@@ -247,6 +247,7 @@ internal static class IsolatedAcceptance
             stage = "process-plugin";
             var processResult = await RunProcessPluginAcceptanceAsync(
                 dataRoot,
+                value => stage = $"process-plugin.{value}",
                 cancellationToken);
             checks.Add(new(
                 "process.discovery",
@@ -312,8 +313,10 @@ internal static class IsolatedAcceptance
 
     private static async Task<ProcessAcceptanceArtifact> RunProcessPluginAcceptanceAsync(
         string dataRoot,
+        Action<string> reportStage,
         CancellationToken cancellationToken)
     {
+        reportStage("package");
         var baseDirectory = Path.GetFullPath(AppContext.BaseDirectory);
         var executable = Path.Combine(baseDirectory, "ZGSTokenBar.Cli.exe");
         if (!File.Exists(executable))
@@ -330,6 +333,8 @@ internal static class IsolatedAcceptance
                 false);
         }
         var packagePath = Path.Combine(dataRoot, "process-fixture.zgsplugin");
+        var driftFixture = Path.Combine(dataRoot, "fixture-data.txt");
+        await File.WriteAllTextAsync(driftFixture, "trusted fixture", cancellationToken);
         var sourceFiles = Directory.EnumerateFiles(baseDirectory, "*", SearchOption.TopDirectoryOnly)
             .Where(path => !string.Equals(
                 Path.GetFileName(path),
@@ -339,6 +344,7 @@ internal static class IsolatedAcceptance
                 Path.GetExtension(path),
                 ".pdb",
                 StringComparison.OrdinalIgnoreCase))
+            .Append(driftFixture)
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToArray();
         if (sourceFiles.Length is <= 0 or > PluginPackageManager.MaximumFiles)
@@ -402,8 +408,10 @@ internal static class IsolatedAcceptance
             }
         }
 
+        reportStage("install");
         var manager = new PluginPackageManager(dataRoot);
         var installed = manager.Install(packagePath, Digest(packagePath));
+        reportStage("discover");
         var discovered = manager.LoadProcessPlugins(new AcceptanceCredentialBroker());
         var proxy = discovered.OfType<ProcessPluginProxy>().SingleOrDefault();
         if (proxy is null)
@@ -429,6 +437,7 @@ internal static class IsolatedAcceptance
         var cancellationIsolation = false;
         try
         {
+            reportStage("runtime");
             var pluginDataRoot = Path.Combine(dataRoot, "plugin-data", manifest.Id);
             var startContext = new PluginStartContext(
                 "headless",
@@ -531,7 +540,8 @@ internal static class IsolatedAcceptance
             foreach (var plugin in discovered) await plugin.DisposeAsync();
         }
 
-        var driftTarget = Path.Combine(installed.Path, files[0].Path);
+        reportStage("drift");
+        var driftTarget = Path.Combine(installed.Path, Path.GetFileName(driftFixture));
         await using (var stream = new FileStream(
                          driftTarget,
                          FileMode.Append,
