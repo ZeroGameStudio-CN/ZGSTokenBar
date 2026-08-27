@@ -1,0 +1,31 @@
+{
+  "name": "zgstokenbar",
+  "version": "3.0.0",
+  "private": true,
+  "description": "Native Windows quota bar for Claude and Codex",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "dotnet build src/ZGSTokenBar.App/ZGSTokenBar.App.csproj -c Release",
+    "test": "node --test \"scripts/*.test.mjs\" && dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj -c Release",
+    "captures": "dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj -c Release -- --taskbar-mini-captures",
+    "settings-captures": "dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj -c Release -- --settings-captures docs/specs/assets/native-settings-panel",
+    "plugins:generate": "node scripts/generate-builtin-plugin-registry.mjs",
+    "plugins:check": "node scripts/generate-builtin-plugin-registry.mjs --check",
+    "cli": "dotnet run --project tools/ZGSTokenBar.Cli/ZGSTokenBar.Cli.csproj -c Release --",
+    "radar": "dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj -c Release --",
+    "dist": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-native-portable.ps1",
+    "verify": "node scripts/graduation-gate.mjs",
+    "audit:security": "npm audit --audit-level=high"
+  },
+  "keywords": [
+    "claude",
+    "codex",
+    "quota",
+    "windows"
+  ],
+  "author": "ZeroGameStudio",
+  "license": "MIT",
+  "type": "commonjs"
+}

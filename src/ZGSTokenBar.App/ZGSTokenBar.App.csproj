@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>ZGSTokenBar</AssemblyName>
+    <RootNamespace>ZGSTokenBar.App</RootNamespace>
+    <Product>ZGSTokenBar</Product>
+    <Description>Native quota bar for Claude and Codex</Description>
+    <Authors>ZeroGameStudio</Authors>
+    <ApplicationIcon>..\..\assets\icon.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <PublishReadyToRun>false</PublishReadyToRun>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ZGSTokenBar.Core\ZGSTokenBar.Core.csproj" />
+    <ProjectReference Include="..\ZGSTokenBar.PluginAdapters\ZGSTokenBar.PluginAdapters.csproj" />
+    <ProjectReference Include="..\ZGSTokenBar.PluginSdk\ZGSTokenBar.PluginSdk.csproj" />
+    <ProjectReference Include="..\ZGSTokenBar.Builtins\ZGSTokenBar.Builtins.csproj" />
+    <ProjectReference Include="..\ZGSTokenBar.Host\ZGSTokenBar.Host.csproj" />
+    <ProjectReference Include="..\ZGSTokenBar.Transport.NamedPipe\ZGSTokenBar.Transport.NamedPipe.csproj" />
+    <InternalsVisibleTo Include="ZGSTokenBar.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\claude-icon-rounded.png" LogicalName="ZGSTokenBar.App.Assets.claude-icon-rounded.png" />
+    <EmbeddedResource Include="Assets\openai-official-ios-icon.png" LogicalName="ZGSTokenBar.App.Assets.openai-official-ios-icon.png" />
+    <EmbeddedResource Include="Assets\deepseek-whale-icon.png" LogicalName="ZGSTokenBar.App.Assets.deepseek-whale-icon.png" />
+    <EmbeddedResource Include="Assets\fluent-clock-20-regular.png" LogicalName="ZGSTokenBar.App.Assets.fluent-clock-20-regular.png" />
+  </ItemGroup>
+</Project>

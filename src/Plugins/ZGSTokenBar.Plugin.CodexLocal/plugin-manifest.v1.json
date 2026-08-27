@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "zgstokenbar.usage.codex-local",
+  "version": "1.0.0",
+  "hostApiMajor": 1,
+  "hostApiMinMinor": 0,
+  "runtime": "builtin",
+  "required": false,
+  "commandNamespace": "codex-usage",
+  "capabilities": ["usage", "details", "cache"],
+  "defaultEnabled": true,
+  "order": 120,
+  "requires": ["zgstokenbar.provider.codex"]
+}

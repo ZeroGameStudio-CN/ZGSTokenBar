@@ -1,0 +1,9 @@
+<Project>
+  <PropertyGroup>
+    <ZGSTokenBarVersion>3.0.0</ZGSTokenBarVersion>
+    <Version>$(ZGSTokenBarVersion)</Version>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+</Project>

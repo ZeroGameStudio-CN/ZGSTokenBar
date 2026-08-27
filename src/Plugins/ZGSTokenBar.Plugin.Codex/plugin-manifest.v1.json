@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "zgstokenbar.provider.codex",
+  "version": "1.0.0",
+  "hostApiMajor": 1,
+  "hostApiMinMinor": 0,
+  "runtime": "builtin",
+  "required": false,
+  "commandNamespace": "codex",
+  "capabilities": ["quota", "health", "accounts", "settings", "commands"],
+  "defaultEnabled": true,
+  "order": 110,
+  "requires": []
+}

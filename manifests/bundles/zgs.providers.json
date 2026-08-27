@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "id": "zgstokenbar.providers",
+  "plugins": ["zgstokenbar.provider.claude", "zgstokenbar.provider.codex", "zgstokenbar.usage.codex-local"]
+}

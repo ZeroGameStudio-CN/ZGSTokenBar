@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zerogamestudio.com/schemas/zgstokenbar/plugin-manifest.v1.json",
+  "title": "ZGSTokenBar plugin manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "id", "version", "hostApiMajor", "hostApiMinMinor",
+    "runtime", "required", "commandNamespace", "capabilities",
+    "defaultEnabled", "order", "requires"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "id": { "$ref": "#/$defs/id" },
+    "version": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "hostApiMajor": { "type": "integer", "minimum": 1 },
+    "hostApiMinMinor": { "type": "integer", "minimum": 0 },
+    "runtime": { "enum": ["builtin", "process"] },
+    "required": { "type": "boolean" },
+    "commandNamespace": { "$ref": "#/$defs/id" },
+    "capabilities": {
+      "type": "array", "maxItems": 32, "uniqueItems": true,
+      "items": { "$ref": "#/$defs/id" }
+    },
+    "defaultEnabled": { "type": "boolean" },
+    "order": { "type": "integer", "minimum": 0, "maximum": 100000 },
+    "requires": {
+      "type": "array", "maxItems": 32, "uniqueItems": true,
+      "items": { "$ref": "#/$defs/id" }
+    },
+    "displayName": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "entrypoint": { "type": "string", "minLength": 1, "maxLength": 260 },
+    "files": {
+      "type": "array", "maxItems": 256,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["path", "bytes", "sha256"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1, "maxLength": 260 },
+          "bytes": { "type": "integer", "minimum": 0, "maximum": 67108864 },
+          "sha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" }
+        }
+      }
+    },
+    "icon": { "type": "string", "minLength": 1, "maxLength": 260 },
+    "locales": {
+      "type": "array", "maxItems": 2, "uniqueItems": true,
+      "items": { "enum": ["locales/en.json", "locales/zh-CN.json"] }
+    },
+    "credentialSlots": {
+      "type": "array", "maxItems": 16, "uniqueItems": true,
+      "items": { "$ref": "#/$defs/id" }
+    },
+    "handshakeTimeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 5 },
+    "callTimeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 15 },
+    "disposeTimeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 2 }
+  },
+  "$defs": {
+    "id": {
+      "type": "string", "minLength": 1, "maxLength": 128,
+      "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+    }
+  }
+}
