@@ -28,6 +28,7 @@ internal static class IsolatedAcceptance
         Directory.CreateDirectory(dataRoot);
         var checks = new List<AcceptanceCheck>();
         var outputFiles = new List<string>();
+        var stage = "host";
         var plugin = new AcceptancePlugin();
         var profile = new EffectiveProfile(
             1,
@@ -243,6 +244,7 @@ internal static class IsolatedAcceptance
                     StringComparison.OrdinalIgnoreCase),
                 "data root is an internally-created OS temporary directory"));
 
+            stage = "process-plugin";
             var processResult = await RunProcessPluginAcceptanceAsync(
                 dataRoot,
                 cancellationToken);
@@ -279,6 +281,20 @@ internal static class IsolatedAcceptance
                 "process-plugin.json",
                 processResult,
                 CliJsonContext.Default.ProcessAcceptanceArtifact));
+        }
+        catch (HostCommandException exception)
+        {
+            checks.Add(new(
+                $"{stage}.exception",
+                false,
+                $"{exception.Code}: {exception.SafeMessage}"));
+        }
+        catch (Exception exception)
+        {
+            checks.Add(new(
+                $"{stage}.exception",
+                false,
+                $"{exception.GetType().Name} (0x{exception.HResult:X8})"));
         }
         finally
         {
