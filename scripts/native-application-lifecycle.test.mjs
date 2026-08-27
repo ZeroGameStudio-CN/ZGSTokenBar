@@ -74,3 +74,11 @@ test('enabled AI Gateway is present before its first network result', () => {
     application,
     /if \(settings\.IsEnabled\(ProviderKind\.AiGateway\)\)[\s\S]*?cards\.Add\(AiGatewayBalanceService\.UnavailableCard\(DateTimeOffset\.UtcNow\)\)/);
 });
+
+test('legacy optional providers are ignored when their built-ins are not installed', () => {
+  assert.match(application, /private bool HasPlugin\(string pluginId\) => _pluginHost\.DescribePlugin\(pluginId\) is not null/);
+  assert.match(application, /if \(!HasPlugin\(pluginId\)\) return;[\s\S]*?CorePluginProjection\.Provider/);
+  assert.match(application, /const string pluginId = "zgstokenbar\.provider\.ai-gateway";[\s\S]*?if \(!HasPlugin\(pluginId\)\) return;/);
+  assert.match(application, /if \(HasPlugin\("zgstokenbar\.intelligence\.radar"\) && _radarViewState\.Snapshot/);
+  assert.match(application, /if \(HasPlugin\("zgstokenbar\.intelligence\.radar"\)\)[\s\S]*?CorePluginProjection\.Radar/);
+});

@@ -171,7 +171,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             this);
         _pluginHost.StartAsync(_shutdown.Token).AsTask().GetAwaiter().GetResult();
         PublishQuotaPlugins(_snapshot);
-        if (_radarViewState.Snapshot is { } restoredRadar)
+        if (HasPlugin("zgstokenbar.intelligence.radar") && _radarViewState.Snapshot is { } restoredRadar)
         {
             _pluginHost.Publish(CorePluginProjection.Radar("zgstokenbar.intelligence.radar", restoredRadar));
         }
@@ -767,7 +767,10 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                 new(next, next.CapturedAt, false, null),
                 _radarState);
             _bar.SetRadarState(_radarViewState);
-            _pluginHost.Publish(CorePluginProjection.Radar("zgstokenbar.intelligence.radar", next));
+            if (HasPlugin("zgstokenbar.intelligence.radar"))
+            {
+                _pluginHost.Publish(CorePluginProjection.Radar("zgstokenbar.intelligence.radar", next));
+            }
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
         {
@@ -1652,6 +1655,8 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         string iconKey,
         string accentToken)
     {
+        if (!HasPlugin(pluginId)) return;
+
         var health = snapshot.Health.FirstOrDefault(item => item.Provider == provider);
         if (health is null) return;
         var result = new ProviderResult(
@@ -1671,6 +1676,9 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
 
     private void PublishAiGatewayPlugin()
     {
+        const string pluginId = "zgstokenbar.provider.ai-gateway";
+        if (!HasPlugin(pluginId)) return;
+
         var health = _snapshot.Health.FirstOrDefault(item => item.Provider == ProviderKind.AiGateway);
         if (health is null) return;
         var result = new ProviderResult(
@@ -1678,7 +1686,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             _snapshot.Cards.Where(card => card.Provider == ProviderKind.AiGateway).ToArray(),
             health);
         var projected = CorePluginProjection.Provider(
-            "zgstokenbar.provider.ai-gateway",
+            pluginId,
             "deepseek",
             "provider.deepseek.icon",
             "accent.deepseek",
@@ -1721,6 +1729,8 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             ],
         });
     }
+
+    private bool HasPlugin(string pluginId) => _pluginHost.DescribePlugin(pluginId) is not null;
 
     public ValueTask PersistPluginEnabledAsync(
         string pluginId,
