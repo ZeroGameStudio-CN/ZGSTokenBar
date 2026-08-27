@@ -56,6 +56,7 @@ test('process plugins are package-verified and job-contained', () => {
   assert.doesNotMatch(processHost, /UseShellExecute = true/);
   assert.match(processHost, /requestMayHaveBeenWritten/);
   assert.match(processHost, /catch \(OperationCanceledException\) when \(cancellationToken\.IsCancellationRequested\)[\s\S]*?StopProcessAsync/);
+  assert.match(processHost, /process\.Kill\(entireProcessTree: true\);[\s\S]*?await process\.WaitForExitAsync\(\)/);
 });
 
 test('host uses independent global, config, ui, and plugin data revisions', () => {

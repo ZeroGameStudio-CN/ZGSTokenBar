@@ -385,13 +385,12 @@ public sealed class ProcessPluginProxy : IZgsPlugin, IDataSource, ICommandContri
                 {
                     using var timeout = new CancellationTokenSource(DisposeTimeout());
                     try { await process.WaitForExitAsync(timeout.Token); }
-                    catch (OperationCanceledException) { process.Kill(entireProcessTree: true); }
+                    catch (OperationCanceledException) { await KillAndWaitAsync(process); }
                 }
             }
             catch
             {
-                try { process.Kill(entireProcessTree: true); }
-                catch { }
+                await KillAndWaitAsync(process);
             }
             process.Dispose();
         }
@@ -402,6 +401,18 @@ public sealed class ProcessPluginProxy : IZgsPlugin, IDataSource, ICommandContri
             try { await _stderrTask.WaitAsync(TimeSpan.FromSeconds(1)); }
             catch { }
             _stderrTask = null;
+        }
+    }
+
+    private static async Task KillAndWaitAsync(Process process)
+    {
+        try
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync();
+        }
+        catch
+        {
         }
     }
 
