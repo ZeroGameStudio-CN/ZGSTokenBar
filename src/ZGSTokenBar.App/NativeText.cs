@@ -222,6 +222,13 @@ internal sealed class NativeText
         "These settings have not been saved. Discard the changes?");
 
     public string RefreshNow => T("立即刷新", "Refresh now");
+    public string UpdateTo(Version version) => T($"更新到 v{version.ToString(3)}", $"Update to v{version.ToString(3)}");
+    public string UpdateAvailableTitle(Version version) => T(
+        $"ZGSTokenBar v{version.ToString(3)} 可更新",
+        $"ZGSTokenBar v{version.ToString(3)} is available");
+    public string UpdateAvailableBody => T(
+        "点击通知或托盘菜单查看已签名发布包。",
+        "Click this notification or the tray menu to view the signed release.");
     public string OpenSettingsHint => T("打开设置面板", "Open settings panel");
     public string OpenRadarWebsite => T("打开 Codex Radar 网站", "Open Codex Radar website");
     public string Settings => T("设置", "Settings");

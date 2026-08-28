@@ -7,6 +7,7 @@ const application = fs.readFileSync('src/ZGSTokenBar.App/QuotaApplicationContext
 const settings = fs.readFileSync('src/ZGSTokenBar.App/SettingsForm.cs', 'utf8');
 const startup = fs.readFileSync('src/ZGSTokenBar.App/StartupManager.cs', 'utf8');
 const watchdog = fs.readFileSync('src/ZGSTokenBar.App/WatchdogManager.cs', 'utf8');
+const update = fs.readFileSync('src/ZGSTokenBar.App/ReleaseUpdateChecker.cs', 'utf8');
 const quit = application.match(/private async void Quit\(\)([\s\S]*?)protected override void Dispose/)?.[1] ?? '';
 const dispose = application.match(/protected override void Dispose\(bool disposing\)([\s\S]*?)private static QuotaSnapshot/)?.[1] ?? '';
 
@@ -59,6 +60,32 @@ test('optional keep-running mode supervises the app without entering the UI path
   assert.match(quit, /if \(_settings\.KeepRunning && !_sessionEnding\) WatchdogManager\.EnsureRunning\(\);/);
   assert.match(settings, /if \(keepRunningChanged && _keepRunning\.Checked\)[\s\S]*?_openAtLogin\.Checked = true/);
   assert.match(settings, /!keepRunningChanged && !_openAtLogin\.Checked[\s\S]*?_keepRunning\.Checked = false/);
+});
+
+test('startup registration is reconciled idempotently before the single-instance exit path', () => {
+  assert.ok(
+    program.indexOf('StartupManager.ReconcileRegistration(') < program.indexOf('new Mutex('),
+    'a newly launched version must migrate the login command even while an older instance is running');
+  assert.match(startup, /GetValue\([\s\S]*?RequiredAction\(currentCommand, command\)/);
+  assert.match(startup, /case StartupRegistrationAction\.Set:[\s\S]*?SetValue/);
+  assert.match(startup, /case StartupRegistrationAction\.Delete:[\s\S]*?DeleteValue/);
+  assert.match(startup, /string\.Equals\(currentCommand, desiredCommand, StringComparison\.Ordinal\)[\s\S]*?StartupRegistrationAction\.None/);
+  assert.doesNotMatch(program, /StartupApproved/);
+  assert.doesNotMatch(startup, /StartupApproved/);
+});
+
+test('stable GitHub releases surface one periodic update notification without owning installation', () => {
+  assert.match(update, /releases\/latest/);
+  assert.match(update, /ZGSTokenBar-Portable-v\{versionText\}\.zip/);
+  assert.match(update, /ZGSTokenBar-v\{versionText\}-SHA256\.txt/);
+  assert.match(update, /parsed\.Scheme == Uri\.UriSchemeHttps/);
+  assert.match(update, /string\.Equals\(parsed\.Host, "github\.com"/);
+  assert.match(application, /Interval = 6 \* 60 \* 60 \* 1000/);
+  assert.match(application, /_bar\.BeginInvoke\(\(\) => _ = CheckForUpdatesAsync\(\)\)/);
+  assert.match(application, /_notifiedUpdateVersion == update\.Version/);
+  assert.match(application, /_updateMenuItem\.Visible = true/);
+  assert.match(application, /_updateTimer\.Dispose\(\)/);
+  assert.doesNotMatch(application, /DownloadFile|ExtractToDirectory|apply-update/);
 });
 
 test('settings restore covers off-screen windows and normal-window z-order', () => {

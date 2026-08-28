@@ -1,4 +1,5 @@
 using Microsoft.Win32;
+using System.Diagnostics;
 
 namespace ZGSTokenBar.App;
 
@@ -9,24 +10,38 @@ internal static class StartupManager
 
     public static void Apply(bool openAtLogin, bool keepRunning)
     {
-        var command = BuildCommand(Application.ExecutablePath, openAtLogin, keepRunning);
+        ReconcileRegistration(Application.ExecutablePath, openAtLogin, keepRunning);
+        WatchdogManager.Apply(keepRunning);
+    }
+
+    public static void ReconcileRegistration(string executablePath, bool openAtLogin, bool keepRunning)
+    {
+        var command = BuildCommand(executablePath, openAtLogin, keepRunning);
+        var intendedAction = command is null ? "remove" : "set";
         try
         {
             using var key = Registry.CurrentUser.CreateSubKey(RegistryPath, true);
-            if (command is not null)
+            var currentCommand = key.GetValue(
+                ValueName,
+                null,
+                RegistryValueOptions.DoNotExpandEnvironmentNames) as string;
+            switch (RequiredAction(currentCommand, command))
             {
-                key.SetValue(ValueName, command);
-            }
-            else
-            {
-                key.DeleteValue(ValueName, false);
+                case StartupRegistrationAction.Set:
+                    key.SetValue(ValueName, command!, RegistryValueKind.String);
+                    break;
+                case StartupRegistrationAction.Delete:
+                    key.DeleteValue(ValueName, false);
+                    break;
             }
         }
-        catch
+        catch (Exception exception)
         {
-            // Startup registration is optional and must never prevent the bar from running.
+            Trace.TraceWarning(
+                "ZGSTokenBar startup registration reconciliation failed while trying to {0} the command ({1}).",
+                intendedAction,
+                exception.GetType().Name);
         }
-        WatchdogManager.Apply(keepRunning);
     }
 
     internal static string? BuildCommand(string executablePath, bool openAtLogin, bool keepRunning)
@@ -35,4 +50,27 @@ internal static class StartupManager
         var command = $"\"{executablePath}\"";
         return keepRunning ? $"{command} --watchdog" : command;
     }
+
+    internal static StartupRegistrationAction RequiredAction(
+        string? currentCommand,
+        string? desiredCommand)
+    {
+        if (desiredCommand is null)
+        {
+            return currentCommand is null
+                ? StartupRegistrationAction.None
+                : StartupRegistrationAction.Delete;
+        }
+
+        return string.Equals(currentCommand, desiredCommand, StringComparison.Ordinal)
+            ? StartupRegistrationAction.None
+            : StartupRegistrationAction.Set;
+    }
+}
+
+internal enum StartupRegistrationAction
+{
+    None,
+    Set,
+    Delete,
 }

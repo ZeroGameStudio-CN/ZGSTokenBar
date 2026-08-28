@@ -46,6 +46,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     private readonly SemaphoreSlim _codexTokenUsageGate = new(1, 1);
     private readonly SemaphoreSlim _aiGatewayUsageGate = new(1, 1);
     private readonly SemaphoreSlim _systemUsageGate = new(1, 1);
+    private readonly SemaphoreSlim _updateGate = new(1, 1);
     private readonly CancellationTokenSource _shutdown = new();
     private readonly QuotaSnapshotStabilizer _snapshotStabilizer = new();
     private readonly QuotaPaceTracker _quotaPaceTracker;
@@ -53,10 +54,12 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     private readonly CodexTokenUsageReader _codexTokenUsageReader;
     private readonly SystemUsageSampler _systemUsageSampler = new();
     private readonly CodexEconomyRouter _codexEconomyRouter = new();
+    private readonly ReleaseUpdateChecker _updateChecker = new();
     private readonly BarForm _bar;
     private readonly NotifyIcon _tray;
     private readonly ToolStripMenuItem _refreshMenuItem;
     private readonly ToolStripMenuItem _radarMenuItem;
+    private readonly ToolStripMenuItem _updateMenuItem;
     private readonly ToolStripMenuItem _settingsMenuItem;
     private readonly ToolStripMenuItem _quitMenuItem;
     private readonly QuotaMilestoneTracker _milestoneTracker;
@@ -66,6 +69,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     private readonly System.Windows.Forms.Timer _refreshTimer;
     private readonly System.Windows.Forms.Timer _providerActivityTimer;
     private readonly System.Windows.Forms.Timer _radarTimer;
+    private readonly System.Windows.Forms.Timer _updateTimer;
     private readonly RegisteredWaitHandle _activationWait;
     private readonly ZgsTokenBarHost _pluginHost;
     private readonly ZgsNamedPipeServer _apiServer;
@@ -82,6 +86,9 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     private AiGatewayUsageSummary? _aiGatewayUsage;
     private SettingsForm? _settingsDialog;
     private bool _radarBalloonActive;
+    private bool _updateBalloonActive;
+    private ReleaseUpdateInfo? _availableUpdate;
+    private Version? _notifiedUpdateVersion;
     private bool _quitting;
     private bool _sessionEnding;
     private bool _rolloutImportRunning;
@@ -190,6 +197,11 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             Visible = _settings.EnableRadar,
         };
         menu.Items.Add(_radarMenuItem);
+        _updateMenuItem = new ToolStripMenuItem(string.Empty, null, (_, _) => OpenUpdatePage())
+        {
+            Visible = false,
+        };
+        menu.Items.Add(_updateMenuItem);
         _settingsMenuItem = new ToolStripMenuItem(_text.Settings, null, (_, _) => OpenSettings());
         menu.Items.Add(_settingsMenuItem);
         menu.Items.Add(new ToolStripSeparator());
@@ -214,7 +226,8 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         };
         _tray.BalloonTipClicked += (_, _) =>
         {
-            if (_radarBalloonActive) OpenRadarWebsite();
+            if (_updateBalloonActive) OpenUpdatePage();
+            else if (_radarBalloonActive) OpenRadarWebsite();
         };
 
         _clockTimer = new System.Windows.Forms.Timer { Enabled = true };
@@ -249,6 +262,9 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         _providerActivityTimer.Tick += (_, _) => UpdateProviderActivity(requestRefresh: true);
         _radarTimer = new System.Windows.Forms.Timer { Interval = 60_000 };
         _radarTimer.Tick += (_, _) => _ = RefreshRadarAsync();
+        _updateTimer = new System.Windows.Forms.Timer { Interval = 6 * 60 * 60 * 1000 };
+        _updateTimer.Tick += (_, _) => _ = CheckForUpdatesAsync();
+        _updateTimer.Start();
         ApplyRefreshInterval();
         _providerActivityTimer.Start();
         ApplyRadarInterval();
@@ -279,6 +295,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
 
         _bar.BeginInvoke(() => _ = RefreshSystemUsageOverviewAsync());
         _bar.BeginInvoke(() => _ = RefreshAsync());
+        _bar.BeginInvoke(() => _ = CheckForUpdatesAsync());
         if (openSettingsOnStart) _bar.BeginInvoke(OpenSettings);
         if (_settings.EnableRadarAlerts) _bar.BeginInvoke(() => _ = RefreshRadarAsync());
     }
@@ -1237,6 +1254,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     {
         _refreshMenuItem.Text = _text.RefreshNow;
         _radarMenuItem.Text = _text.OpenRadarWebsite;
+        if (_availableUpdate is { } update) _updateMenuItem.Text = _text.UpdateTo(update.Version);
         _settingsMenuItem.Text = _text.Settings;
         _quitMenuItem.Text = _text.Quit;
         _tray.Text = _text.TrayText;
@@ -1405,10 +1423,55 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         _bar.BringToFront();
     }
 
+    private async Task CheckForUpdatesAsync()
+    {
+        if (!await _updateGate.WaitAsync(0)) return;
+        try
+        {
+            if (!Version.TryParse(ProductVersion(), out var currentVersion)) return;
+            var update = await _updateChecker.CheckAsync(currentVersion, _shutdown.Token);
+            if (update is null || _shutdown.IsCancellationRequested || _bar.IsDisposed) return;
+            _availableUpdate = update;
+            _updateMenuItem.Text = _text.UpdateTo(update.Version);
+            _updateMenuItem.Visible = true;
+            if (_notifiedUpdateVersion == update.Version || _quitting) return;
+            _notifiedUpdateVersion = update.Version;
+            _radarBalloonActive = false;
+            _updateBalloonActive = true;
+            _tray.ShowBalloonTip(
+                8_000,
+                _text.UpdateAvailableTitle(update.Version),
+                _text.UpdateAvailableBody,
+                ToolTipIcon.Info);
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception) when (exception is HttpRequestException
+            or TaskCanceledException
+            or InvalidDataException
+            or System.Text.Json.JsonException
+            or InvalidOperationException)
+        {
+            // Update discovery is best-effort and must not disturb the quota bar.
+        }
+        finally
+        {
+            _updateGate.Release();
+        }
+    }
+
+    private void OpenUpdatePage()
+    {
+        if (_availableUpdate is not { } update) return;
+        Process.Start(new ProcessStartInfo(update.PageUri.AbsoluteUri) { UseShellExecute = true });
+    }
+
     private void ShowMilestoneAlerts(IReadOnlyList<QuotaMilestoneAlert> alerts)
     {
         if (alerts.Count == 0 || _quitting) return;
         _radarBalloonActive = false;
+        _updateBalloonActive = false;
         var now = DateTimeOffset.UtcNow;
         var warning = alerts.Any(alert => alert.Threshold >= 90);
         var title = alerts.Count == 1
@@ -1455,6 +1518,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             || previousScore is { } oldScore && primary.Score is { } newScore && newScore < oldScore;
         try
         {
+            _updateBalloonActive = false;
             _radarBalloonActive = true;
             _tray.ShowBalloonTip(
                 8_000,
@@ -1473,6 +1537,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     private void ShowRadarTestNotification()
     {
         if (_quitting) return;
+        _updateBalloonActive = false;
         _radarBalloonActive = true;
         try
         {
@@ -2056,6 +2121,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         _shutdown.Cancel();
         _refreshTimer.Stop();
         _radarTimer.Stop();
+        _updateTimer.Stop();
         _clockTimer.Stop();
         _watchdogTimer.Stop();
         _confirmationTimer.Stop();
@@ -2074,6 +2140,8 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             _aiGatewayUsageGate.Release();
             await _systemUsageGate.WaitAsync();
             _systemUsageGate.Release();
+            await _updateGate.WaitAsync();
+            _updateGate.Release();
         }
         catch (ObjectDisposedException)
         {
@@ -2104,6 +2172,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             _refreshTimer.Dispose();
             _providerActivityTimer.Dispose();
             _radarTimer.Dispose();
+            _updateTimer.Dispose();
             _clockTimer.Dispose();
             _watchdogTimer.Dispose();
             _confirmationTimer.Dispose();
@@ -2118,7 +2187,9 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             _codexTokenUsageGate.Dispose();
             _aiGatewayUsageGate.Dispose();
             _systemUsageGate.Dispose();
+            _updateGate.Dispose();
             _systemUsageSampler.Dispose();
+            _updateChecker.Dispose();
             DisposePluginRuntimeAsync().AsTask().GetAwaiter().GetResult();
             _shutdown.Dispose();
         }

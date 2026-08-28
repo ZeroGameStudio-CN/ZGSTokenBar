@@ -215,6 +215,7 @@ var tests = new (string Name, Action Run)[]
     ("Codex Radar state persistence", TestRadarStatePersistence),
     ("Settings normalization", TestSettingsNormalization),
     ("Keep-running watchdog policy", TestKeepRunningWatchdogPolicy),
+    ("Release update discovery", TestReleaseUpdateDiscovery),
     ("Settings v2 plugin migration", TestSettingsV2PluginMigration),
     ("Plugin profile state redaction", TestPluginProfileStateRedaction),
     ("Plugin package malformed manifest rejection", TestPluginMalformedManifestRejection),
@@ -10675,6 +10676,30 @@ static void TestKeepRunningWatchdogPolicy()
         $"\"{executablePath}\" --watchdog",
         StartupManager.BuildCommand(executablePath, openAtLogin: false, keepRunning: true),
         "keep-running startup launches watchdog mode");
+    Equal(
+        StartupRegistrationAction.None,
+        StartupManager.RequiredAction(null, null),
+        "missing disabled startup remains untouched");
+    Equal(
+        StartupRegistrationAction.None,
+        StartupManager.RequiredAction($"\"{executablePath}\"", $"\"{executablePath}\""),
+        "matching startup command is not rewritten");
+    Equal(
+        StartupRegistrationAction.Set,
+        StartupManager.RequiredAction(
+            "\"C:\\Old\\ZGSTokenBar.exe\"",
+            $"\"{executablePath}\""),
+        "an upgraded executable path replaces the startup command");
+    Equal(
+        StartupRegistrationAction.Set,
+        StartupManager.RequiredAction(
+            $"\"{executablePath}\"",
+            $"\"{executablePath}\" --watchdog"),
+        "changing keep-running mode replaces the startup command");
+    Equal(
+        StartupRegistrationAction.Delete,
+        StartupManager.RequiredAction($"\"{executablePath}\"", null),
+        "disabling startup removes an existing command");
 
     Equal(true, WatchdogManager.IsWatchdogRequest(["--WATCHDOG"]), "watchdog switch is case-insensitive");
     Equal(false, WatchdogManager.IsWatchdogRequest(["--settings"]), "settings launch stays in the main app");
@@ -10682,6 +10707,86 @@ static void TestKeepRunningWatchdogPolicy()
     Equal(false, WatchdogManager.ShouldStartApplication(true, true), "running main app is not duplicated");
     Equal(false, WatchdogManager.ShouldStartApplication(false, false), "disabled watchdog does not recover the app");
     Equal(2_000, WatchdogManager.PollMilliseconds, "watchdog restart attempts are throttled");
+}
+
+static void TestReleaseUpdateDiscovery()
+{
+    static JsonDocument Release(string tag, string page, bool includePackage = true, bool includeChecksums = true)
+    {
+        var version = tag.TrimStart('v', 'V');
+        var assets = new List<object>();
+        if (includePackage)
+        {
+            assets.Add(new
+            {
+                name = $"ZGSTokenBar-Portable-v{version}.zip",
+                browser_download_url = $"https://github.com/ZeroGameStudio-CN/ZGSTokenBar/releases/download/{tag}/ZGSTokenBar-Portable-v{version}.zip",
+            });
+        }
+        if (includeChecksums)
+        {
+            assets.Add(new
+            {
+                name = $"ZGSTokenBar-v{version}-SHA256.txt",
+                browser_download_url = $"https://github.com/ZeroGameStudio-CN/ZGSTokenBar/releases/download/{tag}/ZGSTokenBar-v{version}-SHA256.txt",
+            });
+        }
+        return JsonDocument.Parse(JsonSerializer.Serialize(new { tag_name = tag, html_url = page, assets }));
+    }
+
+    using (var document = Release(
+        "v3.0.1",
+        "https://github.com/ZeroGameStudio-CN/ZGSTokenBar/releases/tag/v3.0.1"))
+    {
+        var update = ReleaseUpdateChecker.Parse(document.RootElement, new Version(3, 0, 0));
+        Equal(new Version(3, 0, 1), update?.Version, "newer complete release is discovered");
+        Equal("github.com", update?.PageUri.Host, "release page stays on GitHub");
+    }
+    using (var document = Release(
+        "v3.0.0",
+        "https://github.com/ZeroGameStudio-CN/ZGSTokenBar/releases/tag/v3.0.0"))
+    {
+        Equal<ReleaseUpdateInfo?>(
+            null,
+            ReleaseUpdateChecker.Parse(document.RootElement, new Version(3, 0, 0)),
+            "current release does not notify");
+    }
+    using (var document = Release(
+        "v3.0.1",
+        "https://github.com/ZeroGameStudio-CN/ZGSTokenBar/releases/tag/v3.0.1",
+        includeChecksums: false))
+    {
+        Equal<ReleaseUpdateInfo?>(
+            null,
+            ReleaseUpdateChecker.Parse(document.RootElement, new Version(3, 0, 0)),
+            "release without checksums fails closed");
+    }
+
+    var untrustedRejected = false;
+    try
+    {
+        using var document = Release("v3.0.1", "https://example.com/releases/tag/v3.0.1");
+        ReleaseUpdateChecker.Parse(document.RootElement, new Version(3, 0, 0));
+    }
+    catch (JsonException)
+    {
+        untrustedRejected = true;
+    }
+    Equal(true, untrustedRejected, "untrusted release page is rejected");
+    Equal(false, ReleaseUpdateChecker.TryParseTag("3.0.1", out _), "version tag requires v prefix");
+    Equal(false, ReleaseUpdateChecker.TryParseTag("v3.0.1-beta", out _), "prerelease tag is rejected");
+
+    var handler = new RecordingHandler(request =>
+    {
+        Equal("api.github.com", request.RequestUri?.Host, "update check uses GitHub API");
+        Equal(true, request.Headers.UserAgent.Any(), "update check identifies the product");
+        return new HttpResponseMessage(HttpStatusCode.NotFound);
+    });
+    using var checker = new ReleaseUpdateChecker(new HttpClient(handler));
+    Equal<ReleaseUpdateInfo?>(
+        null,
+        checker.CheckAsync(new Version(3, 0, 0), CancellationToken.None).GetAwaiter().GetResult(),
+        "missing latest release is a normal no-update result");
 }
 
 static void TestPositionPersistence()

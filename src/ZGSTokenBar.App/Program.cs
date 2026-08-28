@@ -1,4 +1,5 @@
 using System.Threading;
+using ZGSTokenBar.Core;
 
 namespace ZGSTokenBar.App;
 
@@ -19,6 +20,11 @@ internal static class Program
         var openSettingsOnStart = args.Any(value =>
             string.Equals(value, "--settings", StringComparison.OrdinalIgnoreCase)
             || string.Equals(value, "settings", StringComparison.OrdinalIgnoreCase));
+        var settings = new AppSettingsStore().Load();
+        StartupManager.ReconcileRegistration(
+            Environment.ProcessPath ?? Application.ExecutablePath,
+            settings.OpenAtLogin,
+            settings.KeepRunning);
         using var activationEvent = new EventWaitHandle(
             false,
             EventResetMode.AutoReset,

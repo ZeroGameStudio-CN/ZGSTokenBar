@@ -42,6 +42,8 @@ test('Native settings completion copy stays typed, bilingual, and setting-local'
   assert.match(text, /public string UnsavedChanges => T\(/);
   assert.match(text, /public string DiscardChangesMessage => T\(/);
   assert.match(text, /public string VersionUnknown => T\(/);
+  assert.match(text, /public string UpdateAvailableTitle\(Version version\) => T\(/);
+  assert.match(text, /public string UpdateAvailableBody => T\(/);
   assert.match(settingsForm, /_text\.RadarTestNotificationHint/);
   assert.match(settingsForm, /_text\.RadarNetworkHint/);
   assert.match(settingsForm, /_text\.LocalFirstPrivacy/);

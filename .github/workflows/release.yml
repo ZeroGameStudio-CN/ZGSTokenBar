@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Verify tag matches product version
+        shell: pwsh
+        run: |
+          [xml] $props = Get-Content -LiteralPath Directory.Build.props
+          $version = @($props.Project.PropertyGroup.ZGSTokenBarVersion)[0].Trim()
+          if ($env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Tag $env:GITHUB_REF_NAME does not match product version v$version."
+          }
+      - run: npm run verify
+      - name: Prepare signing certificate
+        shell: pwsh
+        env:
+          SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+          SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:SIGNING_CERTIFICATE_BASE64) -or
+              [string]::IsNullOrWhiteSpace($env:SIGNING_CERTIFICATE_PASSWORD)) {
+            throw 'Public releases require both Windows signing certificate secrets.'
+          }
+          $certificate = Join-Path $env:RUNNER_TEMP 'zgstokenbar-signing.pfx'
+          [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:SIGNING_CERTIFICATE_BASE64))
+          "WIN_CSC_LINK=$certificate" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "WIN_CSC_KEY_PASSWORD=$env:SIGNING_CERTIFICATE_PASSWORD" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          'ZTB_REQUIRE_SIGNATURE=1' | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - run: npm run dist
+      - name: Publish signed release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          gh release create $env:GITHUB_REF_NAME `
+            "release/ZGSTokenBar-Portable-v$version.zip" `
+            "release/ZGSTokenBar-v$version-SHA256.txt" `
+            --verify-tag `
+            --title "ZGSTokenBar v$version" `
+            --generate-notes
