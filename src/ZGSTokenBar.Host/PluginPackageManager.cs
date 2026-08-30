@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using ZGSTokenBar.PluginSdk;
 
@@ -28,6 +29,7 @@ public sealed class PluginPackageManager
     public const long MaximumExpandedBytes = 128L * 1024 * 1024;
     public const int MaximumFiles = 256;
     private const string ManifestName = "plugin-manifest.v1.json";
+    private const string BundledDiagnosticsDirectoryName = ".bundled-install-errors";
     private readonly string _pluginsRoot;
     private readonly string _lockPath;
 
@@ -187,6 +189,57 @@ public sealed class PluginPackageManager
         return new(manifest.Id, manifest.Version, target, true);
     }
 
+    public InstalledPluginStatus EnsureInstalled(string packagePath, string expectedSha256)
+    {
+        var package = Path.GetFullPath(packagePath);
+        if (!File.Exists(package)) throw new PluginTrustException("Plugin package was not found.");
+        var packageInfo = new FileInfo(package);
+        if (packageInfo.Length is <= 0 or > MaximumArchiveBytes
+            || !ValidDigest(expectedSha256)
+            || !FixedEquals(FileDigest(package), expectedSha256))
+        {
+            throw new PluginTrustException("Plugin package SHA-256 does not match.");
+        }
+
+        PluginManifest manifest;
+        using (var archive = ZipFile.OpenRead(package))
+        {
+            var entries = ValidateArchiveEntries(archive);
+            if (!entries.TryGetValue(ManifestName, out var manifestEntry)
+                || manifestEntry.Length is <= 0 or > ZgsHostApi.MaximumFrameBytes)
+            {
+                throw new PluginTrustException("Plugin manifest is missing or invalid.");
+            }
+            using var manifestStream = manifestEntry.Open();
+            try
+            {
+                manifest = JsonSerializer.Deserialize(
+                        manifestStream,
+                        PluginSdkJsonContext.Default.PluginManifest)
+                    ?? throw new JsonException();
+            }
+            catch (JsonException)
+            {
+                throw new PluginTrustException("Plugin manifest is invalid.");
+            }
+            ValidateProcessManifest(manifest);
+        }
+
+        var target = SafeTarget(manifest.Id, manifest.Version);
+        if (!Directory.Exists(target)) return Install(package, expectedSha256);
+        var existing = Inspect(target);
+        if (!existing.Valid)
+        {
+            throw new PluginTrustException("Installed plugin version failed trust validation.");
+        }
+        if (!CanonicalManifestMatches(target, manifest))
+        {
+            throw new PluginTrustException(
+                "Installed plugin version does not match the supplied package.");
+        }
+        return existing;
+    }
+
     public bool Remove(string pluginId)
     {
         if (!PluginValidation.IsStableId(pluginId))
@@ -208,27 +261,117 @@ public sealed class PluginPackageManager
 
     public IReadOnlyList<InstalledPluginStatus> InspectInstalled()
     {
-        if (!Directory.Exists(_pluginsRoot)) return [];
         var results = new List<InstalledPluginStatus>();
-        foreach (var pluginDirectory in Directory.EnumerateDirectories(_pluginsRoot)
-                     .Where(path => !Path.GetFileName(path).StartsWith(".", StringComparison.Ordinal))
-                     .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+        FileAttributes rootAttributes;
+        try
         {
-            foreach (var versionDirectory in Directory.EnumerateDirectories(pluginDirectory)
+            rootAttributes = File.GetAttributes(_pluginsRoot);
+        }
+        catch (Exception exception) when (
+            exception is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return results;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException)
+        {
+            results.Add(InstallDirectoryFailure(_pluginsRoot));
+            return results;
+        }
+        if (!rootAttributes.HasFlag(FileAttributes.Directory))
+        {
+            results.Add(InstallDirectoryFailure(_pluginsRoot));
+            return results;
+        }
+        try
+        {
+            foreach (var pluginDirectory in Directory.EnumerateDirectories(_pluginsRoot)
+                         .Where(path => !Path.GetFileName(path).StartsWith(".", StringComparison.Ordinal))
                          .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
             {
-                results.Add(Inspect(versionDirectory));
+                try
+                {
+                    foreach (var versionDirectory in Directory.EnumerateDirectories(pluginDirectory)
+                                 .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+                    {
+                        results.Add(Inspect(versionDirectory));
+                    }
+                }
+                catch (Exception exception) when (
+                    exception is IOException or UnauthorizedAccessException)
+                {
+                    results.Add(InstallDirectoryFailure(pluginDirectory));
+                }
             }
+            results.AddRange(InspectBundledInstallFailures());
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException)
+        {
+            results.Add(InstallDirectoryFailure(_pluginsRoot));
         }
         return results;
+    }
+
+    public InstalledPluginStatus RecordBundledInstallFailure(
+        string bundleKey,
+        string pluginId,
+        string version)
+    {
+        var diagnosticPluginId = PluginValidation.IsStableId(pluginId)
+            ? pluginId
+            : "zgstokenbar.bundled.install";
+        var diagnosticVersion = Version.TryParse(version, out _)
+            ? version
+            : "0.0.0";
+        var path = BundledDiagnosticPath(bundleKey);
+        var temporary = path + $".{Guid.NewGuid():N}.tmp";
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllLines(
+                temporary,
+                [diagnosticPluginId, diagnosticVersion, "trust_failed"],
+                new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            File.Move(temporary, path, overwrite: true);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException)
+        {
+            // The desktop can still expose the returned in-memory status when persistence is unavailable.
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(temporary)) File.Delete(temporary);
+            }
+            catch (Exception exception) when (
+                exception is IOException or UnauthorizedAccessException)
+            {
+            }
+        }
+        return new(diagnosticPluginId, diagnosticVersion, path, false, "trust_failed");
+    }
+
+    public void ClearBundledInstallFailure(string bundleKey)
+    {
+        var path = BundledDiagnosticPath(bundleKey);
+        if (File.Exists(path)) File.Delete(path);
     }
 
     public IReadOnlyList<IZgsPlugin> LoadProcessPlugins(
         IPluginCredentialBroker? credentialBroker = null)
     {
         var plugins = new List<IZgsPlugin>();
-        var active = InspectInstalled()
-            .Where(status => status.Valid)
+        var statuses = InspectInstalled();
+        var blockedVersions = statuses
+            .Where(status => !status.Valid && IsBundledDiagnosticStatus(status))
+            .Select(status => $"{status.PluginId}\0{status.Version}")
+            .ToHashSet(StringComparer.Ordinal);
+        var active = statuses
+            .Where(status => status.Valid
+                && !blockedVersions.Contains($"{status.PluginId}\0{status.Version}"))
             .GroupBy(status => status.PluginId, StringComparer.Ordinal)
             .Select(group => group
                 .OrderByDescending(status => Version.Parse(status.Version))
@@ -252,6 +395,12 @@ public sealed class PluginPackageManager
         }
         return plugins;
     }
+
+    private static bool IsBundledDiagnosticStatus(InstalledPluginStatus status) =>
+        string.Equals(
+            Path.GetFileName(Path.GetDirectoryName(status.Path)),
+            BundledDiagnosticsDirectoryName,
+            StringComparison.OrdinalIgnoreCase);
 
     private InstalledPluginStatus Inspect(string directory)
     {
@@ -300,6 +449,83 @@ public sealed class PluginPackageManager
         {
             return new(pluginId, version, directory, false, "trust_failed");
         }
+    }
+
+    private static bool CanonicalManifestMatches(string directory, PluginManifest supplied)
+    {
+        try
+        {
+            var installed = JsonSerializer.Deserialize(
+                    File.ReadAllBytes(Path.Combine(directory, ManifestName)),
+                    PluginSdkJsonContext.Default.PluginManifest)
+                ?? throw new JsonException();
+            var installedCanonical = JsonSerializer.SerializeToUtf8Bytes(
+                installed,
+                PluginSdkJsonContext.Default.PluginManifest);
+            var suppliedCanonical = JsonSerializer.SerializeToUtf8Bytes(
+                supplied,
+                PluginSdkJsonContext.Default.PluginManifest);
+            return installedCanonical.AsSpan().SequenceEqual(suppliedCanonical);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return false;
+        }
+    }
+
+    private IReadOnlyList<InstalledPluginStatus> InspectBundledInstallFailures()
+    {
+        var root = Path.Combine(_pluginsRoot, BundledDiagnosticsDirectoryName);
+        if (File.Exists(root)) return [InstallDirectoryFailure(root)];
+        if (!Directory.Exists(root)) return [];
+        var results = new List<InstalledPluginStatus>();
+        foreach (var path in Directory.EnumerateFiles(root, "*.status", SearchOption.TopDirectoryOnly)
+                     .Order(StringComparer.OrdinalIgnoreCase))
+        {
+            var pluginId = "zgstokenbar.bundled.install";
+            var version = "0.0.0";
+            try
+            {
+                if (new FileInfo(path).Length > 4096) throw new InvalidDataException();
+                var values = File.ReadAllLines(path);
+                if (values.Length != 3
+                    || !PluginValidation.IsStableId(values[0])
+                    || !Version.TryParse(values[1], out _)
+                    || !string.Equals(values[2], "trust_failed", StringComparison.Ordinal))
+                {
+                    throw new InvalidDataException();
+                }
+                pluginId = values[0];
+                version = values[1];
+            }
+            catch (Exception exception) when (
+                exception is IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                // A malformed marker is itself a trust failure and remains visible to doctor.
+            }
+            results.Add(new(pluginId, version, path, false, "trust_failed"));
+        }
+        return results;
+    }
+
+    private static InstalledPluginStatus InstallDirectoryFailure(string path)
+    {
+        var name = Path.GetFileName(path);
+        var pluginId = PluginValidation.IsStableId(name)
+            ? name
+            : "zgstokenbar.plugin.catalog";
+        return new(pluginId, "0.0.0", path, false, "trust_failed");
+    }
+
+    private string BundledDiagnosticPath(string bundleKey)
+    {
+        if (string.IsNullOrWhiteSpace(bundleKey) || bundleKey.Length > 512)
+        {
+            throw new ArgumentException("Bundle key is invalid.", nameof(bundleKey));
+        }
+        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(bundleKey)));
+        return Path.Combine(_pluginsRoot, BundledDiagnosticsDirectoryName, digest + ".status");
     }
 
     private static Dictionary<string, ZipArchiveEntry> ValidateArchiveEntries(ZipArchive archive)

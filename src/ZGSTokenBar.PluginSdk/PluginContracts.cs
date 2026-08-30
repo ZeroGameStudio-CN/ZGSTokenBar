@@ -257,6 +257,11 @@ public interface IDataSource
         CancellationToken cancellationToken);
 }
 
+public interface ILocalCredentialProbe
+{
+    ValueTask<bool> HasLocalCredentialsAsync(CancellationToken cancellationToken);
+}
+
 public interface ICommandContributor
 {
     ValueTask<CommandResult> InvokeAsync(

@@ -100,6 +100,7 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
         try
         {
             if (_persistProfileState) ProfileStateStore.SaveLastKnownGood(_dataRoot, GetProfile());
+            ValidateRuntimeCatalog();
             foreach (var plugin in DependencyOrder())
             {
                 if (!_enabled[plugin.Manifest.Id]) continue;
@@ -109,13 +110,9 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
                     Publish(StartFailure(plugin.Manifest, PluginHealthCode.Unavailable));
                     continue;
                 }
-                var pluginRoot = Path.Combine(_dataRoot, "plugin-data", plugin.Manifest.Id);
-                Directory.CreateDirectory(pluginRoot);
                 try
                 {
-                    await plugin.StartAsync(
-                        new PluginStartContext(_profile.Name, pluginRoot, DateTimeOffset.UtcNow),
-                        cancellationToken);
+                    await StartPluginAsync(plugin, cancellationToken);
                     started.Add(plugin);
                 }
                 catch (Exception exception) when (
@@ -454,11 +451,7 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
             {
                 if (enabled)
                 {
-                    var pluginRoot = Path.Combine(_dataRoot, "plugin-data", pluginId);
-                    Directory.CreateDirectory(pluginRoot);
-                    await plugin.StartAsync(
-                        new PluginStartContext(_profile.Name, pluginRoot, DateTimeOffset.UtcNow),
-                        cancellationToken);
+                    await StartPluginAsync(plugin, cancellationToken);
                 }
                 else
                 {
@@ -488,10 +481,7 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
                         if (enabled) await plugin.StopAsync(CancellationToken.None);
                         else
                         {
-                            var pluginRoot = Path.Combine(_dataRoot, "plugin-data", pluginId);
-                            await plugin.StartAsync(
-                                new PluginStartContext(_profile.Name, pluginRoot, DateTimeOffset.UtcNow),
-                                CancellationToken.None);
+                            await StartPluginAsync(plugin, CancellationToken.None);
                         }
                     }
                     catch { }
@@ -909,6 +899,30 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
             }
         }
         return result;
+    }
+
+    private async ValueTask StartPluginAsync(
+        IZgsPlugin plugin,
+        CancellationToken cancellationToken)
+    {
+        var pluginRoot = Path.Combine(_dataRoot, "plugin-data", plugin.Manifest.Id);
+        Directory.CreateDirectory(pluginRoot);
+        await plugin.StartAsync(
+            new PluginStartContext(_profile.Name, pluginRoot, DateTimeOffset.UtcNow),
+            cancellationToken);
+        if (plugin.Manifest.Runtime != PluginRuntime.Process) return;
+        try
+        {
+            ValidateRuntimeCatalog();
+        }
+        catch (InvalidOperationException)
+        {
+            try { await plugin.StopAsync(CancellationToken.None); }
+            catch { }
+            throw new HostCommandException(
+                "trust_failed",
+                "Plugin runtime catalog conflicts with the active host.");
+        }
     }
 
     private void ValidateRuntimeCatalog()

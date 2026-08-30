@@ -6,6 +6,7 @@
     <SelfContained>true</SelfContained>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\src\ProcessPlugins\ZGSTokenBar.Plugin.AiGatewayObserver\ZGSTokenBar.Plugin.AiGatewayObserver.csproj" />
     <ProjectReference Include="..\..\src\ZGSTokenBar.Core\ZGSTokenBar.Core.csproj" />
     <ProjectReference Include="..\..\src\ZGSTokenBar.App\ZGSTokenBar.App.csproj" />
     <ProjectReference Include="..\..\src\ZGSTokenBar.Builtins\ZGSTokenBar.Builtins.csproj" />

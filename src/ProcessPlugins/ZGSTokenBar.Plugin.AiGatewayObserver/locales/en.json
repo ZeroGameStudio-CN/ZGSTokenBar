@@ -1,0 +1,15 @@
+{
+  "zgstokenbar.provider.ai-gateway.title": "DeepSeek Harness",
+  "zgstokenbar.provider.ai-gateway.health.missing-credentials": "DeepSeek Harness has no usable provider credential",
+  "zgstokenbar.provider.ai-gateway.health.invalid-key": "DeepSeek rejected the Harness provider credential",
+  "zgstokenbar.provider.ai-gateway.health.timeout": "DeepSeek balance request timed out",
+  "zgstokenbar.provider.ai-gateway.health.http-error": "DeepSeek balance request returned an error",
+  "zgstokenbar.provider.ai-gateway.health.unavailable": "DeepSeek Harness balance is unavailable",
+  "zgstokenbar.provider.ai-gateway.health.cached": "Showing the last observed DeepSeek balance",
+  "zgstokenbar.provider.ai-gateway.health.current": "DeepSeek Harness balance is current",
+  "zgstokenbar.provider.ai-gateway.health.balance-unavailable": "Balance is temporarily unavailable",
+  "zgstokenbar.provider.ai-gateway.section.balance": "Balance",
+  "zgstokenbar.provider.ai-gateway.balance.total": "Available balance",
+  "zgstokenbar.provider.ai-gateway.balance.topped-up": "Topped-up balance",
+  "zgstokenbar.provider.ai-gateway.balance.granted": "Granted balance"
+}

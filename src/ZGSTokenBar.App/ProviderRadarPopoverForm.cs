@@ -6,6 +6,8 @@ internal sealed class ProviderRadarPopoverForm : Form
 {
     private const int ToolWindowStyle = 0x00000080;
     private const int NoActivateStyle = 0x08000000;
+    private const int WmMouseActivate = 0x0021;
+    private const int MaNoActivate = 3;
     private const int EntranceDurationMs = 130;
     private const int ExitDurationMs = 90;
     private readonly System.Windows.Forms.Timer _motionTimer = new() { Interval = 16 };
@@ -14,6 +16,7 @@ internal sealed class ProviderRadarPopoverForm : Form
     private RadarViewState _state = new(null, null, false, null);
     private RadarPresentationResult? _presentation;
     private RadarPopoverLayout _layout = RadarPopoverLayout.Create(96, 0, false);
+    private CodexSpendHistoryLayout? _historyLayout;
     private NativeText _text = NativeText.For("zh-CN");
     private Image? _logo;
     private CodexTokenUsageSummary? _tokenUsage;
@@ -23,6 +26,11 @@ internal sealed class ProviderRadarPopoverForm : Form
     private bool _animateMotion;
     private bool _pinned;
     private bool _deepSeekOnly;
+    private bool _historyVisible;
+    private bool _spendCardHovered;
+    private bool _backHovered;
+    private int _selectedHistoryDayIndex = -1;
+    private Rectangle _anchorScreen;
     private bool _exiting;
     private DateTime _motionStarted;
     private Point _motionFrom;
@@ -47,6 +55,8 @@ internal sealed class ProviderRadarPopoverForm : Form
             | ControlStyles.OptimizedDoubleBuffer
             | ControlStyles.ResizeRedraw, true);
     }
+
+    public event EventHandler? SpendHistoryRequested;
 
     protected override bool ShowWithoutActivation => true;
 
@@ -105,14 +115,18 @@ internal sealed class ProviderRadarPopoverForm : Form
                 dpi,
                 modelKeys,
                 hasInlineError,
-                state.Snapshot?.ResetWindow?.Open == true)
+                state.Snapshot?.ResetWindow?.Open == true,
+                tokenUsage is not null)
             : RadarPopoverLayout.CreateTokenUsage(dpi);
-        var placement = TaskbarMiniPopoverMath.Place(
-            anchorScreen,
-            _layout.BodySize,
-            _layout.TailSize,
-            _layout.Gap,
-            Screen.FromRectangle(anchorScreen).WorkingArea);
+        _historyLayout = !deepSeekOnly && HasSpendHistory(tokenUsage)
+            ? CodexSpendHistoryLayout.Create(
+                dpi,
+                radarEnabled,
+                Math.Min(CodexSpendHistoryLayout.MaximumTrendDays, tokenUsage!.SpendHistory!.Days.Count))
+            : null;
+        if (_historyLayout is null) _historyVisible = false;
+        _anchorScreen = anchorScreen;
+        var placement = CurrentPlacement();
         _tailSide = placement.TailSide;
         _tailOffset = placement.TailOffset;
         ClientSize = placement.WindowSize;
@@ -149,6 +163,7 @@ internal sealed class ProviderRadarPopoverForm : Form
     public void HidePopover()
     {
         _countdownTimer.Stop();
+        ResetHistoryView();
         if (!Visible) return;
         _motionTimer.Stop();
         if (!_animateMotion)
@@ -175,6 +190,7 @@ internal sealed class ProviderRadarPopoverForm : Form
     private void UpdateCountdownTimer()
     {
         if (!_layout.TokenOnly
+            && !_historyVisible
             && Visible
             && HasActiveResetCountdown(_state.Snapshot?.ResetWindow, DateTimeOffset.UtcNow))
         {
@@ -226,6 +242,22 @@ internal sealed class ProviderRadarPopoverForm : Form
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
+        if (_historyVisible
+            && _historyLayout is { } historyLayout
+            && _tokenUsage is { SpendHistory: not null } tokenUsage)
+        {
+            _renderer.DrawSpendHistory(
+                e.Graphics,
+                historyLayout,
+                _tailSide,
+                _tailOffset,
+                tokenUsage,
+                _logo,
+                _text,
+                _selectedHistoryDayIndex,
+                _pinned);
+            return;
+        }
         _renderer.Draw(
             e.Graphics,
             _layout,
@@ -240,7 +272,76 @@ internal sealed class ProviderRadarPopoverForm : Form
             _pinned,
             radarTitle: _deepSeekOnly
                 ? _text.DeepSeekRadarTitle
-                : _text.RadarTitle);
+                : _text.RadarTitle,
+            spendCardHovered: _spendCardHovered);
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        if (_historyVisible && _historyLayout is { } historyLayout)
+        {
+            var backHovered = historyLayout
+                .InWindow(historyLayout.BackBounds, _tailSide)
+                .Contains(e.Location);
+            var selected = HistoryDayIndexAt(e.Location, historyLayout);
+            var changed = backHovered != _backHovered;
+            _backHovered = backHovered;
+            if (selected >= 0 && selected != _selectedHistoryDayIndex)
+            {
+                _selectedHistoryDayIndex = selected;
+                changed = true;
+            }
+            Cursor = backHovered ? Cursors.Hand : Cursors.Default;
+            if (changed) Invalidate();
+            return;
+        }
+
+        var hovered = HasSpendHistory(_tokenUsage) && SpendCardBounds().Contains(e.Location);
+        if (hovered == _spendCardHovered) return;
+        _spendCardHovered = hovered;
+        Cursor = hovered ? Cursors.Hand : Cursors.Default;
+        Invalidate();
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        base.OnMouseLeave(e);
+        if (!_spendCardHovered && !_backHovered) return;
+        _spendCardHovered = false;
+        _backHovered = false;
+        Cursor = Cursors.Default;
+        Invalidate();
+    }
+
+    protected override void OnMouseClick(MouseEventArgs e)
+    {
+        base.OnMouseClick(e);
+        if (e.Button != MouseButtons.Left) return;
+        if (_historyVisible && _historyLayout is { } historyLayout)
+        {
+            if (historyLayout.InWindow(historyLayout.BackBounds, _tailSide).Contains(e.Location))
+            {
+                _historyVisible = false;
+                _backHovered = false;
+                _selectedHistoryDayIndex = -1;
+                ApplyCurrentPlacement();
+            }
+            return;
+        }
+        if (_historyLayout is null
+            || !HasSpendHistory(_tokenUsage)
+            || !SpendCardBounds().Contains(e.Location))
+        {
+            return;
+        }
+
+        _historyVisible = true;
+        _spendCardHovered = false;
+        _selectedHistoryDayIndex = Math.Max(0, _historyLayout.BarBounds.Count - 1);
+        _pinned = true;
+        SpendHistoryRequested?.Invoke(this, EventArgs.Empty);
+        ApplyCurrentPlacement();
     }
 
     protected override void OnResize(EventArgs e)
@@ -252,9 +353,88 @@ internal sealed class ProviderRadarPopoverForm : Form
     private void UpdateWindowRegion()
     {
         if (ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
-        var next = RadarPopoverRenderer.CreateWindowRegion(_layout, _tailSide, _tailOffset);
+        var next = _historyVisible && _historyLayout is { } historyLayout
+            ? RadarPopoverRenderer.CreateWindowRegion(historyLayout, _tailSide, _tailOffset)
+            : RadarPopoverRenderer.CreateWindowRegion(_layout, _tailSide, _tailOffset);
         Region?.Dispose();
         Region = next;
+    }
+
+    protected override void WndProc(ref Message message)
+    {
+        if (message.Msg == WmMouseActivate)
+        {
+            message.Result = (IntPtr)MaNoActivate;
+            return;
+        }
+        base.WndProc(ref message);
+    }
+
+    private TaskbarMiniPopoverPlacement CurrentPlacement()
+    {
+        var bodySize = _historyVisible && _historyLayout is { } historyLayout
+            ? historyLayout.BodySize
+            : _layout.BodySize;
+        var tailSize = _historyVisible && _historyLayout is { } activeHistoryLayout
+            ? activeHistoryLayout.TailSize
+            : _layout.TailSize;
+        var gap = _historyVisible && _historyLayout is { } activeHistory
+            ? activeHistory.Gap
+            : _layout.Gap;
+        return TaskbarMiniPopoverMath.Place(
+            _anchorScreen,
+            bodySize,
+            tailSize,
+            gap,
+            Screen.FromRectangle(_anchorScreen).WorkingArea);
+    }
+
+    private void ApplyCurrentPlacement()
+    {
+        var placement = CurrentPlacement();
+        _tailSide = placement.TailSide;
+        _tailOffset = placement.TailOffset;
+        ClientSize = placement.WindowSize;
+        UpdateWindowRegion();
+        if (!TaskbarPlacement.ShowAt(Handle, placement.Location, placement.WindowSize))
+        {
+            Location = placement.Location;
+        }
+        UpdateCountdownTimer();
+        Cursor = Cursors.Default;
+        Invalidate();
+    }
+
+    private Rectangle SpendCardBounds()
+    {
+        if (_layout.FooterSpendBounds.IsEmpty) return Rectangle.Empty;
+        var body = RadarPopoverRenderer.BodyBounds(_layout, _tailSide);
+        return new Rectangle(
+            body.Left + _layout.FooterSpendBounds.Left,
+            body.Top + _layout.FooterSpendBounds.Top,
+            _layout.FooterSpendBounds.Width,
+            _layout.FooterSpendBounds.Height);
+    }
+
+    private int HistoryDayIndexAt(Point location, CodexSpendHistoryLayout layout)
+    {
+        for (var index = 0; index < layout.BarBounds.Count; index++)
+        {
+            if (layout.InWindow(layout.BarBounds[index], _tailSide).Contains(location)) return index;
+        }
+        return -1;
+    }
+
+    private static bool HasSpendHistory(CodexTokenUsageSummary? tokenUsage) =>
+        tokenUsage?.SpendHistory?.Days.Any(day => day.Spend.HasUsage) == true;
+
+    private void ResetHistoryView()
+    {
+        _historyVisible = false;
+        _spendCardHovered = false;
+        _backHovered = false;
+        _selectedHistoryDayIndex = -1;
+        Cursor = Cursors.Default;
     }
 
     protected override void Dispose(bool disposing)

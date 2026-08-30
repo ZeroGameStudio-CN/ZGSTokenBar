@@ -7,8 +7,8 @@
   "runtime": "builtin",
   "required": false,
   "commandNamespace": "codex",
-  "capabilities": ["quota", "health", "accounts", "settings", "commands"],
-  "defaultEnabled": true,
+  "capabilities": ["quota", "health", "accounts", "settings", "commands", "local-credentials"],
+  "defaultEnabled": false,
   "order": 110,
   "requires": []
 }

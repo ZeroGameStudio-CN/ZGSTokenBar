@@ -238,7 +238,12 @@ internal sealed class NativeText
     public string SettingsSaveFailed => T(
         "ZGSTokenBar 无法保存设置。请检查 App 数据目录权限后重试。",
         "ZGSTokenBar could not save settings. Check access to the app data folder and try again.");
-
+    public string PluginBundleTrustFailedTitle => T(
+        "Provider 信任校验失败",
+        "Provider trust validation failed");
+    public string PluginBundleTrustFailedBody => T(
+        "DeepSeek Provider 未加载；请运行 ZGSTokenBar.Cli.exe plugin doctor 查看安全诊断。",
+        "DeepSeek Provider was not loaded. Run ZGSTokenBar.Cli.exe plugin doctor for the safe diagnostic.");
     public string Quota => T("配额", "Quota");
     public string Refreshing => T("刷新中", "refreshing");
     public string LiveLimits => T("实时限制", "live limits");
@@ -630,7 +635,35 @@ internal sealed class NativeText
     public string CodexTokenMetricTitle => T("Token 用量", "Tokens");
     public string CodexCacheMetricTitle => T("缓存命中率", "Cache hit");
     public string CodexTodayMetricLabel => T("今日", "Today");
+    public string CodexYesterdayMetricLabel => T("昨日", "Yesterday");
     public string CodexTotalMetricLabel => T("累计", "Total");
+    public string CodexLast7DaysMetricLabel => T("7 日", "7d");
+    public string CodexLast30DaysMetricLabel => T("30 日", "30d");
+    public string CodexSpendMetricTitle => T("API 等值估算", "API equivalent estimate");
+    public string CodexSpendHistoryTitle => T("消费历史", "Spend history");
+    public string CodexSpendHistoryBack => T("‹ 返回", "‹ Back");
+    public string CodexSpendHistoryAction => T("历史 ›", "History ›");
+    public string CodexSpendTrendTitle => T("30 日趋势", "30-day trend");
+    public string CodexSpendModelsTitle => T("模型构成 · 30 日", "Models · 30d");
+    public string CodexUnknownModel => T("未知模型", "Unknown model");
+    public string CodexSpendHistorySubtitle(int sessionCount) => T(
+        $"{CodexSessionCount(sessionCount)} · 本机日志 · API 等值估算",
+        $"{CodexSessionCount(sessionCount)} · local logs · API equivalent");
+    public string CodexSpendDate(string localDate)
+    {
+        if (!DateOnly.TryParseExact(
+                localDate,
+                "yyyy-MM-dd",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out var date))
+        {
+            return localDate;
+        }
+        return _zh
+            ? $"{date.Month}月{date.Day}日"
+            : date.ToString("MMM d", CultureInfo.InvariantCulture);
+    }
     public string CodexTokenRadarMetricTitle => T("Token", "Tokens");
     public string CodexCacheRadarMetricTitle => T("缓存", "Cache");
     public string AiGatewayTokenRadarMetricTitle => T("Token", "Tokens");
@@ -639,6 +672,31 @@ internal sealed class NativeText
     {
         var count = sessionCount.ToString("N0", CultureInfo.InvariantCulture);
         return T($"{count} 个会话 · 未按账号拆分", $"{count} sessions · not split by account");
+    }
+    public string CodexTokenScope(
+        int sessionCount,
+        CodexSpendPeriod? todaySpend,
+        CodexSpendPeriod? last30DaysSpend)
+    {
+        return T(
+            $"{CodexSessionCount(sessionCount)} · API等值 今{CodexApiEquivalent(todaySpend)} · 30日{CodexApiEquivalent(last30DaysSpend)}",
+            $"{CodexSessionCount(sessionCount)} · API eq. Today {CodexApiEquivalent(todaySpend)} · 30d {CodexApiEquivalent(last30DaysSpend)}");
+    }
+    public string CodexSessionCount(int sessionCount)
+    {
+        var count = sessionCount.ToString("N0", CultureInfo.InvariantCulture);
+        return T($"{count} 会话", $"{count} sessions");
+    }
+    public string CodexApiEquivalent(CodexSpendPeriod? period)
+    {
+        if (period is null or { HasUsage: false }) return "—";
+        if (period.ApiEquivalentUsd is not { } value) return T("未定价", "unpriced");
+        var amount = value == 0m
+            ? "$0.00"
+            : value < 0.01m
+                ? "<$0.01"
+                : "$" + value.ToString(value >= 100m ? "#,##0.0" : "0.00", CultureInfo.InvariantCulture);
+        return "≈" + amount + (period.HasUnpricedUsage ? "+" : string.Empty);
     }
     public string CodexAccountsHeading => T("Codex 账号", "Codex accounts");
     public string CodexQuotaCapacityTitle => T("Token · 原始用量", "Tokens · raw usage");

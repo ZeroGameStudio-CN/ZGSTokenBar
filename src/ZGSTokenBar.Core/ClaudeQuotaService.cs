@@ -21,6 +21,8 @@ public sealed class ClaudeQuotaService
         _httpClient = httpClient;
     }
 
+    public static bool HasLocalCredentials() => ReadCredential() is not null;
+
     public async Task<ProviderResult> FetchAsync(
         AppSettings settings,
         CancellationToken cancellationToken,

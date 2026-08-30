@@ -36,15 +36,14 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         "zgstokenbar.provider.codex",
         "zgstokenbar.usage.codex-local",
         "zgstokenbar.intelligence.radar",
-        "zgstokenbar.provider.ai-gateway",
     ];
-    private readonly AppSettingsStore _store = new();
+    private readonly AppSettingsStore _store;
+    private readonly PluginCredentialStore _pluginCredentialStore = new();
     private readonly QuotaCoordinator _coordinator = new();
     private readonly RadarService _radarService = new();
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private readonly SemaphoreSlim _radarGate = new(1, 1);
     private readonly SemaphoreSlim _codexTokenUsageGate = new(1, 1);
-    private readonly SemaphoreSlim _aiGatewayUsageGate = new(1, 1);
     private readonly SemaphoreSlim _systemUsageGate = new(1, 1);
     private readonly SemaphoreSlim _updateGate = new(1, 1);
     private readonly CancellationTokenSource _shutdown = new();
@@ -65,6 +64,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     private readonly QuotaMilestoneTracker _milestoneTracker;
     private readonly System.Windows.Forms.Timer _clockTimer;
     private readonly System.Windows.Forms.Timer _watchdogTimer;
+    private readonly bool _allowProcessSupervision;
     private readonly System.Windows.Forms.Timer _confirmationTimer;
     private readonly System.Windows.Forms.Timer _refreshTimer;
     private readonly System.Windows.Forms.Timer _providerActivityTimer;
@@ -80,10 +80,10 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     private NativeText _text;
     private QuotaSnapshot _snapshot;
     private HashSet<ProviderKind> _activeProviders;
+    private CodexTokenUsageSummary? _cachedCodexTokenUsage;
     private IReadOnlyList<CodexAccountInfo> _codexAccounts = [];
     private RadarAlertState _radarState;
     private RadarViewState _radarViewState;
-    private AiGatewayUsageSummary? _aiGatewayUsage;
     private SettingsForm? _settingsDialog;
     private bool _radarBalloonActive;
     private bool _updateBalloonActive;
@@ -99,8 +99,15 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     private bool _pluginRuntimeDisposed;
     private long _systemUsageGeneration;
 
-    public QuotaApplicationContext(EventWaitHandle activationEvent, bool openSettingsOnStart = false)
+    public QuotaApplicationContext(
+        EventWaitHandle activationEvent,
+        bool openSettingsOnStart = false,
+        AppSettingsStore? store = null,
+        bool allowProcessSupervision = true,
+        bool bundledPluginInstallFailed = false)
     {
+        _allowProcessSupervision = allowProcessSupervision;
+        _store = store ?? new AppSettingsStore();
         var now = DateTimeOffset.UtcNow;
         _settings = _store.Load();
         _text = NativeText.For(_settings.Locale);
@@ -109,6 +116,10 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         _quotaPaceTracker = new QuotaPaceTracker(_store.LoadQuotaRateHistory(now));
         _codexQuotaTokenTracker = new CodexQuotaTokenTracker(_store.LoadCodexQuotaTokenHistory());
         _codexTokenUsageReader = new CodexTokenUsageReader(_store.LoadCodexTokenUsageIndex());
+        _cachedCodexTokenUsage = CodexTokenUsageSummary.ApplyCumulativeFloor(
+            _codexTokenUsageReader.Snapshot(now),
+            _codexQuotaTokenTracker.GetProfileLifetimeTotal(),
+            now);
         _radarState = _store.LoadRadarState();
         _radarService.RestoreRecommendationCache(_radarState.LastSnapshot);
         _radarViewState = WithRadarUnreadState(
@@ -118,9 +129,12 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                 false,
                 null),
             _radarState);
-        StartupManager.Apply(_settings.OpenAtLogin, _settings.KeepRunning);
+        if (_allowProcessSupervision)
+        {
+            StartupManager.Apply(_settings.OpenAtLogin, _settings.KeepRunning);
+        }
 
-        _snapshot = _store.LoadCache(now) ?? LoadingSnapshot(_settings, _text);
+        _snapshot = WithoutLegacyAiGateway(_store.LoadCache(now) ?? LoadingSnapshot(_settings, _text));
         _milestoneTracker = new QuotaMilestoneTracker(_snapshot);
         _bar = new BarForm(
             _settings,
@@ -130,6 +144,9 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             activeProviders: _activeProviders);
         _bar.SetQuotaPaceEstimates(QuotaPaceEstimates(_snapshot, now));
         _bar.SetCodexQuotaTokenSummaries(CodexQuotaTokenSummaries(now));
+        _bar.SetCodexTokenUsage(_activeProviders.Contains(ProviderKind.Codex)
+            ? _cachedCodexTokenUsage
+            : null);
         RefreshBarCodexEconomyStatus();
         _bar.RefreshRequested += (_, _) => _ = RefreshAsync(userInitiated: true);
         _bar.SettingsRequested += (_, _) => OpenSettings();
@@ -145,7 +162,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         {
             if (args.CloseReason != CloseReason.WindowsShutDown) return;
             _sessionEnding = true;
-            WatchdogManager.Stop();
+            if (_allowProcessSupervision) WatchdogManager.Stop();
         };
         _bar.FormClosed += (_, _) => Quit();
         _bar.SetRadarState(_radarViewState);
@@ -164,8 +181,15 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             pluginEnabled[entry.Key] = entry.Value;
         }
         var plugins = GeneratedBuiltinPluginRegistry.Create().ToList();
-        plugins.AddRange(new PluginPackageManager(_store.DataDirectory).LoadProcessPlugins(
-            new PluginCredentialStore()));
+        var processPlugins = new PluginPackageManager(_store.DataDirectory).LoadProcessPlugins(
+            _pluginCredentialStore);
+        var selection = PluginCatalogComposer.SelectOptional(plugins, processPlugins);
+        plugins.AddRange(selection.Accepted);
+        foreach (var plugin in selection.Rejected)
+        {
+            try { plugin.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+            catch { }
+        }
         var profile = ProfileComposition.IncludePlugins(
             BuiltinProfiles.Desktop(pluginEnabled),
             plugins.Select(plugin => plugin.Manifest),
@@ -176,8 +200,20 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             ProductVersion(),
             _store.DataDirectory,
             this);
-        _pluginHost.StartAsync(_shutdown.Token).AsTask().GetAwaiter().GetResult();
+        // Process plugins perform asynchronous pipe handshakes before the WinForms
+        // message loop starts, so they must not capture the UI synchronization context.
+        Task.Run(() => _pluginHost.StartAsync(_shutdown.Token).AsTask())
+            .GetAwaiter()
+            .GetResult();
         PublishQuotaPlugins(_snapshot);
+        if (_activeProviders.Contains(ProviderKind.Codex))
+        {
+            _pluginHost.Publish(CorePluginProjection.CodexUsage(
+                "zgstokenbar.usage.codex-local",
+                _cachedCodexTokenUsage,
+                now,
+                cached: _cachedCodexTokenUsage is not null));
+        }
         if (HasPlugin("zgstokenbar.intelligence.radar") && _radarViewState.Snapshot is { } restoredRadar)
         {
             _pluginHost.Publish(CorePluginProjection.Radar("zgstokenbar.intelligence.radar", restoredRadar));
@@ -247,9 +283,17 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         _watchdogTimer = new System.Windows.Forms.Timer
         {
             Interval = 30_000,
-            Enabled = _settings.KeepRunning,
+            Enabled = _allowProcessSupervision && _settings.KeepRunning,
         };
-        _watchdogTimer.Tick += (_, _) => WatchdogManager.EnsureRunning();
+        _watchdogTimer.Tick += (_, _) =>
+        {
+            if (!_allowProcessSupervision) return;
+            StartupManager.ReconcileRegistration(
+                Application.ExecutablePath,
+                _settings.OpenAtLogin,
+                _settings.KeepRunning);
+            WatchdogManager.EnsureRunning();
+        };
         _confirmationTimer = new System.Windows.Forms.Timer { Interval = 3_000 };
         _confirmationTimer.Tick += (_, _) =>
         {
@@ -271,6 +315,14 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         ApplyClockInterval();
 
         _bar.Show();
+        if (bundledPluginInstallFailed)
+        {
+            _tray.ShowBalloonTip(
+                8_000,
+                _text.PluginBundleTrustFailedTitle,
+                _text.PluginBundleTrustFailedBody,
+                ToolTipIcon.Warning);
+        }
         _bar.SyncTaskbarPlacement();
         _apiServer.Start();
         _pluginEventTask = WatchPluginEventsAsync();
@@ -359,10 +411,6 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             {
                 _ = RefreshCodexTokenUsageAsync(observedAt);
             }
-            if (_activeProviders.Contains(ProviderKind.AiGateway))
-            {
-                _ = RefreshAiGatewayUsageAsync(observedAt);
-            }
             if (!stabilization.ConfirmationRequired
                 && _activeProviders.Contains(ProviderKind.Codex))
             {
@@ -414,10 +462,11 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         }
 
         var economyProfiles = DiscoverCodexEconomyProfiles();
+        var pluginStatuses = _pluginHost.ListPlugins();
         var dialog = new SettingsForm(
             _settings,
             _bar.DeviceDpi,
-            plugins: _pluginHost.ListPlugins(),
+            plugins: pluginStatuses,
             codexEconomyStatus: InspectRecommendedCodexEconomyProfile(economyProfiles),
             codexEconomyProfiles: economyProfiles,
             inspectCodexEconomy: _codexEconomyRouter.Inspect,
@@ -655,8 +704,11 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     {
         _settings = settings;
         _text = NativeText.For(_settings.Locale);
-        StartupManager.Apply(_settings.OpenAtLogin, _settings.KeepRunning);
-        _watchdogTimer.Enabled = _settings.KeepRunning;
+        if (_allowProcessSupervision)
+        {
+            StartupManager.Apply(_settings.OpenAtLogin, _settings.KeepRunning);
+        }
+        _watchdogTimer.Enabled = _allowProcessSupervision && _settings.KeepRunning;
         ApplyRefreshInterval();
         _bar.ApplySettings(_settings);
         UpdateProviderActivity(requestRefresh: false);
@@ -855,15 +907,49 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         var nextProviders = ActiveProviders(_settings);
         if (nextProviders.SetEquals(_activeProviders)) return;
 
+        var codexWasActive = _activeProviders.Contains(ProviderKind.Codex);
         _activeProviders = nextProviders;
         _bar.SetActiveProviders(_activeProviders);
-        if (!_activeProviders.Contains(ProviderKind.Codex)) _bar.SetCodexTokenUsage(null);
-        if (!_activeProviders.Contains(ProviderKind.AiGateway))
+        var refreshRequested = ApplyCodexUsageActivityTransition(
+            codexWasActive,
+            _activeProviders.Contains(ProviderKind.Codex),
+            _cachedCodexTokenUsage,
+            requestRefresh,
+            _bar.SetCodexTokenUsage,
+            (summary, cached) => _pluginHost.Publish(CorePluginProjection.CodexUsage(
+                "zgstokenbar.usage.codex-local",
+                summary,
+                DateTimeOffset.UtcNow,
+                cached)),
+            () => _ = RefreshAsync(forceProviderRefresh: true));
+        if (requestRefresh && !refreshRequested)
         {
-            _aiGatewayUsage = null;
-            _bar.SetAiGatewayUsage(null);
+            _ = RefreshAsync(forceProviderRefresh: true);
         }
-        if (requestRefresh) _ = RefreshAsync(forceProviderRefresh: true);
+    }
+
+    internal static bool ApplyCodexUsageActivityTransition(
+        bool wasActive,
+        bool isActive,
+        CodexTokenUsageSummary? cachedSummary,
+        bool requestRefresh,
+        Action<CodexTokenUsageSummary?> setUsage,
+        Action<CodexTokenUsageSummary?, bool> publishUsage,
+        Action requestRefreshAction)
+    {
+        if (wasActive == isActive) return false;
+        if (isActive)
+        {
+            setUsage(cachedSummary);
+            publishUsage(cachedSummary, cachedSummary is not null);
+        }
+        else
+        {
+            setUsage(null);
+        }
+        if (!requestRefresh) return false;
+        requestRefreshAction();
+        return true;
     }
 
     private static HashSet<ProviderKind> ActiveProviders(AppSettings settings)
@@ -871,10 +957,6 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         var active = ProviderProcessActivity.DetectActiveProviders()
             .Where(settings.IsEnabled)
             .ToHashSet();
-        if (settings.IsEnabled(ProviderKind.AiGateway))
-        {
-            active.Add(ProviderKind.AiGateway);
-        }
         return active;
     }
 
@@ -1048,6 +1130,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                 result.Summary,
                 _codexQuotaTokenTracker.GetProfileLifetimeTotal(),
                 observedAt);
+            _cachedCodexTokenUsage = summary;
             if (result.Changed)
             {
                 try
@@ -1061,7 +1144,9 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                     // The in-memory summary remains useful when its incremental index cannot be saved.
                 }
             }
-            if (!_shutdown.IsCancellationRequested && !_bar.IsDisposed)
+            if (!_shutdown.IsCancellationRequested
+                && !_bar.IsDisposed
+                && _activeProviders.Contains(ProviderKind.Codex))
             {
                 _bar.SetCodexTokenUsage(summary);
                 _pluginHost.Publish(CorePluginProjection.CodexUsage(
@@ -1081,47 +1166,6 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         finally
         {
             _codexTokenUsageGate.Release();
-        }
-    }
-
-    private async Task RefreshAiGatewayUsageAsync(DateTimeOffset observedAt)
-    {
-        if (!await _aiGatewayUsageGate.WaitAsync(0)) return;
-        try
-        {
-            var result = await _coordinator.FetchAiGatewayUsageAsync(
-                observedAt,
-                _shutdown.Token);
-            if (_shutdown.IsCancellationRequested || _bar.IsDisposed) return;
-            if (result.Summary is { } summary)
-            {
-                _aiGatewayUsage = summary;
-                _bar.SetAiGatewayUsage(summary);
-                PublishAiGatewayPlugin();
-            }
-            else if (_aiGatewayUsage is { } previous)
-            {
-                _aiGatewayUsage = previous.AsStale();
-                _bar.SetAiGatewayUsage(_aiGatewayUsage);
-                PublishAiGatewayPlugin();
-            }
-        }
-        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
-        {
-            // Normal application shutdown.
-        }
-        catch
-        {
-            if (!_shutdown.IsCancellationRequested && !_bar.IsDisposed && _aiGatewayUsage is { } previous)
-            {
-                _aiGatewayUsage = previous.AsStale();
-                _bar.SetAiGatewayUsage(_aiGatewayUsage);
-                PublishAiGatewayPlugin();
-            }
-        }
-        finally
-        {
-            _aiGatewayUsageGate.Release();
         }
     }
 
@@ -1590,7 +1634,6 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             "codex",
             "provider.codex.icon",
             "accent.codex");
-        PublishAiGatewayPlugin();
     }
 
     private async Task RefreshGenericPluginsAsync()
@@ -1737,62 +1780,6 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             iconKey,
             accentToken,
             result));
-    }
-
-    private void PublishAiGatewayPlugin()
-    {
-        const string pluginId = "zgstokenbar.provider.ai-gateway";
-        if (!HasPlugin(pluginId)) return;
-
-        var health = _snapshot.Health.FirstOrDefault(item => item.Provider == ProviderKind.AiGateway);
-        if (health is null) return;
-        var result = new ProviderResult(
-            ProviderKind.AiGateway,
-            _snapshot.Cards.Where(card => card.Provider == ProviderKind.AiGateway).ToArray(),
-            health);
-        var projected = CorePluginProjection.Provider(
-            pluginId,
-            "deepseek",
-            "provider.deepseek.icon",
-            "accent.deepseek",
-            result);
-        if (_aiGatewayUsage is not { } usage)
-        {
-            _pluginHost.Publish(projected);
-            return;
-        }
-        var values = new ContributionSummaryItem[]
-        {
-            new("usage.requests.today", new("integer", Integer: usage.Today.RequestCount)),
-            new("usage.tokens.today", new("integer", Integer: usage.Today.TotalTokens)),
-            new("usage.cost.today", new("currency", Text: usage.Currency, Decimal: usage.Today.EstimatedCostCny)),
-            new("usage.cache.today", new("percent", Number: usage.Today.CacheHitRatePercent is null ? null : (double?)usage.Today.CacheHitRatePercent.Value)),
-            new("usage.requests.total", new("integer", Integer: usage.Total.RequestCount)),
-            new("usage.tokens.total", new("integer", Integer: usage.Total.TotalTokens)),
-            new("usage.cost.total", new("currency", Text: usage.Currency, Decimal: usage.Total.EstimatedCostCny)),
-            new("usage.cache.total", new("percent", Number: usage.Total.CacheHitRatePercent is null ? null : (double?)usage.Total.CacheHitRatePercent.Value)),
-        };
-        _pluginHost.Publish(projected with
-        {
-            Details =
-            [
-                .. projected.Details,
-                new(
-                    "detail.ai-gateway.usage",
-                    "zgstokenbar.provider.ai-gateway",
-                    [
-                        new(
-                            "section.ai-gateway.usage",
-                            "ai-gateway.usage.details",
-                            10,
-                            values.Select(value => new DetailRowContribution(
-                                value.LabelKey,
-                                value.Value,
-                                value.Status,
-                                usage.ObservedAt)).ToArray()),
-                    ]),
-            ],
-        });
     }
 
     private bool HasPlugin(string pluginId) => _pluginHost.DescribePlugin(pluginId) is not null;
@@ -2117,7 +2104,10 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     {
         if (_quitting) return;
         _quitting = true;
-        if (_settings.KeepRunning && !_sessionEnding) WatchdogManager.EnsureRunning();
+        if (_allowProcessSupervision && _settings.KeepRunning && !_sessionEnding)
+        {
+            WatchdogManager.EnsureRunning();
+        }
         _shutdown.Cancel();
         _refreshTimer.Stop();
         _radarTimer.Stop();
@@ -2136,8 +2126,6 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             _radarGate.Release();
             await _codexTokenUsageGate.WaitAsync();
             _codexTokenUsageGate.Release();
-            await _aiGatewayUsageGate.WaitAsync();
-            _aiGatewayUsageGate.Release();
             await _systemUsageGate.WaitAsync();
             _systemUsageGate.Release();
             await _updateGate.WaitAsync();
@@ -2185,7 +2173,6 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             _refreshGate.Dispose();
             _radarGate.Dispose();
             _codexTokenUsageGate.Dispose();
-            _aiGatewayUsageGate.Dispose();
             _systemUsageGate.Dispose();
             _updateGate.Dispose();
             _systemUsageSampler.Dispose();
@@ -2236,15 +2223,16 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                 text.ProviderLoading(ProviderKind.Codex),
                 ProviderHealthCode.Loading));
         }
-        if (settings.IsEnabled(ProviderKind.AiGateway))
-        {
-            cards.Add(AiGatewayBalanceService.UnavailableCard(DateTimeOffset.UtcNow));
-            health.Add(new ProviderHealth(
-                ProviderKind.AiGateway,
-                false,
-                text.ProviderLoading(ProviderKind.AiGateway),
-                ProviderHealthCode.Loading));
-        }
         return new QuotaSnapshot(cards, health, DateTimeOffset.UtcNow);
     }
+
+    private static QuotaSnapshot WithoutLegacyAiGateway(QuotaSnapshot snapshot) => snapshot with
+    {
+        Cards = snapshot.Cards
+            .Where(card => card.Provider != ProviderKind.AiGateway)
+            .ToArray(),
+        Health = snapshot.Health
+            .Where(health => health.Provider != ProviderKind.AiGateway)
+            .ToArray(),
+    };
 }

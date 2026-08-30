@@ -34,4 +34,8 @@
     <EmbeddedResource Include="Assets\deepseek-whale-icon.png" LogicalName="ZGSTokenBar.App.Assets.deepseek-whale-icon.png" />
     <EmbeddedResource Include="Assets\fluent-clock-20-regular.png" LogicalName="ZGSTokenBar.App.Assets.fluent-clock-20-regular.png" />
   </ItemGroup>
+  <ItemGroup Condition="'$(BundledPluginPackage)' != ''">
+    <EmbeddedResource Include="$(BundledPluginPackage)"
+                      LogicalName="ZGSTokenBar.App.BundledPlugins.DeepSeekHarness.zgsplugin" />
+  </ItemGroup>
 </Project>

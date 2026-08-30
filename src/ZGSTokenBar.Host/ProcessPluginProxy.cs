@@ -6,7 +6,7 @@ using ZGSTokenBar.PluginSdk;
 
 namespace ZGSTokenBar.Host;
 
-public sealed class ProcessPluginProxy : IZgsPlugin, IDataSource, ICommandContributor
+public sealed class ProcessPluginProxy : IZgsPlugin, IDataSource, ICommandContributor, ILocalCredentialProbe
 {
     private readonly string _installDirectory;
     private readonly IPluginCredentialBroker? _credentialBroker;
@@ -78,7 +78,7 @@ public sealed class ProcessPluginProxy : IZgsPlugin, IDataSource, ICommandContri
             RedirectStandardError = true,
         };
         var inherited = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-        foreach (var name in new[] { "SystemRoot", "WINDIR", "TEMP", "TMP", "PATH" })
+        foreach (var name in new[] { "SystemRoot", "WINDIR", "TEMP", "TMP", "PATH", "DSH_HOME" })
         {
             inherited[name] = Environment.GetEnvironmentVariable(name);
         }
@@ -194,16 +194,26 @@ public sealed class ProcessPluginProxy : IZgsPlugin, IDataSource, ICommandContri
 
     public async ValueTask StopAsync(CancellationToken cancellationToken)
     {
-        if (_process is null) return;
         try
         {
-            await CallAsync("plugin.dispose", null, DisposeTimeout(), cancellationToken);
+            if (_process is not null)
+            {
+                try
+                {
+                    await CallAsync("plugin.dispose", null, DisposeTimeout(), cancellationToken);
+                }
+                catch
+                {
+                }
+                await StopProcessAsync();
+            }
         }
-        catch
+        finally
         {
+            Commands = [];
+            Settings = [];
+            _started = false;
         }
-        await StopProcessAsync();
-        _started = false;
     }
 
     public async ValueTask DisposeAsync()
@@ -402,6 +412,26 @@ public sealed class ProcessPluginProxy : IZgsPlugin, IDataSource, ICommandContri
             catch { }
             _stderrTask = null;
         }
+    }
+
+    public async ValueTask<bool> HasLocalCredentialsAsync(
+        CancellationToken cancellationToken)
+    {
+        EnsureStarted();
+        if (!Manifest.Capabilities.Contains("local-credentials", StringComparer.Ordinal))
+        {
+            return false;
+        }
+        var value = await CallAsync(
+            "plugin.probe",
+            null,
+            CallTimeout(),
+            cancellationToken);
+        if (value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+        {
+            throw new HostCommandException("internal", "Plugin returned an invalid credential probe.");
+        }
+        return value.GetBoolean();
     }
 
     private static async Task KillAndWaitAsync(Process process)

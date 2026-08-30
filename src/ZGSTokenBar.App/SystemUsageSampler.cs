@@ -381,9 +381,10 @@ internal static class SystemUsageMath
 
 internal sealed class SystemUsageSampler : IDisposable
 {
+    private readonly object _counterSync = new();
     private CpuUsageTimes? _previousCpu;
-    private readonly DiskUsageCounter? _disk = DiskUsageCounter.TryCreate();
-    private readonly GpuUsageCounter? _gpu = GpuUsageCounter.TryCreate();
+    private DiskUsageCounter? _disk;
+    private GpuUsageCounter? _gpu;
     private readonly List<ProcessCounterSample> _processSamples = [];
     private Dictionary<int, ProcessCpuBaseline> _previousProcesses = [];
     private Dictionary<int, ProcessCpuBaseline> _currentProcesses = [];
@@ -391,6 +392,13 @@ internal sealed class SystemUsageSampler : IDisposable
     private long? _previousProcessTimestamp;
     private nint _processBuffer;
     private int _processBufferCapacity;
+    private bool _disposed;
+
+    public SystemUsageSampler()
+    {
+        _ = InitializeDiskCounterAsync();
+        _ = InitializeGpuCounterAsync();
+    }
 
     public SystemUsageSnapshot Sample(bool includeProcesses = false)
     {
@@ -401,8 +409,9 @@ internal sealed class SystemUsageSampler : IDisposable
         if (cpuTimes is { }) _previousCpu = cpuTimes;
 
         ReadMemory(out var usedMemory, out var availableMemory, out var totalMemory);
-        var disk = _disk?.Read() ?? new DiskUsage(null, null, null);
-        var gpu = _gpu?.Read(includeProcesses) ?? new GpuUsage(null, null, 0);
+        var (diskCounter, gpuCounter) = AvailableCounters();
+        var disk = diskCounter?.Read() ?? new DiskUsage(null, null, null);
+        var gpu = gpuCounter?.Read(includeProcesses) ?? new GpuUsage(null, null, 0);
         var topProcesses = includeProcesses
             ? ReadTopProcesses(totalMemory, gpu.ProcessEngines)
             : ResetProcessSampling();
@@ -577,6 +586,54 @@ internal sealed class SystemUsageSampler : IDisposable
         return [];
     }
 
+    private async Task InitializeDiskCounterAsync()
+    {
+        DiskUsageCounter? counter;
+        try
+        {
+            counter = await Task.Run(DiskUsageCounter.TryCreate).ConfigureAwait(false);
+        }
+        catch
+        {
+            return;
+        }
+        InstallCounter(counter, isGpu: false);
+    }
+
+    private async Task InitializeGpuCounterAsync()
+    {
+        GpuUsageCounter? counter;
+        try
+        {
+            counter = await Task.Run(GpuUsageCounter.TryCreate).ConfigureAwait(false);
+        }
+        catch
+        {
+            return;
+        }
+        InstallCounter(counter, isGpu: true);
+    }
+
+    private void InstallCounter(IDisposable? counter, bool isGpu)
+    {
+        if (counter is null) return;
+        lock (_counterSync)
+        {
+            if (!_disposed)
+            {
+                if (isGpu) _gpu = (GpuUsageCounter)counter;
+                else _disk = (DiskUsageCounter)counter;
+                return;
+            }
+        }
+        counter.Dispose();
+    }
+
+    private (DiskUsageCounter? Disk, GpuUsageCounter? Gpu) AvailableCounters()
+    {
+        lock (_counterSync) return (_disk, _gpu);
+    }
+
     private static CpuUsageTimes? ReadCpuTimes()
     {
         if (!GetSystemTimes(out var idle, out var kernel, out var user)) return null;
@@ -603,8 +660,19 @@ internal sealed class SystemUsageSampler : IDisposable
 
     public void Dispose()
     {
-        _disk?.Dispose();
-        _gpu?.Dispose();
+        DiskUsageCounter? disk;
+        GpuUsageCounter? gpu;
+        lock (_counterSync)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            disk = _disk;
+            gpu = _gpu;
+            _disk = null;
+            _gpu = null;
+        }
+        disk?.Dispose();
+        gpu?.Dispose();
         if (_processBuffer == 0) return;
         Marshal.FreeHGlobal(_processBuffer);
         _processBuffer = 0;

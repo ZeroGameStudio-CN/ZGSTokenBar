@@ -14,6 +14,7 @@ using ZGSTokenBar.App;
 using ZGSTokenBar.Builtins;
 using ZGSTokenBar.Host;
 using ZGSTokenBar.PluginSdk;
+using ZGSTokenBar.Plugin.AiGatewayObserver;
 
 if (args.Length > 0
     && string.Equals(args[0], "quota-import-fixture", StringComparison.OrdinalIgnoreCase))
@@ -50,8 +51,17 @@ if (args.Length == 1
 if (args.Length == 1
     && string.Equals(args[0], "--ai-gateway-balance", StringComparison.OrdinalIgnoreCase))
 {
+    TestAiGatewayObserverPlugin();
     TestAiGatewayBalance();
     Console.WriteLine("PASS AI Gateway read-only balance");
+    return 0;
+}
+
+if (args.Length == 3
+    && string.Equals(args[0], "--ai-gateway-plugin-package", StringComparison.OrdinalIgnoreCase))
+{
+    TestAiGatewayPluginPackage(args[1], args[2]);
+    Console.WriteLine("PASS AI Gateway verified package host protocol");
     return 0;
 }
 
@@ -104,6 +114,15 @@ if (args.Length == 1
 {
     TestCodexEconomyRouter();
     Console.WriteLine("PASS Codex economy router");
+    return 0;
+}
+
+if (args.Length == 1
+    && string.Equals(args[0], "--codex-startup-cache", StringComparison.OrdinalIgnoreCase))
+{
+    TestCodexSpendHistoryProjection();
+    TestCodexStartupCacheActivation();
+    Console.WriteLine("PASS Codex startup cache freshness and delayed activation");
     return 0;
 }
 
@@ -193,6 +212,9 @@ var tests = new (string Name, Action Run)[]
     ("Codex rollout bounded scanner", TestCodexRolloutBoundedScanner),
     ("Codex quota token tracker", TestCodexQuotaTokenTracker),
     ("Codex local token aggregation", TestCodexTokenUsageAggregation),
+    ("Codex API-equivalent pricing", TestCodexApiEquivalentPricing),
+    ("Codex spend history projection", TestCodexSpendHistoryProjection),
+    ("Codex startup cache activation", TestCodexStartupCacheActivation),
     ("Codex rollout fixture CLI", TestCodexRolloutFixtureCli),
     ("Codex Radar parser", TestRadarParser),
     ("Codex Radar reset countdown supplement", TestRadarResetCountdownSupplement),
@@ -211,14 +233,21 @@ var tests = new (string Name, Action Run)[]
     ("Taskbar popover motion geometry", TestTaskbarPopoverMotionGeometry),
     ("Codex Radar stable ranking", TestRadarStableRanking),
     ("Codex Radar pixel layout", TestRadarPopoverLayout),
+    ("Codex spend history pixel layout", TestCodexSpendHistoryLayout),
     ("Codex Radar alert contract", TestRadarAlertContract),
     ("Codex Radar state persistence", TestRadarStatePersistence),
     ("Settings normalization", TestSettingsNormalization),
+    ("Settings data directory override", TestSettingsDataDirectoryOverride),
     ("Keep-running watchdog policy", TestKeepRunningWatchdogPolicy),
     ("Release update discovery", TestReleaseUpdateDiscovery),
     ("Settings v2 plugin migration", TestSettingsV2PluginMigration),
+    ("Provider local credential auto-discovery", TestProviderLocalCredentialAutoDiscovery),
+    ("Bundled plugin extraction closes package file", TestBundledPluginExtraction),
     ("Plugin profile state redaction", TestPluginProfileStateRedaction),
     ("Plugin package malformed manifest rejection", TestPluginMalformedManifestRejection),
+    ("Plugin filesystem fault isolation", TestPluginFilesystemFaultIsolation),
+    ("Optional plugin catalog isolation", TestOptionalPluginCatalogIsolation),
+    ("Optional plugin runtime catalog isolation", TestOptionalPluginRuntimeCatalogIsolation),
     ("Plugin host catalog and revisions", TestPluginHostCatalog),
     ("Plugin request ID validation", TestPluginRequestIdValidation),
     ("Window and taskbar position persistence", TestPositionPersistence),
@@ -259,6 +288,7 @@ var tests = new (string Name, Action Run)[]
     ("Build identity payload fixtures", TestBuildIdentityPayloadFixtures),
     ("Sub2API aggregate proxy usage and pool", TestSub2ApiPool),
     ("Sub2API anonymous account availability contract", TestSub2ApiAccountAvailabilityContract),
+    ("AI Gateway observer process plugin", TestAiGatewayObserverPlugin),
     ("AI Gateway read-only balance", TestAiGatewayBalance),
     ("AI Gateway read-only usage", TestAiGatewayUsage),
 };
@@ -303,6 +333,466 @@ static void TestClaudeParser()
     Equal(DateTimeOffset.Parse("2026-07-15T12:00:00Z"), usage.FiveHourResetsAt, "five-hour reset");
     Equal(38, usage.FableWeekUsedPercent, "Fable weekly utilization");
     Equal(DateTimeOffset.Parse("2026-07-20T00:01:00Z"), usage.FableWeekResetsAt, "Fable weekly reset");
+}
+
+static void TestAiGatewayObserverPlugin()
+{
+    var now = DateTimeOffset.Parse("2026-08-29T08:00:00Z", CultureInfo.InvariantCulture);
+    const string key = "deepseek-test-secret-never-cache";
+    var expectedKey = key;
+    var dataRoot = Path.Combine(Path.GetTempPath(), $"zgstokenbar-deepseek-harness-{Guid.NewGuid():N}");
+    var harnessHome = Path.Combine(dataRoot, "harness");
+    var cachePath = Path.Combine(dataRoot, "plugin-data", AiGatewayObserverClient.CacheFileName);
+    Directory.CreateDirectory(harnessHome);
+    try
+    {
+        File.WriteAllText(
+            Path.Combine(harnessHome, ".credentials.yaml"),
+            $"{AiGatewayObserverClient.DefaultCredentialReference}: \"{key}\"\n",
+            new UTF8Encoding(false));
+
+        var requests = 0;
+        var responseMode = "success";
+        using var http = new HttpClient(new RecordingHandler(request =>
+        {
+            requests++;
+            Equal("GET", request.Method.Method, "DeepSeek Harness balance uses a read-only GET");
+            Equal("https", request.RequestUri?.Scheme, "DeepSeek Harness balance uses HTTPS");
+            Equal("api.deepseek.com", request.RequestUri?.Host, "DeepSeek Harness uses the official DeepSeek host");
+            Equal("/user/balance", request.RequestUri?.AbsolutePath, "DeepSeek Harness uses the official balance route");
+            Equal("Bearer", request.Headers.Authorization?.Scheme, "Harness provider credentials use bearer auth");
+            Equal(expectedKey, request.Headers.Authorization?.Parameter, "Harness credential is used only for the provider request");
+            return responseMode switch
+            {
+                "unauthorized" => new HttpResponseMessage(HttpStatusCode.Unauthorized),
+                "unavailable" => JsonResponse(
+                    """
+                    {
+                      "is_available": false,
+                      "balance_infos": [
+                        {
+                          "currency": "CNY",
+                          "total_balance": "0.00",
+                          "topped_up_balance": "0.00",
+                          "granted_balance": "0.00"
+                        }
+                      ]
+                    }
+                    """),
+                _ => JsonResponse(
+                    """
+                    {
+                      "is_available": true,
+                      "balance_infos": [
+                        {
+                          "currency": "USD",
+                          "total_balance": "10.00",
+                          "topped_up_balance": "9.00",
+                          "granted_balance": "1.00"
+                        },
+                        {
+                          "currency": "CNY",
+                          "total_balance": "42.50",
+                          "topped_up_balance": "40.00",
+                          "granted_balance": "2.50"
+                        }
+                      ]
+                    }
+                    """),
+            };
+        }));
+        using var client = new AiGatewayObserverClient(
+            http,
+            new Uri(AiGatewayObserverClient.OfficialBalanceEndpoint),
+            TimeSpan.FromSeconds(1),
+            harnessHome,
+            cachePath);
+        using var plugin = new AiGatewayObserverPlugin(client);
+        var credentialFingerprint = AiGatewayObserverClient.CredentialFingerprint(key);
+
+        var description = plugin.Describe();
+        Equal(0, description.Settings.Count, "DeepSeek Harness plugin describes no host settings");
+        Equal(
+            false,
+            typeof(AiGatewayObserverPlugin).GetMethods(
+                    System.Reflection.BindingFlags.Instance
+                    | System.Reflection.BindingFlags.Public
+                    | System.Reflection.BindingFlags.NonPublic)
+                .SelectMany(method => method.GetParameters())
+                .Any(parameter => parameter.ParameterType == typeof(Func<CancellationToken, ValueTask<string?>>)),
+            "DeepSeek Harness plugin exposes no host credential resolver seam");
+        Equal(true, AiGatewayObserverClient.HasLocalCredentials(harnessHome), "local probe finds Harness credentials without a provider request");
+        Equal(true, plugin.HasLocalCredentials(), "plugin exposes the local-only credential probe");
+        Equal(0, requests, "credential probing performs no network request");
+
+        var snapshot = plugin.RefreshAsync(now, CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+        Equal(1, requests, "DeepSeek Harness fetches one official balance snapshot");
+        Equal(PluginHealthCode.Current, snapshot.Health.Code, "fresh official balance is current");
+        Equal(1, snapshot.MiniCards.Count, "official balance creates one generic balance card");
+        Equal(ContributionKind.Balance, snapshot.MiniCards.Single().Kind, "card uses the generic balance contribution");
+        Equal(42.50m, snapshot.MiniCards.Single().Summary[0].Value.Decimal, "CNY is preferred from a multi-currency response");
+        Equal("CNY", snapshot.MiniCards.Single().Summary[0].Value.Text, "card identifies the selected currency");
+        Equal(1, snapshot.Details.Count, "provider balance details stay inside the plugin contribution");
+        Equal(true, File.Exists(cachePath), "a successful provider response creates the local balance cache");
+        var cachedPayload = File.ReadAllText(cachePath, Encoding.UTF8);
+        Equal(false, cachedPayload.Contains(key, StringComparison.Ordinal), "balance cache never contains the Harness credential");
+        Equal(true, cachedPayload.Contains("deepseek-harness", StringComparison.Ordinal), "balance cache identifies its sanitized source");
+
+        responseMode = "unauthorized";
+        var rejected = client.FetchAsync(CancellationToken.None).GetAwaiter().GetResult();
+        Equal(ObserverFailureKind.Authentication, rejected.Failure, "401 is classified as rejected Harness credentials");
+        Equal(401, rejected.HttpStatus, "provider authentication failure preserves the safe HTTP status");
+        Equal(true, rejected.IsCached, "provider failure falls back to the sanitized cache");
+        Equal(42.50m, rejected.Snapshot?.TotalBalance, "provider failure preserves the last successful amount");
+        var cachedSnapshot = plugin.RefreshAsync(now.AddMinutes(1), CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+        Equal(PluginHealthCode.Cached, cachedSnapshot.Health.Code, "failed refresh reports cached health");
+        Equal(42.50m, cachedSnapshot.MiniCards.Single().Summary[0].Value.Decimal, "failed refresh keeps the cached amount visible");
+
+        responseMode = "unavailable";
+        var unavailable = client.FetchAsync(CancellationToken.None).GetAwaiter().GetResult();
+        Equal(ObserverFailureKind.BalanceUnavailable, unavailable.Failure, "provider is_available=false has an explicit failure kind");
+        Equal(true, unavailable.IsCached, "an unavailable provider balance falls back to the last success");
+        Equal(42.50m, unavailable.Snapshot?.TotalBalance, "an unavailable provider balance preserves the last successful amount");
+        Equal(cachedPayload, File.ReadAllText(cachePath, Encoding.UTF8), "is_available=false never overwrites the successful balance cache");
+
+        foreach (var forbiddenField in new[] { "authorization", "api_key", "prompt" })
+        {
+            var unsafeCache = Encoding.UTF8.GetBytes($$"""
+                {
+                  "schema_version": 2,
+                  "source": "deepseek-harness",
+                  "provider": "deepseek-official",
+                  "credential_fingerprint": "{{credentialFingerprint}}",
+                  "observed_at": "{{now:O}}",
+                  "is_available": true,
+                  "currency": "CNY",
+                  "total_balance": "42.50",
+                  "topped_up_balance": "40.00",
+                  "granted_balance": "2.50",
+                  "{{forbiddenField}}": "must-not-survive"
+                }
+                """);
+            Throws<InvalidDataException>(
+                () => AiGatewayObserverClient.ParseCache(unsafeCache, credentialFingerprint),
+                $"sanitized cache rejects the extra {forbiddenField} field");
+        }
+
+        const string switchedKey = "deepseek-second-account-secret";
+        expectedKey = switchedKey;
+        File.WriteAllText(
+            Path.Combine(harnessHome, ".credentials.yaml"),
+            $"{AiGatewayObserverClient.DefaultCredentialReference}: \"{switchedKey}\"\n",
+            new UTF8Encoding(false));
+        responseMode = "unauthorized";
+        var switchedAccount = client.FetchAsync(CancellationToken.None).GetAwaiter().GetResult();
+        Equal(false, switchedAccount.IsCached, "a different Harness account cannot reuse the prior account cache");
+        Equal<DeepSeekBalanceSnapshot?>(null, switchedAccount.Snapshot, "account switch never displays another account's amount");
+        var requestsBeforeMissing = requests;
+        File.Delete(Path.Combine(harnessHome, ".credentials.yaml"));
+        Equal(false, AiGatewayObserverClient.HasLocalCredentials(harnessHome), "local probe reports missing Harness credentials");
+        var missingCredential = client.FetchAsync(CancellationToken.None).GetAwaiter().GetResult();
+        Equal(ObserverFailureKind.MissingCredentials, missingCredential.Failure, "missing Harness credentials remain a configuration state");
+        Equal(false, missingCredential.IsCached, "missing credentials cannot reveal a previous account cache");
+        Equal(requestsBeforeMissing, requests, "missing-credential handling performs no provider request");
+        expectedKey = key;
+        File.WriteAllText(
+            Path.Combine(harnessHome, ".credentials.yaml"),
+            $"{AiGatewayObserverClient.DefaultCredentialReference}: \"{key}\"\n",
+            new UTF8Encoding(false));
+
+        var usd = AiGatewayObserverClient.Parse(
+            """
+            {
+              "is_available": true,
+              "balance_infos": [
+                {
+                  "currency": "USD",
+                  "total_balance": "7.25",
+                  "topped_up_balance": "7.00",
+                  "granted_balance": "0.25"
+                }
+              ]
+            }
+            """u8,
+            now);
+        Equal("USD", usd.Currency, "a single USD balance is selected when CNY is absent");
+        Equal(7.25m, usd.TotalBalance, "USD balance keeps its exact amount");
+        Throws<InvalidDataException>(
+            () => AiGatewayObserverClient.Parse(
+                """
+                {
+                  "is_available": true,
+                  "balance_infos": [
+                    { "currency": "EUR", "total_balance": "1", "topped_up_balance": "1", "granted_balance": "0" },
+                    { "currency": "JPY", "total_balance": "2", "topped_up_balance": "2", "granted_balance": "0" }
+                  ]
+                }
+                """u8,
+                now),
+            "ambiguous non-preferred currencies are rejected instead of relabeled");
+
+        var customHarnessHome = Path.Combine(dataRoot, "custom-harness");
+        Directory.CreateDirectory(customHarnessHome);
+        File.WriteAllText(
+            Path.Combine(customHarnessHome, "settings.yaml"),
+            "llm-deepseek:\n  apiKeyEnv: CUSTOM_DEEPSEEK_KEY\n",
+            new UTF8Encoding(false));
+        File.WriteAllText(
+            Path.Combine(customHarnessHome, ".credentials.yaml"),
+            "DEEPSEEK_API_KEY: default-value\nCUSTOM_DEEPSEEK_KEY: custom-value\n",
+            new UTF8Encoding(false));
+        Equal(
+            "custom-value",
+            AiGatewayObserverClient.ResolveHarnessCredential(customHarnessHome),
+            "Harness provider apiKeyEnv selects its managed credential by reference");
+
+        var paddedYamlHarnessHome = Path.Combine(dataRoot, "padded-yaml-harness");
+        Directory.CreateDirectory(paddedYamlHarnessHome);
+        File.WriteAllText(
+            Path.Combine(paddedYamlHarnessHome, ".credentials.yaml"),
+            "DEEPSEEK_API_KEY: \"  sk-valid  \"\n",
+            new UTF8Encoding(false));
+        Equal(
+            "sk-valid",
+            AiGatewayObserverClient.ResolveHarnessCredential(paddedYamlHarnessHome),
+            "quoted Harness YAML credential values are trimmed before use");
+
+        var paddedDotEnvHarnessHome = Path.Combine(dataRoot, "padded-dotenv-harness");
+        Directory.CreateDirectory(paddedDotEnvHarnessHome);
+        File.WriteAllText(
+            Path.Combine(paddedDotEnvHarnessHome, ".env"),
+            "DEEPSEEK_API_KEY=\"  sk-dotenv-valid  \"\n",
+            new UTF8Encoding(false));
+        Equal(
+            "sk-dotenv-valid",
+            AiGatewayObserverClient.ResolveHarnessCredential(paddedDotEnvHarnessHome),
+            "quoted Harness dotenv credential values are trimmed before use");
+
+        Equal(
+            "lowercase-env-value",
+            AiGatewayObserverClient.ParseDotEnv(
+                "deepseek_api_key=lowercase-env-value\n"u8,
+                AiGatewayObserverClient.DefaultCredentialReference),
+            "Windows Harness .env credential references match without case sensitivity");
+        Throws<InvalidDataException>(
+            () => AiGatewayObserverClient.ParseDotEnv(
+                "DEEPSEEK_API_KEY=first-value\ndeepseek_api_key=second-value\n"u8,
+                AiGatewayObserverClient.DefaultCredentialReference),
+            "Windows Harness .env rejects credential keys duplicated with different casing");
+
+        foreach (var nonStringScalar in new[] { "true", "false", "null", "~", "123", "1.25" })
+        {
+            var credentialsYaml = Encoding.UTF8.GetBytes(
+                $"DEEPSEEK_API_KEY: {nonStringScalar}\n");
+            Throws<InvalidDataException>(
+                () => AiGatewayObserverClient.ParseCredentialsDocument(
+                    credentialsYaml,
+                    AiGatewayObserverClient.DefaultCredentialReference),
+                $"Harness credentials reject the unquoted non-string YAML scalar {nonStringScalar}");
+        }
+
+        Equal(
+            "single-quoted-value",
+            AiGatewayObserverClient.ParseCredentialsDocument(
+                "'DEEPSEEK_API_KEY': 'single-quoted-value'\n"u8,
+                AiGatewayObserverClient.DefaultCredentialReference),
+            "Harness credentials accept a legal single-quoted YAML key");
+        Equal(
+            "double-quoted-value",
+            AiGatewayObserverClient.ParseCredentialsDocument(
+                "\"DEEPSEEK_API_KEY\": \"double-quoted-value\"\n"u8,
+                AiGatewayObserverClient.DefaultCredentialReference),
+            "Harness credentials accept a legal double-quoted YAML key");
+        Throws<InvalidDataException>(
+            () => AiGatewayObserverClient.ParseCredentialsDocument(
+                "DEEPSEEK_API_KEY: valid-value\nBROKEN: [not-a-string]\n"u8,
+                AiGatewayObserverClient.DefaultCredentialReference),
+            "an invalid unrelated entry makes the Harness-managed credential document fail closed");
+
+        var emptyHarnessHome = Path.Combine(dataRoot, "empty-harness");
+        Directory.CreateDirectory(emptyHarnessHome);
+        var noKeyRequests = 0;
+        using var noKeyHttp = new HttpClient(new RecordingHandler(_ =>
+        {
+            noKeyRequests++;
+            return JsonResponse("{}");
+        }));
+        using var noKeyClient = new AiGatewayObserverClient(
+            noKeyHttp,
+            new Uri(AiGatewayObserverClient.OfficialBalanceEndpoint),
+            TimeSpan.FromSeconds(1),
+            emptyHarnessHome,
+            Path.Combine(dataRoot, "no-key-cache.json"));
+        var missing = noKeyClient.FetchAsync(CancellationToken.None).GetAwaiter().GetResult();
+        Equal(0, noKeyRequests, "missing Harness credentials never start a provider request");
+        Equal(ObserverFailureKind.MissingCredentials, missing.Failure, "missing Harness credentials have a deterministic failure kind");
+        Equal<DeepSeekBalanceSnapshot?>(null, missing.Snapshot, "missing Harness credentials do not fabricate an amount");
+
+        using var malformedHttp = new HttpClient(new RecordingHandler(_ => JsonResponse(
+            """
+            {
+              "is_available": true,
+              "balance_infos": [
+                { "currency": "CNY", "total_balance": "99", "topped_up_balance": "1", "granted_balance": "2" }
+              ]
+            }
+            """)));
+        using var malformedClient = new AiGatewayObserverClient(
+            malformedHttp,
+            new Uri(AiGatewayObserverClient.OfficialBalanceEndpoint),
+            TimeSpan.FromSeconds(1),
+            harnessHome,
+            Path.Combine(dataRoot, "malformed-cache.json"));
+        Equal(
+            ObserverFailureKind.InvalidResponse,
+            malformedClient.FetchAsync(CancellationToken.None).GetAwaiter().GetResult().Failure,
+            "malformed provider balances are rejected safely");
+
+        using var oversizedHttp = new HttpClient(new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(new byte[AiGatewayObserverClient.MaximumResponseBytes + 1]),
+        }));
+        using var oversizedClient = new AiGatewayObserverClient(
+            oversizedHttp,
+            new Uri(AiGatewayObserverClient.OfficialBalanceEndpoint),
+            TimeSpan.FromSeconds(1),
+            harnessHome,
+            Path.Combine(dataRoot, "oversized-cache.json"));
+        Equal(
+            ObserverFailureKind.InvalidResponse,
+            oversizedClient.FetchAsync(CancellationToken.None).GetAwaiter().GetResult().Failure,
+            "oversized provider responses are rejected before parsing");
+
+        using var timeoutHttp = new HttpClient(new AsyncRecordingHandler(async (_, cancellationToken) =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+            return JsonResponse("{}");
+        }));
+        using var timeoutClient = new AiGatewayObserverClient(
+            timeoutHttp,
+            new Uri(AiGatewayObserverClient.OfficialBalanceEndpoint),
+            TimeSpan.FromMilliseconds(20),
+            harnessHome,
+            Path.Combine(dataRoot, "timeout-cache.json"));
+        Equal(
+            ObserverFailureKind.Timeout,
+            timeoutClient.FetchAsync(CancellationToken.None).GetAwaiter().GetResult().Failure,
+            "provider timeouts are classified without exposing credentials");
+
+        Throws<ArgumentException>(
+            () => new AiGatewayObserverClient(
+                new HttpClient(new RecordingHandler(_ => JsonResponse("{}"))),
+                new Uri("https://api.deepseek.com/user/balance?redirect=1"),
+                harnessHome: harnessHome,
+                cachePath: cachePath),
+            "provider endpoint rejects query-bearing overrides");
+    }
+    finally
+    {
+        if (Directory.Exists(dataRoot)) Directory.Delete(dataRoot, recursive: true);
+    }
+
+    var coordinatorConstructors = typeof(QuotaCoordinator).GetConstructors(
+        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+    Equal(
+        false,
+        coordinatorConstructors.SelectMany(constructor => constructor.GetParameters())
+            .Any(parameter => parameter.ParameterType == typeof(AiGatewayConnectionStore)
+                || parameter.Name?.Contains("gateway", StringComparison.OrdinalIgnoreCase) == true),
+        "core coordinator remains decoupled from DeepSeek Harness transport details");
+}
+
+static void TestAiGatewayPluginPackage(string packagePath, string sha256)
+{
+    var dataRoot = Path.Combine(
+        Path.GetTempPath(),
+        $"zgstokenbar-deepseek-harness-package-{Guid.NewGuid():N}");
+    var harnessHome = Path.Combine(dataRoot, "empty-harness");
+    var originalDshHome = Environment.GetEnvironmentVariable("DSH_HOME");
+    Directory.CreateDirectory(dataRoot);
+    Directory.CreateDirectory(harnessHome);
+    try
+    {
+        using (var archive = System.IO.Compression.ZipFile.OpenRead(packagePath))
+        {
+            Equal(
+                false,
+                archive.Entries.Any(entry => string.Equals(
+                    entry.FullName,
+                    "observer-endpoint.v1.json",
+                    StringComparison.OrdinalIgnoreCase)),
+                "DeepSeek Harness package contains no private observer endpoint asset");
+        }
+
+        Environment.SetEnvironmentVariable("DSH_HOME", harnessHome);
+        var manager = new PluginPackageManager(dataRoot);
+        var installed = manager.EnsureInstalled(packagePath, sha256);
+        Equal(PluginIdentity.Id, installed.PluginId, "package installs under the stable plugin ID");
+        Equal(
+            installed.Path,
+            manager.EnsureInstalled(packagePath, sha256).Path,
+            "verified bundled installation is idempotent for the same plugin version");
+        var credentialBroker = new RecordingPluginCredentialBroker();
+        var proxy = manager.LoadProcessPlugins(credentialBroker).OfType<ProcessPluginProxy>().Single();
+        try
+        {
+            Equal("1.2.3", proxy.Manifest.Version, "package advertises the hardened local-discovery version");
+            Equal("DeepSeek Harness", proxy.Manifest.DisplayName, "package advertises the Harness provider name");
+            Equal(2, proxy.Manifest.Capabilities.Count, "package declares balance and local-discovery capabilities");
+            Equal(true, proxy.Manifest.Capabilities.Contains("balance"), "package declares generic balance data");
+            Equal(true, proxy.Manifest.Capabilities.Contains("local-credentials"), "package declares its local-only discovery probe");
+            Equal(0, proxy.Manifest.CredentialSlots.Count, "package declares no host credential slots");
+            Equal(
+                false,
+                Directory.EnumerateFiles(installed.Path, "*", SearchOption.AllDirectories)
+                    .Any(path => string.Equals(
+                        Path.GetFileName(path),
+                        "observer-endpoint.v1.json",
+                        StringComparison.OrdinalIgnoreCase)),
+                "installed plugin contains no private observer endpoint asset");
+            proxy.StartAsync(
+                    new PluginStartContext(
+                        "acceptance",
+                        Path.Combine(dataRoot, "plugin-data"),
+                        DateTimeOffset.UtcNow),
+                    CancellationToken.None)
+                .AsTask()
+                .GetAwaiter()
+                .GetResult();
+            Equal(true, proxy.ProcessId is not null, "native plugin completes the verified process handshake");
+            Equal(0, proxy.Settings.Count, "native plugin exposes no host settings through the protocol");
+            Equal(
+                false,
+                proxy.HasLocalCredentialsAsync(CancellationToken.None).AsTask().GetAwaiter().GetResult(),
+                "verified process probe reports no credentials in an isolated Harness home");
+            Equal(
+                "DeepSeek Harness",
+                proxy.ReadLocalization("en")["zgstokenbar.provider.ai-gateway.title"],
+                "package localization is integrity-checked and readable");
+            var snapshot = proxy.RefreshAsync(
+                    new PluginRefreshContext(DateTimeOffset.UtcNow, "acceptance", 0),
+                    CancellationToken.None)
+                .AsTask()
+                .GetAwaiter()
+                .GetResult();
+            Equal(PluginHealthCode.MissingCredentials, snapshot.Health.Code, "an isolated empty Harness home reports missing provider credentials");
+            Equal(0, snapshot.MiniCards.Count, "package acceptance does not contact DeepSeek without Harness credentials");
+            Equal(0, credentialBroker.ResolveCalls, "DeepSeek Harness never calls the host credential broker");
+        }
+        finally
+        {
+            proxy.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+    }
+    finally
+    {
+        Environment.SetEnvironmentVariable("DSH_HOME", originalDshHome);
+        if (Directory.Exists(dataRoot)) Directory.Delete(dataRoot, recursive: true);
+    }
 }
 
 static void TestAiGatewayBalance()
@@ -5451,6 +5941,629 @@ static void TestCodexTokenUsageAggregation()
     }
 }
 
+static void TestCodexApiEquivalentPricing()
+{
+    var standard = CodexPricingCatalog.Estimate(new CodexModelTokenUsage(
+        "gpt-5.6-sol",
+        1_000_000,
+        500_000,
+        100_000,
+        ReasoningOutputTokens: 75_000));
+    Equal(4.2m, standard.ApiEquivalentUsd, "standard API estimate separates cached input and output");
+    var withCacheWrite = CodexPricingCatalog.Estimate(new CodexModelTokenUsage(
+        "gpt-5.6-sol",
+        1_000_000,
+        400_000,
+        100_000,
+        CacheWriteInputTokens: 100_000));
+    Equal(4.66m, withCacheWrite.ApiEquivalentUsd, "GPT-5.6 cache writes use the documented write rate");
+    var noReasoningDoubleCharge = CodexPricingCatalog.Estimate(new CodexModelTokenUsage(
+        "gpt-5.6-sol",
+        1_000_000,
+        500_000,
+        100_000,
+        ReasoningOutputTokens: 0));
+    Equal(standard.ApiEquivalentUsd, noReasoningDoubleCharge.ApiEquivalentUsd, "reasoning remains an output subset and is not charged twice");
+    var longContext = CodexPricingCatalog.Estimate(new CodexModelTokenUsage(
+        "gpt-5.6-sol",
+        300_000,
+        100_000,
+        50_000,
+        IsLongContext: true));
+    Equal(3.18m, longContext.ApiEquivalentUsd, "GPT-5.6 long-context multipliers are applied per request");
+    var gpt55LongContext = CodexPricingCatalog.Estimate(new CodexModelTokenUsage(
+        "gpt-5.5",
+        300_000,
+        100_000,
+        50_000,
+        IsLongContext: true));
+    Equal(4.35m, gpt55LongContext.ApiEquivalentUsd, "GPT-5.5 long-context multipliers are applied per request");
+    var gpt54LongContext = CodexPricingCatalog.Estimate(new CodexModelTokenUsage(
+        "gpt-5.4",
+        300_000,
+        100_000,
+        50_000,
+        IsLongContext: true));
+    Equal(2.175m, gpt54LongContext.ApiEquivalentUsd, "GPT-5.4 long-context multipliers are applied per request");
+    var gpt54MiniLongInput = CodexPricingCatalog.Estimate(new CodexModelTokenUsage(
+        "gpt-5.4-mini",
+        300_000,
+        100_000,
+        50_000,
+        IsLongContext: true));
+    Equal(0.3825m, gpt54MiniLongInput.ApiEquivalentUsd, "GPT-5.4 Mini does not inherit the flagship long-context surcharge");
+    var unknown = CodexPricingCatalog.Estimate(new CodexModelTokenUsage(
+        "future-unpriced-model",
+        100,
+        50,
+        25));
+    Equal<decimal?>(null, unknown.ApiEquivalentUsd, "unknown models are explicitly unpriced");
+    var partial = CodexPricingCatalog.SummarizePeriod(
+    [
+        new CodexModelTokenUsage("gpt-5.6-luna", 200_000, 120_000, 50_000, UnattributedTokens: 7),
+        new CodexModelTokenUsage("future-unpriced-model", 10, 0, 5),
+    ]);
+    Equal(true, partial.IsPartiallyPriced, "mixed model periods stay visibly partial");
+    Equal(22L, partial.UnpricedTokens, "unknown and unattributed tokens remain unpriced instead of becoming zero-cost");
+
+    var easternTime = TimeZoneInfo.FindSystemTimeZoneById(
+        OperatingSystem.IsWindows() ? "Eastern Standard Time" : "America/New_York");
+    var dstBoundary = DateTimeOffset.Parse(
+        "2026-03-09T04:30:00Z",
+        CultureInfo.InvariantCulture);
+    var dstWindow = CodexTokenUsageReader.SpendWindowDates(dstBoundary, easternTime);
+    Equal("2026-03-09", dstWindow.Today, "spend windows start from the local calendar date");
+    Equal("2026-03-08", dstWindow.Yesterday, "DST yesterday subtracts a local calendar day instead of 24 UTC hours");
+    Equal("2026-02-08", dstWindow.Last30DaysCutoff, "30d cutoff uses local DateOnly arithmetic across DST");
+    Equal(
+        true,
+        CodexTokenUsageReader.ShouldPruneHistoricalSpend(
+            "2026-01-15",
+            DateTimeOffset.Parse("2026-01-16T12:00:00Z", CultureInfo.InvariantCulture),
+            dstBoundary,
+            easternTime),
+        "clearly expired closed sessions are eligible for spend-scan pruning");
+    Equal(
+        false,
+        CodexTokenUsageReader.ShouldPruneHistoricalSpend(
+            "2026-01-15",
+            dstBoundary,
+            dstBoundary,
+            easternTime),
+        "recently-written sessions are never pruned solely from an old token date");
+
+    var directory = Path.Combine(Path.GetTempPath(), $"zgstokenbar-codex-cost-{Guid.NewGuid():N}");
+    var sessions = Path.Combine(directory, "sessions");
+    Directory.CreateDirectory(sessions);
+    try
+    {
+        var localClock = DateTime.SpecifyKind(new DateTime(2026, 8, 30, 12, 0, 0), DateTimeKind.Unspecified);
+        var now = new DateTimeOffset(localClock, TimeZoneInfo.Local.GetUtcOffset(localClock));
+        var path = Path.Combine(sessions, "priced.jsonl");
+        File.WriteAllText(
+            path,
+            string.Join('\n',
+            [
+                TokenSessionMetaJsonLine(now.AddDays(-1).AddHours(-1), "gpt-5.6-luna"),
+                TokenUsageJsonLine(
+                    now.AddDays(-1),
+                    250_000,
+                    200_000,
+                    120_000,
+                    250_000,
+                    200_000,
+                    120_000,
+                    50_000,
+                    50_000,
+                    0,
+                    0),
+                TokenUsageJsonLine(
+                    now.AddHours(-2),
+                    500_000,
+                    400_000,
+                    240_000,
+                    250_000,
+                    200_000,
+                    120_000,
+                    100_000,
+                    50_000,
+                    0,
+                    0),
+                TokenTurnContextJsonLine(now.AddHours(-1), "gpt-5.6-sol"),
+                TokenUsageJsonLine(
+                    now.AddMinutes(-50),
+                    750_000,
+                    600_000,
+                    360_000,
+                    250_000,
+                    200_000,
+                    120_000,
+                    150_000,
+                    50_000,
+                    0,
+                    0),
+            ]) + "\n");
+
+        var reader = new CodexTokenUsageReader();
+        var initial = reader.Refresh(directory, now);
+        Equal(50_000L, CodexTokenUsageReader.TryParseLine(
+            TokenUsageJsonLine(now, 250_000, 200_000, 120_000, 250_000, 200_000, 120_000, 50_000, 50_000),
+            out var parsed) ? parsed!.OutputTokens : null,
+            "token events expose cumulative output without double-counting reasoning");
+        Equal(1.4464m, initial.Summary!.TodaySpend!.ApiEquivalentUsd, "today estimate follows model changes in the JSONL stream");
+        Equal(0.0784m, initial.Summary.YesterdaySpend!.ApiEquivalentUsd, "yesterday uses the previous local calendar day");
+        Equal(1.5248m, initial.Summary.Last30DaysSpend!.ApiEquivalentUsd, "30d includes today and yesterday local-day buckets");
+        Equal(true, initial.Summary.TodaySpend.IsFullyPriced, "known standard-tier model usage is fully priced");
+        Equal(
+            CodexTokenUsageIndex.CurrentSpendAccountingVersion,
+            initial.Index.Files.Single().SpendAccountingVersion,
+            "spend scanner persists its accounting version");
+
+        File.AppendAllText(
+            path,
+            TokenTurnContextJsonLine(now.AddMinutes(-40), "gpt-5.4") + "\n"
+            + TokenUsageJsonLine(
+                now.AddMinutes(-30),
+                1_000_000,
+                800_000,
+                480_000,
+                250_000,
+                200_000,
+                120_000,
+                200_000,
+                50_000,
+                0,
+                0) + "\n");
+        var appended = reader.Refresh(directory, now);
+        Equal(2.4264m, appended.Summary!.TodaySpend!.ApiEquivalentUsd, "incremental scan prices only appended requests and preserves model context");
+        var resumed = new CodexTokenUsageReader(appended.Index).Refresh(directory, now);
+        Equal(2.4264m, resumed.Summary!.TodaySpend!.ApiEquivalentUsd, "persisted daily model buckets resume without duplication");
+        Equal(false, resumed.Changed, "unchanged priced usage index does not churn");
+
+        File.AppendAllText(
+            path,
+            TokenTurnContextJsonLine(now.AddMinutes(-20), "future-unpriced-model") + "\n"
+            + TokenUsageJsonLine(
+                now.AddMinutes(-10),
+                1_250_000,
+                1_000_000,
+                600_000,
+                250_000,
+                200_000,
+                120_000,
+                250_000,
+                50_000,
+                0,
+                0) + "\n");
+        var mixed = reader.Refresh(directory, now);
+        Equal(2.4264m, mixed.Summary!.TodaySpend!.ApiEquivalentUsd, "unknown model usage does not change the known estimated amount");
+        Equal(250_000L, mixed.Summary.TodaySpend.UnpricedTokens, "unknown model tokens remain visible as unpriced coverage");
+        Equal(true, mixed.Summary.TodaySpend.IsPartiallyPriced, "mixed known and unknown model usage displays as a lower-bound estimate");
+
+        var partialTailHome = Path.Combine(directory, "partial-tail-home");
+        var partialTailSessions = Path.Combine(partialTailHome, "sessions");
+        Directory.CreateDirectory(partialTailSessions);
+        var partialTailPath = Path.Combine(partialTailSessions, "partial-tail.jsonl");
+        File.WriteAllText(
+            partialTailPath,
+            TokenSessionMetaJsonLine(now.AddHours(-1), "gpt-5.6-sol") + "\n"
+            + TokenUsageJsonLine(
+                now.AddMinutes(-50),
+                1_000,
+                800,
+                100,
+                1_000,
+                800,
+                100,
+                200,
+                200,
+                0,
+                0) + "\n");
+        var partialTailReader = new CodexTokenUsageReader();
+        var partialTailInitial = partialTailReader.Refresh(partialTailHome, now);
+        Equal(0.00684m, partialTailInitial.Summary!.TodaySpend!.ApiEquivalentUsd, "complete JSONL lines are priced before an append");
+        var completeCursor = partialTailInitial.Index.Files.Single().SpendScannedLength;
+        Equal(new FileInfo(partialTailPath).Length, completeCursor, "spend cursor records the last complete newline");
+        var appendedLine = TokenUsageJsonLine(
+            now.AddMinutes(-40),
+            2_000,
+            1_600,
+            200,
+            1_000,
+            800,
+            100,
+            400,
+            200,
+            0,
+            0);
+        var split = appendedLine.Length / 2;
+        File.AppendAllText(partialTailPath, appendedLine[..split]);
+        var partialTailPending = partialTailReader.Refresh(partialTailHome, now);
+        Equal(0.00684m, partialTailPending.Summary!.TodaySpend!.ApiEquivalentUsd, "unterminated JSONL tails are not consumed");
+        Equal(completeCursor, partialTailPending.Index.Files.Single().SpendScannedLength, "unterminated tails leave the spend cursor at the prior newline");
+        File.AppendAllText(partialTailPath, appendedLine[split..] + "\n");
+        var partialTailCompleted = partialTailReader.Refresh(partialTailHome, now);
+        Equal(0.01368m, partialTailCompleted.Summary!.TodaySpend!.ApiEquivalentUsd, "a completed JSONL tail is priced exactly once");
+        var partialTailStore = new AppSettingsStore(Path.Combine(directory, "partial-tail-state"));
+        partialTailStore.SaveCodexTokenUsageIndex(partialTailCompleted.Index);
+        var partialTailResumed = new CodexTokenUsageReader(
+                partialTailStore.LoadCodexTokenUsageIndex())
+            .Refresh(partialTailHome, now);
+        Equal(0.01368m, partialTailResumed.Summary!.TodaySpend!.ApiEquivalentUsd, "persisted spend cursors resume without duplicating a completed tail");
+
+        var unknownCacheWriteHome = Path.Combine(directory, "unknown-cache-write-home");
+        var unknownCacheWriteSessions = Path.Combine(unknownCacheWriteHome, "sessions");
+        Directory.CreateDirectory(unknownCacheWriteSessions);
+        var unknownCacheWritePath = Path.Combine(
+            unknownCacheWriteSessions,
+            "unknown-cache-write.jsonl");
+        File.WriteAllText(
+            unknownCacheWritePath,
+            TokenSessionMetaJsonLine(now.AddHours(-1), "gpt-5.6-sol") + "\n"
+            + TokenUsageJsonLine(
+                now.AddMinutes(-50),
+                1_000,
+                800,
+                100,
+                1_000,
+                800,
+                100,
+                200,
+                200) + "\n");
+        var unknownCacheWriteReader = new CodexTokenUsageReader();
+        var unknownCacheWriteInitial = unknownCacheWriteReader.Refresh(unknownCacheWriteHome, now);
+        Equal<decimal?>(null, unknownCacheWriteInitial.Summary!.TodaySpend!.ApiEquivalentUsd, "missing cache-write counters are not fabricated as zero");
+        Equal(1_000L, unknownCacheWriteInitial.Summary.TodaySpend.UnpricedTokens, "requests with unknown cache writes remain visibly unpriced");
+        File.AppendAllText(
+            unknownCacheWritePath,
+            TokenUsageJsonLine(
+                now.AddMinutes(-40),
+                2_000,
+                1_600,
+                200,
+                1_000,
+                800,
+                100,
+                400,
+                200,
+                0,
+                0) + "\n");
+        var knownnessTransition = unknownCacheWriteReader.Refresh(unknownCacheWriteHome, now);
+        Equal<decimal?>(null, knownnessTransition.Summary!.TodaySpend!.ApiEquivalentUsd, "an unknown-to-known cache-write transition does not fabricate its first delta");
+        Equal(2_000L, knownnessTransition.Summary.TodaySpend.UnpricedTokens, "the transition request remains unpriced");
+        File.AppendAllText(
+            unknownCacheWritePath,
+            TokenUsageJsonLine(
+                now.AddMinutes(-30),
+                3_000,
+                2_400,
+                300,
+                1_000,
+                800,
+                100,
+                600,
+                200,
+                0,
+                0) + "\n");
+        var knownCacheWrite = unknownCacheWriteReader.Refresh(unknownCacheWriteHome, now);
+        Equal(0.00684m, knownCacheWrite.Summary!.TodaySpend!.ApiEquivalentUsd, "later explicit-zero cache-write deltas recover normal pricing");
+        Equal(2_000L, knownCacheWrite.Summary.TodaySpend.UnpricedTokens, "unknown historical requests remain marked as a lower-bound gap");
+        Equal(true, knownCacheWrite.Summary.TodaySpend.IsPartiallyPriced, "known and unknown cache-write coverage displays as partial");
+        var knownCacheWriteResumed = new CodexTokenUsageReader(knownCacheWrite.Index)
+            .Refresh(unknownCacheWriteHome, now);
+        Equal(0.00684m, knownCacheWriteResumed.Summary!.TodaySpend!.ApiEquivalentUsd, "cache-write knownness resumes without duplicate pricing");
+
+        var historicalHome = Path.Combine(directory, "historical-home");
+        var historicalSessions = Path.Combine(historicalHome, "sessions");
+        Directory.CreateDirectory(historicalSessions);
+        var historicalPath = Path.Combine(historicalSessions, "historical.jsonl");
+        var historicalAt = now.AddDays(-60);
+        File.WriteAllText(
+            historicalPath,
+            TokenSessionMetaJsonLine(historicalAt.AddMinutes(-5), "gpt-5.6-sol") + "\n"
+            + TokenUsageJsonLine(
+                historicalAt,
+                1_000,
+                800,
+                100,
+                1_000,
+                800,
+                100,
+                200,
+                200,
+                0,
+                0) + "\n");
+        File.SetLastWriteTimeUtc(historicalPath, historicalAt.UtcDateTime);
+        var historical = new CodexTokenUsageReader().Refresh(historicalHome, now);
+        var historicalFile = historical.Index.Files.Single();
+        Equal(0, historicalFile.DailyModelUsage!.Count, "expired closed sessions produce no retained spend buckets");
+        Equal<long?>(null, historicalFile.SpendLastTotalTokens, "expired closed sessions skip the full spend-state replay");
+        Equal(new FileInfo(historicalPath).Length, historicalFile.SpendScannedLength, "pruned sessions retain an append-safe newline cursor");
+
+        var cacheWriteHome = Path.Combine(directory, "cache-write-home");
+        var cacheWriteSessions = Path.Combine(cacheWriteHome, "sessions");
+        Directory.CreateDirectory(cacheWriteSessions);
+        File.WriteAllText(
+            Path.Combine(cacheWriteSessions, "cache-write.jsonl"),
+            TokenSessionMetaJsonLine(now.AddHours(-1), "gpt-5.6-sol") + "\n"
+            + TokenUsageJsonLine(
+                now,
+                1_100_000,
+                1_000_000,
+                400_000,
+                1_100_000,
+                1_000_000,
+                400_000,
+                100_000,
+                100_000,
+                100_000,
+                100_000) + "\n");
+        var cacheWriteSummary = new CodexTokenUsageReader().Refresh(cacheWriteHome, now).Summary!;
+        Equal(100_000L, cacheWriteSummary.TodaySpend!.CacheWriteInputTokens, "spend scanner retains cache-write input tokens");
+        Equal(8.32m, cacheWriteSummary.TodaySpend.ApiEquivalentUsd, "spend scanner prices cache-write input and long context separately");
+    }
+    finally
+    {
+        Directory.Delete(directory, true);
+    }
+}
+
+static void TestCodexSpendHistoryProjection()
+{
+    var directory = Path.Combine(
+        Path.GetTempPath(),
+        $"zgstokenbar-codex-spend-history-{Guid.NewGuid():N}");
+    var sessions = Path.Combine(directory, "sessions");
+    Directory.CreateDirectory(sessions);
+    try
+    {
+        var localClock = DateTime.SpecifyKind(
+            new DateTime(2026, 8, 30, 12, 0, 0),
+            DateTimeKind.Unspecified);
+        var now = new DateTimeOffset(localClock, TimeZoneInfo.Local.GetUtcOffset(localClock));
+
+        void WriteSpendSession(
+            string fileName,
+            DateTimeOffset capturedAt,
+            string model,
+            long inputTokens,
+            long cachedInputTokens,
+            long outputTokens,
+            string? serviceTier = null)
+        {
+            var totalTokens = checked(inputTokens + outputTokens);
+            var lines = new List<string>
+            {
+                TokenSessionMetaJsonLine(capturedAt.AddMinutes(-5), model),
+            };
+            if (serviceTier is not null)
+            {
+                lines.Add(TokenTurnContextJsonLine(
+                    capturedAt.AddMinutes(-2),
+                    model,
+                    serviceTier));
+            }
+            lines.Add(TokenUsageJsonLine(
+                capturedAt,
+                totalTokens,
+                inputTokens,
+                cachedInputTokens,
+                totalTokens,
+                inputTokens,
+                cachedInputTokens,
+                outputTokens,
+                outputTokens,
+                0,
+                0));
+            var path = Path.Combine(sessions, fileName);
+            File.WriteAllText(path, string.Join('\n', lines) + "\n");
+            File.SetLastWriteTimeUtc(path, capturedAt.UtcDateTime);
+        }
+
+        WriteSpendSession(
+            "oldest-alias.jsonl",
+            now.AddDays(-29),
+            "gpt-5.6",
+            1_000,
+            200,
+            200);
+        WriteSpendSession(
+            "recent-canonical.jsonl",
+            now.AddDays(-6),
+            "gpt-5.6-sol",
+            2_000,
+            400,
+            400);
+        const string sensitiveModel = @"C:\Users\person\private\model.json";
+        WriteSpendSession(
+            "unknown-path.jsonl",
+            now.AddDays(-1),
+            sensitiveModel,
+            100,
+            20,
+            20);
+        WriteSpendSession(
+            "today-priced.jsonl",
+            now,
+            "gpt-5.4",
+            3_000,
+            600,
+            600);
+        WriteSpendSession(
+            "today-nonstandard-tier.jsonl",
+            now.AddMinutes(1),
+            "gpt-5.4",
+            500,
+            100,
+            100,
+            "priority");
+
+        var initial = new CodexTokenUsageReader().Refresh(directory, now.AddMinutes(2));
+        var history = initial.Summary!.SpendHistory!;
+        Equal(30, history.Days.Count, "spend history always projects exactly 30 local calendar days");
+        Equal("2026-08-01", history.Days[0].LocalDate, "spend history begins 29 local days before today");
+        Equal("2026-08-30", history.Days[^1].LocalDate, "spend history ends on the current local day");
+        for (var index = 1; index < history.Days.Count; index++)
+        {
+            var previous = DateOnly.ParseExact(
+                history.Days[index - 1].LocalDate,
+                "yyyy-MM-dd",
+                CultureInfo.InvariantCulture);
+            var current = DateOnly.ParseExact(
+                history.Days[index].LocalDate,
+                "yyyy-MM-dd",
+                CultureInfo.InvariantCulture);
+            Equal(previous.AddDays(1), current, $"spend history day {index} follows its predecessor");
+        }
+        Equal(26, history.Days.Count(day => !day.Spend.HasUsage), "missing local days remain explicit empty buckets");
+        Equal(
+            false,
+            history.Days.Single(day => day.LocalDate == "2026-08-02").Spend.HasUsage,
+            "an interior missing day is not collapsed out of the chart");
+
+        Equal(6_720L, history.Last7DaysSpend.TotalTokens, "7d spend includes today and the six prior local days");
+        Equal(6_000L, history.Last7DaysSpend.PricedTokens, "7d spend retains priced coverage");
+        Equal(720L, history.Last7DaysSpend.UnpricedTokens, "7d spend retains unknown-model and nonstandard-tier coverage");
+        Equal(true, history.Last7DaysSpend.IsPartiallyPriced, "mixed 7d coverage is visibly partial");
+
+        var yesterday = history.Days.Single(day => day.LocalDate == "2026-08-29").Spend;
+        Equal(false, yesterday.HasPricedUsage, "unknown-only days never look like zero-dollar priced usage");
+        Equal(true, yesterday.HasUnpricedUsage, "unknown-only days preserve unpriced coverage");
+        Equal<decimal?>(null, yesterday.ApiEquivalentUsd, "unknown-only days expose no dollar estimate");
+        var today = history.Days[^1].Spend;
+        Equal(true, today.IsPartiallyPriced, "standard and nonstandard tier usage on one day remains partial");
+        Equal(3_600L, today.PricedTokens, "today's standard-tier tokens remain priced");
+        Equal(600L, today.UnpricedTokens, "today's nonstandard-tier tokens remain unpriced");
+
+        var canonical = history.Models.Single(model => model.Model == "gpt-5.6-sol");
+        Equal(3_600L, canonical.Spend.TotalTokens, "model aliases merge into one canonical history row");
+        Equal(1, history.Models.Count(model => model.Model == "gpt-5.6-sol"), "canonical model history has no alias duplicate");
+        var sanitized = history.Models.Single(model => model.Model == "unknown");
+        Equal(120L, sanitized.Spend.TotalTokens, "sanitized model rows retain aggregate usage");
+        Equal(false, history.Models.Any(model => model.Model.Contains("person", StringComparison.OrdinalIgnoreCase)), "model history never exposes path components");
+        Equal(false, history.Models.Any(model => model.Model.Contains('\\')), "model history never exposes a filesystem path");
+
+        var resumed = new CodexTokenUsageReader(initial.Index).Refresh(directory, now.AddMinutes(2));
+        Equal(false, resumed.Changed, "unchanged spend history index does not churn");
+        Equal(30, resumed.Summary!.SpendHistory!.Days.Count, "persisted history resumes with the fixed 30-day shape");
+        Equal(
+            3_600L,
+            resumed.Summary.SpendHistory.Models.Single(model => model.Model == "gpt-5.6-sol").Spend.TotalTokens,
+            "persisted canonical history resumes without duplicate usage");
+
+        var cached = new CodexTokenUsageReader(initial.Index).Snapshot(now.AddMinutes(3));
+        var cachedHistory = cached!.SpendHistory!;
+        var latestIndexedWriteAt = new DateTimeOffset(
+            initial.Index.Files.Max(file => file.LastWriteTimeUtcTicks),
+            TimeSpan.Zero);
+        Equal(
+            latestIndexedWriteAt,
+            cached.CapturedAt,
+            "startup snapshot retains the latest indexed file timestamp");
+        Equal(
+            true,
+            cached.CapturedAt < now.AddMinutes(3),
+            "startup snapshot does not claim it was sampled at process start");
+        Equal(
+            now.AddMinutes(2),
+            initial.Summary.CapturedAt,
+            "successful background refresh is marked current at its observation time");
+        Equal(30, cachedHistory.Days.Count, "persisted history is available before a rollout rescan");
+        Equal(
+            initial.Summary.TodaySpend!.ApiEquivalentUsd,
+            cached.TodaySpend!.ApiEquivalentUsd,
+            "startup snapshot restores the latest priced day immediately");
+        Equal(
+            history.Last7DaysSpend.TotalTokens,
+            cachedHistory.Last7DaysSpend.TotalTokens,
+            "startup snapshot restores the seven-day history immediately");
+    }
+    finally
+    {
+        Directory.Delete(directory, true);
+    }
+}
+
+static void TestCodexStartupCacheActivation()
+{
+    var now = DateTimeOffset.Parse("2026-08-30T08:00:00Z", CultureInfo.InvariantCulture);
+    var cached = new CodexTokenUsageSummary(
+        12,
+        34,
+        1,
+        now.AddMinutes(-20));
+    var calls = new List<string>();
+    PluginDataSnapshot? published = null;
+
+    var refreshRequested = QuotaApplicationContext.ApplyCodexUsageActivityTransition(
+        wasActive: false,
+        isActive: true,
+        cached,
+        requestRefresh: true,
+        summary => calls.Add(summary is null ? "clear" : "set"),
+        (summary, isCached) =>
+        {
+            calls.Add("publish");
+            published = ZGSTokenBar.PluginAdapters.CorePluginProjection.CodexUsage(
+                "zgstokenbar.usage.codex-local",
+                summary,
+                now,
+                isCached);
+        },
+        () => calls.Add("refresh"));
+
+    Equal(true, refreshRequested, "delayed Codex activation schedules its background refresh");
+    Equal(
+        "set,publish,refresh",
+        string.Join(',', calls),
+        "delayed Codex activation restores UI and publishes cache before background refresh");
+    Equal(
+        PluginHealthCode.Cached,
+        published!.Health.Code,
+        "delayed activation publishes persisted usage with cached health");
+    Equal(
+        cached.CapturedAt,
+        published.Health.SampledAt,
+        "cached plugin health retains the persisted observation time");
+
+    calls.Clear();
+    refreshRequested = QuotaApplicationContext.ApplyCodexUsageActivityTransition(
+        wasActive: true,
+        isActive: true,
+        cached,
+        requestRefresh: true,
+        summary => calls.Add(summary is null ? "clear" : "set"),
+        (_, _) => calls.Add("publish"),
+        () => calls.Add("refresh"));
+    Equal(false, refreshRequested, "unchanged active state does not schedule duplicate refresh work");
+    Equal(0, calls.Count, "unchanged active state does not republish the startup cache");
+
+    calls.Clear();
+    refreshRequested = QuotaApplicationContext.ApplyCodexUsageActivityTransition(
+        wasActive: true,
+        isActive: false,
+        cached,
+        requestRefresh: true,
+        summary => calls.Add(summary is null ? "clear" : "set"),
+        (_, _) => calls.Add("publish"),
+        () => calls.Add("refresh"));
+    Equal(true, refreshRequested, "deactivation keeps the provider refresh request");
+    Equal(
+        "clear,refresh",
+        string.Join(',', calls),
+        "deactivation clears visible usage without republishing cached data");
+
+    var current = cached with { CapturedAt = now };
+    var refreshed = ZGSTokenBar.PluginAdapters.CorePluginProjection.CodexUsage(
+        "zgstokenbar.usage.codex-local",
+        current,
+        now);
+    Equal(
+        PluginHealthCode.Current,
+        refreshed.Health.Code,
+        "successful background refresh replaces cached health with current health");
+}
+
 static void TestCodexRolloutFixtureCli()
 {
     var now = DateTimeOffset.Parse("2026-07-31T12:00:00Z");
@@ -5646,11 +6759,21 @@ static CodexQuotaTokenObservation TokenObservation(
         sourceKey,
         totalTokens);
 
-static string TokenSessionMetaJsonLine(DateTimeOffset timestamp) => JsonSerializer.Serialize(new
+static string TokenSessionMetaJsonLine(DateTimeOffset timestamp, string? model = null) => JsonSerializer.Serialize(new
 {
     timestamp = timestamp.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture),
     type = "session_meta",
-    payload = new { type = "session_meta" },
+    payload = new { type = "session_meta", model },
+});
+
+static string TokenTurnContextJsonLine(
+    DateTimeOffset timestamp,
+    string model,
+    string? serviceTier = null) => JsonSerializer.Serialize(new
+{
+    timestamp = timestamp.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture),
+    type = "turn_context",
+    payload = new { type = "turn_context", model, service_tier = serviceTier },
 });
 
 static string TokenForkSessionMetaJsonLine(
@@ -5690,7 +6813,11 @@ static string TokenUsageJsonLine(
     long? cachedInputTokens = null,
     long? lastTotalTokens = null,
     long? lastInputTokens = null,
-    long? lastCachedInputTokens = null) => JsonSerializer.Serialize(new
+    long? lastCachedInputTokens = null,
+    long? outputTokens = null,
+    long? lastOutputTokens = null,
+    long? cacheWriteInputTokens = null,
+    long? lastCacheWriteInputTokens = null) => JsonSerializer.Serialize(new
 {
     timestamp = timestamp.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture),
     type = "event_msg",
@@ -5704,6 +6831,8 @@ static string TokenUsageJsonLine(
                 total_tokens = totalTokens,
                 input_tokens = inputTokens,
                 cached_input_tokens = cachedInputTokens,
+                cache_write_input_tokens = cacheWriteInputTokens,
+                output_tokens = outputTokens,
             },
             last_token_usage = lastTotalTokens is null
                 ? null
@@ -5712,6 +6841,8 @@ static string TokenUsageJsonLine(
                     total_tokens = lastTotalTokens,
                     input_tokens = lastInputTokens,
                     cached_input_tokens = lastCachedInputTokens,
+                    cache_write_input_tokens = lastCacheWriteInputTokens,
+                    output_tokens = lastOutputTokens,
                 },
         },
     },
@@ -8238,7 +9369,25 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
                 337_671_064,
                 332_691_712,
                 12_000_000,
-                11_400_000);
+                11_400_000,
+                TodaySpend: new CodexSpendPeriod(
+                    12_000_000,
+                    11_400_000,
+                    345_678,
+                    0,
+                    0,
+                    12_345_678,
+                    0,
+                    11.48m),
+                Last30DaysSpend: new CodexSpendPeriod(
+                    168_000_000_000,
+                    164_000_000_000,
+                    4_600_000_000,
+                    0,
+                    0,
+                    172_500_000_000,
+                    100_000_000,
+                    152.73m));
             var tokenLayout = RadarPopoverLayout.CreateTokenUsage(dpi);
             using var tokenBitmap = new Bitmap(
                 tokenLayout.BodySize.Width,
@@ -8264,6 +9413,61 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
                 $"taskbar-mini-codex-token-popover-{locale}-{dpi}dpi.png"));
             tokenBitmap.Save(tokenPath, ImageFormat.Png);
             Console.WriteLine($"{tokenPath} {tokenBitmap.Width}x{tokenBitmap.Height}");
+
+            var spendHistoryUsage = SpendHistoryCaptureUsage(now);
+            using var historyActionBitmap = new Bitmap(
+                tokenLayout.BodySize.Width,
+                tokenLayout.BodySize.Height + tokenLayout.TailSize,
+                PixelFormat.Format32bppPArgb);
+            using (var historyActionGraphics = Graphics.FromImage(historyActionBitmap))
+            using (var renderer = new RadarPopoverRenderer())
+            {
+                historyActionGraphics.Clear(Color.FromArgb(2, 6, 23));
+                renderer.Draw(
+                    historyActionGraphics,
+                    tokenLayout,
+                    PopoverTailSide.Bottom,
+                    tokenLayout.BodySize.Width / 2,
+                    new RadarViewState(null, null, false, null),
+                    null,
+                    providerLogo,
+                    NativeText.For(locale),
+                    spendHistoryUsage);
+            }
+            var historyActionPath = Path.GetFullPath(Path.Combine(
+                outputDirectory,
+                $"taskbar-mini-codex-token-popover-history-action-{locale}-{dpi}dpi.png"));
+            historyActionBitmap.Save(historyActionPath, ImageFormat.Png);
+            Console.WriteLine($"{historyActionPath} {historyActionBitmap.Width}x{historyActionBitmap.Height}");
+
+            var spendHistoryLayout = CodexSpendHistoryLayout.Create(
+                dpi,
+                wide: false,
+                spendHistoryUsage.SpendHistory!.Days.Count);
+            using var spendHistoryBitmap = new Bitmap(
+                spendHistoryLayout.BodySize.Width,
+                spendHistoryLayout.BodySize.Height + spendHistoryLayout.TailSize,
+                PixelFormat.Format32bppPArgb);
+            using (var spendHistoryGraphics = Graphics.FromImage(spendHistoryBitmap))
+            using (var renderer = new RadarPopoverRenderer())
+            {
+                spendHistoryGraphics.Clear(Color.FromArgb(2, 6, 23));
+                renderer.DrawSpendHistory(
+                    spendHistoryGraphics,
+                    spendHistoryLayout,
+                    PopoverTailSide.Bottom,
+                    spendHistoryLayout.BodySize.Width / 2,
+                    spendHistoryUsage,
+                    providerLogo,
+                    NativeText.For(locale),
+                    spendHistoryUsage.SpendHistory.Days.Count - 1,
+                    pinned: true);
+            }
+            var spendHistoryPath = Path.GetFullPath(Path.Combine(
+                outputDirectory,
+                $"taskbar-mini-codex-spend-history-{locale}-{dpi}dpi.png"));
+            spendHistoryBitmap.Save(spendHistoryPath, ImageFormat.Png);
+            Console.WriteLine($"{spendHistoryPath} {spendHistoryBitmap.Width}x{spendHistoryBitmap.Height}");
 
             using var systemPopover = new SystemUsagePopoverForm();
             using var systemBitmap = systemPopover.RenderForTest(
@@ -8505,6 +9709,105 @@ static QuotaSnapshot TaskbarMiniCaptureSnapshot(bool includeClaude, int codexCou
         now);
 }
 
+static CodexTokenUsageSummary SpendHistoryCaptureUsage(DateTimeOffset capturedAt)
+{
+    decimal?[] dailyCosts =
+    [
+        .42m, .64m, null, .31m, .85m, .56m, .72m, null, 1.10m, .96m,
+        1.25m, .44m, null, 1.68m, 1.32m, 0m, 1.84m, 1.20m, null, 2.10m,
+        1.76m, 2.43m, 2.06m, 2.82m, 3.10m, null, 3.62m, 2.96m, 4.08m, 4.76m,
+    ];
+    var days = dailyCosts
+        .Select((cost, index) =>
+        {
+            var localDate = capturedAt.Date
+                .AddDays(index - dailyCosts.Length + 1)
+                .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            if (cost is null) return new CodexSpendDay(localDate, CodexSpendPeriod.Empty);
+
+            var inputTokens = 560_000L + index * 74_000L;
+            var cachedInputTokens = inputTokens * (index % 4 + 4) / 10;
+            var outputTokens = 180_000L + index * 21_000L;
+            var totalTokens = inputTokens + outputTokens;
+            var unpricedTokens = index switch
+            {
+                15 => totalTokens,
+                24 => 420_000L,
+                _ => 0L,
+            };
+            return new CodexSpendDay(
+                localDate,
+                new CodexSpendPeriod(
+                    inputTokens,
+                    cachedInputTokens,
+                    outputTokens,
+                    outputTokens / 3,
+                    0,
+                    totalTokens - unpricedTokens,
+                    unpricedTokens,
+                    cost.Value));
+        })
+        .ToArray();
+
+    static CodexSpendPeriod SumPeriods(IEnumerable<CodexSpendPeriod> values)
+    {
+        var periods = values.ToArray();
+        return new CodexSpendPeriod(
+            periods.Sum(period => period.InputTokens),
+            periods.Sum(period => period.CachedInputTokens),
+            periods.Sum(period => period.OutputTokens),
+            periods.Sum(period => period.ReasoningOutputTokens),
+            periods.Sum(period => period.UnattributedTokens),
+            periods.Sum(period => period.PricedTokens),
+            periods.Sum(period => period.UnpricedTokens),
+            periods.Sum(period => period.PricedApiEquivalentUsd),
+            periods.Sum(period => period.CacheWriteInputTokens));
+    }
+
+    var last30Days = SumPeriods(days.Select(day => day.Spend));
+    var last7Days = SumPeriods(days.TakeLast(7).Select(day => day.Spend));
+    CodexSpendPeriod ModelSpend(int percent, decimal costShare, bool partial)
+    {
+        var inputTokens = last30Days.InputTokens * percent / 100;
+        var outputTokens = last30Days.OutputTokens * percent / 100;
+        var unattributedTokens = last30Days.UnattributedTokens * percent / 100;
+        var totalTokens = inputTokens + outputTokens + unattributedTokens;
+        var unpricedTokens = partial
+            ? Math.Min(totalTokens, last30Days.UnpricedTokens)
+            : 0;
+        return new CodexSpendPeriod(
+            inputTokens,
+            last30Days.CachedInputTokens * percent / 100,
+            outputTokens,
+            last30Days.ReasoningOutputTokens * percent / 100,
+            unattributedTokens,
+            totalTokens - unpricedTokens,
+            unpricedTokens,
+            decimal.Round(last30Days.PricedApiEquivalentUsd * costShare, 4),
+            last30Days.CacheWriteInputTokens * percent / 100);
+    }
+
+    var models = new[]
+    {
+        new CodexSpendModel("gpt-5.6-sol", ModelSpend(50, .52m, partial: false)),
+        new CodexSpendModel("gpt-5.6-terra", ModelSpend(30, .31m, partial: false)),
+        new CodexSpendModel("gpt-5.6-luna", ModelSpend(20, .17m, partial: true)),
+    };
+    return new CodexTokenUsageSummary(
+        days[^1].Spend.TotalTokens,
+        last30Days.TotalTokens,
+        2_179,
+        capturedAt,
+        last30Days.InputTokens,
+        last30Days.CachedInputTokens,
+        days[^1].Spend.InputTokens,
+        days[^1].Spend.CachedInputTokens,
+        days[^1].Spend,
+        days[^2].Spend,
+        last30Days,
+        new CodexSpendHistory(days, models, last7Days));
+}
+
 static void RenderLocalizationCaptures(string outputDirectory)
 {
     Directory.CreateDirectory(outputDirectory);
@@ -8513,6 +9816,7 @@ static void RenderLocalizationCaptures(string outputDirectory)
     var fullPresentation = RadarPresentation.Build(snapshot);
     var presentation = RadarPresentation.CodexOnly(fullPresentation);
     var deepSeekPresentation = RadarPresentation.DeepSeekOnly(fullPresentation);
+    using var providerLogo = LoadNativeAsset("ZGSTokenBar.App.Assets.openai-official-ios-icon.png");
     using var deepSeekLogo = LoadNativeAsset("ZGSTokenBar.App.Assets.deepseek-whale-icon.png");
 
     foreach (var locale in new[] { "zh-CN", "en" })
@@ -8546,7 +9850,8 @@ static void RenderLocalizationCaptures(string outputDirectory)
                 dpi,
                 presentation.Rows.Select(row => row.Model.Model).ToArray(),
                 false,
-                snapshot.ResetWindow?.Open == true);
+                snapshot.ResetWindow?.Open == true,
+                hasSpendSummary: true);
             var radarSize = new Size(
                 layout.BodySize.Width,
                 layout.BodySize.Height + layout.TailSize);
@@ -8577,7 +9882,25 @@ static void RenderLocalizationCaptures(string outputDirectory)
                             337_671_064,
                             332_691_712,
                             12_000_000,
-                            11_400_000),
+                            11_400_000,
+                            TodaySpend: new CodexSpendPeriod(
+                                12_000_000,
+                                11_400_000,
+                                345_678,
+                                0,
+                                0,
+                                12_345_678,
+                                1,
+                                1_024.7992890m),
+                            Last30DaysSpend: new CodexSpendPeriod(
+                                168_000_000_000,
+                                164_000_000_000,
+                                4_600_000_000,
+                                0,
+                                0,
+                                172_500_000_000,
+                                100_000_000,
+                                33_149.57033992m)),
                         null,
                         pinned);
                 }
@@ -8605,6 +9928,34 @@ static void RenderLocalizationCaptures(string outputDirectory)
                     $"native-localization-{locale}-{dpi}dpi{suffix}.png");
                 composite.Save(path, ImageFormat.Png);
                 Console.WriteLine(path);
+
+                if (!pinned)
+                {
+                    using var historyActionBitmap = new Bitmap(
+                        radarSize.Width,
+                        radarSize.Height,
+                        PixelFormat.Format32bppPArgb);
+                    using (var historyActionGraphics = Graphics.FromImage(historyActionBitmap))
+                    using (var historyActionRenderer = new RadarPopoverRenderer())
+                    {
+                        historyActionGraphics.Clear(Color.FromArgb(2, 6, 23));
+                        historyActionRenderer.Draw(
+                            historyActionGraphics,
+                            layout,
+                            PopoverTailSide.Bottom,
+                            layout.BodySize.Width / 2,
+                            state,
+                            presentation,
+                            null,
+                            NativeText.For(locale),
+                            SpendHistoryCaptureUsage(snapshot.CapturedAt));
+                    }
+                    var historyActionPath = Path.Combine(
+                        outputDirectory,
+                        $"native-localization-history-action-{locale}-{dpi}dpi.png");
+                    historyActionBitmap.Save(historyActionPath, ImageFormat.Png);
+                    Console.WriteLine(historyActionPath);
+                }
 
                 var deepSeekLayout = RadarPopoverLayout.Create(
                     dpi,
@@ -8647,6 +9998,36 @@ static void RenderLocalizationCaptures(string outputDirectory)
                 deepSeekBitmap.Save(deepSeekPath, ImageFormat.Png);
                 Console.WriteLine(deepSeekPath);
             }
+
+            var spendHistoryUsage = SpendHistoryCaptureUsage(snapshot.CapturedAt);
+            var spendHistoryLayout = CodexSpendHistoryLayout.Create(
+                dpi,
+                wide: true,
+                spendHistoryUsage.SpendHistory!.Days.Count);
+            using var spendHistoryBitmap = new Bitmap(
+                spendHistoryLayout.BodySize.Width,
+                spendHistoryLayout.BodySize.Height + spendHistoryLayout.TailSize,
+                PixelFormat.Format32bppPArgb);
+            using (var spendHistoryGraphics = Graphics.FromImage(spendHistoryBitmap))
+            using (var renderer = new RadarPopoverRenderer())
+            {
+                spendHistoryGraphics.Clear(Color.FromArgb(2, 6, 23));
+                renderer.DrawSpendHistory(
+                    spendHistoryGraphics,
+                    spendHistoryLayout,
+                    PopoverTailSide.Bottom,
+                    spendHistoryLayout.BodySize.Width / 2,
+                    spendHistoryUsage,
+                    providerLogo,
+                    NativeText.For(locale),
+                    spendHistoryUsage.SpendHistory.Days.Count - 1,
+                    pinned: true);
+            }
+            var spendHistoryPath = Path.Combine(
+                outputDirectory,
+                $"native-localization-spend-history-{locale}-{dpi}dpi.png");
+            spendHistoryBitmap.Save(spendHistoryPath, ImageFormat.Png);
+            Console.WriteLine(spendHistoryPath);
             settingsBitmap?.Dispose();
         }
     }
@@ -9616,6 +10997,23 @@ static void TestRadarPopoverLayout()
         Equal((int)Math.Round(476 * scale, MidpointRounding.AwayFromZero), layout.BodySize.Width, $"{dpi} DPI body width");
         Equal((int)Math.Round(329 * scale, MidpointRounding.AwayFromZero), layout.BodySize.Height, $"{dpi} DPI 11-row height");
         Equal(11, layout.RowBounds.Count, $"{dpi} DPI row count");
+        Equal(true, layout.FooterSpendBounds.IsEmpty, $"{dpi} DPI default Radar omits spend row");
+        var spendLayout = RadarPopoverLayout.Create(dpi, 11, false, hasSpendSummary: true);
+        Equal(
+            (int)Math.Round((329 + RadarPopoverLayout.LogicalSpendSummaryHeight) * scale, MidpointRounding.AwayFromZero),
+            spendLayout.BodySize.Height,
+            $"{dpi} DPI spend row extends Radar height");
+        Equal(
+            (int)Math.Round(RadarPopoverLayout.LogicalSpendCardHeight * scale, MidpointRounding.AwayFromZero),
+            spendLayout.FooterSpendBounds.Height,
+            $"{dpi} DPI spend card has its compact two-line height");
+        Equal(
+            (int)Math.Round(6 * scale, MidpointRounding.AwayFromZero),
+            spendLayout.FooterLegendBounds.Top - spendLayout.FooterSpendBounds.Bottom,
+            $"{dpi} DPI spend card clears the legend by a visible gap");
+        Equal(false, spendLayout.FooterSpendBounds.IntersectsWith(spendLayout.FooterLegendBounds), $"{dpi} DPI spend row clears legend");
+        Equal(false, spendLayout.FooterSpendBounds.IntersectsWith(spendLayout.FooterSourceBounds), $"{dpi} DPI spend row clears metric cards");
+        Equal(false, spendLayout.RowBounds[^1].IntersectsWith(spendLayout.FooterSpendBounds), $"{dpi} DPI rows clear spend row");
         Equal(false, layout.SubtitleBounds.IntersectsWith(layout.ResetBounds), $"{dpi} DPI reset status clears subtitle");
         Equal(false, layout.ResetBounds.IntersectsWith(layout.TableHeaderBounds), $"{dpi} DPI reset status clears table header");
         Equal(false, layout.SubtitleBounds.IntersectsWith(layout.TableHeaderBounds), $"{dpi} DPI table header clears product header");
@@ -9637,6 +11035,11 @@ static void TestRadarPopoverLayout()
         using var numberFont = new Font(
             "Cascadia Mono",
             Math.Max(1, (float)Math.Round(8.5 * scale, MidpointRounding.AwayFromZero)),
+            FontStyle.Bold,
+            GraphicsUnit.Pixel);
+        using var spendNumberFont = new Font(
+            "Cascadia Mono",
+            Math.Max(1, (float)Math.Round(10.5 * scale, MidpointRounding.AwayFromZero)),
             FontStyle.Bold,
             GraphicsUnit.Pixel);
         var resetTextWidth = System.Windows.Forms.TextRenderer.MeasureText(
@@ -9834,9 +11237,13 @@ static void TestRadarPopoverLayout()
             tokenLayout.BodySize.Width,
             $"{dpi} DPI token body width");
         Equal(
-            (int)Math.Round(144 * scale, MidpointRounding.AwayFromZero),
+            (int)Math.Round(RadarPopoverLayout.LogicalTokenHeight * scale, MidpointRounding.AwayFromZero),
             tokenLayout.BodySize.Height,
             $"{dpi} DPI token body height");
+        Equal(
+            (int)Math.Round(RadarPopoverLayout.LogicalSpendCardHeight * scale, MidpointRounding.AwayFromZero),
+            tokenLayout.FooterSpendBounds.Height,
+            $"{dpi} DPI token overview reuses the spend card");
         foreach (var text in new[] { zh, en })
         {
             foreach (var pinned in new[] { false, true })
@@ -9850,6 +11257,49 @@ static void TestRadarPopoverLayout()
                     | System.Windows.Forms.TextFormatFlags.SingleLine).Width;
                 Equal(true, subtitleWidth <= tokenLayout.SubtitleBounds.Width, $"{dpi} DPI {text.Locale} token pin subtitle fits");
             }
+
+            var spendInnerWidth = tokenLayout.FooterSpendBounds.Width
+                - 2 * Math.Max(1, (int)Math.Round(8 * scale, MidpointRounding.AwayFromZero));
+            var spendTitleWidth = spendInnerWidth * 3 / 5;
+            Equal(
+                true,
+                MeasureSingleLine(text.CodexSpendMetricTitle, badgeFont) <= spendTitleWidth,
+                $"{dpi} DPI {text.Locale} spend-card title fits");
+            Equal(
+                true,
+                MeasureSingleLine(text.CodexSessionCount(2_179), metaFont) <= spendInnerWidth - spendTitleWidth,
+                $"{dpi} DPI {text.Locale} spend-card session count fits");
+            var spendFieldGap = Math.Max(1, (int)Math.Round(10 * scale, MidpointRounding.AwayFromZero));
+            var spendFieldWidth = (spendInnerWidth - spendFieldGap) / 2;
+            var spendValueGap = Math.Max(1, (int)Math.Round(4 * scale, MidpointRounding.AwayFromZero));
+            Equal(
+                true,
+                MeasureSingleLine(text.CodexTodayMetricLabel, metaFont)
+                    + spendValueGap
+                    + MeasureSingleLine("≈$33,149.6+", spendNumberFont)
+                    <= spendFieldWidth,
+                $"{dpi} DPI {text.Locale} primary spend field fits");
+            Equal(
+                true,
+                MeasureSingleLine(text.CodexLast30DaysMetricLabel, metaFont)
+                    + spendValueGap
+                    + MeasureSingleLine("≈$33,149.6+", numberFont)
+                    <= spendFieldWidth,
+                $"{dpi} DPI {text.Locale} secondary spend field fits");
+            foreach (var fallbackValue in new[]
+                     {
+                         text.CodexApiEquivalent(null),
+                         text.CodexApiEquivalent(new CodexSpendPeriod(0, 0, 0, 0, 50, 0, 50, 0m)),
+                     })
+            {
+                Equal(
+                    true,
+                    MeasureSingleLine(text.CodexLast30DaysMetricLabel, metaFont)
+                        + spendValueGap
+                        + MeasureSingleLine(fallbackValue, numberFont)
+                        <= spendFieldWidth,
+                    $"{dpi} DPI {text.Locale} spend fallback '{fallbackValue}' fits");
+            }
         }
     }
 
@@ -9862,7 +11312,10 @@ static void TestRadarPopoverLayout()
         800,
         610,
         200,
-        180);
+        180,
+        TodaySpend: new CodexSpendPeriod(100, 0, 0, 0, 0, 100, 0, 1.234m),
+        YesterdaySpend: new CodexSpendPeriod(0, 0, 0, 0, 50, 0, 50, 0m),
+        Last30DaysSpend: new CodexSpendPeriod(1_000, 100, 200, 0, 50, 1_200, 50, 12.34m));
     Equal(("今日 Token", "12.3M"), zh.CodexTodayTokens(tokenUsage.TodayTokens), "Chinese daily token summary");
     Equal(("Local total", "1.23B"), en.CodexLocalTokens(tokenUsage.LocalTokens), "English local token summary");
     Equal(("今日命中率", "90.0%"), zh.CodexTodayCacheHitRate(tokenUsage.TodayCacheHitPercent), "Chinese today cache hit rate");
@@ -9872,9 +11325,32 @@ static void TestRadarPopoverLayout()
     Equal("Cache hit", en.CodexCacheMetricTitle, "English cache metric group title");
     Equal("今日", zh.CodexTodayMetricLabel, "Chinese metric scope label");
     Equal("Total", en.CodexTotalMetricLabel, "English metric scope label");
+    Equal("30 日", zh.CodexLast30DaysMetricLabel, "Chinese spend period label");
+    Equal("API equivalent estimate", en.CodexSpendMetricTitle, "English spend card names the estimate");
+    Equal("42 sessions", en.CodexSessionCount(42), "spend card keeps session scope secondary");
     Equal("Token", zh.CodexTokenRadarMetricTitle, "Chinese Radar token metric title");
     Equal("Cache", en.CodexCacheRadarMetricTitle, "English Radar cache metric title");
     Equal("42 sessions · not split by account", en.CodexTokenScope(42), "token scope names local account limitation");
+    Equal("≈$1.23", zh.CodexApiEquivalent(tokenUsage.TodaySpend), "known API equivalent is labeled approximate");
+    Equal("—", en.CodexApiEquivalent(null), "missing spend remains explicit in the spend card");
+    Equal("unpriced", en.CodexApiEquivalent(tokenUsage.YesterdaySpend), "all-unknown usage is never displayed as zero dollars");
+    Equal("≈$12.34+", en.CodexApiEquivalent(tokenUsage.Last30DaysSpend), "partly priced usage is displayed as a lower bound");
+    Equal(
+        "≈$33,149.6+",
+        en.CodexApiEquivalent(new CodexSpendPeriod(1, 0, 0, 0, 0, 1, 1, 33_149.57033992m)),
+        "large API-equivalent values use grouping separators");
+    Equal(
+        "42 sessions · API eq. Today ≈$1.23 · 30d ≈$12.34+",
+        en.CodexTokenScope(42, tokenUsage.TodaySpend, tokenUsage.Last30DaysSpend),
+        "token popover labels the estimate as API-equivalent");
+    var projectedUsage = ZGSTokenBar.PluginAdapters.CorePluginProjection.CodexUsage(
+        "zgstokenbar.usage.codex-local",
+        tokenUsage,
+        tokenUsage.CapturedAt);
+    var projectedRows = projectedUsage.MiniCards.Single().Summary;
+    Equal(7, projectedRows.Count, "Codex local usage contribution exposes three cost periods");
+    Equal(1.234m, projectedRows.Single(row => row.LabelKey == "usage.cost.today").Value.Decimal, "plugin snapshot exposes today's API equivalent");
+    Equal("partial", projectedRows.Single(row => row.LabelKey == "usage.cost.30d").Status, "plugin snapshot preserves partial price coverage");
     var cockpitAccounts = new[]
     {
         new CodexAccountInfo("current", "current@example.test", "pro", true),
@@ -9887,6 +11363,145 @@ static void TestRadarPopoverLayout()
     Equal(false, BarForm.HasProviderOverview(ProviderKind.Codex, false, null), "empty Codex overview stays inert");
     Equal(false, BarForm.HasProviderOverview(ProviderKind.Claude, false, tokenUsage), "Codex tokens do not enable Claude hover");
     Equal(true, BarForm.HasProviderOverview(ProviderKind.Claude, true, null), "Radar enables provider logo hover");
+}
+
+static void TestCodexSpendHistoryLayout()
+{
+    var zh = NativeText.For("zh-CN");
+    var en = NativeText.For("en");
+    Equal("消费历史", zh.CodexSpendHistoryTitle, "Chinese spend-history title");
+    Equal("Spend history", en.CodexSpendHistoryTitle, "English spend-history title");
+    Equal("历史 ›", zh.CodexSpendHistoryAction, "Chinese spend-history CTA");
+    Equal("History ›", en.CodexSpendHistoryAction, "English spend-history CTA");
+    Equal("‹ 返回", zh.CodexSpendHistoryBack, "Chinese spend-history back action");
+    Equal("‹ Back", en.CodexSpendHistoryBack, "English spend-history back action");
+    Equal("昨日", zh.CodexYesterdayMetricLabel, "Chinese yesterday metric label");
+    Equal("7d", en.CodexLast7DaysMetricLabel, "English 7d metric label");
+    Equal("30 日趋势", zh.CodexSpendTrendTitle, "Chinese spend trend title");
+    Equal("Models · 30d", en.CodexSpendModelsTitle, "English model-composition title");
+    Equal("8月3日", zh.CodexSpendDate("2026-08-03"), "Chinese selected spend date");
+    Equal("Aug 3", en.CodexSpendDate("2026-08-03"), "English selected spend date");
+    Equal("not-a-date", en.CodexSpendDate("not-a-date"), "invalid spend dates remain lossless");
+    Equal(
+        "42 会话 · 本机日志 · API 等值估算",
+        zh.CodexSpendHistorySubtitle(42),
+        "Chinese spend-history subtitle names local API-equivalent scope");
+    Equal(
+        "42 sessions · local logs · API equivalent",
+        en.CodexSpendHistorySubtitle(42),
+        "English spend-history subtitle names local API-equivalent scope");
+
+    foreach (var dpi in new[] { 96, 144, 192 })
+    {
+        var scale = dpi / 96d;
+        foreach (var wide in new[] { false, true })
+        {
+            var layout = CodexSpendHistoryLayout.Create(dpi, wide, 30);
+            var mode = wide ? "wide" : "narrow";
+            var expectedLogicalWidth = wide
+                ? CodexSpendHistoryLayout.LogicalWideWidth
+                : CodexSpendHistoryLayout.LogicalNarrowWidth;
+            Equal(
+                (int)Math.Round(expectedLogicalWidth * scale, MidpointRounding.AwayFromZero),
+                layout.BodySize.Width,
+                $"{dpi} DPI {mode} spend-history width");
+            Equal(
+                (int)Math.Round(CodexSpendHistoryLayout.LogicalHeight * scale, MidpointRounding.AwayFromZero),
+                layout.BodySize.Height,
+                $"{dpi} DPI {mode} spend-history height");
+            Equal(wide, layout.Wide, $"{dpi} DPI {mode} layout keeps its width mode");
+            Equal(4, layout.SummaryCardBounds.Count, $"{dpi} DPI {mode} layout has four period summaries");
+            Equal(30, layout.BarBounds.Count, $"{dpi} DPI {mode} layout has one bar hit area per day");
+            Equal(3, layout.ModelRowBounds.Count, $"{dpi} DPI {mode} layout reserves three model rows");
+
+            var body = new Rectangle(Point.Empty, layout.BodySize);
+            void AssertInside(Rectangle bounds, string region)
+            {
+                Equal(true, bounds.Width > 0 && bounds.Height > 0, $"{dpi} DPI {mode} {region} has area");
+                Equal(true, body.Contains(bounds), $"{dpi} DPI {mode} {region} remains inside the body");
+            }
+
+            AssertInside(layout.LogoBounds, "logo");
+            AssertInside(layout.TitleBounds, "title");
+            AssertInside(layout.SubtitleBounds, "subtitle");
+            AssertInside(layout.BackBounds, "back action");
+            AssertInside(layout.TrendTitleBounds, "trend title");
+            AssertInside(layout.SelectedDayBounds, "selected day");
+            AssertInside(layout.TrendChartBounds, "trend chart");
+            AssertInside(layout.ModelsTitleBounds, "models title");
+            foreach (var (bounds, index) in layout.SummaryCardBounds.Select((bounds, index) => (bounds, index)))
+            {
+                AssertInside(bounds, $"summary card {index}");
+            }
+            foreach (var (bounds, index) in layout.ModelRowBounds.Select((bounds, index) => (bounds, index)))
+            {
+                AssertInside(bounds, $"model row {index}");
+            }
+            foreach (var (bar, index) in layout.BarBounds.Select((bounds, index) => (bounds, index)))
+            {
+                Equal(true, bar.Width > 0 && bar.Height > 0, $"{dpi} DPI {mode} bar {index} has a hit area");
+                Equal(true, layout.TrendChartBounds.Contains(bar), $"{dpi} DPI {mode} bar {index} stays inside the chart");
+                if (index > 0)
+                {
+                    Equal(
+                        true,
+                        layout.BarBounds[index - 1].Right <= bar.Left,
+                        $"{dpi} DPI {mode} bars {index - 1}/{index} do not overlap");
+                }
+            }
+
+            Equal(false, layout.LogoBounds.IntersectsWith(layout.TitleBounds), $"{dpi} DPI {mode} logo clears title");
+            Equal(false, layout.BackBounds.IntersectsWith(layout.TitleBounds), $"{dpi} DPI {mode} back action clears title");
+            Equal(false, layout.BackBounds.IntersectsWith(layout.SubtitleBounds), $"{dpi} DPI {mode} back action clears subtitle");
+            for (var index = 1; index < layout.SummaryCardBounds.Count; index++)
+            {
+                Equal(
+                    true,
+                    layout.SummaryCardBounds[index - 1].Right <= layout.SummaryCardBounds[index].Left,
+                    $"{dpi} DPI {mode} summary cards {index - 1}/{index} do not overlap");
+            }
+            Equal(false, layout.SummaryCardBounds[^1].IntersectsWith(layout.TrendTitleBounds), $"{dpi} DPI {mode} summaries clear trend heading");
+            Equal(false, layout.TrendTitleBounds.IntersectsWith(layout.SelectedDayBounds), $"{dpi} DPI {mode} trend heading clears selected day");
+            Equal(false, layout.TrendTitleBounds.IntersectsWith(layout.TrendChartBounds), $"{dpi} DPI {mode} trend heading clears chart");
+            Equal(false, layout.SelectedDayBounds.IntersectsWith(layout.TrendChartBounds), $"{dpi} DPI {mode} selected day clears chart");
+            Equal(false, layout.TrendChartBounds.IntersectsWith(layout.ModelsTitleBounds), $"{dpi} DPI {mode} chart clears model heading");
+            Equal(false, layout.ModelsTitleBounds.IntersectsWith(layout.ModelRowBounds[0]), $"{dpi} DPI {mode} model heading clears rows");
+            for (var index = 1; index < layout.ModelRowBounds.Count; index++)
+            {
+                Equal(
+                    true,
+                    layout.ModelRowBounds[index - 1].Bottom <= layout.ModelRowBounds[index].Top,
+                    $"{dpi} DPI {mode} model rows {index - 1}/{index} do not overlap");
+            }
+
+            foreach (var tailSide in Enum.GetValues<PopoverTailSide>())
+            {
+                var bodyInWindow = layout.BodyBounds(tailSide);
+                var windowBounds = new Rectangle(
+                    0,
+                    0,
+                    layout.BodySize.Width
+                        + (tailSide is PopoverTailSide.Left or PopoverTailSide.Right ? layout.TailSize : 0),
+                    layout.BodySize.Height
+                        + (tailSide is PopoverTailSide.Top or PopoverTailSide.Bottom ? layout.TailSize : 0));
+                Equal(true, windowBounds.Contains(bodyInWindow), $"{dpi} DPI {mode} {tailSide} body stays inside window");
+                Equal(
+                    new Rectangle(
+                        bodyInWindow.Left + layout.BackBounds.Left,
+                        bodyInWindow.Top + layout.BackBounds.Top,
+                        layout.BackBounds.Width,
+                        layout.BackBounds.Height),
+                    layout.InWindow(layout.BackBounds, tailSide),
+                    $"{dpi} DPI {mode} {tailSide} back hit area follows body offset");
+            }
+        }
+    }
+
+    Equal(0, CodexSpendHistoryLayout.Create(96, false, 0).BarBounds.Count, "empty spend history has no bar hit areas");
+    Equal(
+        CodexSpendHistoryLayout.MaximumTrendDays,
+        CodexSpendHistoryLayout.Create(96, false, CodexSpendHistoryLayout.MaximumTrendDays + 10).BarBounds.Count,
+        "spend-history bar hit areas are capped to the visible 30 days");
 }
 
 static int MeasureSingleLine(string text, Font font) =>
@@ -10147,6 +11762,7 @@ static void TestSettingsV2PluginMigration()
         Equal(false, loaded.IsPluginEnabled("zgstokenbar.usage.codex-local"), "Codex usage dependency migrated");
         Equal(true, loaded.IsPluginEnabled("zgstokenbar.intelligence.radar"), "Radar plugin migrated");
         Equal(true, loaded.IsPluginEnabled("zgstokenbar.provider.ai-gateway"), "AI Gateway plugin migrated");
+        Equal(true, loaded.HasExplicitPluginEnablement("zgstokenbar.provider.ai-gateway"), "an enabled legacy gateway remains an explicit user choice");
         Equal(original, File.ReadAllText(settingsPath + ".v1.bak"), "v1 backup is exact");
         using var migrated = JsonDocument.Parse(File.ReadAllBytes(settingsPath));
         Equal(
@@ -10154,11 +11770,276 @@ static void TestSettingsV2PluginMigration()
             migrated.RootElement.GetProperty("schemaVersion").GetInt32(),
             "saved settings are v2");
 
+        var legacyV2Directory = Path.Combine(directory, "legacy-v2");
+        Directory.CreateDirectory(legacyV2Directory);
+        const string legacyV2 = """
+            {
+              "schemaVersion": 2,
+              "pluginEnabled": {
+                "test.provider": false,
+                "zgstokenbar.provider.ai-gateway": false
+              },
+              "enableAiGatewayBalance": false,
+              "enabledProviders": ["codex"]
+            }
+            """;
+        var legacyV2Path = Path.Combine(legacyV2Directory, "settings.json");
+        File.WriteAllText(legacyV2Path, legacyV2);
+        var migratedLegacyV2 = new AppSettingsStore(legacyV2Directory).Load();
+        Equal(false, migratedLegacyV2.IsPluginEnabled("test.provider"), "legacy v2 plugin off is retained");
+        Equal(true, migratedLegacyV2.HasExplicitPluginEnablement("test.provider"), "v2 settings without provenance treat existing plugin choices as explicit");
+        Equal(false, migratedLegacyV2.WasPluginAutoEnabled("test.provider"), "legacy v2 never fabricates auto-discovery provenance");
+        Equal(false, migratedLegacyV2.HasExplicitPluginEnablement("zgstokenbar.provider.ai-gateway"), "retired gateway default-off remains eligible for one Harness discovery probe");
+        Equal(legacyV2, File.ReadAllText(legacyV2Path + ".v2.bak"), "legacy v2 provenance migration keeps an exact backup");
+        using (var migratedV2Document = JsonDocument.Parse(File.ReadAllBytes(legacyV2Path)))
+        {
+            Equal(2, migratedV2Document.RootElement.GetProperty("schemaVersion").GetInt32(), "provenance fields remain rollback-compatible schema v2");
+            Equal(true, migratedV2Document.RootElement.TryGetProperty("pluginEnablementDecisions", out _), "migrated v2 writes explicit-decision provenance");
+            Equal(true, migratedV2Document.RootElement.TryGetProperty("autoEnabledPlugins", out _), "migrated v2 writes automatic provenance");
+        }
+
+        var transitionalV3Directory = Path.Combine(directory, "transitional-v3");
+        Directory.CreateDirectory(transitionalV3Directory);
+        const string transitionalV3 = """
+            {
+              "schemaVersion": 3,
+              "pluginEnabled": {
+                "test.provider": true
+              },
+              "pluginEnablementDecisions": [],
+              "autoEnabledPlugins": ["test.provider"]
+            }
+            """;
+        var transitionalV3Path = Path.Combine(transitionalV3Directory, "settings.json");
+        File.WriteAllText(transitionalV3Path, transitionalV3);
+        var downgradedV3 = new AppSettingsStore(transitionalV3Directory).Load();
+        Equal(2, downgradedV3.SchemaVersion, "transitional schema v3 is normalized back to v2");
+        Equal(true, downgradedV3.WasPluginAutoEnabled("test.provider"), "transitional v3 keeps valid auto-discovery provenance");
+        Equal(false, downgradedV3.HasExplicitPluginEnablement("test.provider"), "transitional v3 does not turn auto enablement into an explicit choice");
+        Equal(transitionalV3, File.ReadAllText(transitionalV3Path + ".v3.bak"), "transitional v3 downgrade keeps an exact backup");
+        using (var downgradedV3Document = JsonDocument.Parse(File.ReadAllBytes(transitionalV3Path)))
+        {
+            Equal(2, downgradedV3Document.RootElement.GetProperty("schemaVersion").GetInt32(), "transitional settings are persisted with rollback-compatible schema v2");
+        }
+
+        var blockedMigrationDirectory = Path.Combine(directory, "blocked-migration");
+        Directory.CreateDirectory(blockedMigrationDirectory);
+        var blockedMigrationPath = Path.Combine(blockedMigrationDirectory, "settings.json");
+        File.WriteAllText(blockedMigrationPath, transitionalV3);
+        using (var migrationLock = new FileStream(
+                   blockedMigrationPath,
+                   FileMode.Open,
+                   FileAccess.Read,
+                   FileShare.Read))
+        {
+            var blockedMigration = new AppSettingsStore(blockedMigrationDirectory).Load();
+            Equal(2, blockedMigration.SchemaVersion, "temporarily blocked migration still returns valid normalized settings");
+            Equal(true, blockedMigration.WasPluginAutoEnabled("test.provider"), "blocked migration keeps in-memory provenance instead of resetting defaults");
+            Equal(false, File.Exists(blockedMigrationPath + ".corrupt.bak"), "a migration write lock is never misclassified as corrupt settings");
+        }
+
         var manager = new SettingsMigrationManager(directory);
         Equal(true, manager.Status().V1BackupExists, "migration status sees v1 backup");
         manager.RestoreV1();
         Equal(original, File.ReadAllText(settingsPath), "restore returns exact v1 settings");
         Equal(true, File.Exists(settingsPath + ".v2.rollback"), "v2 rollback is preserved");
+    }
+    finally
+    {
+        Directory.Delete(directory, recursive: true);
+    }
+}
+
+static void TestProviderLocalCredentialAutoDiscovery()
+{
+    var directory = Path.Combine(
+        Path.GetTempPath(),
+        $"zgstokenbar-provider-discovery-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(directory);
+    try
+    {
+        var store = new AppSettingsStore(directory);
+        var provider = new LocalProbeTestPlugin(
+            "test.provider",
+            hasCredentials: true,
+            canProbe: true);
+        var dependent = new LocalProbeTestPlugin(
+            "test.usage",
+            hasCredentials: false,
+            canProbe: false,
+            requires: ["test.provider"]);
+        var settings = new AppSettings();
+        settings.Normalize();
+        Equal(
+            true,
+            PluginAutoDiscovery.ApplyAsync(
+                    store,
+                    settings,
+                    [provider, dependent],
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult(),
+            "fresh settings auto-enable a locally detected Provider");
+        Equal(true, settings.IsPluginEnabled("test.provider"), "detected Provider is enabled");
+        Equal(true, settings.IsPluginEnabled("test.usage"), "Provider-dependent local usage is enabled");
+        Equal(true, settings.WasPluginAutoEnabled("test.provider"), "Provider enablement records automatic provenance");
+        Equal(true, settings.WasPluginAutoEnabled("test.usage"), "dependent enablement records automatic provenance");
+        Equal(false, settings.HasExplicitPluginEnablement("test.provider"), "automatic discovery never impersonates a user choice");
+        Equal(1, provider.ProbeCalls, "fresh Provider is probed exactly once");
+        Equal(1, provider.StartCalls, "local probe runs inside the normal plugin lifecycle");
+        Equal(1, provider.StopCalls, "local probe stops the plugin after discovery");
+
+        var reloaded = store.Load();
+        Equal(true, reloaded.WasPluginAutoEnabled("test.provider"), "automatic provenance survives restart");
+        Equal(
+            false,
+            PluginAutoDiscovery.ApplyAsync(
+                    store,
+                    reloaded,
+                    [provider, dependent],
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult(),
+            "already-discovered Providers are not reprobed on every start");
+        Equal(1, provider.ProbeCalls, "restart reuses the automatic decision without touching credentials again");
+
+        var explicitlyDisabledProvider = new LocalProbeTestPlugin(
+            "test.provider",
+            hasCredentials: true,
+            canProbe: true);
+        var explicitlyDisabled = new AppSettings();
+        explicitlyDisabled.Normalize();
+        explicitlyDisabled.SetPluginEnabled("test.provider", false);
+        Equal(
+            false,
+            PluginAutoDiscovery.ApplyAsync(
+                    store,
+                    explicitlyDisabled,
+                    [explicitlyDisabledProvider, dependent],
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult(),
+            "an explicit off decision wins over local credential discovery");
+        Equal(0, explicitlyDisabledProvider.ProbeCalls, "explicitly disabled Providers do not inspect local credentials");
+        Equal(false, explicitlyDisabled.IsPluginEnabled("test.provider"), "explicit Provider off remains disabled");
+
+        var missingProvider = new LocalProbeTestPlugin(
+            "test.missing-provider",
+            hasCredentials: false,
+            canProbe: true);
+        var missingSettings = new AppSettings();
+        missingSettings.Normalize();
+        Equal(
+            false,
+            PluginAutoDiscovery.ApplyAsync(
+                    store,
+                    missingSettings,
+                    [missingProvider],
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult(),
+            "missing local credentials leave a Provider disabled");
+        Equal(false, missingSettings.IsPluginEnabled("test.missing-provider"), "missing Provider is not fabricated");
+        Equal(1, missingProvider.ProbeCalls, "missing-provider discovery is still a single local-only probe");
+
+        var throwingProvider = new LocalProbeTestPlugin(
+            "test.throwing-provider",
+            hasCredentials: false,
+            canProbe: true,
+            throwOnProbe: true);
+        var throwingSettings = new AppSettings();
+        throwingSettings.Normalize();
+        Equal(
+            false,
+            PluginAutoDiscovery.ApplyAsync(
+                    store,
+                    throwingSettings,
+                    [throwingProvider],
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult(),
+            "unexpected optional-probe failures remain best-effort");
+        Equal(false, throwingSettings.IsPluginEnabled("test.throwing-provider"), "throwing probes fail closed without enabling a Provider");
+        Equal(1, throwingProvider.StopCalls, "throwing probes still stop their plugin lifecycle");
+
+        var blockedSaveDirectory = Path.Combine(directory, "blocked-save");
+        Directory.CreateDirectory(blockedSaveDirectory);
+        Directory.CreateDirectory(Path.Combine(blockedSaveDirectory, "settings.json"));
+        var blockedSaveStore = new AppSettingsStore(blockedSaveDirectory);
+        var blockedSaveProvider = new LocalProbeTestPlugin(
+            "test.blocked-save-provider",
+            hasCredentials: true,
+            canProbe: true);
+        var blockedSaveSettings = new AppSettings();
+        blockedSaveSettings.Normalize();
+        Equal(
+            false,
+            PluginAutoDiscovery.ApplyAsync(
+                    blockedSaveStore,
+                    blockedSaveSettings,
+                    [blockedSaveProvider],
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult(),
+            "settings persistence failures do not terminate startup discovery");
+        Equal(false, blockedSaveSettings.IsPluginEnabled("test.blocked-save-provider"), "failed persistence restores in-memory plugin enablement");
+        Equal(false, blockedSaveSettings.WasPluginAutoEnabled("test.blocked-save-provider"), "failed persistence restores automatic provenance");
+
+        using var cancellation = new CancellationTokenSource();
+        var detectedBeforeCancellation = new LocalProbeTestPlugin(
+            "test.a-detected",
+            hasCredentials: true,
+            canProbe: true);
+        var cancellingProvider = new LocalProbeTestPlugin(
+            "test.z-cancelling",
+            hasCredentials: false,
+            canProbe: true,
+            cancelOnProbe: cancellation);
+        var cancelledSettings = new AppSettings();
+        cancelledSettings.Normalize();
+        try
+        {
+            PluginAutoDiscovery.ApplyAsync(
+                    store,
+                    cancelledSettings,
+                    [detectedBeforeCancellation, cancellingProvider],
+                    cancellation.Token)
+                .GetAwaiter()
+                .GetResult();
+            throw new InvalidOperationException("Cancelled discovery should propagate cancellation.");
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        Equal(false, cancelledSettings.IsPluginEnabled("test.a-detected"), "cancelled discovery restores earlier in-memory enablement");
+        Equal(false, cancelledSettings.WasPluginAutoEnabled("test.a-detected"), "cancelled discovery restores earlier provenance");
+    }
+    finally
+    {
+        Directory.Delete(directory, recursive: true);
+    }
+}
+
+static void TestBundledPluginExtraction()
+{
+    var directory = Path.Combine(
+        Path.GetTempPath(),
+        $"zgstokenbar-bundled-plugin-extraction-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(directory);
+    try
+    {
+        var bytes = Encoding.UTF8.GetBytes("bundled-provider-fixture");
+        var packagePath = Path.Combine(directory, "fixture.zgsplugin");
+        using var input = new MemoryStream(bytes, writable: false);
+        var digest = BundledPluginInstaller.ExtractPackage(input, packagePath);
+
+        Equal(Convert.ToHexString(SHA256.HashData(bytes)), digest, "bundle digest is calculated while copying");
+        using var exclusiveReader = new FileStream(
+            packagePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.None);
+        Equal(bytes.Length, exclusiveReader.Length, "bundle output is closed before package verification");
     }
     finally
     {
@@ -10273,10 +12154,356 @@ static void TestPluginMalformedManifestRejection()
         {
             Equal("Process plugin manifest is incompatible.", exception.SafeMessage, "malformed plugin manifest fails through the trust boundary");
         }
+
+        var firstPackage = Path.Combine(directory, "same-version-first.zgsplugin");
+        var secondPackage = Path.Combine(directory, "same-version-second.zgsplugin");
+        var firstDigest = CreateTestProcessPluginPackage(
+            firstPackage,
+            "test.same-version",
+            "1.0.0",
+            "first executable");
+        var secondDigest = CreateTestProcessPluginPackage(
+            secondPackage,
+            "test.same-version",
+            "1.0.0",
+            "different executable");
+        var manager = new PluginPackageManager(directory);
+        var firstInstalled = manager.EnsureInstalled(firstPackage, firstDigest);
+        try
+        {
+            manager.EnsureInstalled(secondPackage, secondDigest);
+            throw new InvalidOperationException("A conflicting same-version package should be rejected.");
+        }
+        catch (PluginTrustException exception)
+        {
+            Equal(
+                "Installed plugin version does not match the supplied package.",
+                exception.SafeMessage,
+                "same ID/version packages must match the supplied canonical manifest");
+        }
+        Equal(
+            "first executable",
+            File.ReadAllText(Path.Combine(firstInstalled.Path, "plugin.exe")),
+            "same-version conflicts never overwrite the trusted installed bytes");
+        manager.RecordBundledInstallFailure(
+            "test.same-version.bundle",
+            "test.same-version",
+            "1.0.0");
+        Equal(
+            false,
+            manager.LoadProcessPlugins().Any(plugin => plugin.Manifest.Id == "test.same-version"),
+            "a bundled same-version trust conflict cannot remain active behind its warning");
+        manager.ClearBundledInstallFailure("test.same-version.bundle");
+
+        var marker = manager.RecordBundledInstallFailure(
+            "test.bundle.resource",
+            "test.bundled-provider",
+            "1.2.3");
+        Equal(false, marker.Valid, "bundle trust failures are recorded as invalid status");
+        Equal("trust_failed", marker.Error, "bundle failure marker exposes a safe diagnostic code");
+        var doctorMarker = manager.InspectInstalled().Single(status =>
+            status.PluginId == "test.bundled-provider"
+            && status.Version == "1.2.3"
+            && status.Error == "trust_failed");
+        Equal(false, doctorMarker.Valid, "plugin doctor inspection includes persisted bundle failures");
+        manager.ClearBundledInstallFailure("test.bundle.resource");
+        Equal(
+            false,
+            manager.InspectInstalled().Any(status =>
+                status.PluginId == "test.bundled-provider"
+                && status.Version == "1.2.3"
+                && status.Error == "trust_failed"),
+            "successful bundle reconciliation clears its prior diagnostic marker");
     }
     finally
     {
         Directory.Delete(directory, recursive: true);
+    }
+}
+
+static string CreateTestProcessPluginPackage(
+    string packagePath,
+    string pluginId,
+    string version,
+    string executableContents)
+{
+    var executable = Encoding.UTF8.GetBytes(executableContents);
+    var executableDigest = Convert.ToHexString(SHA256.HashData(executable));
+    var manifest = new PluginManifest(
+        1,
+        pluginId,
+        version,
+        ZgsHostApi.Major,
+        ZgsHostApi.Minor,
+        PluginRuntime.Process,
+        false,
+        pluginId,
+        ["usage"],
+        false,
+        0,
+        [])
+    {
+        Entrypoint = "plugin.exe",
+        Files = [new PluginPackageFile("plugin.exe", executable.Length, executableDigest)],
+        HandshakeTimeoutSeconds = 1,
+        CallTimeoutSeconds = 1,
+        DisposeTimeoutSeconds = 1,
+    };
+    using (var archive = System.IO.Compression.ZipFile.Open(
+               packagePath,
+               System.IO.Compression.ZipArchiveMode.Create))
+    {
+        var manifestEntry = archive.CreateEntry("plugin-manifest.v1.json");
+        using (var output = manifestEntry.Open())
+        {
+            output.Write(JsonSerializer.SerializeToUtf8Bytes(
+                manifest,
+                PluginSdkJsonContext.Default.PluginManifest));
+        }
+        using var executableOutput = archive.CreateEntry("plugin.exe").Open();
+        executableOutput.Write(executable);
+    }
+    return Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(packagePath)));
+}
+
+static void TestPluginFilesystemFaultIsolation()
+{
+    var catalogDirectory = Path.Combine(
+        Path.GetTempPath(),
+        $"zgstokenbar-plugin-catalog-fault-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(catalogDirectory);
+    try
+    {
+        var pluginsPath = Path.Combine(catalogDirectory, "plugins");
+        File.WriteAllText(pluginsPath, "occupied");
+        var manager = new PluginPackageManager(catalogDirectory);
+        var failure = manager.InspectInstalled().Single();
+        Equal(false, failure.Valid, "a non-directory plugin catalog is reported as invalid");
+        Equal("trust_failed", failure.Error, "plugin catalog faults expose only the safe trust code");
+        Equal(0, manager.LoadProcessPlugins().Count, "plugin catalog faults load no process Providers");
+        var bundleFailure = manager.RecordBundledInstallFailure(
+            "test.unwritable.bundle",
+            "test.optional-provider",
+            "1.0.0");
+        Equal(false, bundleFailure.Valid, "an unwritable diagnostic root still returns a visible invalid bundle status");
+    }
+    finally
+    {
+        Directory.Delete(catalogDirectory, recursive: true);
+    }
+
+    var hostDirectory = Path.Combine(
+        Path.GetTempPath(),
+        $"zgstokenbar-plugin-data-fault-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(Path.Combine(hostDirectory, "plugin-data"));
+    File.WriteAllText(
+        Path.Combine(hostDirectory, "plugin-data", "zgstokenbar.provider.claude"),
+        "occupied");
+    var plugins = GeneratedBuiltinPluginRegistry.Create();
+    var host = new ZgsTokenBarHost(
+        plugins,
+        BuiltinProfiles.Headless(new Dictionary<string, bool>(StringComparer.Ordinal)
+        {
+            ["zgstokenbar.metrics.system"] = true,
+            ["zgstokenbar.provider.claude"] = true,
+            ["zgstokenbar.provider.codex"] = false,
+            ["zgstokenbar.usage.codex-local"] = false,
+            ["zgstokenbar.intelligence.radar"] = false,
+        }),
+        "test",
+        hostDirectory);
+    try
+    {
+        host.StartAsync().AsTask().GetAwaiter().GetResult();
+        var status = host.DescribePlugin("zgstokenbar.provider.claude")
+            ?? throw new InvalidOperationException("Claude plugin status is missing.");
+        Equal(PluginHealthCode.Unavailable, status.Health.Code, "optional Provider data-root faults remain visible");
+        Equal(false, status.Health.Connected, "optional Provider data-root faults do not report a connection");
+    }
+    finally
+    {
+        host.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        Directory.Delete(hostDirectory, recursive: true);
+    }
+}
+
+static void TestOptionalPluginCatalogIsolation()
+{
+    var builtins = GeneratedBuiltinPluginRegistry.Create();
+    var duplicateId = new LocalProbeTestPlugin(
+        "zgstokenbar.provider.claude",
+        false,
+        false);
+    var duplicateNamespace = new LocalProbeTestPlugin(
+        "test.optional.namespace-conflict",
+        false,
+        false,
+        commandNamespace: "claude");
+    var dependency = new LocalProbeTestPlugin(
+        "test.optional.dependent",
+        false,
+        false,
+        requires: ["test.optional.base"]);
+    var dependencyBase = new LocalProbeTestPlugin(
+        "test.optional.base",
+        false,
+        false);
+    var orphan = new LocalProbeTestPlugin(
+        "test.optional.orphan",
+        false,
+        false,
+        requires: ["test.optional.missing"]);
+    var selection = PluginCatalogComposer.SelectOptional(
+        builtins,
+        [duplicateId, duplicateNamespace, dependency, dependencyBase, orphan]);
+    Equal(
+        true,
+        selection.Accepted.Contains(dependencyBase)
+            && selection.Accepted.Contains(dependency),
+        "compatible optional dependencies are composed regardless of candidate order");
+    Equal(
+        true,
+        selection.Rejected.Contains(duplicateId)
+            && selection.Rejected.Contains(duplicateNamespace)
+            && selection.Rejected.Contains(orphan),
+        "ID, command namespace, and missing-dependency conflicts fail closed");
+    Equal(
+        0,
+        PluginValidation.ValidateCatalog(
+            builtins.Concat(selection.Accepted).Select(plugin => plugin.Manifest).ToArray()).Count,
+        "the selected desktop catalog remains valid");
+}
+
+static void TestOptionalPluginRuntimeCatalogIsolation()
+{
+    var basePlugin = new RuntimeCatalogTestPlugin(
+        "test.runtime.base",
+        "runtime-base",
+        PluginRuntime.Builtin,
+        publishOnStart: false,
+        "test.runtime.shared-command",
+        "test.runtime.shared-settings");
+    var optionalPlugin = new RuntimeCatalogTestPlugin(
+        "test.runtime.optional",
+        "runtime-optional",
+        PluginRuntime.Process,
+        publishOnStart: true,
+        "test.runtime.shared-command",
+        "test.runtime.shared-settings");
+    var profile = new EffectiveProfile(
+        1,
+        "test",
+        [],
+        [
+            new ProfilePlugin(
+                basePlugin.Manifest.Id,
+                basePlugin.Manifest.Version,
+                true,
+                basePlugin.Manifest.Order,
+                new Dictionary<string, JsonElement>(StringComparer.Ordinal)),
+            new ProfilePlugin(
+                optionalPlugin.Manifest.Id,
+                optionalPlugin.Manifest.Version,
+                true,
+                optionalPlugin.Manifest.Order,
+                new Dictionary<string, JsonElement>(StringComparer.Ordinal)),
+        ]);
+    var dataRoot = Path.Combine(
+        Path.GetTempPath(),
+        $"zgstokenbar-runtime-catalog-{Guid.NewGuid():N}");
+    var host = new ZgsTokenBarHost(
+        [basePlugin, optionalPlugin],
+        profile,
+        "test",
+        dataRoot,
+        persistProfileState: false);
+    try
+    {
+        host.StartAsync().AsTask().GetAwaiter().GetResult();
+        var status = host.DescribePlugin(optionalPlugin.Manifest.Id)
+            ?? throw new InvalidOperationException("Optional runtime plugin status is missing.");
+        Equal(PluginHealthCode.TrustFailed, status.Health.Code, "runtime catalog conflicts fail closed");
+        Equal(1, optionalPlugin.StopCalls, "the conflicting optional process is stopped immediately");
+        Equal(0, status.Commands.Count, "rejected runtime commands are removed from the host catalog");
+        Equal(0, status.Settings.Count, "rejected runtime settings are removed from the host catalog");
+    }
+    finally
+    {
+        host.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        if (Directory.Exists(dataRoot)) Directory.Delete(dataRoot, recursive: true);
+    }
+
+    var dynamicBase = new RuntimeCatalogTestPlugin(
+        "test.runtime.dynamic-base",
+        "runtime-dynamic-base",
+        PluginRuntime.Builtin,
+        publishOnStart: false,
+        "test.runtime.dynamic-command",
+        "test.runtime.dynamic-settings");
+    var dynamicOptional = new RuntimeCatalogTestPlugin(
+        "test.runtime.dynamic-optional",
+        "runtime-dynamic-optional",
+        PluginRuntime.Process,
+        publishOnStart: true,
+        "test.runtime.dynamic-command",
+        "test.runtime.dynamic-settings");
+    var dynamicProfile = new EffectiveProfile(
+        1,
+        "test",
+        [],
+        [
+            new ProfilePlugin(
+                dynamicBase.Manifest.Id,
+                dynamicBase.Manifest.Version,
+                true,
+                dynamicBase.Manifest.Order,
+                new Dictionary<string, JsonElement>(StringComparer.Ordinal)),
+            new ProfilePlugin(
+                dynamicOptional.Manifest.Id,
+                dynamicOptional.Manifest.Version,
+                false,
+                dynamicOptional.Manifest.Order,
+                new Dictionary<string, JsonElement>(StringComparer.Ordinal)),
+        ]);
+    var dynamicRoot = Path.Combine(
+        Path.GetTempPath(),
+        $"zgstokenbar-runtime-enable-{Guid.NewGuid():N}");
+    var dynamicHost = new ZgsTokenBarHost(
+        [dynamicBase, dynamicOptional],
+        dynamicProfile,
+        "test",
+        dynamicRoot,
+        persistProfileState: false);
+    try
+    {
+        dynamicHost.StartAsync().AsTask().GetAwaiter().GetResult();
+        try
+        {
+            dynamicHost.SetEnabledAsync(
+                    dynamicOptional.Manifest.Id,
+                    true,
+                    dynamicHost.Describe().Revisions.ConfigRevision,
+                    CancellationToken.None)
+                .AsTask()
+                .GetAwaiter()
+                .GetResult();
+            throw new InvalidOperationException("Conflicting optional Provider was enabled.");
+        }
+        catch (HostCommandException exception)
+        {
+            Equal("trust_failed", exception.Code, "dynamic runtime conflicts return a safe trust failure");
+        }
+        var status = dynamicHost.DescribePlugin(dynamicOptional.Manifest.Id)
+            ?? throw new InvalidOperationException("Dynamic optional Provider status is missing.");
+        Equal(false, status.Enabled, "failed dynamic enablement restores the disabled state");
+        Equal(1, dynamicOptional.StopCalls, "failed dynamic enablement stops the conflicting process");
+        Equal(0, status.Commands.Count, "failed dynamic commands do not leak into the host catalog");
+        Equal(0, status.Settings.Count, "failed dynamic settings do not leak into the host catalog");
+    }
+    finally
+    {
+        dynamicHost.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        if (Directory.Exists(dynamicRoot)) Directory.Delete(dynamicRoot, recursive: true);
     }
 }
 
@@ -10303,6 +12530,9 @@ static void TestPluginHostCatalog()
             BuiltinProfiles.Headless(new Dictionary<string, bool>(StringComparer.Ordinal)
             {
                 ["zgstokenbar.intelligence.radar"] = true,
+                ["zgstokenbar.provider.claude"] = true,
+                ["zgstokenbar.provider.codex"] = true,
+                ["zgstokenbar.usage.codex-local"] = true,
             }),
             "test",
             directory);
@@ -10707,6 +12937,54 @@ static void TestKeepRunningWatchdogPolicy()
     Equal(false, WatchdogManager.ShouldStartApplication(true, true), "running main app is not duplicated");
     Equal(false, WatchdogManager.ShouldStartApplication(false, false), "disabled watchdog does not recover the app");
     Equal(2_000, WatchdogManager.PollMilliseconds, "watchdog restart attempts are throttled");
+}
+
+static void TestSettingsDataDirectoryOverride()
+{
+    var variable = AppSettingsStore.DataDirectoryEnvironmentVariable;
+    var previous = Environment.GetEnvironmentVariable(variable);
+    var configured = Path.Combine(Path.GetTempPath(), $"zgs-settings-env-{Guid.NewGuid():N}");
+    var explicitDirectory = Path.Combine(Path.GetTempPath(), $"zgs-settings-explicit-{Guid.NewGuid():N}");
+    try
+    {
+        Environment.SetEnvironmentVariable(variable, configured);
+        Equal(configured, new AppSettingsStore().DataDirectory, "environment selects the data directory");
+        Equal(
+            configured,
+            ZGSTokenBar.App.Program.ResolveDataDirectoryOverride(["--settings"]),
+            "environment data roots are explicit application isolation overrides");
+        Equal(
+            explicitDirectory,
+            new AppSettingsStore(explicitDirectory).DataDirectory,
+            "explicit data directory wins over the environment");
+        Equal(
+            explicitDirectory,
+            ZGSTokenBar.App.Program.ResolveDataDirectoryOverride(
+                ["--data-directory", explicitDirectory]),
+            "explicit application roots win over the environment override");
+        Equal(
+            explicitDirectory,
+            ZGSTokenBar.App.Program.ResolveDataDirectoryArgument(
+                ["--settings", "--data-directory", explicitDirectory]),
+            "application launch accepts an explicit fully-qualified data directory");
+        Equal(
+            null,
+            ZGSTokenBar.App.Program.ResolveDataDirectoryArgument(["--settings"]),
+            "application launch keeps the normal data-directory resolution by default");
+        Throws<ArgumentException>(
+            () => ZGSTokenBar.App.Program.ResolveDataDirectoryArgument(
+                ["--data-directory", "relative"]),
+            "application launch rejects a relative data directory");
+        Environment.SetEnvironmentVariable(variable, "relative");
+        Equal(
+            null,
+            ZGSTokenBar.App.Program.ResolveDataDirectoryOverride(["--settings"]),
+            "relative environment roots cannot disable normal process supervision");
+    }
+    finally
+    {
+        Environment.SetEnvironmentVariable(variable, previous);
+    }
 }
 
 static void TestReleaseUpdateDiscovery()
@@ -11522,7 +13800,7 @@ static void TestSettingsCorruptionRecovery()
         const string corrupt = "{not-json";
         File.WriteAllText(store.SettingsPath, corrupt);
         var settings = store.Load();
-        Equal(2, settings.EnabledProviders.Length, "corrupt settings fall back to defaults");
+        Equal(0, settings.EnabledProviders.Length, "corrupt settings fall back to local-discovery defaults");
         Equal(corrupt, File.ReadAllText(store.SettingsPath + ".corrupt.bak"), "corrupt settings recovery copy");
         store.Save(settings);
         using var document = JsonDocument.Parse(File.ReadAllText(store.SettingsPath));
@@ -13477,6 +15755,7 @@ static void TestNativeSettingsPanelContract()
         },
         96,
         renderOnly: true,
+        plugins: [AiGatewayTestPluginStatus(enabled: false)],
         codexEconomyStatus: new CodexEconomyStatus(
             CodexEconomyMode.Ask,
             new CodexEconomyProfile("Default Codex", Path.Combine(Path.GetTempPath(), "wmt-ui-default"), true, "test"),
@@ -13504,6 +15783,31 @@ static void TestNativeSettingsPanelContract()
                 "page switching leaves exactly one visible page");
         }
     }
+    Equal(
+        7,
+        controls.Count(control => Equals(control.Tag, "settings.scrollbar")),
+        "every settings page uses the shared themed scrollbar");
+    Equal(
+        true,
+        controls
+            .Where(control => control.Tag is string tag
+                && tag.StartsWith("settings.page.", StringComparison.Ordinal)
+                && tag != "settings.page.title")
+            .All(control => control is System.Windows.Forms.ScrollableControl { AutoScroll: false }),
+        "settings pages do not expose the native scrollbar");
+    draft.SelectPageForRendering("providers");
+    System.Windows.Forms.Application.DoEvents();
+    var providerScroll = draft.ScrollStateForAcceptance;
+    Equal(true, providerScroll.Maximum > 0, "overflowing settings content has a bounded scroll range");
+    Equal(true, providerScroll.ThemedBarVisible, "the themed scrollbar is visible only for overflowing content");
+    draft.SetScrollOffsetForAcceptance(providerScroll.Maximum);
+    Equal(
+        providerScroll.Maximum,
+        draft.ScrollStateForAcceptance.Offset,
+        "the themed scrollbar reaches the end of the settings content");
+    draft.SelectPageForRendering("general");
+    draft.SelectPageForRendering("providers");
+    Equal(0, draft.ScrollStateForAcceptance.Offset, "returning to a settings page resets it to the top");
     draft.SelectPageForRendering("general");
     var save = controls.OfType<System.Windows.Forms.Button>().Single(button => Equals(button.Tag, "settings.save"));
     var claude = controls.OfType<System.Windows.Forms.CheckBox>().Single(toggle => toggle.AccessibleName == "Claude");
@@ -13534,11 +15838,23 @@ static void TestNativeSettingsPanelContract()
     Equal(false, save.Enabled, "restoring system usage clears dirty state");
 
     var aiGateway = controls.OfType<System.Windows.Forms.CheckBox>()
-        .Single(toggle => toggle.AccessibleName == "AI Gateway");
+        .Single(toggle => toggle.AccessibleName == "DeepSeek Harness");
     PerformClick(aiGateway);
-    Equal(true, save.Enabled, "AI Gateway has an independent module switch");
+    Equal(true, save.Enabled, "DeepSeek Harness has an independent module switch");
     PerformClick(aiGateway);
-    Equal(false, save.Enabled, "restoring AI Gateway clears dirty state");
+    Equal(false, save.Enabled, "restoring DeepSeek Harness clears dirty state");
+    Equal(
+        false,
+        controls.OfType<System.Windows.Forms.TextBox>().Any(input =>
+            input.Tag is string tag
+            && tag.StartsWith("settings.plugin.zgstokenbar.provider.ai-gateway.secret.", StringComparison.Ordinal)),
+        "DeepSeek Harness settings reuse Harness credentials and expose no secret field");
+    Equal(
+        false,
+        controls.OfType<System.Windows.Forms.Button>().Any(button =>
+            button.Tag is string tag
+            && tag.StartsWith("settings.plugin.zgstokenbar.provider.ai-gateway.secret.", StringComparison.Ordinal)),
+        "DeepSeek Harness settings expose no credential clear action");
 
     var animations = controls.OfType<System.Windows.Forms.CheckBox>().Single(toggle => toggle.AccessibleName == "Animation effects");
     PerformClick(animations);
@@ -13589,6 +15905,40 @@ static void TestNativeSettingsPanelContract()
     Equal(27, draft.ResultSettings?.WindowX, "Save preserves floating window X");
     Equal(41, draft.ResultSettings?.WindowY, "Save preserves floating window Y");
     Equal(.4, draft.ResultSettings?.TaskbarPosition, "Save preserves taskbar position");
+}
+
+static PluginStatus AiGatewayTestPluginStatus(bool enabled)
+{
+    var manifest = new PluginManifest(
+        1,
+        PluginIdentity.Id,
+        PluginIdentity.Version,
+        1,
+        0,
+        PluginRuntime.Process,
+        false,
+        "ai-gateway",
+        ["balance"],
+        false,
+        400,
+        [])
+    {
+        DisplayName = "DeepSeek Harness",
+        CredentialSlots = [],
+    };
+    using var plugin = new AiGatewayObserverPlugin();
+    return new PluginStatus(
+        manifest,
+        enabled,
+        0,
+        new PluginHealth(
+            PluginHealthCode.Unavailable,
+            false,
+            false,
+            DateTimeOffset.UtcNow,
+            "zgstokenbar.provider.ai-gateway.health.unavailable"),
+        [],
+        plugin.Describe().Settings);
 }
 
 static void TestCodexEconomySettingsPanelContract()
@@ -13900,6 +16250,20 @@ static void Equal<T>(T expected, T actual, string label)
     }
 }
 
+static void Throws<TException>(Action action, string label)
+    where TException : Exception
+{
+    try
+    {
+        action();
+    }
+    catch (TException)
+    {
+        return;
+    }
+    throw new InvalidOperationException($"{label}: expected {typeof(TException).Name}");
+}
+
 static string ProfileBodyWithDailyUsage(
     long lifetimeTokens,
     IEnumerable<(DateOnly Date, long Tokens)> buckets) =>
@@ -13943,6 +16307,157 @@ sealed class RecordingHandler(Func<HttpRequestMessage, HttpResponseMessage> resp
         HttpRequestMessage request,
         CancellationToken cancellationToken) =>
         Task.FromResult(responseFactory(request));
+}
+
+sealed class AsyncRecordingHandler(
+    Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> responseFactory)
+    : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request,
+        CancellationToken cancellationToken) =>
+        responseFactory(request, cancellationToken);
+}
+
+sealed class LocalProbeTestPlugin(
+    string id,
+    bool hasCredentials,
+    bool canProbe,
+    IReadOnlyList<string>? requires = null,
+    bool throwOnProbe = false,
+    CancellationTokenSource? cancelOnProbe = null,
+    string? commandNamespace = null) : BuiltinPluginBase, ILocalCredentialProbe
+{
+    public int StartCalls { get; private set; }
+    public int StopCalls { get; private set; }
+    public int ProbeCalls { get; private set; }
+
+    public override PluginManifest Manifest { get; } = new(
+        1,
+        id,
+        "1.0.0",
+        ZgsHostApi.Major,
+        ZgsHostApi.Minor,
+        PluginRuntime.Builtin,
+        false,
+        commandNamespace ?? id,
+        canProbe ? ["local-credentials"] : ["usage"],
+        false,
+        0,
+        requires ?? []);
+
+    public override ValueTask StartAsync(
+        PluginStartContext context,
+        CancellationToken cancellationToken)
+    {
+        StartCalls++;
+        return ValueTask.CompletedTask;
+    }
+
+    public override ValueTask StopAsync(CancellationToken cancellationToken)
+    {
+        StopCalls++;
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask<bool> HasLocalCredentialsAsync(CancellationToken cancellationToken)
+    {
+        ProbeCalls++;
+        if (cancelOnProbe is not null)
+        {
+            cancelOnProbe.Cancel();
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+        if (throwOnProbe) throw new InvalidOperationException("probe failure");
+        return ValueTask.FromResult(hasCredentials);
+    }
+}
+
+sealed class RecordingPluginCredentialBroker : IPluginCredentialBroker
+{
+    public int ResolveCalls { get; private set; }
+
+    public ValueTask<string?> ResolveAsync(
+        string pluginId,
+        string slot,
+        CancellationToken cancellationToken)
+    {
+        ResolveCalls++;
+        return ValueTask.FromResult<string?>(null);
+    }
+}
+
+sealed class RuntimeCatalogTestPlugin : IZgsPlugin
+{
+    private readonly bool _publishOnStart;
+    private readonly CommandDescriptor _command;
+    private readonly SettingsContribution _settings;
+
+    public RuntimeCatalogTestPlugin(
+        string id,
+        string commandNamespace,
+        PluginRuntime runtime,
+        bool publishOnStart,
+        string commandId,
+        string settingsId)
+    {
+        _publishOnStart = publishOnStart;
+        Manifest = new(
+            1,
+            id,
+            "1.0.0",
+            ZgsHostApi.Major,
+            ZgsHostApi.Minor,
+            runtime,
+            false,
+            commandNamespace,
+            ["commands", "settings"],
+            false,
+            runtime == PluginRuntime.Builtin ? 0 : 1,
+            []);
+        _command = new(
+            commandId,
+            id,
+            commandNamespace,
+            "status",
+            "Synthetic runtime command",
+            true,
+            true,
+            false,
+            [],
+            RevisionDomain.None);
+        _settings = new(settingsId, id, []);
+        if (!publishOnStart)
+        {
+            Commands = [_command];
+            Settings = [_settings];
+        }
+    }
+
+    public PluginManifest Manifest { get; }
+    public IReadOnlyList<CommandDescriptor> Commands { get; private set; } = [];
+    public IReadOnlyList<SettingsContribution> Settings { get; private set; } = [];
+    public int StopCalls { get; private set; }
+
+    public ValueTask StartAsync(PluginStartContext context, CancellationToken cancellationToken)
+    {
+        if (_publishOnStart)
+        {
+            Commands = [_command];
+            Settings = [_settings];
+        }
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask StopAsync(CancellationToken cancellationToken)
+    {
+        StopCalls++;
+        Commands = [];
+        Settings = [];
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask DisposeAsync() => StopAsync(CancellationToken.None);
 }
 
 sealed class RecordingProxy(Uri proxy) : IWebProxy

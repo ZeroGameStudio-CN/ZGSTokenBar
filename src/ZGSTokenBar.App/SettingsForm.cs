@@ -16,7 +16,6 @@ internal sealed class SettingsForm : Form
         "zgstokenbar.provider.codex",
         "zgstokenbar.usage.codex-local",
         "zgstokenbar.intelligence.radar",
-        "zgstokenbar.provider.ai-gateway",
     ];
     private const int LogicalClientWidth = 720;
     private const int LogicalClientHeight = 540;
@@ -43,7 +42,6 @@ internal sealed class SettingsForm : Form
     private readonly ToggleSwitch _claude;
     private readonly ToggleSwitch _codex;
     private readonly ToggleSwitch _codexLocalUsage;
-    private readonly ToggleSwitch _aiGateway;
     private readonly ToggleSwitch _sub2ApiPool;
     private readonly ToggleSwitch _openAtLogin;
     private readonly ToggleSwitch _keepRunning;
@@ -100,6 +98,10 @@ internal sealed class SettingsForm : Form
 
         _original = Copy(settings);
         _plugins = plugins ?? [];
+        foreach (var plugin in _plugins.Where(plugin => !BuiltinPluginIds.Contains(plugin.Manifest.Id)))
+        {
+            _original.SetPluginEnabled(plugin.Manifest.Id, plugin.Enabled, explicitChoice: false);
+        }
         _text = NativeText.For(settings.Locale);
         _theme = SettingsTheme.Create();
         _scale = Math.Max(1, targetDpi / 96f);
@@ -185,7 +187,6 @@ internal sealed class SettingsForm : Form
             _text.CodexLocalUsageModule,
             _text.CodexLocalUsageModuleHint,
             settings.IsPluginEnabled("zgstokenbar.usage.codex-local", settings.IsEnabled(ProviderKind.Codex)));
-        _aiGateway = CreateToggle(_text.AiGateway, _text.AiGatewayProviderHint, settings.IsEnabled(ProviderKind.AiGateway));
         _sub2ApiPool = CreateToggle(
             _text.Sub2ApiPool,
             _text.Sub2ApiModuleHint,
@@ -335,7 +336,6 @@ internal sealed class SettingsForm : Form
             }
             RefreshDirtyState();
         };
-        _aiGateway.CheckedChanged += (_, _) => RefreshDirtyState();
         _sub2ApiPool.CheckedChanged += (_, _) =>
         {
             if (!_updatingCodexDependency && _codex.Checked)
@@ -384,6 +384,11 @@ internal sealed class SettingsForm : Form
     }
 
     internal Panel ScrollViewport => _activePage;
+
+    internal (int Offset, int Maximum, bool ThemedBarVisible) ScrollStateForAcceptance =>
+        _activePage.ScrollState;
+
+    internal void SetScrollOffsetForAcceptance(int value) => _activePage.ScrollTo(value);
 
     internal void SelectPageForRendering(string key) => SelectPage(key, focusPage: false);
 
@@ -466,7 +471,6 @@ internal sealed class SettingsForm : Form
             _text.CodexLocalUsageModuleHint,
             _theme,
             _scale));
-        providers.Add(new ToggleSettingRow(_aiGateway, _text.AiGateway, _text.AiGatewayProviderHint, _theme, _scale));
         providers.Add(new ToggleSettingRow(
             _sub2ApiPool,
             _text.Sub2ApiPool,
@@ -614,7 +618,7 @@ internal sealed class SettingsForm : Form
             }
             _activePage = page;
             page.BringToFront();
-            page.AutoScrollPosition = Point.Empty;
+            page.ScrollToTop();
             page.Visible = true;
         }
         finally
@@ -920,7 +924,11 @@ internal sealed class SettingsForm : Form
             EnableRadar = _radar.Checked,
             EnableRadarAlerts = _radar.Checked && _radarAlerts.Checked,
             EnableCodexEconomyBar = _codexEconomyBar.Checked,
-            EnableAiGatewayBalance = _aiGateway.Checked,
+            EnableAiGatewayBalance = _externalPluginToggles.TryGetValue(
+                MiniAreaIds.AiGateway,
+                out var aiGatewayToggle)
+                ? aiGatewayToggle.Checked
+                : _original.EnableAiGatewayBalance,
             EnableSub2ApiPool = _codex.Checked && _sub2ApiPool.Checked,
             MiniAreaLayouts = AppSettings.CopyMiniAreaLayouts(_original.MiniAreaLayouts),
             MiniAreaOrder = AppSettings.CopyMiniAreaOrder(_original.MiniAreaOrder),
@@ -929,19 +937,38 @@ internal sealed class SettingsForm : Form
             BackgroundPalette = _backgroundPalette,
             Locale = (_locale.SelectedItem as LocaleChoice)?.Locale ?? _original.Locale,
             PluginEnabled = new Dictionary<string, bool>(_original.PluginEnabled, StringComparer.Ordinal),
+            PluginEnablementDecisions = [.. _original.PluginEnablementDecisions],
+            AutoEnabledPlugins = [.. _original.AutoEnabledPlugins],
         };
-        settings.SetPluginEnabled("zgstokenbar.metrics.system", _systemMetrics.Checked);
-        settings.SetPluginEnabled("zgstokenbar.provider.claude", _claude.Checked);
-        settings.SetPluginEnabled("zgstokenbar.provider.codex", _codex.Checked);
-        settings.SetPluginEnabled("zgstokenbar.usage.codex-local", _codex.Checked && _codexLocalUsage.Checked);
-        settings.SetPluginEnabled("zgstokenbar.provider.ai-gateway", _aiGateway.Checked);
-        settings.SetPluginEnabled("zgstokenbar.intelligence.radar", _radar.Checked);
+        ApplyPluginToggle(settings, "zgstokenbar.metrics.system", _systemMetrics.Checked, true);
+        ApplyPluginToggle(settings, "zgstokenbar.provider.claude", _claude.Checked, false);
+        ApplyPluginToggle(settings, "zgstokenbar.provider.codex", _codex.Checked, false);
+        ApplyPluginToggle(
+            settings,
+            "zgstokenbar.usage.codex-local",
+            _codex.Checked && _codexLocalUsage.Checked,
+            _original.IsEnabled(ProviderKind.Codex));
+        ApplyPluginToggle(settings, "zgstokenbar.intelligence.radar", _radar.Checked, false);
         foreach (var pair in _externalPluginToggles)
         {
-            settings.SetPluginEnabled(pair.Key, pair.Value.Checked);
+            ApplyPluginToggle(
+                settings,
+                pair.Key,
+                pair.Value.Checked,
+                _plugins.FirstOrDefault(plugin => plugin.Manifest.Id == pair.Key)?.Manifest.DefaultEnabled == true);
         }
         settings.CopyPlacementStateFrom(_original);
         return settings;
+    }
+
+    private void ApplyPluginToggle(
+        AppSettings settings,
+        string pluginId,
+        bool enabled,
+        bool fallback)
+    {
+        var changed = _original.IsPluginEnabled(pluginId, fallback) != enabled;
+        settings.SetPluginEnabled(pluginId, enabled, explicitChoice: changed);
     }
 
     private static bool EditableEquals(AppSettings left, AppSettings right) =>
@@ -992,6 +1019,8 @@ internal sealed class SettingsForm : Form
             BackgroundPalette = AppSettings.NormalizeBackgroundPalette(settings.BackgroundPalette),
             Locale = settings.Locale,
             PluginEnabled = new Dictionary<string, bool>(settings.PluginEnabled, StringComparer.Ordinal),
+            PluginEnablementDecisions = [.. settings.PluginEnablementDecisions],
+            AutoEnabledPlugins = [.. settings.AutoEnabledPlugins],
         };
         copy.CopyPlacementStateFrom(settings);
         return copy;
@@ -1110,6 +1139,8 @@ internal sealed class SettingsForm : Form
         Color Surface,
         Color Hover,
         Color Border,
+        Color ScrollTrack,
+        Color ScrollThumb,
         Color Text,
         Color Muted,
         Color Accent,
@@ -1124,6 +1155,8 @@ internal sealed class SettingsForm : Form
                 SystemColors.Control,
                 SystemColors.Highlight,
                 SystemColors.WindowText,
+                SystemColors.ScrollBar,
+                SystemColors.WindowText,
                 SystemColors.WindowText,
                 SystemColors.GrayText,
                 SystemColors.Highlight,
@@ -1136,6 +1169,8 @@ internal sealed class SettingsForm : Form
                 Color.FromArgb(31, 31, 35),
                 Color.FromArgb(39, 39, 45),
                 Color.FromArgb(44, 44, 49),
+                Color.FromArgb(44, 44, 49),
+                Color.FromArgb(104, 108, 118),
                 Color.FromArgb(242, 243, 245),
                 Color.FromArgb(160, 164, 173),
                 Color.FromArgb(76, 141, 255),
@@ -1337,13 +1372,16 @@ internal sealed class SettingsForm : Form
     private sealed class SettingsPage : Panel
     {
         private readonly FlowLayoutPanel _stack;
+        private readonly SettingsScrollBar _scrollBar;
         private readonly float _scale;
+        private int _wheelRemainder;
+        private bool _layingOut;
 
         public SettingsPage(string title, SettingsTheme theme, float scale)
         {
             _scale = scale;
             BackColor = theme.Content;
-            AutoScroll = true;
+            AutoScroll = false;
             TabStop = true;
             SetStyle(
                 ControlStyles.AllPaintingInWmPaint
@@ -1360,7 +1398,18 @@ internal sealed class SettingsForm : Form
                 Padding = Padding.Empty,
                 TabStop = false,
             };
+            _scrollBar = new SettingsScrollBar(theme, scale)
+            {
+                Visible = false,
+                Tag = "settings.scrollbar",
+                AccessibleName = title,
+                AccessibleRole = AccessibleRole.ScrollBar,
+            };
+            _scrollBar.ValueChanged += (_, _) => ApplyScrollPosition();
+            _scrollBar.MouseWheel += OnChildMouseWheel;
             Controls.Add(_stack);
+            Controls.Add(_scrollBar);
+            _scrollBar.BringToFront();
             _stack.Controls.Add(new Label
             {
                 AutoSize = false,
@@ -1374,6 +1423,7 @@ internal sealed class SettingsForm : Form
                 UseMnemonic = false,
                 Tag = "settings.page.title",
             });
+            HookScrollInput(_stack);
         }
 
         public void Add(Control control)
@@ -1382,26 +1432,317 @@ internal sealed class SettingsForm : Form
             _stack.Controls.Add(control);
         }
 
+        public (int Offset, int Maximum, bool ThemedBarVisible) ScrollState =>
+            (_scrollBar.Value, _scrollBar.Maximum, _scrollBar.Visible);
+
+        public void ScrollToTop() => ScrollTo(0);
+
+        public void ScrollTo(int value)
+        {
+            _scrollBar.Value = value;
+            ApplyScrollPosition();
+        }
+
         protected override void OnLayout(LayoutEventArgs levent)
         {
             base.OnLayout(levent);
-            if (_stack is null) return;
-            var inset = Scale(24);
-            var scrollbar = VerticalScroll.Visible ? SystemInformation.VerticalScrollBarWidth : 0;
-            var width = Math.Max(Scale(260), ClientSize.Width - inset * 2 - scrollbar);
-            _stack.SuspendLayout();
-            _stack.Location = new Point(inset, 0);
-            _stack.Width = width;
-            var height = 0;
-            foreach (Control control in _stack.Controls)
+            if (_stack is null || _layingOut) return;
+            _layingOut = true;
+            try
             {
-                control.Width = width;
-                control.PerformLayout();
-                height += control.Height + control.Margin.Vertical;
+                var inset = Scale(24);
+                var width = Math.Max(Scale(260), ClientSize.Width - inset * 2);
+                _stack.SuspendLayout();
+                _stack.Width = width;
+                var height = 0;
+                foreach (Control control in _stack.Controls)
+                {
+                    control.Width = width;
+                    control.PerformLayout();
+                    height += control.Height + control.Margin.Vertical;
+                }
+                _stack.Height = Math.Max(1, height + Scale(20));
+                _stack.ResumeLayout(true);
+
+                var barTop = Scale(10);
+                var barRight = Scale(6);
+                var barWidth = Scale(12);
+                _scrollBar.SetBounds(
+                    Math.Max(0, ClientSize.Width - barRight - barWidth),
+                    barTop,
+                    barWidth,
+                    Math.Max(1, ClientSize.Height - barTop * 2));
+                _scrollBar.SetRange(
+                    Math.Max(0, _stack.Height - ClientSize.Height),
+                    ClientSize.Height,
+                    _stack.Height);
+                _scrollBar.Visible = _scrollBar.Maximum > 0;
+                ApplyScrollPosition(inset);
+                _scrollBar.BringToFront();
             }
-            _stack.Height = Math.Max(1, height + Scale(20));
-            _stack.ResumeLayout(true);
-            AutoScrollMinSize = new Size(0, _stack.Height);
+            finally
+            {
+                _layingOut = false;
+            }
+        }
+
+        protected override void OnMouseWheel(MouseEventArgs e)
+        {
+            ScrollFromWheel(e);
+            base.OnMouseWheel(e);
+        }
+
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (_scrollBar.Maximum <= 0 || (keyData & Keys.Modifiers) != Keys.None)
+            {
+                return base.ProcessCmdKey(ref msg, keyData);
+            }
+
+            var handled = true;
+            switch (keyData & Keys.KeyCode)
+            {
+                case Keys.Up:
+                    ScrollTo(_scrollBar.Value - Scale(32));
+                    break;
+                case Keys.Down:
+                    ScrollTo(_scrollBar.Value + Scale(32));
+                    break;
+                case Keys.PageUp:
+                    ScrollTo(_scrollBar.Value - Math.Max(Scale(64), ClientSize.Height - Scale(48)));
+                    break;
+                case Keys.PageDown:
+                    ScrollTo(_scrollBar.Value + Math.Max(Scale(64), ClientSize.Height - Scale(48)));
+                    break;
+                case Keys.Home:
+                    ScrollTo(0);
+                    break;
+                case Keys.End:
+                    ScrollTo(_scrollBar.Maximum);
+                    break;
+                default:
+                    handled = false;
+                    break;
+            }
+            return handled || base.ProcessCmdKey(ref msg, keyData);
+        }
+
+        private void ApplyScrollPosition(int? inset = null)
+        {
+            var left = inset ?? Scale(24);
+            _stack.Location = new Point(left, -_scrollBar.Value);
+            _stack.Invalidate();
+        }
+
+        private void HookScrollInput(Control control)
+        {
+            control.MouseWheel += OnChildMouseWheel;
+            control.Enter += OnDescendantEnter;
+            control.ControlAdded += OnDescendantAdded;
+            foreach (Control child in control.Controls) HookScrollInput(child);
+        }
+
+        private void OnDescendantAdded(object? sender, ControlEventArgs eventArgs)
+        {
+            if (eventArgs.Control is { } control) HookScrollInput(control);
+        }
+
+        private void OnChildMouseWheel(object? sender, MouseEventArgs eventArgs) =>
+            ScrollFromWheel(eventArgs);
+
+        private void ScrollFromWheel(MouseEventArgs eventArgs)
+        {
+            if (_scrollBar.Maximum <= 0) return;
+            _wheelRemainder += eventArgs.Delta;
+            var notches = _wheelRemainder / SystemInformation.MouseWheelScrollDelta;
+            if (notches == 0) return;
+            _wheelRemainder -= notches * SystemInformation.MouseWheelScrollDelta;
+            var lines = SystemInformation.MouseWheelScrollLines;
+            var distance = lines < 0
+                ? Math.Max(Scale(64), ClientSize.Height - Scale(48))
+                : Scale(Math.Max(1, lines) * 16);
+            ScrollTo(_scrollBar.Value - notches * distance);
+            if (eventArgs is HandledMouseEventArgs handled) handled.Handled = true;
+        }
+
+        private void OnDescendantEnter(object? sender, EventArgs eventArgs)
+        {
+            if (sender is not Control control || !IsHandleCreated || !control.IsHandleCreated) return;
+            var bounds = RectangleToClient(control.RectangleToScreen(control.ClientRectangle));
+            var margin = Scale(12);
+            if (bounds.Top < margin)
+            {
+                ScrollTo(_scrollBar.Value + bounds.Top - margin);
+            }
+            else if (bounds.Bottom > ClientSize.Height - margin)
+            {
+                ScrollTo(_scrollBar.Value + bounds.Bottom - ClientSize.Height + margin);
+            }
+        }
+
+        private int Scale(int value) => Math.Max(1, (int)Math.Round(value * _scale));
+    }
+
+    private sealed class SettingsScrollBar : Control
+    {
+        private readonly SettingsTheme _theme;
+        private readonly float _scale;
+        private int _value;
+        private int _viewportHeight;
+        private int _contentHeight;
+        private int _dragOffset;
+        private bool _dragging;
+        private bool _hover;
+
+        public SettingsScrollBar(SettingsTheme theme, float scale)
+        {
+            _theme = theme;
+            _scale = scale;
+            BackColor = theme.Content;
+            Cursor = Cursors.Hand;
+            TabStop = false;
+            SetStyle(
+                ControlStyles.AllPaintingInWmPaint
+                | ControlStyles.OptimizedDoubleBuffer
+                | ControlStyles.ResizeRedraw
+                | ControlStyles.UserPaint,
+                true);
+        }
+
+        public event EventHandler? ValueChanged;
+
+        public int Maximum { get; private set; }
+
+        [DefaultValue(0)]
+        public int Value
+        {
+            get => _value;
+            set
+            {
+                var next = Math.Clamp(value, 0, Maximum);
+                if (next == _value) return;
+                _value = next;
+                Invalidate();
+                ValueChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+
+        public void SetRange(int maximum, int viewportHeight, int contentHeight)
+        {
+            Maximum = Math.Max(0, maximum);
+            _viewportHeight = Math.Max(0, viewportHeight);
+            _contentHeight = Math.Max(0, contentHeight);
+            Value = Math.Min(Value, Maximum);
+            Invalidate();
+        }
+
+        protected override void OnPaint(PaintEventArgs eventArgs)
+        {
+            eventArgs.Graphics.Clear(_theme.Content);
+            if (Maximum <= 0) return;
+            eventArgs.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            var track = TrackBounds();
+            var thumb = ThumbBounds(track);
+            using var trackPath = RoundedRectangle(track, Math.Max(1, track.Width / 2));
+            using var trackBrush = new SolidBrush(_theme.ScrollTrack);
+            eventArgs.Graphics.FillPath(trackBrush, trackPath);
+            using var thumbPath = RoundedRectangle(thumb, Math.Max(1, thumb.Width / 2));
+            using var thumbBrush = new SolidBrush(
+                _dragging ? _theme.Accent : _hover ? _theme.Muted : _theme.ScrollThumb);
+            eventArgs.Graphics.FillPath(thumbBrush, thumbPath);
+        }
+
+        protected override void OnMouseEnter(EventArgs eventArgs)
+        {
+            _hover = true;
+            Invalidate();
+            base.OnMouseEnter(eventArgs);
+        }
+
+        protected override void OnMouseLeave(EventArgs eventArgs)
+        {
+            _hover = false;
+            if (!_dragging) Invalidate();
+            base.OnMouseLeave(eventArgs);
+        }
+
+        protected override void OnMouseDown(MouseEventArgs eventArgs)
+        {
+            base.OnMouseDown(eventArgs);
+            if (eventArgs.Button != MouseButtons.Left || Maximum <= 0) return;
+            var track = TrackBounds();
+            var thumb = ThumbBounds(track);
+            if (thumb.Contains(eventArgs.Location))
+            {
+                _dragging = true;
+                _dragOffset = eventArgs.Y - thumb.Top;
+                Capture = true;
+                Invalidate();
+                return;
+            }
+
+            var page = Math.Max(Scale(64), _viewportHeight - Scale(48));
+            Value += eventArgs.Y < thumb.Top ? -page : page;
+        }
+
+        protected override void OnMouseMove(MouseEventArgs eventArgs)
+        {
+            base.OnMouseMove(eventArgs);
+            if (!_dragging || Maximum <= 0) return;
+            var track = TrackBounds();
+            var thumb = ThumbBounds(track);
+            var travel = Math.Max(1, track.Height - thumb.Height);
+            var thumbTop = Math.Clamp(eventArgs.Y - _dragOffset, track.Top, track.Bottom - thumb.Height);
+            Value = (int)Math.Round((thumbTop - track.Top) * (double)Maximum / travel);
+        }
+
+        protected override void OnMouseUp(MouseEventArgs eventArgs)
+        {
+            if (eventArgs.Button == MouseButtons.Left) EndDrag();
+            base.OnMouseUp(eventArgs);
+        }
+
+        protected override void OnMouseCaptureChanged(EventArgs eventArgs)
+        {
+            if (!Capture) EndDrag();
+            base.OnMouseCaptureChanged(eventArgs);
+        }
+
+        private void EndDrag()
+        {
+            if (!_dragging) return;
+            _dragging = false;
+            Capture = false;
+            Invalidate();
+        }
+
+        private Rectangle TrackBounds()
+        {
+            var width = Math.Min(Width, Scale(4));
+            var top = Scale(4);
+            return new Rectangle(
+                Math.Max(0, (Width - width) / 2),
+                top,
+                Math.Max(1, width),
+                Math.Max(1, Height - top * 2));
+        }
+
+        private Rectangle ThumbBounds(Rectangle track)
+        {
+            var width = Math.Min(Width, Scale(7));
+            var proportionalHeight = _contentHeight <= 0
+                ? track.Height
+                : (int)Math.Round(track.Height * Math.Min(1d, _viewportHeight / (double)_contentHeight));
+            var height = Math.Clamp(proportionalHeight, Math.Min(track.Height, Scale(32)), track.Height);
+            var travel = Math.Max(0, track.Height - height);
+            var top = Maximum <= 0
+                ? track.Top
+                : track.Top + (int)Math.Round(travel * (_value / (double)Maximum));
+            return new Rectangle(
+                Math.Max(0, (Width - width) / 2),
+                top,
+                Math.Max(1, width),
+                Math.Max(1, height));
         }
 
         private int Scale(int value) => Math.Max(1, (int)Math.Round(value * _scale));

@@ -8,7 +8,7 @@
   "required": false,
   "commandNamespace": "codex-usage",
   "capabilities": ["usage", "details", "cache"],
-  "defaultEnabled": true,
+  "defaultEnabled": false,
   "order": 120,
   "requires": ["zgstokenbar.provider.codex"]
 }

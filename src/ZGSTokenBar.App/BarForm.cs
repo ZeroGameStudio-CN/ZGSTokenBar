@@ -5033,7 +5033,11 @@ internal sealed class BarForm : Form
                 this,
                 new RadarPreviewRequest(target.SourceProvider, target.SurfaceId));
         }
-        _radarPopover ??= new ProviderRadarPopoverForm();
+        if (_radarPopover is null)
+        {
+            _radarPopover = new ProviderRadarPopoverForm();
+            _radarPopover.SpendHistoryRequested += (_, _) => PinVisibleRadarPopoverForHistory();
+        }
         var tokenUsage = target.DeepSeekOnly
             ? null
             : target.SourceProvider == ProviderKind.Codex
@@ -5061,6 +5065,15 @@ internal sealed class BarForm : Form
         _popoverEscapeWasDown = IsEscapeDown();
         _popoverStateTimer.Start();
         Invalidate();
+    }
+
+    private void PinVisibleRadarPopoverForHistory()
+    {
+        if (_hoverRadarTarget is not { } target) return;
+        ShowRadarPopover(
+            ResolveRadarTarget(target.Id) ?? target,
+            pinned: true,
+            requestRefresh: false);
     }
 
     private void MonitorPopover()

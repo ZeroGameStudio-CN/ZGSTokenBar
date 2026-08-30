@@ -75,7 +75,8 @@ public static class CorePluginProjection
     public static PluginDataSnapshot CodexUsage(
         string pluginId,
         CodexTokenUsageSummary? summary,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        bool cached = false)
     {
         var health = summary is null
             ? new PluginHealth(
@@ -85,11 +86,11 @@ public static class CorePluginProjection
                 now,
                 "codex.usage.waiting")
             : new PluginHealth(
-                PluginHealthCode.Current,
+                cached ? PluginHealthCode.Cached : PluginHealthCode.Current,
                 true,
                 false,
                 summary.CapturedAt,
-                "codex.usage.current");
+                cached ? "codex.usage.cached" : "codex.usage.current");
         if (summary is null) return new(pluginId, now, health, [], [], []);
 
         var rows = new[]
@@ -98,6 +99,9 @@ public static class CorePluginProjection
             new ContributionSummaryItem("usage.tokens.total", new("integer", Integer: summary.LocalTokens)),
             new ContributionSummaryItem("usage.cache.today", new("percent", Number: summary.TodayCacheHitPercent)),
             new ContributionSummaryItem("usage.cache.total", new("percent", Number: summary.TotalCacheHitPercent)),
+            SpendRow("usage.cost.today", summary.TodaySpend),
+            SpendRow("usage.cost.yesterday", summary.YesterdaySpend),
+            SpendRow("usage.cost.30d", summary.Last30DaysSpend),
         };
         return new(
             pluginId,
@@ -132,6 +136,26 @@ public static class CorePluginProjection
                     ]),
             ],
             []);
+    }
+
+    private static ContributionSummaryItem SpendRow(
+        string labelKey,
+        CodexSpendPeriod? period)
+    {
+        var status = period switch
+        {
+            null or { HasUsage: false } => "no-data",
+            { IsPartiallyPriced: true } => "partial",
+            { HasPricedUsage: false } => "unpriced",
+            _ => "estimated",
+        };
+        return new ContributionSummaryItem(
+            labelKey,
+            new ContributionValue(
+                "currency",
+                Text: "USD",
+                Decimal: period?.ApiEquivalentUsd),
+            status);
     }
 
     public static PluginDataSnapshot Radar(

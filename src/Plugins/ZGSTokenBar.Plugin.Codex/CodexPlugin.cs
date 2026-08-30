@@ -4,14 +4,14 @@ using ZGSTokenBar.PluginSdk;
 
 namespace ZGSTokenBar.Plugin.Codex;
 
-public sealed class CodexPlugin : BuiltinPluginBase, IDataSource
+public sealed class CodexPlugin : BuiltinPluginBase, IDataSource, ILocalCredentialProbe
 {
     private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(15) };
 
     public override PluginManifest Manifest => new(
         1, "zgstokenbar.provider.codex", "1.0.0", 1, 0, PluginRuntime.Builtin,
-        false, "codex", ["quota", "health", "accounts", "settings", "commands"],
-        true, 110, [])
+        false, "codex", ["quota", "health", "accounts", "settings", "commands", "local-credentials"],
+        false, 110, [])
     {
         DisplayName = "Codex",
     };
@@ -27,6 +27,12 @@ public sealed class CodexPlugin : BuiltinPluginBase, IDataSource
             "provider.codex.icon",
             "accent.codex",
             result);
+    }
+
+    public ValueTask<bool> HasLocalCredentialsAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(CodexQuotaService.HasLocalCredentials());
     }
 
     public override ValueTask DisposeAsync()

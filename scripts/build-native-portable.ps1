@@ -1,3 +1,7 @@
+param(
+  [string] $BundledPluginPackagePath
+)
+
 $ErrorActionPreference = 'Stop'
 
 $root = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -15,6 +19,7 @@ $zip = [System.IO.Path]::GetFullPath((Join-Path $release "ZGSTokenBar-Portable-v
 $checksums = [System.IO.Path]::GetFullPath((Join-Path $release "ZGSTokenBar-v$version-SHA256.txt"))
 $cliOutput = [System.IO.Path]::GetFullPath((Join-Path $release ".zgstokenbar-cli-v$version"))
 $artifactsPath = [System.IO.Path]::GetFullPath((Join-Path ([System.IO.Path]::GetTempPath()) "zgstokenbar-dist-$([Guid]::NewGuid().ToString('N'))"))
+$bundledPluginPackage = Join-Path $artifactsPath 'ZGSTokenBar.Plugin.AiGatewayObserver-v1.2.3.zgsplugin'
 $releasePrefix = $release.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
 $requireSignature = [string]::Equals($env:ZTB_REQUIRE_SIGNATURE, '1', [System.StringComparison]::Ordinal)
 
@@ -126,10 +131,23 @@ if (Test-Path -LiteralPath $cliOutput) {
 
 New-Item -ItemType Directory -Path $artifactsPath | Out-Null
 try {
+if ([string]::IsNullOrWhiteSpace($BundledPluginPackagePath)) {
+  & (Join-Path $root 'scripts\build-ai-gateway-observer-plugin.ps1') -OutputPath $bundledPluginPackage
+  if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+  }
+} else {
+  $resolvedBundledPluginPackage = [System.IO.Path]::GetFullPath($BundledPluginPackagePath)
+  if (-not (Test-Path -LiteralPath $resolvedBundledPluginPackage -PathType Leaf)) {
+    throw "Bundled plugin package was not found: $resolvedBundledPluginPackage"
+  }
+  Copy-Item -LiteralPath $resolvedBundledPluginPackage -Destination $bundledPluginPackage
+}
 dotnet publish $projectPath `
   -c Release `
   -r win-x64 `
   --artifacts-path $artifactsPath `
+  "-p:BundledPluginPackage=$bundledPluginPackage" `
   -o $output
 if ($LASTEXITCODE -ne 0) {
   exit $LASTEXITCODE

@@ -132,7 +132,6 @@ internal static partial class CliApplication
             "window inspect",
             "watch [--include-values]",
             "acceptance run --isolated --artifacts <dir>",
-            "ai-gateway configure|status|disconnect",
             "sub2api provision|configure|status|disconnect",
             "economy status|install|set off|ask|on [--codex-home <dir>]",
             "version",
@@ -148,91 +147,20 @@ internal static partial class CliApplication
             + "\n\nGlobal options before the command: --profile desktop|headless --timeout <seconds>. Add --json for machine-readable output.");
     }
 
-    private static async Task<int> AiGatewayCommandAsync(string[] commandLine, bool asJson)
+    private static Task<int> AiGatewayCommandAsync(string[] commandLine, bool asJson)
     {
         var subcommand = Subcommand(commandLine, "help");
-        return subcommand switch
-        {
-            "configure" => await ConfigureAiGatewayAsync(commandLine, asJson),
-            "status" => PrintAiGatewayStatus(asJson),
-            "disconnect" => await DisconnectAiGatewayAsync(asJson),
-            "help" or "h" or "?" => PrintAiGatewayHelp(asJson),
-            _ => CliOutput.Unknown($"ai-gateway {subcommand}", asJson),
-        };
-    }
-
-    private static async Task<int> ConfigureAiGatewayAsync(string[] commandLine, bool asJson)
-    {
-        var endpointValue = Option(commandLine, "--endpoint");
-        var token = commandLine.Contains("--token-stdin", StringComparer.OrdinalIgnoreCase)
-            ? Console.In.ReadToEnd().Trim()
-            : string.Empty;
-        if (!AiGatewayEndpoint.TryNormalize(endpointValue, out var endpoint)
-            || string.IsNullOrWhiteSpace(token)
-            || token.Length > 4096
-            || token.Contains('\r')
-            || token.Contains('\n'))
-        {
-            CliOutput.Legacy(
-                asJson,
-                new CliActionResult(
-                    false,
-                    null,
-                    "ai-gateway configure",
-                    null,
-                    "invalid_arguments",
-                    null,
-                    null),
-                "Usage: ai-gateway configure --endpoint <private-url> --token-stdin",
-                CliJsonContext.Default.CliActionResult);
-            return 2;
-        }
-        try
-        {
-            new AiGatewayConnectionStore().Write(new AiGatewayConnection(endpoint, token));
-            new AppSettingsStore().SetAiGatewayBalanceEnabled(true);
-            var syncError = await ReloadRunningAppSettingsAsync();
-            if (syncError is not null)
-            {
-                return WriteLegacySettingsSyncFailure(
-                    "ai-gateway configure",
-                    asJson,
-                    syncError);
-            }
-            CliOutput.Legacy(
-                asJson,
-                new CliActionResult(
-                    true,
-                    "configured",
-                    "ai-gateway configure",
-                    null,
-                    null,
-                    null,
-                    null),
-                "AI Gateway read-only balance observer configured.",
-                CliJsonContext.Default.CliActionResult);
-            return 0;
-        }
-        catch (Exception exception) when (
-            exception is IOException
-                or UnauthorizedAccessException
-                or InvalidOperationException
-                or PlatformNotSupportedException)
-        {
-            CliOutput.Legacy(
-                asJson,
-                new CliActionResult(
-                    false,
-                    null,
-                    "ai-gateway configure",
-                    null,
-                    "credential_write_failed",
-                    null,
-                    null),
-                "Unable to store the AI Gateway observer credential.",
-                CliJsonContext.Default.CliActionResult);
-            return 3;
-        }
+        var command = subcommand is "help" or "h" or "?"
+            ? "ai-gateway"
+            : $"ai-gateway {subcommand}";
+        CliOutput.Write(
+            asJson,
+            command,
+            null,
+            new(
+                "retired_command",
+                "AI Gateway commands are retired. DeepSeek Harness access is discovered automatically; ZGSTokenBar does not accept an API key."));
+        return Task.FromResult(2);
     }
 
     private static async Task<CliError?> ReloadRunningAppSettingsAsync()
@@ -262,83 +190,6 @@ internal static partial class CliApplication
             true);
     }
 
-    private static int PrintAiGatewayStatus(bool asJson)
-    {
-        try
-        {
-            var connection = new AiGatewayConnectionStore().Read();
-            var status = new AiGatewayCliStatus(
-                "AI Gateway",
-                new AppSettingsStore().IsAiGatewayBalanceEnabled(),
-                connection is not null,
-                connection is null ? null : AiGatewayEndpoint.Mask(connection.Endpoint));
-            CliOutput.Legacy(
-                asJson,
-                status,
-                connection is null
-                    ? "AI Gateway observer is not configured."
-                    : $"AI Gateway observer is {(status.Enabled ? "enabled" : "disabled")} at {status.Endpoint}.",
-                CliJsonContext.Default.AiGatewayCliStatus);
-            return 0;
-        }
-        catch
-        {
-            CliOutput.Legacy(
-                asJson,
-                new AiGatewayCliStatus("AI Gateway", false, false, null),
-                "AI Gateway observer status is unavailable.",
-                CliJsonContext.Default.AiGatewayCliStatus);
-            return 3;
-        }
-    }
-
-    private static async Task<int> DisconnectAiGatewayAsync(bool asJson)
-    {
-        try
-        {
-            new AiGatewayConnectionStore().Delete();
-            new AppSettingsStore().SetAiGatewayBalanceEnabled(false);
-            var syncError = await ReloadRunningAppSettingsAsync();
-            if (syncError is not null)
-            {
-                return WriteLegacySettingsSyncFailure(
-                    "ai-gateway disconnect",
-                    asJson,
-                    syncError);
-            }
-            CliOutput.Legacy(
-                asJson,
-                new CliActionResult(
-                    true,
-                    "disconnected",
-                    "ai-gateway disconnect",
-                    null,
-                    null,
-                    null,
-                    null),
-                "AI Gateway observer disconnected.",
-                CliJsonContext.Default.CliActionResult);
-            return 0;
-        }
-        catch (Exception exception) when (
-            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
-        {
-            CliOutput.Legacy(
-                asJson,
-                new CliActionResult(
-                    false,
-                    null,
-                    "ai-gateway disconnect",
-                    null,
-                    "credential_delete_failed",
-                    null,
-                    null),
-                "Unable to remove the AI Gateway observer credential.",
-                CliJsonContext.Default.CliActionResult);
-            return 3;
-        }
-    }
-
     private static int WriteLegacySettingsSyncFailure(
         string command,
         bool asJson,
@@ -359,19 +210,4 @@ internal static partial class CliApplication
         return 3;
     }
 
-    private static int PrintAiGatewayHelp(bool asJson)
-    {
-        var commands = new[]
-        {
-            "configure --endpoint <private-url> --token-stdin  Store the read-only observer token",
-            "status                                      Report observer state",
-            "disconnect                                  Remove observer credential",
-        };
-        CliOutput.Legacy(
-            asJson,
-            new CliHelp("AI Gateway CLI", commands),
-            "AI Gateway CLI\n\n" + string.Join(Environment.NewLine, commands),
-            CliJsonContext.Default.CliHelp);
-        return 0;
-    }
 }

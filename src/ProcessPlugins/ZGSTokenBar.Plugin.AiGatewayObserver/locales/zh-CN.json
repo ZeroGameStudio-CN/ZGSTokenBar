@@ -1,0 +1,15 @@
+{
+  "zgstokenbar.provider.ai-gateway.title": "DeepSeek Harness",
+  "zgstokenbar.provider.ai-gateway.health.missing-credentials": "Harness 中没有可用的 DeepSeek Provider 凭据",
+  "zgstokenbar.provider.ai-gateway.health.invalid-key": "DeepSeek 拒绝了 Harness Provider 凭据",
+  "zgstokenbar.provider.ai-gateway.health.timeout": "DeepSeek 余额请求超时",
+  "zgstokenbar.provider.ai-gateway.health.http-error": "DeepSeek 余额请求返回错误",
+  "zgstokenbar.provider.ai-gateway.health.unavailable": "DeepSeek Harness 余额暂不可用",
+  "zgstokenbar.provider.ai-gateway.health.cached": "正在显示最近一次 DeepSeek 余额",
+  "zgstokenbar.provider.ai-gateway.health.current": "DeepSeek Harness 余额已更新",
+  "zgstokenbar.provider.ai-gateway.health.balance-unavailable": "余额暂不可用",
+  "zgstokenbar.provider.ai-gateway.section.balance": "余额",
+  "zgstokenbar.provider.ai-gateway.balance.total": "可用余额",
+  "zgstokenbar.provider.ai-gateway.balance.topped-up": "充值余额",
+  "zgstokenbar.provider.ai-gateway.balance.granted": "赠送余额"
+}

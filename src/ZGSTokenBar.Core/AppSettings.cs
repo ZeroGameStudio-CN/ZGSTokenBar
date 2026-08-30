@@ -19,12 +19,15 @@ public static class CodexMiniDisplayModes
 public sealed class AppSettings
 {
     public const int CurrentSchemaVersion = 2;
+    internal const int TransitionalProvenanceSchemaVersion = 3;
     public const string DefaultBackgroundPalette = "midnight";
     public const int CurrentPlacementSchemaVersion = 1;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public Dictionary<string, bool> PluginEnabled { get; set; } = new(StringComparer.Ordinal);
-    public string[] EnabledProviders { get; set; } = ["claude", "codex"];
+    public string[] PluginEnablementDecisions { get; set; } = [];
+    public string[] AutoEnabledPlugins { get; set; } = [];
+    public string[] EnabledProviders { get; set; } = [];
     public int RefreshMinutes { get; set; } = 5;
     public bool AutoRefreshClaudeOAuth { get; set; } = true;
     public bool OpenAtLogin { get; set; }
@@ -65,9 +68,27 @@ public sealed class AppSettings
     public bool IsPluginEnabled(string pluginId, bool fallback = false) =>
         PluginEnabled.TryGetValue(pluginId, out var enabled) ? enabled : fallback;
 
-    public void SetPluginEnabled(string pluginId, bool enabled)
+    public bool HasExplicitPluginEnablement(string pluginId) =>
+        PluginEnablementDecisions.Contains(pluginId, StringComparer.Ordinal);
+
+    public bool WasPluginAutoEnabled(string pluginId) =>
+        AutoEnabledPlugins.Contains(pluginId, StringComparer.Ordinal);
+
+    public void SetPluginEnabled(string pluginId, bool enabled, bool explicitChoice = true)
     {
         PluginEnabled[pluginId] = enabled;
+        if (explicitChoice)
+        {
+            PluginEnablementDecisions = PluginEnablementDecisions
+                .Append(pluginId)
+                .Where(IsPluginId)
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+            AutoEnabledPlugins = AutoEnabledPlugins
+                .Where(value => !string.Equals(value, pluginId, StringComparison.Ordinal))
+                .ToArray();
+        }
         switch (pluginId)
         {
             case "zgstokenbar.provider.claude":
@@ -89,6 +110,48 @@ public sealed class AppSettings
             case "zgstokenbar.metrics.system":
                 break;
         }
+    }
+
+    public void SetPluginAutoEnabled(string pluginId)
+    {
+        if (HasExplicitPluginEnablement(pluginId)) return;
+        SetPluginEnabled(pluginId, true, explicitChoice: false);
+        AutoEnabledPlugins = AutoEnabledPlugins
+            .Append(pluginId)
+            .Where(IsPluginId)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    internal void CaptureLegacyPluginEnablementDecisions()
+    {
+        var known = new HashSet<string>(PluginEnabled.Keys, StringComparer.Ordinal)
+        {
+            "zgstokenbar.metrics.system",
+            "zgstokenbar.provider.claude",
+            "zgstokenbar.provider.codex",
+            "zgstokenbar.usage.codex-local",
+            "zgstokenbar.intelligence.radar",
+        };
+        const string harnessProviderId = "zgstokenbar.provider.ai-gateway";
+        if (EnableAiGatewayBalance
+            || PluginEnabled.TryGetValue(harnessProviderId, out var legacyGatewayEnabled)
+            && legacyGatewayEnabled)
+        {
+            known.Add(harnessProviderId);
+        }
+        else
+        {
+            // Legacy false was also the default for the retired key-based gateway.
+            // Leave it undecided so the replacement Harness Provider can be discovered once.
+            known.Remove(harnessProviderId);
+        }
+        PluginEnablementDecisions = known
+            .Where(IsPluginId)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        AutoEnabledPlugins = [];
     }
 
     private void SetLegacyProvider(string provider, bool enabled)
@@ -129,6 +192,18 @@ public sealed class AppSettings
         PluginEnabled = (PluginEnabled ?? new Dictionary<string, bool>())
             .Where(entry => IsPluginId(entry.Key))
             .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal);
+        PluginEnablementDecisions = (PluginEnablementDecisions ?? [])
+            .Where(IsPluginId)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        var explicitDecisions = PluginEnablementDecisions.ToHashSet(StringComparer.Ordinal);
+        AutoEnabledPlugins = (AutoEnabledPlugins ?? [])
+            .Where(IsPluginId)
+            .Where(value => !explicitDecisions.Contains(value))
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
         PluginEnabled["zgstokenbar.metrics.system"] =
             PluginEnabled.TryGetValue("zgstokenbar.metrics.system", out var systemMetrics)
                 ? systemMetrics
@@ -456,10 +531,13 @@ internal sealed class WindowPlacementProfilesJsonConverter
     WriteIndented = true)]
 [JsonSerializable(typeof(AppSettings))]
 [JsonSerializable(typeof(WindowPlacementProfile))]
+[JsonSerializable(typeof(CodexTokenUsageIndex))]
+[JsonSerializable(typeof(string))]
 internal partial class AppSettingsJsonContext : JsonSerializerContext;
 
 public sealed class AppSettingsStore
 {
+    public const string DataDirectoryEnvironmentVariable = "ZGSTOKENBAR_DATA_DIRECTORY";
     private const int SettingsLoadAttempts = 3;
     private const int SettingsLoadRetryMilliseconds = 25;
     private readonly string? _legacySettingsPath;
@@ -479,7 +557,19 @@ public sealed class AppSettingsStore
         string? dataDirectory = null,
         string? legacySettingsPath = null)
     {
+        var configuredDirectory = Environment.GetEnvironmentVariable(
+            DataDirectoryEnvironmentVariable);
+        if (dataDirectory is null
+            && !string.IsNullOrWhiteSpace(configuredDirectory)
+            && Path.IsPathFullyQualified(configuredDirectory))
+        {
+            dataDirectory = configuredDirectory;
+        }
         var roamingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        if (string.IsNullOrWhiteSpace(roamingDirectory))
+        {
+            roamingDirectory = Environment.GetEnvironmentVariable("APPDATA") ?? string.Empty;
+        }
         DataDirectory = dataDirectory ?? Path.Combine(roamingDirectory, "ZGSTokenBar");
         _legacySettingsPath = legacySettingsPath;
     }
@@ -553,6 +643,17 @@ public sealed class AppSettingsStore
         var pluginEnabled = settings["pluginEnabled"] as JsonObject ?? new JsonObject();
         pluginEnabled["zgstokenbar.provider.ai-gateway"] = enabled;
         settings["pluginEnabled"] = pluginEnabled;
+        var decisions = settings["pluginEnablementDecisions"] as JsonArray ?? [];
+        if (!decisions.Any(value => string.Equals(
+                value?.GetValue<string>(),
+                "zgstokenbar.provider.ai-gateway",
+                StringComparison.Ordinal)))
+        {
+            decisions.Add(JsonSerializer.SerializeToNode(
+                "zgstokenbar.provider.ai-gateway",
+                SettingsJsonContext.String));
+        }
+        settings["pluginEnablementDecisions"] = decisions;
         if (!CredentialSupport.AtomicWrite(
                 SettingsPath,
                 settings.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
@@ -759,14 +860,14 @@ public sealed class AppSettingsStore
                 && schema.TryGetInt32(out var parsedSchema)
                     ? parsedSchema
                     : 1;
-            if (schemaVersion is not (1 or 2 or 3 or 4 or CodexTokenUsageIndex.CurrentSchemaVersion))
+            if (schemaVersion is < 1 or > CodexTokenUsageIndex.CurrentSchemaVersion)
             {
                 throw new JsonException("Unsupported Codex token usage index schema.");
             }
 
-            var index = JsonSerializer.Deserialize<CodexTokenUsageIndex>(
+            var index = JsonSerializer.Deserialize(
                 json,
-                JsonOptions);
+                SettingsJsonContext.CodexTokenUsageIndex);
             if (index is null)
             {
                 throw new JsonException("Invalid Codex token usage index.");
@@ -805,7 +906,7 @@ public sealed class AppSettingsStore
         index.SchemaVersion = CodexTokenUsageIndex.CurrentSchemaVersion;
         if (!CredentialSupport.AtomicWrite(
                 CodexTokenUsageIndexPath,
-                JsonSerializer.Serialize(index, JsonOptions)))
+                JsonSerializer.Serialize(index, SettingsJsonContext.CodexTokenUsageIndex)))
         {
             throw new IOException("Codex token usage index is busy. Please retry.");
         }
@@ -1000,7 +1101,7 @@ public sealed class AppSettingsStore
                     && schema.TryGetInt32(out var parsedSchema)
                         ? parsedSchema
                         : 1;
-                if (schemaVersion is not (1 or AppSettings.CurrentSchemaVersion))
+                if (schemaVersion is not (1 or 2 or AppSettings.TransitionalProvenanceSchemaVersion))
                 {
                     throw new JsonException("Unsupported settings schema.");
                 }
@@ -1008,6 +1109,11 @@ public sealed class AppSettingsStore
                 var hasTaskbarDocked = document.RootElement.TryGetProperty("taskbarDocked", out _);
                 var hasLegacyTaskbarMode = document.RootElement.TryGetProperty("useTaskbarRings", out _);
                 var hasPlacementSchema = document.RootElement.TryGetProperty("placementSchemaVersion", out _);
+                var hasPluginEnablementProvenance =
+                    document.RootElement.TryGetProperty("pluginEnablementDecisions", out _)
+                    && document.RootElement.TryGetProperty("autoEnabledPlugins", out _);
+                var needsMigration = schemaVersion != AppSettings.CurrentSchemaVersion
+                    || !hasPluginEnablementProvenance;
                 var loaded = JsonSerializer.Deserialize(json, SettingsJsonContext.AppSettings)
                     ?? new AppSettings();
                 if (!hasLocale) loaded.Locale = "en";
@@ -1016,12 +1122,25 @@ public sealed class AppSettingsStore
                     loaded.TaskbarDocked = loaded.UseTaskbarRings;
                 }
                 if (!hasPlacementSchema) loaded.CapturePlacementMigrationSeed();
+                if (!hasPluginEnablementProvenance)
+                {
+                    loaded.CaptureLegacyPluginEnablementDecisions();
+                }
                 loaded.Normalize();
-                if (schemaVersion == 1
+                if (needsMigration
                     && string.Equals(path, SettingsPath, StringComparison.OrdinalIgnoreCase))
                 {
-                    PreserveV1Settings(json);
-                    Save(loaded);
+                    try
+                    {
+                        PreserveLegacySettings(json, schemaVersion);
+                        Save(loaded);
+                    }
+                    catch (Exception exception) when (
+                        exception is IOException or UnauthorizedAccessException)
+                    {
+                        // A valid older settings file remains usable when migration persistence
+                        // is temporarily blocked; a later startup can retry the atomic write.
+                    }
                 }
                 return loaded;
             }
@@ -1052,9 +1171,9 @@ public sealed class AppSettingsStore
         }
     }
 
-    private void PreserveV1Settings(string contents)
+    private void PreserveLegacySettings(string contents, int schemaVersion)
     {
-        var backupPath = SettingsPath + ".v1.bak";
+        var backupPath = SettingsPath + $".v{schemaVersion}.bak";
         if (File.Exists(backupPath)) return;
         Directory.CreateDirectory(DataDirectory);
         if (!CredentialSupport.AtomicWrite(backupPath, contents))

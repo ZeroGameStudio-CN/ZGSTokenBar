@@ -27,6 +27,13 @@ public sealed class CodexQuotaService
         _cockpitHome = cockpitHome;
     }
 
+    public static bool HasLocalCredentials()
+    {
+        if (ReadCredentials().Count > 0) return true;
+        return CockpitCodexQuotaReader.Read(DefaultCockpitHome(), DateTimeOffset.UtcNow)
+            .Any(account => account.Active && !string.IsNullOrWhiteSpace(account.AccessToken));
+    }
+
     public async Task<ProviderResult> FetchAsync(CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;

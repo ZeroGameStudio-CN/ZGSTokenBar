@@ -33,6 +33,21 @@ test('native UI routes user-facing copy through the typed bilingual catalog', ()
   assert.match(application, /if \(!localeOnlyChange\)[\s\S]*?RefreshAsync\(\)[\s\S]*?RefreshRadarAsync\(\)/);
 });
 
+test('Codex spend history keeps its action, summaries, trend, and model copy bilingual', () => {
+  assert.match(text, /CodexSpendHistoryTitle => T\("消费历史", "Spend history"\)/);
+  assert.match(text, /CodexSpendHistoryBack => T\("‹ 返回", "‹ Back"\)/);
+  assert.match(text, /CodexSpendHistoryAction => T\("历史 ›", "History ›"\)/);
+  assert.match(text, /CodexYesterdayMetricLabel => T\("昨日", "Yesterday"\)/);
+  assert.match(text, /CodexLast7DaysMetricLabel => T\("7 日", "7d"\)/);
+  assert.match(text, /CodexSpendTrendTitle => T\("30 日趋势", "30-day trend"\)/);
+  assert.match(text, /CodexSpendModelsTitle => T\("模型构成 · 30 日", "Models · 30d"\)/);
+  assert.match(text, /CodexUnknownModel => T\("未知模型", "Unknown model"\)/);
+  assert.match(radar, /text\.CodexSpendHistoryTitle/);
+  assert.match(radar, /text\.CodexSpendHistorySubtitle\(tokenUsage\.SessionCount\)/);
+  assert.match(radar, /text\.CodexSpendHistoryBack/);
+  assert.match(radar, /text\.CodexSpendDate\(selected\.LocalDate\)/);
+});
+
 test('Native settings completion copy stays typed, bilingual, and setting-local', () => {
   assert.match(text, /public string SettingsSubtitle => T\(/);
   assert.match(text, /public string General => T\("常规", "General"\)/);

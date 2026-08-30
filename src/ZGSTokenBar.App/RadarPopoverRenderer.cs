@@ -43,7 +43,8 @@ internal sealed class RadarPopoverRenderer : IDisposable
         CodexTokenUsageSummary? tokenUsage = null,
         AiGatewayUsageSummary? aiGatewayUsage = null,
         bool pinned = false,
-        string? radarTitle = null)
+        string? radarTitle = null,
+        bool spendCardHovered = false)
     {
         var fonts = Fonts(layout.Dpi);
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
@@ -56,7 +57,16 @@ internal sealed class RadarPopoverRenderer : IDisposable
         {
             if (tokenUsage is not null)
             {
-                DrawTokenOverview(graphics, layout, body.Location, tokenUsage, logo, fonts, text, pinned);
+                DrawTokenOverview(
+                    graphics,
+                    layout,
+                    body.Location,
+                    tokenUsage,
+                    logo,
+                    fonts,
+                    text,
+                    pinned,
+                    spendCardHovered);
             }
             return;
         }
@@ -103,7 +113,363 @@ internal sealed class RadarPopoverRenderer : IDisposable
             text,
             tokenUsage,
             aiGatewayUsage,
-            title);
+            title,
+            spendCardHovered);
+    }
+
+    public void DrawSpendHistory(
+        Graphics graphics,
+        CodexSpendHistoryLayout layout,
+        PopoverTailSide tailSide,
+        int tailOffset,
+        CodexTokenUsageSummary tokenUsage,
+        Image? logo,
+        NativeText text,
+        int selectedDayIndex = -1,
+        bool pinned = false)
+    {
+        var fonts = Fonts(layout.Dpi);
+        graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+
+        var body = layout.BodyBounds(tailSide);
+        DrawHistoryBody(graphics, layout, tailSide, tailOffset, body);
+        var origin = body.Location;
+        if (logo is not null) graphics.DrawImage(logo, Offset(layout.LogoBounds, origin));
+
+        DrawText(
+            graphics,
+            text.CodexSpendHistoryTitle,
+            fonts.Title,
+            Color.FromArgb(248, 250, 252),
+            Offset(layout.TitleBounds, origin),
+            CellTextFlags);
+        DrawText(
+            graphics,
+            text.CodexSpendHistorySubtitle(tokenUsage.SessionCount),
+            fonts.Meta,
+            pinned ? Color.FromArgb(165, 180, 252) : Color.FromArgb(148, 163, 184),
+            Offset(layout.SubtitleBounds, origin),
+            CellTextFlags);
+        DrawText(
+            graphics,
+            text.CodexSpendHistoryBack,
+            fonts.Badge,
+            Color.FromArgb(165, 180, 252),
+            Offset(layout.BackBounds, origin),
+            CellTextFlags | TextFormatFlags.Right);
+
+        using (var divider = new Pen(Color.FromArgb(42, 71, 85, 105)))
+        {
+            var dividerY = origin.Y + ScaleCoordinate(layout.Dpi, 44);
+            graphics.DrawLine(
+                divider,
+                origin.X + ScaleCoordinate(layout.Dpi, 12),
+                dividerY,
+                origin.X + layout.BodySize.Width - ScaleCoordinate(layout.Dpi, 12),
+                dividerY);
+        }
+
+        var history = tokenUsage.SpendHistory;
+        var summaryPeriods = new CodexSpendPeriod?[]
+        {
+            tokenUsage.TodaySpend,
+            tokenUsage.YesterdaySpend,
+            history?.Last7DaysSpend,
+            tokenUsage.Last30DaysSpend,
+        };
+        var summaryLabels = new[]
+        {
+            text.CodexTodayMetricLabel,
+            text.CodexYesterdayMetricLabel,
+            text.CodexLast7DaysMetricLabel,
+            text.CodexLast30DaysMetricLabel,
+        };
+        for (var index = 0; index < layout.SummaryCardBounds.Count; index++)
+        {
+            DrawHistorySummaryCard(
+                graphics,
+                layout.Dpi,
+                Offset(layout.SummaryCardBounds[index], origin),
+                summaryLabels[index],
+                summaryPeriods[index],
+                index == 0,
+                fonts,
+                text);
+        }
+
+        var displayedDays = history?.Days
+            .TakeLast(layout.BarBounds.Count)
+            .ToArray() ?? [];
+        DrawSpendTrend(
+            graphics,
+            layout,
+            origin,
+            displayedDays,
+            selectedDayIndex,
+            fonts,
+            text);
+        DrawSpendModels(
+            graphics,
+            layout,
+            origin,
+            history?.Models ?? [],
+            fonts,
+            text);
+    }
+
+    private static void DrawHistorySummaryCard(
+        Graphics graphics,
+        int dpi,
+        Rectangle bounds,
+        string label,
+        CodexSpendPeriod? period,
+        bool primary,
+        RadarPopoverFonts fonts,
+        NativeText text)
+    {
+        var accent = period?.HasUnpricedUsage == true
+            ? Color.FromArgb(251, 191, 36)
+            : Color.FromArgb(129, 140, 248);
+        var surfaceBounds = new Rectangle(
+            bounds.X,
+            bounds.Y,
+            Math.Max(1, bounds.Width - 1),
+            Math.Max(1, bounds.Height - 1));
+        using var surface = RoundedRectangle(surfaceBounds, Scale(dpi, 6));
+        using var fill = new SolidBrush(Color.FromArgb(
+            primary ? 34 : 22,
+            accent.R,
+            accent.G,
+            accent.B));
+        using var border = new Pen(Color.FromArgb(
+            primary ? 82 : 52,
+            accent.R,
+            accent.G,
+            accent.B));
+        graphics.FillPath(fill, surface);
+        graphics.DrawPath(border, surface);
+
+        var left = bounds.Left + Scale(dpi, 7);
+        var right = bounds.Right - Scale(dpi, 7);
+        DrawText(
+            graphics,
+            label,
+            fonts.Badge,
+            period?.HasUnpricedUsage == true
+                ? Color.FromArgb(251, 191, 36)
+                : Color.FromArgb(165, 180, 252),
+            new Rectangle(
+                left,
+                bounds.Top + ScaleCoordinate(dpi, 3),
+                Math.Max(1, right - left),
+                Scale(dpi, 12)),
+            CellTextFlags);
+        DrawText(
+            graphics,
+            text.CodexApiEquivalent(period),
+            primary && bounds.Width >= Scale(dpi, 100)
+                ? fonts.SpendNumber
+                : fonts.EmphasizedNumber,
+            Color.FromArgb(241, 245, 249),
+            new Rectangle(
+                left,
+                bounds.Top + ScaleCoordinate(dpi, 17),
+                Math.Max(1, right - left),
+                Math.Max(1, bounds.Bottom - bounds.Top - ScaleCoordinate(dpi, 19))),
+            CellTextFlags | TextFormatFlags.Right);
+    }
+
+    private static void DrawSpendTrend(
+        Graphics graphics,
+        CodexSpendHistoryLayout layout,
+        Point origin,
+        IReadOnlyList<CodexSpendDay> days,
+        int selectedDayIndex,
+        RadarPopoverFonts fonts,
+        NativeText text)
+    {
+        DrawText(
+            graphics,
+            text.CodexSpendTrendTitle,
+            fonts.Badge,
+            Color.FromArgb(165, 180, 252),
+            Offset(layout.TrendTitleBounds, origin),
+            CellTextFlags);
+
+        var selectedIndex = days.Count == 0
+            ? -1
+            : Math.Clamp(selectedDayIndex < 0 ? days.Count - 1 : selectedDayIndex, 0, days.Count - 1);
+        var selected = selectedIndex >= 0 ? days[selectedIndex] : null;
+        DrawText(
+            graphics,
+            selected is null
+                ? "—"
+                : $"{text.CodexSpendDate(selected.LocalDate)}  {text.CodexApiEquivalent(selected.Spend)}",
+            fonts.EmphasizedNumber,
+            selected?.Spend.HasUnpricedUsage == true
+                ? Color.FromArgb(251, 191, 36)
+                : Color.FromArgb(203, 213, 225),
+            Offset(layout.SelectedDayBounds, origin),
+            CellTextFlags | TextFormatFlags.Right);
+
+        var chart = Offset(layout.TrendChartBounds, origin);
+        var plotTop = chart.Top + ScaleCoordinate(layout.Dpi, 2);
+        var plotBottom = chart.Bottom - ScaleCoordinate(layout.Dpi, 3);
+        using (var grid = new Pen(Color.FromArgb(28, 71, 85, 105)))
+        {
+            for (var index = 0; index < 3; index++)
+            {
+                var y = plotTop + (plotBottom - plotTop) * index / 2;
+                graphics.DrawLine(grid, chart.Left, y, chart.Right, y);
+            }
+        }
+
+        if (days.Count == 0 || layout.BarBounds.Count == 0) return;
+        var maximum = days.Max(day => day.Spend.ApiEquivalentUsd ?? 0m);
+        var count = Math.Min(days.Count, layout.BarBounds.Count);
+        var firstRecentIndex = Math.Max(0, count - 7);
+        for (var index = 0; index < count; index++)
+        {
+            var day = days[index];
+            var slot = Offset(layout.BarBounds[index], origin);
+            var amount = day.Spend.ApiEquivalentUsd ?? 0m;
+            var height = maximum <= 0m || amount <= 0m
+                ? 0
+                : Math.Max(
+                    Scale(layout.Dpi, 1),
+                    (int)Math.Round(
+                        (plotBottom - plotTop) * (double)(amount / maximum),
+                        MidpointRounding.AwayFromZero));
+            var isRecent = index >= firstRecentIndex;
+            var isSelected = index == selectedIndex;
+            if (isSelected)
+            {
+                using var selection = new SolidBrush(Color.FromArgb(20, 165, 180, 252));
+                graphics.FillRectangle(
+                    selection,
+                    new Rectangle(slot.Left - Scale(layout.Dpi, 1), plotTop, slot.Width + Scale(layout.Dpi, 2), plotBottom - plotTop + 1));
+            }
+            if (height > 0)
+            {
+                var bar = new Rectangle(
+                    slot.Left,
+                    plotBottom - height,
+                    Math.Max(1, slot.Width),
+                    height);
+                using var fill = new SolidBrush(isSelected
+                    ? Color.FromArgb(235, 165, 180, 252)
+                    : isRecent
+                        ? Color.FromArgb(190, 129, 140, 248)
+                        : Color.FromArgb(78, 100, 116, 139));
+                graphics.FillRectangle(fill, bar);
+            }
+            if (day.Spend.HasUnpricedUsage)
+            {
+                var markerY = height > 0
+                    ? plotBottom - height
+                    : plotBottom - Scale(layout.Dpi, 1);
+                using var marker = new Pen(Color.FromArgb(251, 191, 36), Scale(layout.Dpi, 1));
+                graphics.DrawLine(marker, slot.Left, markerY, slot.Right - 1, markerY);
+            }
+        }
+    }
+
+    private static void DrawSpendModels(
+        Graphics graphics,
+        CodexSpendHistoryLayout layout,
+        Point origin,
+        IReadOnlyList<CodexSpendModel> models,
+        RadarPopoverFonts fonts,
+        NativeText text)
+    {
+        DrawText(
+            graphics,
+            text.CodexSpendModelsTitle,
+            fonts.Badge,
+            Color.FromArgb(165, 180, 252),
+            Offset(layout.ModelsTitleBounds, origin),
+            CellTextFlags);
+
+        var topModels = models
+            .OrderByDescending(model => model.Spend.PricedApiEquivalentUsd)
+            .ThenByDescending(model => model.Spend.TotalTokens)
+            .Take(layout.ModelRowBounds.Count)
+            .ToArray();
+        if (topModels.Length == 0)
+        {
+            DrawText(
+                graphics,
+                "—",
+                fonts.Model,
+                Color.FromArgb(100, 116, 139),
+                Offset(layout.ModelRowBounds[0], origin),
+                CellTextFlags);
+            return;
+        }
+
+        var maximum = topModels.Max(model => model.Spend.ApiEquivalentUsd ?? 0m);
+        for (var index = 0; index < topModels.Length; index++)
+        {
+            var model = topModels[index];
+            var row = Offset(layout.ModelRowBounds[index], origin);
+            var labelWidth = Scale(layout.Dpi, layout.Wide ? 150 : 105);
+            var amountWidth = Scale(layout.Dpi, 82);
+            var gap = Scale(layout.Dpi, 7);
+            var trackLeft = row.Left + labelWidth + gap;
+            var trackRight = row.Right - amountWidth - gap;
+            var trackHeight = Scale(layout.Dpi, 4);
+            var track = new Rectangle(
+                trackLeft,
+                row.Top + (row.Height - trackHeight) / 2,
+                Math.Max(1, trackRight - trackLeft),
+                trackHeight);
+            DrawText(
+                graphics,
+                string.Equals(model.Model, "unknown", StringComparison.OrdinalIgnoreCase)
+                    ? text.CodexUnknownModel
+                    : model.Model,
+                index == 0 ? fonts.EmphasizedModel : fonts.Model,
+                Color.FromArgb(203, 213, 225),
+                new Rectangle(row.Left, row.Top, labelWidth, row.Height),
+                CellTextFlags);
+
+            using (var trackFill = new SolidBrush(Color.FromArgb(42, 71, 85, 105)))
+            {
+                graphics.FillRectangle(trackFill, track);
+            }
+            var amount = model.Spend.ApiEquivalentUsd ?? 0m;
+            if (maximum > 0m && amount > 0m)
+            {
+                var fillWidth = Math.Max(
+                    Scale(layout.Dpi, 2),
+                    (int)Math.Round(track.Width * (double)(amount / maximum), MidpointRounding.AwayFromZero));
+                using var fill = new SolidBrush(index == 0
+                    ? Color.FromArgb(205, 129, 140, 248)
+                    : Color.FromArgb(135, 99, 102, 241));
+                graphics.FillRectangle(fill, new Rectangle(track.X, track.Y, Math.Min(track.Width, fillWidth), track.Height));
+            }
+            if (model.Spend.HasUnpricedUsage)
+            {
+                using var marker = new SolidBrush(Color.FromArgb(251, 191, 36));
+                graphics.FillEllipse(
+                    marker,
+                    track.Right - Scale(layout.Dpi, 4),
+                    track.Top,
+                    Scale(layout.Dpi, 4),
+                    Scale(layout.Dpi, 4));
+            }
+            DrawText(
+                graphics,
+                text.CodexApiEquivalent(model.Spend),
+                fonts.EmphasizedNumber,
+                model.Spend.HasUnpricedUsage
+                    ? Color.FromArgb(251, 191, 36)
+                    : Color.FromArgb(203, 213, 225),
+                new Rectangle(row.Right - amountWidth, row.Top, amountWidth, row.Height),
+                CellTextFlags | TextFormatFlags.Right);
+        }
     }
 
     private static void DrawTokenOverview(
@@ -114,7 +480,8 @@ internal sealed class RadarPopoverRenderer : IDisposable
         Image? logo,
         RadarPopoverFonts fonts,
         NativeText text,
-        bool pinned)
+        bool pinned,
+        bool spendCardHovered)
     {
         Rectangle Rect(int x, int y, int width, int height) => Rectangle.FromLTRB(
             origin.X + ScaleCoordinate(layout.Dpi, x),
@@ -178,13 +545,15 @@ internal sealed class RadarPopoverRenderer : IDisposable
             labelColor,
             valueColor,
             fonts);
-        DrawText(
+        DrawSpendSummaryCard(
             graphics,
-            text.CodexTokenScope(tokenUsage.SessionCount),
-            fonts.Meta,
-            labelColor,
-            Rect(12, 126, 216, 12),
-            CellTextFlags);
+            layout.Dpi,
+            Offset(layout.FooterSpendBounds, origin),
+            tokenUsage,
+            fonts,
+            text,
+            HasSpendHistory(tokenUsage),
+            spendCardHovered);
     }
 
     private static void DrawTokenMetricGroup(
@@ -289,6 +658,28 @@ internal sealed class RadarPopoverRenderer : IDisposable
         graphics.FillPath(fill, bodyPath);
         graphics.DrawPath(border, bodyPath);
         DrawTail(graphics, layout, tailSide, tailOffset, fill, border, body);
+    }
+
+    private static void DrawHistoryBody(
+        Graphics graphics,
+        CodexSpendHistoryLayout layout,
+        PopoverTailSide tailSide,
+        int tailOffset,
+        Rectangle body)
+    {
+        var pathBounds = new Rectangle(
+            body.X,
+            body.Y,
+            Math.Max(1, body.Width - 1),
+            Math.Max(1, body.Height - 1));
+        using var bodyPath = RoundedRectangle(pathBounds, Scale(layout.Dpi, 10));
+        using var fill = new SolidBrush(Color.FromArgb(7, 12, 24));
+        using var border = new Pen(Color.FromArgb(86, 100, 116, 139));
+        graphics.FillPath(fill, bodyPath);
+        graphics.DrawPath(border, bodyPath);
+        var points = TailPoints(layout, tailSide, tailOffset, body);
+        graphics.FillPolygon(fill, points);
+        graphics.DrawLines(border, points);
     }
 
     private static void DrawHeader(
@@ -458,7 +849,15 @@ internal sealed class RadarPopoverRenderer : IDisposable
         DrawColumnText(graphics, text.RadarIqAverageHeader, fonts.Badge, color, layout.Columns.IqAverage, layout.TableHeaderBounds, origin);
         DrawColumnText(graphics, text.RadarSampleHeader, fonts.Badge, color, layout.Columns.Samples, layout.TableHeaderBounds, origin);
         DrawColumnText(graphics, text.RadarAverageHeader, fonts.Badge, color, layout.Columns.AverageTime, layout.TableHeaderBounds, origin);
-        DrawColumnText(graphics, text.RadarCostHeader, fonts.Badge, color, layout.Columns.Cost, layout.TableHeaderBounds, origin);
+        DrawColumnText(
+            graphics,
+            text.RadarCostHeader,
+            fonts.Badge,
+            color,
+            layout.Columns.Cost,
+            layout.TableHeaderBounds,
+            origin,
+            CellTextFlags | TextFormatFlags.Right);
 
         var previousSmoothing = graphics.SmoothingMode;
         graphics.SmoothingMode = SmoothingMode.None;
@@ -574,7 +973,15 @@ internal sealed class RadarPopoverRenderer : IDisposable
             }
             DrawColumnText(graphics, row.SampleCountText, numberFont, labelColor, layout.Columns.Samples, rowBounds, origin);
             DrawColumnText(graphics, text.RadarAverageTime(row.Model), numberFont, labelColor, layout.Columns.AverageTime, rowBounds, origin);
-            DrawColumnText(graphics, row.AverageCostText, numberFont, labelColor, layout.Columns.Cost, rowBounds, origin);
+            DrawColumnText(
+                graphics,
+                row.AverageCostText,
+                numberFont,
+                labelColor,
+                layout.Columns.Cost,
+                rowBounds,
+                origin,
+                CellTextFlags | TextFormatFlags.Right);
         }
     }
 
@@ -742,9 +1149,22 @@ internal sealed class RadarPopoverRenderer : IDisposable
         NativeText text,
         CodexTokenUsageSummary? tokenUsage,
         AiGatewayUsageSummary? aiGatewayUsage,
-        string title)
+        string title,
+        bool spendCardHovered)
     {
         var footerColor = Color.FromArgb(148, 163, 184);
+        if (tokenUsage is not null && !layout.FooterSpendBounds.IsEmpty)
+        {
+            DrawSpendSummaryCard(
+                graphics,
+                layout.Dpi,
+                Offset(layout.FooterSpendBounds, origin),
+                tokenUsage,
+                fonts,
+                text,
+                HasSpendHistory(tokenUsage),
+                spendCardHovered);
+        }
         var legendBounds = Offset(layout.FooterLegendBounds, origin);
         using (var divider = new Pen(Color.FromArgb(42, 71, 85, 105)))
         {
@@ -863,6 +1283,185 @@ internal sealed class RadarPopoverRenderer : IDisposable
                 BaseTextFlags);
             x += textBounds.Width + itemGap;
         }
+    }
+
+    private static bool HasSpendHistory(CodexTokenUsageSummary tokenUsage) =>
+        tokenUsage.SpendHistory?.Days.Any(day => day.Spend.HasUsage) == true;
+
+    private static void DrawSpendSummaryCard(
+        Graphics graphics,
+        int dpi,
+        Rectangle bounds,
+        CodexTokenUsageSummary tokenUsage,
+        RadarPopoverFonts fonts,
+        NativeText text,
+        bool showHistoryAction,
+        bool hovered)
+    {
+        var surfaceBounds = new Rectangle(
+            bounds.X,
+            bounds.Y,
+            Math.Max(1, bounds.Width - 1),
+            Math.Max(1, bounds.Height - 1));
+        var accentColor = Color.FromArgb(129, 140, 248);
+        using var surface = RoundedRectangle(surfaceBounds, Scale(dpi, 6));
+        using var fill = new SolidBrush(Color.FromArgb(
+            hovered && showHistoryAction ? 45 : 32,
+            accentColor.R,
+            accentColor.G,
+            accentColor.B));
+        using var border = new Pen(Color.FromArgb(
+            hovered && showHistoryAction ? 104 : 70,
+            accentColor.R,
+            accentColor.G,
+            accentColor.B));
+        graphics.FillPath(fill, surface);
+        graphics.DrawPath(border, surface);
+
+        var padding = Scale(dpi, 8);
+        var inner = new Rectangle(
+            bounds.Left + padding,
+            bounds.Top,
+            Math.Max(1, bounds.Width - padding * 2),
+            bounds.Height);
+        var headerHeight = Scale(dpi, 12);
+        var headerBounds = new Rectangle(
+            inner.Left,
+            inner.Top + ScaleCoordinate(dpi, 1),
+            inner.Width,
+            headerHeight);
+        var actionWidth = showHistoryAction
+            ? Math.Min(
+                headerBounds.Width / 2,
+                TextRenderer.MeasureText(
+                    graphics,
+                    text.CodexSpendHistoryAction,
+                    fonts.Badge,
+                    Size.Empty,
+                    BaseTextFlags).Width + Scale(dpi, 2))
+            : 0;
+        var actionGap = showHistoryAction ? Scale(dpi, 6) : 0;
+        var wideCard = bounds.Width >= Scale(dpi, 320);
+        var titleWidth = showHistoryAction
+            ? Math.Max(1, headerBounds.Width * (wideCard ? 2 : 3) / 5)
+            : headerBounds.Width * 3 / 5;
+        DrawText(
+            graphics,
+            text.CodexSpendMetricTitle,
+            fonts.Badge,
+            Color.FromArgb(165, 180, 252),
+            new Rectangle(headerBounds.Left, headerBounds.Top, titleWidth, headerBounds.Height),
+            CellTextFlags);
+        if (!showHistoryAction || wideCard)
+        {
+            var sessionRight = showHistoryAction
+                ? headerBounds.Right - actionWidth - actionGap
+                : headerBounds.Right;
+            DrawText(
+                graphics,
+                text.CodexSessionCount(tokenUsage.SessionCount),
+                fonts.Meta,
+                Color.FromArgb(100, 116, 139),
+                new Rectangle(
+                    headerBounds.Left + titleWidth,
+                    headerBounds.Top,
+                    Math.Max(1, sessionRight - headerBounds.Left - titleWidth),
+                    headerBounds.Height),
+                CellTextFlags | TextFormatFlags.Right);
+        }
+        if (showHistoryAction)
+        {
+            DrawText(
+                graphics,
+                text.CodexSpendHistoryAction,
+                fonts.Badge,
+                hovered
+                    ? Color.FromArgb(224, 231, 255)
+                    : Color.FromArgb(165, 180, 252),
+                new Rectangle(
+                    headerBounds.Right - actionWidth,
+                    headerBounds.Top,
+                    actionWidth,
+                    headerBounds.Height),
+                CellTextFlags | TextFormatFlags.Right);
+        }
+
+        using var horizontalDivider = new Pen(Color.FromArgb(38, accentColor.R, accentColor.G, accentColor.B));
+        var dividerY = bounds.Top + headerHeight;
+        graphics.DrawLine(horizontalDivider, inner.Left, dividerY, inner.Right, dividerY);
+
+        var fieldsTop = dividerY + Scale(dpi, 1);
+        var fieldsHeight = Math.Max(1, bounds.Bottom - fieldsTop - Scale(dpi, 1));
+        var fieldGap = Scale(dpi, 10);
+        var fieldWidth = Math.Max(1, (inner.Width - fieldGap) / 2);
+        DrawSpendSummaryField(
+            graphics,
+            dpi,
+            new Rectangle(inner.Left, fieldsTop, fieldWidth, fieldsHeight),
+            text.CodexTodayMetricLabel,
+            text.CodexApiEquivalent(tokenUsage.TodaySpend),
+            fonts.SpendNumber,
+            Color.FromArgb(248, 250, 252),
+            fonts);
+        DrawSpendSummaryField(
+            graphics,
+            dpi,
+            new Rectangle(
+                inner.Left + fieldWidth + fieldGap,
+                fieldsTop,
+                inner.Right - inner.Left - fieldWidth - fieldGap,
+                fieldsHeight),
+            text.CodexLast30DaysMetricLabel,
+            text.CodexApiEquivalent(tokenUsage.Last30DaysSpend),
+            fonts.EmphasizedNumber,
+            Color.FromArgb(203, 213, 225),
+            fonts);
+
+        using var verticalDivider = new Pen(Color.FromArgb(38, accentColor.R, accentColor.G, accentColor.B));
+        var dividerX = inner.Left + fieldWidth + fieldGap / 2;
+        graphics.DrawLine(
+            verticalDivider,
+            dividerX,
+            fieldsTop + Scale(dpi, 2),
+            dividerX,
+            bounds.Bottom - Scale(dpi, 3));
+    }
+
+    private static void DrawSpendSummaryField(
+        Graphics graphics,
+        int dpi,
+        Rectangle bounds,
+        string label,
+        string value,
+        Font valueFont,
+        Color valueColor,
+        RadarPopoverFonts fonts)
+    {
+        var labelWidth = TextRenderer.MeasureText(
+            graphics,
+            label,
+            fonts.Meta,
+            Size.Empty,
+            BaseTextFlags).Width;
+        var gap = Scale(dpi, 4);
+        DrawText(
+            graphics,
+            label,
+            fonts.Meta,
+            Color.FromArgb(148, 163, 184),
+            new Rectangle(bounds.Left, bounds.Top, labelWidth, bounds.Height),
+            CellTextFlags);
+        DrawText(
+            graphics,
+            value,
+            valueFont,
+            valueColor,
+            new Rectangle(
+                bounds.Left + labelWidth + gap,
+                bounds.Top,
+                Math.Max(1, bounds.Width - labelWidth - gap),
+                bounds.Height),
+            CellTextFlags | TextFormatFlags.Right);
     }
 
     private static void DrawTokenRadarFooter(
@@ -1072,9 +1671,10 @@ internal sealed class RadarPopoverRenderer : IDisposable
         Color color,
         RadarPopoverColumn column,
         Rectangle row,
-        Point origin)
+        Point origin,
+        TextFormatFlags flags = CellTextFlags)
     {
-        DrawText(graphics, text, font, color, Offset(column.InRow(row), origin), CellTextFlags);
+        DrawText(graphics, text, font, color, Offset(column.InRow(row), origin), flags);
     }
 
     private static void DrawStatusIndicator(
@@ -1168,6 +1768,25 @@ internal sealed class RadarPopoverRenderer : IDisposable
         return region;
     }
 
+    internal static Region CreateWindowRegion(
+        CodexSpendHistoryLayout layout,
+        PopoverTailSide tailSide,
+        int tailOffset)
+    {
+        var body = layout.BodyBounds(tailSide);
+        var pathBounds = new Rectangle(
+            body.X,
+            body.Y,
+            Math.Max(1, body.Width - 1),
+            Math.Max(1, body.Height - 1));
+        using var bodyPath = RoundedRectangle(pathBounds, Scale(layout.Dpi, 10));
+        using var tailPath = new GraphicsPath();
+        tailPath.AddPolygon(TailPoints(layout, tailSide, tailOffset, body));
+        var region = new Region(bodyPath);
+        region.Union(tailPath);
+        return region;
+    }
+
     private static Point[] TailPoints(
         RadarPopoverLayout layout,
         PopoverTailSide tailSide,
@@ -1196,7 +1815,35 @@ internal sealed class RadarPopoverRenderer : IDisposable
         };
     }
 
-    private static Rectangle BodyBounds(RadarPopoverLayout layout, PopoverTailSide tailSide) =>
+    private static Point[] TailPoints(
+        CodexSpendHistoryLayout layout,
+        PopoverTailSide tailSide,
+        int tailOffset,
+        Rectangle body)
+    {
+        var tail = layout.TailSize;
+        return tailSide switch
+        {
+            PopoverTailSide.Top =>
+                [new(tailOffset - tail, body.Top), new(tailOffset, 0), new(tailOffset + tail, body.Top)],
+            PopoverTailSide.Bottom =>
+                [
+                    new(tailOffset - tail, body.Bottom - 1),
+                    new(tailOffset, body.Bottom + tail - 1),
+                    new(tailOffset + tail, body.Bottom - 1),
+                ],
+            PopoverTailSide.Left =>
+                [new(body.Left, tailOffset - tail), new(0, tailOffset), new(body.Left, tailOffset + tail)],
+            _ =>
+                [
+                    new(body.Right - 1, tailOffset - tail),
+                    new(body.Right + tail - 1, tailOffset),
+                    new(body.Right - 1, tailOffset + tail),
+                ],
+        };
+    }
+
+    internal static Rectangle BodyBounds(RadarPopoverLayout layout, PopoverTailSide tailSide) =>
         tailSide switch
         {
             PopoverTailSide.Top => new Rectangle(0, layout.TailSize, layout.BodySize.Width, layout.BodySize.Height),
@@ -1267,6 +1914,7 @@ internal sealed class RadarPopoverRenderer : IDisposable
             EmphasizedModel = Create("Segoe UI", 8.5, FontStyle.Bold, dpi);
             Number = Create("Cascadia Mono", 8.5, FontStyle.Regular, dpi);
             EmphasizedNumber = Create("Cascadia Mono", 8.5, FontStyle.Bold, dpi);
+            SpendNumber = Create("Cascadia Mono", 10.5, FontStyle.Bold, dpi);
         }
 
         public int Dpi { get; }
@@ -1278,6 +1926,7 @@ internal sealed class RadarPopoverRenderer : IDisposable
         public Font EmphasizedModel { get; }
         public Font Number { get; }
         public Font EmphasizedNumber { get; }
+        public Font SpendNumber { get; }
 
         public void Dispose()
         {
@@ -1289,6 +1938,7 @@ internal sealed class RadarPopoverRenderer : IDisposable
             EmphasizedModel.Dispose();
             Number.Dispose();
             EmphasizedNumber.Dispose();
+            SpendNumber.Dispose();
         }
 
         private static Font Create(string family, double logicalPixels, FontStyle style, int dpi) =>

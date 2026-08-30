@@ -111,6 +111,12 @@ test('CLI is a small native executable and part of the portable contract', () =>
   assert.equal(packageConfig.scripts.cli, 'dotnet run --project tools/ZGSTokenBar.Cli/ZGSTokenBar.Cli.csproj -c Release --');
 });
 
+test('portable UI rebuilds can reuse the verified bundled provider bytes', () => {
+  assert.match(packaging, /BundledPluginPackagePath/);
+  assert.match(packaging, /Test-Path -LiteralPath \$resolvedBundledPluginPackage -PathType Leaf/);
+  assert.match(packaging, /Copy-Item -LiteralPath \$resolvedBundledPluginPackage -Destination \$bundledPluginPackage/);
+});
+
 test('headless commands stay in-process and never fall through to the desktop pipe', () => {
   assert.match(cli, /if \(options\.Profile == "headless"\)[\s\S]{0,160}InvokeHeadlessAsync/);
   assert.match(cli, /Event watch requires the desktop profile/);

@@ -14,6 +14,7 @@ const hintPopover = fs.readFileSync('src/ZGSTokenBar.App/TaskbarHintPopoverForm.
 const nativeText = fs.readFileSync('src/ZGSTokenBar.App/NativeText.cs', 'utf8');
 const radarPresentation = fs.readFileSync('src/ZGSTokenBar.Core/RadarPresentation.cs', 'utf8');
 const radarLayout = fs.readFileSync('src/ZGSTokenBar.Core/RadarPopoverLayout.cs', 'utf8');
+const spendHistoryLayout = fs.readFileSync('src/ZGSTokenBar.Core/CodexSpendHistoryLayout.cs', 'utf8');
 const radarRenderer = fs.readFileSync('src/ZGSTokenBar.App/RadarPopoverRenderer.cs', 'utf8');
 const radarPopover = fs.readFileSync('src/ZGSTokenBar.App/ProviderRadarPopoverForm.cs', 'utf8');
 const radarService = fs.readFileSync('src/ZGSTokenBar.Core/RadarService.cs', 'utf8');
@@ -167,10 +168,50 @@ test('Radar and token overview clicks share quota-style temporary pin behavior',
   assert.match(radarRenderer, /CodexTokenPopoverSubtitle\(pinned\)/);
 });
 
+test('Codex spend history reuses the pinned Radar popover with an in-place back path', () => {
+  const mouseClick = boundedSlice(
+    radarPopover,
+    'protected override void OnMouseClick(MouseEventArgs e)',
+    'protected override void OnResize(EventArgs e)');
+  const spendCard = boundedSlice(
+    radarRenderer,
+    'private static void DrawSpendSummaryCard(',
+    'private static void DrawSpendSummaryField(');
+  const pinForHistory = boundedSlice(
+    barForm,
+    'private void PinVisibleRadarPopoverForHistory()',
+    'private void MonitorPopover()');
+
+  assert.match(spendHistoryLayout, /public sealed class CodexSpendHistoryLayout/);
+  assert.match(spendHistoryLayout, /MaximumTrendDays = 30/);
+  assert.match(spendHistoryLayout, /public IReadOnlyList<Rectangle> BarBounds/);
+  assert.match(radarRenderer, /public void DrawSpendHistory\(/);
+  assert.match(radarRenderer, /firstRecentIndex = Math\.Max\(0, count - 7\)/);
+  assert.match(radarRenderer, /day\.Spend\.HasUnpricedUsage/);
+  assert.match(spendCard, /showHistoryAction/);
+  assert.match(spendCard, /text\.CodexSpendHistoryAction/);
+  assert.match(spendCard, /hovered && showHistoryAction/);
+  assert.match(radarPopover, /public event EventHandler\? SpendHistoryRequested/);
+  assert.match(radarPopover, /_renderer\.DrawSpendHistory\(/);
+  assert.match(mouseClick, /BackBounds[\s\S]*?_historyVisible = false/);
+  assert.match(mouseClick, /SpendCardBounds\(\)[\s\S]*?_historyVisible = true/);
+  assert.match(mouseClick, /_pinned = true;[\s\S]*?SpendHistoryRequested\?\.Invoke/);
+  assert.match(barForm, /SpendHistoryRequested \+= \(_, _\) => PinVisibleRadarPopoverForHistory\(\)/);
+  assert.match(pinForHistory, /ShowRadarPopover\([\s\S]*?pinned: true,[\s\S]*?requestRefresh: false/);
+  assert.match(radarPopover, /WmMouseActivate[\s\S]*?message\.Result = \(IntPtr\)MaNoActivate/);
+  assert.doesNotMatch(barForm, /_spendHistoryPopover|SpendHistoryPopoverForm/);
+});
+
 test('Codex logo hover owns local token totals and cache hit rate without coupling them to quota or Radar fetches', () => {
   assert.match(barForm, /HasProviderOverview\(card\.Provider, radarEnabled, _codexTokenUsage\)/);
   assert.match(barForm, /radarEnabled \|\| provider == ProviderKind\.Codex && codexTokenUsage is not null/);
   assert.match(barForm, /if \(requestRefresh && radarEnabled\)[\s\S]*?RadarPreviewRequested\?\.Invoke/);
+  assert.match(tokenUsageReader, /public CodexTokenUsageSummary\? Snapshot\(DateTimeOffset now\)/);
+  assert.match(tokenUsageReader, /capturedAt: LatestIndexedWriteAt\(now\)/);
+  assert.match(applicationContext, /_cachedCodexTokenUsage = CodexTokenUsageSummary\.ApplyCumulativeFloor\([\s\S]*?_codexTokenUsageReader\.Snapshot\(now\)/);
+  assert.match(applicationContext, /ApplyCodexUsageActivityTransition\([\s\S]*?_cachedCodexTokenUsage/);
+  assert.match(applicationContext, /setUsage\(cachedSummary\);[\s\S]*?publishUsage\(cachedSummary,[\s\S]*?requestRefreshAction\(\)/);
+  assert.match(applicationContext, /&& _activeProviders\.Contains\(ProviderKind\.Codex\)[\s\S]*?_bar\.SetCodexTokenUsage\(summary\)/);
   assert.doesNotMatch(popover, /TokenUsage|LogicalTokenBodyHeight/);
   assert.match(radarLayout, /CreateTokenUsage/);
   assert.match(radarRenderer, /DrawTokenOverview/);
@@ -183,6 +224,12 @@ test('Codex logo hover owns local token totals and cache hit rate without coupli
   assert.match(radarRenderer, /DrawTokenRadarFooter/);
   assert.match(radarRenderer, /DrawTokenRadarFooterGroup/);
   assert.match(radarRenderer, /DrawTokenRadarFooterField/);
+  assert.match(radarRenderer, /layout\.FooterSpendBounds/);
+  assert.match(radarRenderer, /DrawSpendSummaryCard/);
+  assert.match(radarRenderer, /fonts\.SpendNumber/);
+  assert.match(radarRenderer, /tokenUsage\.TodaySpend/);
+  assert.match(radarRenderer, /tokenUsage\.Last30DaysSpend/);
+  assert.match(radarPopover, /tokenUsage is not null/);
   assert.match(nativeText, /CodexTokenRadarMetricTitle/);
   assert.match(nativeText, /CodexCacheRadarMetricTitle/);
   assert.match(tokenUsageReader, /cached_input_tokens/);

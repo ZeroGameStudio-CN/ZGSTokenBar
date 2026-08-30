@@ -28,8 +28,10 @@ public sealed class RadarPopoverLayout
     public const int LogicalRowHeight = 19;
     public const int LogicalModelGroupGap = 6;
     public const int LogicalFooterExpansion = 16;
+    public const int LogicalSpendSummaryHeight = 34;
+    public const int LogicalSpendCardHeight = 28;
     public const int LogicalTokenWidth = 240;
-    public const int LogicalTokenHeight = 144;
+    public const int LogicalTokenHeight = 162;
 
     private RadarPopoverLayout(
         int dpi,
@@ -48,6 +50,7 @@ public sealed class RadarPopoverLayout
         IReadOnlyList<Rectangle> rowBounds,
         Rectangle errorBounds,
         Rectangle emptyBounds,
+        Rectangle footerSpendBounds,
         Rectangle footerSourceBounds,
         Rectangle footerLegendBounds,
         RadarPopoverColumns columns)
@@ -68,6 +71,7 @@ public sealed class RadarPopoverLayout
         RowBounds = rowBounds;
         ErrorBounds = errorBounds;
         EmptyBounds = emptyBounds;
+        FooterSpendBounds = footerSpendBounds;
         FooterSourceBounds = footerSourceBounds;
         FooterLegendBounds = footerLegendBounds;
         Columns = columns;
@@ -89,6 +93,7 @@ public sealed class RadarPopoverLayout
     public IReadOnlyList<Rectangle> RowBounds { get; }
     public Rectangle ErrorBounds { get; }
     public Rectangle EmptyBounds { get; }
+    public Rectangle FooterSpendBounds { get; }
     public Rectangle FooterSourceBounds { get; }
     public Rectangle FooterLegendBounds { get; }
     public RadarPopoverColumns Columns { get; }
@@ -97,19 +102,33 @@ public sealed class RadarPopoverLayout
         int dpi,
         int rowCount,
         bool hasInlineError,
-        bool hasOpenResetWindow = false)
+        bool hasOpenResetWindow = false,
+        bool hasSpendSummary = false)
     {
-        return CreateCore(dpi, rowCount, null, hasInlineError, hasOpenResetWindow);
+        return CreateCore(
+            dpi,
+            rowCount,
+            null,
+            hasInlineError,
+            hasOpenResetWindow,
+            hasSpendSummary);
     }
 
     public static RadarPopoverLayout Create(
         int dpi,
         IReadOnlyList<string?> modelKeys,
         bool hasInlineError,
-        bool hasOpenResetWindow = false)
+        bool hasOpenResetWindow = false,
+        bool hasSpendSummary = false)
     {
         ArgumentNullException.ThrowIfNull(modelKeys);
-        return CreateCore(dpi, modelKeys.Count, modelKeys, hasInlineError, hasOpenResetWindow);
+        return CreateCore(
+            dpi,
+            modelKeys.Count,
+            modelKeys,
+            hasInlineError,
+            hasOpenResetWindow,
+            hasSpendSummary);
     }
 
     private static RadarPopoverLayout CreateCore(
@@ -117,21 +136,23 @@ public sealed class RadarPopoverLayout
         int rowCount,
         IReadOnlyList<string?>? modelKeys,
         bool hasInlineError,
-        bool hasOpenResetWindow)
+        bool hasOpenResetWindow,
+        bool hasSpendSummary)
     {
         dpi = Math.Max(96, dpi);
         rowCount = Math.Max(0, rowCount);
         var logicalErrorHeight = hasInlineError ? 14 : 0;
         var resetBannerOffset = hasOpenResetWindow ? 36 : 0;
         var modelGroupGaps = CountModelGroupGaps(rowCount, modelKeys);
-        var logicalHeight = rowCount == 0
+        var logicalHeight = (rowCount == 0
             ? 164 + LogicalFooterExpansion + resetBannerOffset
             : 104
                 + LogicalFooterExpansion
                 + rowCount * LogicalRowHeight
                 + modelGroupGaps * LogicalModelGroupGap
                 + logicalErrorHeight
-                + resetBannerOffset;
+                + resetBannerOffset)
+            + (hasSpendSummary ? LogicalSpendSummaryHeight : 0);
 
         int Scale(int value) => Math.Max(
             1,
@@ -177,6 +198,13 @@ public sealed class RadarPopoverLayout
             rows,
             hasInlineError ? Rect(14, rowsBottom, 448, 14) : Rectangle.Empty,
             Rect(14, 62 + resetBannerOffset, 448, 32),
+            hasSpendSummary
+                ? Rect(
+                    14,
+                    logicalHeight - 48 - LogicalSpendSummaryHeight,
+                    448,
+                    LogicalSpendCardHeight)
+                : Rectangle.Empty,
             Rect(14, logicalHeight - 30, 448, 24),
             Rect(14, logicalHeight - 48, 448, 14),
             new RadarPopoverColumns(
@@ -255,6 +283,7 @@ public sealed class RadarPopoverLayout
             [],
             Rectangle.Empty,
             Rectangle.Empty,
+            Rect(12, 126, 216, LogicalSpendCardHeight),
             Rectangle.Empty,
             Rectangle.Empty,
             emptyColumns);

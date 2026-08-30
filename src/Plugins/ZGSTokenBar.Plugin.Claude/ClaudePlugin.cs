@@ -4,15 +4,15 @@ using ZGSTokenBar.PluginSdk;
 
 namespace ZGSTokenBar.Plugin.Claude;
 
-public sealed class ClaudePlugin : BuiltinPluginBase, IDataSource
+public sealed class ClaudePlugin : BuiltinPluginBase, IDataSource, ILocalCredentialProbe
 {
     private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(15) };
     private readonly AppSettingsStore _settingsStore = new();
 
     public override PluginManifest Manifest => new(
         1, "zgstokenbar.provider.claude", "1.0.0", 1, 0, PluginRuntime.Builtin,
-        false, "claude", ["quota", "health", "settings", "commands"],
-        true, 100, [])
+        false, "claude", ["quota", "health", "settings", "commands", "local-credentials"],
+        false, 100, [])
     {
         DisplayName = "Claude",
     };
@@ -31,6 +31,12 @@ public sealed class ClaudePlugin : BuiltinPluginBase, IDataSource
             "provider.claude.icon",
             "accent.claude",
             result);
+    }
+
+    public ValueTask<bool> HasLocalCredentialsAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(ClaudeQuotaService.HasLocalCredentials());
     }
 
     public override ValueTask DisposeAsync()

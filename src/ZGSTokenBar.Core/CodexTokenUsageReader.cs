@@ -13,7 +13,11 @@ public sealed record CodexTokenUsageSummary(
     long? InputTokens = null,
     long? CachedInputTokens = null,
     long? TodayInputTokens = null,
-    long? TodayCachedInputTokens = null)
+    long? TodayCachedInputTokens = null,
+    CodexSpendPeriod? TodaySpend = null,
+    CodexSpendPeriod? YesterdaySpend = null,
+    CodexSpendPeriod? Last30DaysSpend = null,
+    CodexSpendHistory? SpendHistory = null)
 {
     public static CodexTokenUsageSummary? ApplyCumulativeFloor(
         CodexTokenUsageSummary? summary,
@@ -41,14 +45,39 @@ public sealed record CodexTokenUsageSummary(
             : null;
 }
 
+public sealed record CodexSpendDay(
+    string LocalDate,
+    CodexSpendPeriod Spend);
+
+public sealed record CodexSpendModel(
+    string Model,
+    CodexSpendPeriod Spend);
+
+public sealed record CodexSpendHistory(
+    IReadOnlyList<CodexSpendDay> Days,
+    IReadOnlyList<CodexSpendModel> Models,
+    CodexSpendPeriod Last7DaysSpend);
+
 public sealed class CodexTokenUsageIndex
 {
-    public const int CurrentSchemaVersion = 5;
+    public const int CurrentSchemaVersion = 7;
     public const int CurrentAccountingVersion = 2;
+    public const int CurrentSpendAccountingVersion = 3;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public List<CodexTokenUsageFileIndex> Files { get; set; } = [];
 }
+
+public sealed record CodexDailyModelUsage(
+    string LocalDate,
+    string? Model,
+    string PricingTier,
+    bool IsLongContext,
+    long InputTokens,
+    long CachedInputTokens,
+    long OutputTokens,
+    long UnattributedTokens = 0,
+    long CacheWriteInputTokens = 0);
 
 public sealed record CodexTokenUsageFileIndex(
     string Key,
@@ -66,7 +95,17 @@ public sealed record CodexTokenUsageFileIndex(
     long? LatestDayInputTokens = null,
     long? LatestDayCachedInputTokens = null,
     int AccountingVersion = 0,
-    bool? LegacyLifetimeOnly = null);
+    bool? LegacyLifetimeOnly = null,
+    List<CodexDailyModelUsage>? DailyModelUsage = null,
+    string? SpendCurrentModel = null,
+    string? SpendCurrentServiceTier = null,
+    long? SpendLastTotalTokens = null,
+    long? SpendLastInputTokens = null,
+    long? SpendLastCachedInputTokens = null,
+    long? SpendLastOutputTokens = null,
+    int SpendAccountingVersion = 0,
+    long? SpendLastCacheWriteInputTokens = null,
+    long? SpendScannedLength = null);
 
 public sealed record CodexTokenUsageReadResult(
     CodexTokenUsageSummary? Summary,
@@ -78,9 +117,13 @@ internal sealed record CodexTokenUsageEvent(
     long TotalTokens,
     long? InputTokens,
     long? CachedInputTokens,
+    long? CacheWriteInputTokens,
+    long? OutputTokens,
     long? LastTotalTokens,
     long? LastInputTokens,
-    long? LastCachedInputTokens);
+    long? LastCachedInputTokens,
+    long? LastCacheWriteInputTokens,
+    long? LastOutputTokens);
 
 internal sealed record CodexForkMetadata(
     string ParentThreadId,
@@ -99,6 +142,10 @@ public sealed class CodexTokenUsageReader
     internal const int MaximumLineBytes = 256 * 1024;
     internal const int InitialTailBytes = 256 * 1024;
     internal const int MaximumTailProbeBytes = 8 * 1024 * 1024;
+    internal const int SpendRetentionDays = 32;
+    private const string StandardPricingTier = "standard";
+    private const int MaximumSpendModelDisplayLength = 64;
+    private const string UnknownSpendModel = "unknown";
 
     private readonly Dictionary<string, CodexTokenUsageFileIndex> _files;
 
@@ -117,6 +164,14 @@ public sealed class CodexTokenUsageReader
                 && file.LastCachedInputTokens is null or >= 0
                 && file.LatestDayInputTokens is null or >= 0
                 && file.LatestDayCachedInputTokens is null or >= 0
+                && file.SpendAccountingVersion is >= 0 and <= CodexTokenUsageIndex.CurrentSpendAccountingVersion
+                && file.SpendLastTotalTokens is null or >= 0
+                && file.SpendLastInputTokens is null or >= 0
+                && file.SpendLastCachedInputTokens is null or >= 0
+                && file.SpendLastOutputTokens is null or >= 0
+                && file.SpendLastCacheWriteInputTokens is null or >= 0
+                && file.SpendScannedLength is null or >= 0
+                && (file.SpendScannedLength is null || file.SpendScannedLength <= file.Length)
                 && (file.InputTokens is null
                     || file.CachedInputTokens is null
                     || file.CachedInputTokens <= file.InputTokens)
@@ -125,10 +180,24 @@ public sealed class CodexTokenUsageReader
                     || file.LastCachedInputTokens <= file.LastInputTokens)
                 && (file.LatestDayInputTokens is null
                     || file.LatestDayCachedInputTokens is null
-                    || file.LatestDayCachedInputTokens <= file.LatestDayInputTokens))
+                    || file.LatestDayCachedInputTokens <= file.LatestDayInputTokens)
+                && (file.SpendLastInputTokens is null
+                    || file.SpendLastCachedInputTokens is null
+                    || file.SpendLastCacheWriteInputTokens is null
+                    || file.SpendLastCacheWriteInputTokens <= file.SpendLastInputTokens
+                        && file.SpendLastCachedInputTokens
+                            <= file.SpendLastInputTokens - file.SpendLastCacheWriteInputTokens)
+                && (file.DailyModelUsage is null
+                    || file.DailyModelUsage.All(IsValidDailyUsage)))
             .GroupBy(file => file.Key, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
     }
+
+    public CodexTokenUsageSummary? Snapshot(DateTimeOffset now) =>
+        BuildSummary(
+            now,
+            activeFiles: null,
+            capturedAt: LatestIndexedWriteAt(now));
 
     public CodexTokenUsageReadResult Refresh(
         DateTimeOffset now,
@@ -181,7 +250,23 @@ public sealed class CodexTokenUsageReader
         _files.Clear();
         foreach (var pair in next) _files[pair.Key] = pair.Value;
 
-        var today = LocalDate(now);
+        var summary = BuildSummary(now, candidates, now);
+        return new CodexTokenUsageReadResult(
+            summary,
+            new CodexTokenUsageIndex
+            {
+                Files = _files.Values.OrderBy(file => file.Key, StringComparer.Ordinal).ToList(),
+            },
+            changed);
+    }
+
+    private CodexTokenUsageSummary? BuildSummary(
+        DateTimeOffset now,
+        IReadOnlyDictionary<string, FileInfo>? activeFiles,
+        DateTimeOffset capturedAt)
+    {
+        var spendWindowDates = SpendWindowDates(now, TimeZoneInfo.Local);
+        var today = spendWindowDates.Today;
         long localTokens = 0;
         long todayTokens = 0;
         long inputTokens = 0;
@@ -194,9 +279,11 @@ public sealed class CodexTokenUsageReader
         var sessionCount = 0;
         foreach (var file in _files.Values.Where(file => file.HasTokenData))
         {
+            var isActive = activeFiles?.ContainsKey(file.Key) ?? true;
             if (file.AccountingVersion != CodexTokenUsageIndex.CurrentAccountingVersion)
             {
-                if (file.LegacyLifetimeOnly == true && !candidates.ContainsKey(file.Key))
+                if (file.LegacyLifetimeOnly == true
+                    && (activeFiles is null || !isActive))
                 {
                     localTokens = SaturatingAdd(localTokens, file.TotalTokens);
                     sessionCount++;
@@ -208,7 +295,7 @@ public sealed class CodexTokenUsageReader
             {
                 todayTokens = SaturatingAdd(todayTokens, file.LatestDayTokens);
             }
-            if (candidates.ContainsKey(file.Key))
+            if (isActive)
             {
                 if (file.InputTokens is { } input && file.CachedInputTokens is { } cached)
                 {
@@ -234,24 +321,58 @@ public sealed class CodexTokenUsageReader
             sessionCount++;
         }
 
-        var summary = sessionCount == 0
+        var yesterday = spendWindowDates.Yesterday;
+        var last30DaysCutoff = spendWindowDates.Last30DaysCutoff;
+        var spendBuckets = _files.Values
+            .Where(file => file.SpendAccountingVersion
+                == CodexTokenUsageIndex.CurrentSpendAccountingVersion)
+            .SelectMany(file => file.DailyModelUsage ?? [])
+            .ToArray();
+        var todaySpend = SummarizeSpendPeriod(
+            spendBuckets.Where(item => item.LocalDate == today));
+        var yesterdaySpend = SummarizeSpendPeriod(
+            spendBuckets.Where(item => item.LocalDate == yesterday));
+        var last30DaysSpend = SummarizeSpendPeriod(
+            spendBuckets.Where(item =>
+                string.CompareOrdinal(item.LocalDate, last30DaysCutoff) >= 0
+                && string.CompareOrdinal(item.LocalDate, today) <= 0));
+        var spendHistory = BuildSpendHistory(
+            spendBuckets.Where(item =>
+                    string.CompareOrdinal(item.LocalDate, last30DaysCutoff) >= 0
+                    && string.CompareOrdinal(item.LocalDate, today) <= 0)
+                .ToArray(),
+            LocalCalendarDate(now, TimeZoneInfo.Local));
+
+        return sessionCount == 0
             ? null
             : new CodexTokenUsageSummary(
                 todayTokens,
                 localTokens,
                 sessionCount,
-                now,
+                capturedAt,
                 cacheSessionCount > 0 ? inputTokens : null,
                 cacheSessionCount > 0 ? cachedInputTokens : null,
                 todayCacheStatsComplete && todayCacheSessionCount > 0 ? todayInputTokens : null,
-                todayCacheStatsComplete && todayCacheSessionCount > 0 ? todayCachedInputTokens : null);
-        return new CodexTokenUsageReadResult(
-            summary,
-            new CodexTokenUsageIndex
-            {
-                Files = _files.Values.OrderBy(file => file.Key, StringComparer.Ordinal).ToList(),
-            },
-            changed);
+                todayCacheStatsComplete && todayCacheSessionCount > 0 ? todayCachedInputTokens : null,
+                todaySpend,
+                yesterdaySpend,
+                last30DaysSpend,
+                spendHistory);
+    }
+
+    private DateTimeOffset LatestIndexedWriteAt(DateTimeOffset now)
+    {
+        var latestTicks = _files.Values
+            .Where(file => file.HasTokenData
+                && file.LastWriteTimeUtcTicks > DateTimeOffset.MinValue.UtcTicks
+                && file.LastWriteTimeUtcTicks <= DateTimeOffset.MaxValue.UtcTicks)
+            .Select(file => file.LastWriteTimeUtcTicks)
+            .DefaultIfEmpty(now.UtcTicks)
+            .Max();
+        var indexedAt = new DateTimeOffset(latestTicks, TimeSpan.Zero);
+        return indexedAt <= now.ToUniversalTime()
+            ? indexedAt
+            : now.ToUniversalTime();
     }
 
     internal static bool TryParseLine(string line, out CodexTokenUsageEvent? item)
@@ -287,17 +408,34 @@ public sealed class CodexTokenUsageReader
 
             long? inputTokens = null;
             long? cachedInputTokens = null;
+            long? cacheWriteInputTokens = null;
+            long? outputTokens = null;
             if (TryReadNonNegativeInt64(totalUsage, "input_tokens", out var parsedInputTokens)
                 && TryReadNonNegativeInt64(totalUsage, "cached_input_tokens", out var parsedCachedInputTokens)
                 && parsedCachedInputTokens <= parsedInputTokens)
             {
                 inputTokens = parsedInputTokens;
                 cachedInputTokens = parsedCachedInputTokens;
+                if (TryReadNonNegativeInt64(
+                        totalUsage,
+                        "cache_write_input_tokens",
+                        out var parsedCacheWriteInputTokens)
+                    && parsedCacheWriteInputTokens <= parsedInputTokens - parsedCachedInputTokens)
+                {
+                    cacheWriteInputTokens = parsedCacheWriteInputTokens;
+                }
+            }
+            if (TryReadNonNegativeInt64(totalUsage, "output_tokens", out var parsedOutputTokens)
+                && parsedOutputTokens <= totalTokens)
+            {
+                outputTokens = parsedOutputTokens;
             }
 
             long? lastTotalTokens = null;
             long? lastInputTokens = null;
             long? lastCachedInputTokens = null;
+            long? lastCacheWriteInputTokens = null;
+            long? lastOutputTokens = null;
             if (info.TryGetProperty("last_token_usage", out var lastUsage)
                 && lastUsage.ValueKind == JsonValueKind.Object)
             {
@@ -316,6 +454,23 @@ public sealed class CodexTokenUsageReader
                 {
                     lastInputTokens = parsedLastInputTokens;
                     lastCachedInputTokens = parsedLastCachedInputTokens;
+                    if (TryReadNonNegativeInt64(
+                            lastUsage,
+                            "cache_write_input_tokens",
+                            out var parsedLastCacheWriteInputTokens)
+                        && parsedLastCacheWriteInputTokens
+                            <= parsedLastInputTokens - parsedLastCachedInputTokens
+                        && cacheWriteInputTokens is { } cumulativeCacheWrite
+                        && parsedLastCacheWriteInputTokens <= cumulativeCacheWrite)
+                    {
+                        lastCacheWriteInputTokens = parsedLastCacheWriteInputTokens;
+                    }
+                }
+                if (TryReadNonNegativeInt64(lastUsage, "output_tokens", out var parsedLastOutputTokens)
+                    && outputTokens is { } cumulativeOutput
+                    && parsedLastOutputTokens <= cumulativeOutput)
+                {
+                    lastOutputTokens = parsedLastOutputTokens;
                 }
             }
 
@@ -324,9 +479,13 @@ public sealed class CodexTokenUsageReader
                 totalTokens,
                 inputTokens,
                 cachedInputTokens,
+                cacheWriteInputTokens,
+                outputTokens,
                 lastTotalTokens,
                 lastInputTokens,
-                lastCachedInputTokens);
+                lastCachedInputTokens,
+                lastCacheWriteInputTokens,
+                lastOutputTokens);
             return true;
         }
         catch (Exception exception) when (exception is JsonException or InvalidOperationException)
@@ -357,7 +516,7 @@ public sealed class CodexTokenUsageReader
             cancellationToken.ThrowIfCancellationRequested();
             _files.TryGetValue(pair.Key, out var previous);
             pair.Value.Refresh();
-            var needsBaseline = previous is null
+            var needsAccountingBaseline = previous is null
                 || previous.AccountingVersion != CodexTokenUsageIndex.CurrentAccountingVersion
                 || pair.Value.Length < previous.Length
                 || !previous.HasTokenData
@@ -365,7 +524,20 @@ public sealed class CodexTokenUsageReader
                 || previous.CachedInputTokens is null
                 || previous.LastInputTokens is null
                 || previous.LastCachedInputTokens is null;
-            if (!needsBaseline) continue;
+            var needsSpendBaseline = previous is null
+                || previous.SpendAccountingVersion
+                    != CodexTokenUsageIndex.CurrentSpendAccountingVersion;
+            if (!needsAccountingBaseline
+                && needsSpendBaseline
+                && ShouldPruneHistoricalSpend(
+                    previous!.LatestLocalDate,
+                    new DateTimeOffset(pair.Value.LastWriteTimeUtc, TimeSpan.Zero),
+                    now,
+                    TimeZoneInfo.Local))
+            {
+                continue;
+            }
+            if (!needsAccountingBaseline && !needsSpendBaseline) continue;
 
             CodexForkMetadata? metadata;
             try
@@ -635,6 +807,10 @@ public sealed class CodexTokenUsageReader
         var lastWriteTicks = file.LastWriteTimeUtc.Ticks;
         if (previous is not null
             && previous.AccountingVersion == CodexTokenUsageIndex.CurrentAccountingVersion
+            && previous.SpendAccountingVersion == CodexTokenUsageIndex.CurrentSpendAccountingVersion
+            && previous.SpendScannedLength is >= 0
+            && previous.SpendScannedLength <= previous.Length
+            && SpendRetentionIsCurrent(previous, now)
             && previous.Length == length
             && previous.LastWriteTimeUtcTicks == lastWriteTicks
             && previous.InputTokens is not null
@@ -675,9 +851,16 @@ public sealed class CodexTokenUsageReader
             cancellationToken);
         if (probe.Latest is null)
         {
-            return canIncrement
+            var tokenOnly = canIncrement
                 ? previous! with { Length = length, LastWriteTimeUtcTicks = lastWriteTicks }
                 : EmptyIndex(key, length, lastWriteTicks);
+            return RefreshSpendIndex(
+                file,
+                tokenOnly,
+                previous,
+                forkBaseline,
+                now,
+                cancellationToken);
         }
 
         if (canIncrement)
@@ -718,7 +901,7 @@ public sealed class CodexTokenUsageReader
                     probe.Latest,
                     forkBaseline?.InheritedUsage,
                     now);
-            return previous with
+            var current = previous with
             {
                 Length = length,
                 LastWriteTimeUtcTicks = lastWriteTicks,
@@ -763,6 +946,13 @@ public sealed class CodexTokenUsageReader
                 LatestDayInputTokens = todayCache.InputTokens,
                 LatestDayCachedInputTokens = todayCache.CachedInputTokens,
             };
+            return RefreshSpendIndex(
+                file,
+                current,
+                previous,
+                forkBaseline,
+                now,
+                cancellationToken);
         }
 
         var latestDate = LocalDate(probe.Latest.CapturedAt);
@@ -774,7 +964,7 @@ public sealed class CodexTokenUsageReader
             probe.Latest,
             inheritedUsage,
             now);
-        return new CodexTokenUsageFileIndex(
+        var rebuilt = new CodexTokenUsageFileIndex(
             key,
             length,
             lastWriteTicks,
@@ -790,6 +980,603 @@ public sealed class CodexTokenUsageReader
             initialTodayCache.InputTokens,
             initialTodayCache.CachedInputTokens,
             CodexTokenUsageIndex.CurrentAccountingVersion);
+        return RefreshSpendIndex(
+            file,
+            rebuilt,
+            previous,
+            forkBaseline,
+            now,
+            cancellationToken);
+    }
+
+    private static CodexTokenUsageFileIndex RefreshSpendIndex(
+        FileInfo file,
+        CodexTokenUsageFileIndex current,
+        CodexTokenUsageFileIndex? previous,
+        CodexForkBaseline? forkBaseline,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (forkBaseline is { IsFork: true, InheritedUsage: null })
+        {
+            return current with
+            {
+                DailyModelUsage = null,
+                SpendCurrentModel = null,
+                SpendCurrentServiceTier = null,
+                SpendLastTotalTokens = null,
+                SpendLastInputTokens = null,
+                SpendLastCachedInputTokens = null,
+                SpendLastCacheWriteInputTokens = null,
+                SpendLastOutputTokens = null,
+                SpendAccountingVersion = 0,
+                SpendScannedLength = null,
+            };
+        }
+
+        var canIncrement = previous is not null
+            && previous.AccountingVersion == CodexTokenUsageIndex.CurrentAccountingVersion
+            && previous.SpendAccountingVersion == CodexTokenUsageIndex.CurrentSpendAccountingVersion
+            && previous.SpendScannedLength is >= 0
+            && previous.SpendScannedLength <= previous.Length
+            && file.Length >= previous.Length
+            && (file.Length > previous.Length
+                || file.LastWriteTimeUtc.Ticks == previous.LastWriteTimeUtcTicks);
+        if (!canIncrement
+            && ShouldPruneHistoricalSpend(
+                current.LatestLocalDate,
+                file.LastWriteTimeUtc,
+                now,
+                TimeZoneInfo.Local))
+        {
+            return current with
+            {
+                DailyModelUsage = [],
+                SpendCurrentModel = null,
+                SpendCurrentServiceTier = null,
+                SpendLastTotalTokens = null,
+                SpendLastInputTokens = null,
+                SpendLastCachedInputTokens = null,
+                SpendLastCacheWriteInputTokens = null,
+                SpendLastOutputTokens = null,
+                SpendAccountingVersion = CodexTokenUsageIndex.CurrentSpendAccountingVersion,
+                SpendScannedLength = FindLastCompleteLineOffset(file.FullName, file.Length),
+            };
+        }
+        var dailyUsage = canIncrement
+            ? previous!.DailyModelUsage?.ToList() ?? []
+            : [];
+        SpendScanState state;
+        if (canIncrement)
+        {
+            state = new SpendScanState
+            {
+                Model = previous!.SpendCurrentModel,
+                ServiceTier = previous.SpendCurrentServiceTier,
+                LastTotalTokens = previous.SpendLastTotalTokens,
+                LastInputTokens = previous.SpendLastInputTokens,
+                LastCachedInputTokens = previous.SpendLastCachedInputTokens,
+                LastCacheWriteInputTokens = previous.SpendLastCacheWriteInputTokens,
+                LastOutputTokens = previous.SpendLastOutputTokens,
+            };
+        }
+        else if (forkBaseline?.InheritedUsage is { } inherited)
+        {
+            state = new SpendScanState
+            {
+                LastTotalTokens = inherited.TotalTokens,
+                LastInputTokens = inherited.InputTokens,
+                LastCachedInputTokens = inherited.CachedInputTokens,
+                LastCacheWriteInputTokens = inherited.CacheWriteInputTokens,
+                LastOutputTokens = inherited.OutputTokens,
+                AwaitingForkBaseline = true,
+            };
+        }
+        else
+        {
+            state = new SpendScanState();
+        }
+
+        var start = canIncrement ? previous!.SpendScannedLength!.Value : 0;
+        var scannedLength = start;
+        if (start < file.Length)
+        {
+            scannedLength = ScanSpendRange(
+                file.FullName,
+                start,
+                file.Length,
+                state,
+                dailyUsage,
+                now,
+                cancellationToken);
+        }
+        dailyUsage = TrimAndCombineDailyUsage(dailyUsage, now);
+        return current with
+        {
+            DailyModelUsage = dailyUsage,
+            SpendCurrentModel = state.Model,
+            SpendCurrentServiceTier = state.ServiceTier,
+            SpendLastTotalTokens = state.LastTotalTokens,
+            SpendLastInputTokens = state.LastInputTokens,
+            SpendLastCachedInputTokens = state.LastCachedInputTokens,
+            SpendLastCacheWriteInputTokens = state.LastCacheWriteInputTokens,
+            SpendLastOutputTokens = state.LastOutputTokens,
+            SpendAccountingVersion = CodexTokenUsageIndex.CurrentSpendAccountingVersion,
+            SpendScannedLength = scannedLength,
+        };
+    }
+
+    private static long ScanSpendRange(
+        string path,
+        long start,
+        long end,
+        SpendScanState state,
+        ICollection<CodexDailyModelUsage> dailyUsage,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        using var stream = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete,
+            64 * 1024,
+            FileOptions.SequentialScan);
+        end = Math.Min(end, stream.Length);
+        start = Math.Clamp(start, 0, end);
+        stream.Seek(start, SeekOrigin.Begin);
+        var readBuffer = new byte[64 * 1024];
+        using var lineBuffer = new MemoryStream(Math.Min(MaximumLineBytes, 64 * 1024));
+        var lineOversized = false;
+        long bytesRead = 0;
+        var lastCompleteLineOffset = start;
+
+        while (start + bytesRead < end)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var requested = (int)Math.Min(readBuffer.Length, end - start - bytesRead);
+            var count = stream.Read(readBuffer, 0, requested);
+            if (count <= 0) break;
+            bytesRead += count;
+            for (var index = 0; index < count; index++)
+            {
+                var value = readBuffer[index];
+                if (value == (byte)'\n')
+                {
+                    if (!lineOversized && lineBuffer.Length > 0)
+                    {
+                        ParseSpendBufferedLine(lineBuffer, state, dailyUsage, now);
+                    }
+                    lineBuffer.SetLength(0);
+                    lineOversized = false;
+                    lastCompleteLineOffset = start + bytesRead - count + index + 1;
+                }
+                else if (!lineOversized)
+                {
+                    if (lineBuffer.Length >= MaximumLineBytes)
+                    {
+                        lineBuffer.SetLength(0);
+                        lineOversized = true;
+                    }
+                    else
+                    {
+                        lineBuffer.WriteByte(value);
+                    }
+                }
+            }
+        }
+
+        return lastCompleteLineOffset;
+    }
+
+    private static void ParseSpendBufferedLine(
+        MemoryStream lineBuffer,
+        SpendScanState state,
+        ICollection<CodexDailyModelUsage> dailyUsage,
+        DateTimeOffset now)
+    {
+        var span = lineBuffer.GetBuffer().AsSpan(0, (int)lineBuffer.Length);
+        if (span.Length > 0 && span[^1] == (byte)'\r') span = span[..^1];
+        if (span.IndexOf("\"token_count\""u8) < 0
+            && span.IndexOf("\"session_meta\""u8) < 0
+            && span.IndexOf("\"turn_context\""u8) < 0)
+        {
+            return;
+        }
+        ProcessSpendLine(Encoding.UTF8.GetString(span), state, dailyUsage, now);
+    }
+
+    private static void ProcessSpendLine(
+        string line,
+        SpendScanState state,
+        ICollection<CodexDailyModelUsage> dailyUsage,
+        DateTimeOffset now)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(line);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("type", out var typeElement)
+                || typeElement.ValueKind != JsonValueKind.String
+                || !root.TryGetProperty("payload", out var payload)
+                || payload.ValueKind != JsonValueKind.Object)
+            {
+                return;
+            }
+
+            var outerType = typeElement.GetString();
+            var payloadType = TryReadString(payload, "type");
+            if (outerType is "session_meta" or "turn_context"
+                || payloadType is "session_meta" or "turn_context")
+            {
+                if (TryReadString(payload, "model") is { } model
+                    && !string.IsNullOrWhiteSpace(model))
+                {
+                    state.Model = NormalizeModel(model);
+                }
+                else if (TryReadString(payload, "model_slug") is { } modelSlug
+                    && !string.IsNullOrWhiteSpace(modelSlug))
+                {
+                    state.Model = NormalizeModel(modelSlug);
+                }
+                if (payload.TryGetProperty("service_tier", out var serviceTier))
+                {
+                    state.ServiceTier = serviceTier.ValueKind == JsonValueKind.String
+                        ? NormalizeServiceTier(serviceTier.GetString())
+                        : StandardPricingTier;
+                }
+            }
+
+            if (outerType != "event_msg"
+                || payloadType != "token_count"
+                || !TryParseLine(line, out var item)
+                || item is null
+                || item.CapturedAt > now.AddMinutes(5))
+            {
+                return;
+            }
+            ProcessSpendEvent(item, state, dailyUsage, now);
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException)
+        {
+            // Malformed or partially-written JSONL records are ignored locally.
+        }
+    }
+
+    private static void ProcessSpendEvent(
+        CodexTokenUsageEvent item,
+        SpendScanState state,
+        ICollection<CodexDailyModelUsage> dailyUsage,
+        DateTimeOffset now)
+    {
+        if (state.LastTotalTokens is null)
+        {
+            state.LastTotalTokens = item.LastTotalTokens is { } lastRequestTotal
+                ? item.TotalTokens - lastRequestTotal
+                : 0;
+            state.LastInputTokens = InitialCounterBaseline(item.InputTokens, item.LastInputTokens);
+            state.LastCachedInputTokens = InitialCounterBaseline(
+                item.CachedInputTokens,
+                item.LastCachedInputTokens);
+            state.LastCacheWriteInputTokens = InitialKnownCounterBaseline(
+                item.CacheWriteInputTokens,
+                item.LastCacheWriteInputTokens);
+            state.LastOutputTokens = InitialCounterBaseline(item.OutputTokens, item.LastOutputTokens);
+        }
+
+        if (state.AwaitingForkBaseline)
+        {
+            if (item.TotalTokens < state.LastTotalTokens)
+            {
+                return;
+            }
+            state.AwaitingForkBaseline = false;
+        }
+
+        var totalDelta = PositiveDelta(state.LastTotalTokens.Value, item.TotalTokens);
+        var inputDelta = CounterDelta(state.LastInputTokens, item.InputTokens);
+        var cachedDelta = CounterDelta(state.LastCachedInputTokens, item.CachedInputTokens);
+        var cacheWriteDelta = CounterDelta(
+            state.LastCacheWriteInputTokens,
+            item.CacheWriteInputTokens);
+        var outputDelta = CounterDelta(state.LastOutputTokens, item.OutputTokens);
+        state.LastTotalTokens = item.TotalTokens;
+        state.LastInputTokens = item.InputTokens;
+        state.LastCachedInputTokens = item.CachedInputTokens;
+        state.LastCacheWriteInputTokens = item.CacheWriteInputTokens;
+        state.LastOutputTokens = item.OutputTokens;
+        if (totalDelta <= 0) return;
+
+        var localDate = LocalDate(item.CapturedAt);
+        if (!IsRetainedSpendDate(localDate, now)) return;
+        var model = NormalizeModel(state.Model);
+        var pricingTier = NormalizeServiceTier(state.ServiceTier);
+        if (inputDelta is not { } input
+            || cachedDelta is not { } cached
+            || cacheWriteDelta is not { } cacheWrite
+            || outputDelta is not { } output
+            || cacheWrite > input
+            || cached > input - cacheWrite
+            || input > totalDelta
+            || output > totalDelta - input)
+        {
+            AddDailyUsage(
+                dailyUsage,
+                new CodexDailyModelUsage(
+                    localDate,
+                    model,
+                    pricingTier,
+                    false,
+                    0,
+                    0,
+                    0,
+                    totalDelta));
+            return;
+        }
+
+        AddDailyUsage(
+            dailyUsage,
+            new CodexDailyModelUsage(
+                localDate,
+                model,
+                pricingTier,
+                input > CodexPricingCatalog.LongContextInputTokenThreshold,
+                input,
+                cached,
+                output,
+                totalDelta - input - output,
+                cacheWrite));
+    }
+
+    private static long? InitialCounterBaseline(long? cumulative, long? lastRequest) =>
+        cumulative is not { } total
+            ? null
+            : lastRequest is { } last && last <= total
+                ? total - last
+                : 0;
+
+    private static long? InitialKnownCounterBaseline(long? cumulative, long? lastRequest) =>
+        cumulative is { } total && lastRequest is { } last && last <= total
+            ? total - last
+            : null;
+
+    private static long? CounterDelta(long? previous, long? current) =>
+        previous is { } before && current is { } after
+            ? PositiveDelta(before, after)
+            : null;
+
+    private static void AddDailyUsage(
+        ICollection<CodexDailyModelUsage> dailyUsage,
+        CodexDailyModelUsage item)
+    {
+        if (!IsValidDailyUsage(item)) return;
+        if (dailyUsage is List<CodexDailyModelUsage> list)
+        {
+            var existingIndex = list.FindIndex(existing =>
+                existing.LocalDate == item.LocalDate
+                && string.Equals(existing.Model, item.Model, StringComparison.Ordinal)
+                && existing.PricingTier == item.PricingTier
+                && existing.IsLongContext == item.IsLongContext);
+            if (existingIndex >= 0)
+            {
+                var existing = list[existingIndex];
+                list[existingIndex] = existing with
+                {
+                    InputTokens = SaturatingAdd(existing.InputTokens, item.InputTokens),
+                    CachedInputTokens = SaturatingAdd(
+                        existing.CachedInputTokens,
+                        item.CachedInputTokens),
+                    CacheWriteInputTokens = SaturatingAdd(
+                        existing.CacheWriteInputTokens,
+                        item.CacheWriteInputTokens),
+                    OutputTokens = SaturatingAdd(existing.OutputTokens, item.OutputTokens),
+                    UnattributedTokens = SaturatingAdd(
+                        existing.UnattributedTokens,
+                        item.UnattributedTokens),
+                };
+                return;
+            }
+        }
+        dailyUsage.Add(item);
+    }
+
+    private static List<CodexDailyModelUsage> TrimAndCombineDailyUsage(
+        IEnumerable<CodexDailyModelUsage> dailyUsage,
+        DateTimeOffset now)
+    {
+        var combined = new List<CodexDailyModelUsage>();
+        foreach (var item in dailyUsage.Where(IsValidDailyUsage))
+        {
+            if (IsRetainedSpendDate(item.LocalDate, now)) AddDailyUsage(combined, item);
+        }
+        return combined
+            .OrderBy(item => item.LocalDate, StringComparer.Ordinal)
+            .ThenBy(item => item.Model, StringComparer.Ordinal)
+            .ThenBy(item => item.PricingTier, StringComparer.Ordinal)
+            .ThenBy(item => item.IsLongContext)
+            .ToList();
+    }
+
+    private static bool SpendRetentionIsCurrent(
+        CodexTokenUsageFileIndex file,
+        DateTimeOffset now) =>
+        file.DailyModelUsage is not null
+        && file.DailyModelUsage.All(item => IsRetainedSpendDate(item.LocalDate, now));
+
+    private static bool IsRetainedSpendDate(string localDate, DateTimeOffset now)
+    {
+        if (!DateOnly.TryParseExact(
+                localDate,
+                "yyyy-MM-dd",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out var date))
+        {
+            return false;
+        }
+        var today = LocalCalendarDate(now, TimeZoneInfo.Local);
+        var cutoff = today.AddDays(-(SpendRetentionDays - 1));
+        return date >= cutoff && date <= today;
+    }
+
+    internal static (
+        string Today,
+        string Yesterday,
+        string Last30DaysCutoff) SpendWindowDates(
+        DateTimeOffset now,
+        TimeZoneInfo timeZone)
+    {
+        ArgumentNullException.ThrowIfNull(timeZone);
+        var today = LocalCalendarDate(now, timeZone);
+        return (
+            FormatLocalDate(today),
+            FormatLocalDate(today.AddDays(-1)),
+            FormatLocalDate(today.AddDays(-29)));
+    }
+
+    internal static bool ShouldPruneHistoricalSpend(
+        string? latestLocalDate,
+        DateTimeOffset lastWriteTimeUtc,
+        DateTimeOffset now,
+        TimeZoneInfo timeZone)
+    {
+        ArgumentNullException.ThrowIfNull(timeZone);
+        var cutoff = LocalCalendarDate(now, timeZone).AddDays(-(SpendRetentionDays - 1));
+        if (LocalCalendarDate(lastWriteTimeUtc, timeZone) >= cutoff) return false;
+        if (latestLocalDate is null) return true;
+        return DateOnly.TryParseExact(
+                latestLocalDate,
+                "yyyy-MM-dd",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out var latest)
+            && latest < cutoff;
+    }
+
+    private static long FindLastCompleteLineOffset(string path, long expectedLength)
+    {
+        using var stream = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete,
+            64 * 1024,
+            FileOptions.RandomAccess);
+        var end = Math.Min(Math.Max(0, expectedLength), stream.Length);
+        if (end == 0) return 0;
+        var tailLength = (int)Math.Min(end, MaximumLineBytes + 1L);
+        var start = end - tailLength;
+        stream.Seek(start, SeekOrigin.Begin);
+        var buffer = new byte[tailLength];
+        var read = 0;
+        while (read < buffer.Length)
+        {
+            var count = stream.Read(buffer, read, buffer.Length - read);
+            if (count <= 0) break;
+            read += count;
+        }
+        var lastNewline = buffer.AsSpan(0, read).LastIndexOf((byte)'\n');
+        return lastNewline >= 0 ? start + lastNewline + 1 : 0;
+    }
+
+    private static CodexSpendPeriod SummarizeSpendPeriod(
+        IEnumerable<CodexDailyModelUsage> dailyUsage) =>
+        CodexPricingCatalog.SummarizePeriod(dailyUsage.Select(item =>
+            new CodexModelTokenUsage(
+                item.PricingTier == StandardPricingTier ? item.Model : null,
+                item.InputTokens,
+                item.CachedInputTokens,
+                item.OutputTokens,
+                0,
+                item.UnattributedTokens,
+                item.IsLongContext,
+                item.CacheWriteInputTokens)));
+
+    private static CodexSpendHistory BuildSpendHistory(
+        IReadOnlyList<CodexDailyModelUsage> last30DaysUsage,
+        DateOnly today)
+    {
+        var usageByDay = last30DaysUsage
+            .GroupBy(item => item.LocalDate, StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyList<CodexDailyModelUsage>)group.ToArray(),
+                StringComparer.Ordinal);
+        var days = Enumerable.Range(0, 30)
+            .Select(index =>
+            {
+                var localDate = FormatLocalDate(today.AddDays(index - 29));
+                return new CodexSpendDay(
+                    localDate,
+                    usageByDay.TryGetValue(localDate, out var usage)
+                        ? SummarizeSpendPeriod(usage)
+                        : CodexSpendPeriod.Empty);
+            })
+            .ToArray();
+
+        var last7DaysCutoff = FormatLocalDate(today.AddDays(-6));
+        var last7DaysSpend = SummarizeSpendPeriod(last30DaysUsage.Where(item =>
+            string.CompareOrdinal(item.LocalDate, last7DaysCutoff) >= 0));
+        var models = last30DaysUsage
+            .GroupBy(item => SpendModelDisplay(item.Model), StringComparer.Ordinal)
+            .Select(group => new CodexSpendModel(
+                group.Key,
+                SummarizeSpendPeriod(group)))
+            .OrderByDescending(item => item.Spend.PricedApiEquivalentUsd)
+            .ThenByDescending(item => item.Spend.TotalTokens)
+            .ThenBy(item => item.Model, StringComparer.Ordinal)
+            .ToArray();
+
+        return new CodexSpendHistory(days, models, last7DaysSpend);
+    }
+
+    private static string SpendModelDisplay(string? model)
+    {
+        var normalized = NormalizeModel(model);
+        if (CodexPricingCatalog.TryGetPricing(normalized, out var pricing))
+        {
+            normalized = pricing.CanonicalModel;
+        }
+        if (string.IsNullOrWhiteSpace(normalized)
+            || normalized.Any(char.IsControl)
+            || normalized.Contains('/')
+            || normalized.Contains('\\')
+            || Guid.TryParse(normalized, out _))
+        {
+            return UnknownSpendModel;
+        }
+        return normalized.Length <= MaximumSpendModelDisplayLength
+            ? normalized
+            : string.Concat(
+                normalized.AsSpan(0, MaximumSpendModelDisplayLength - 1),
+                "\u2026");
+    }
+
+    private static bool IsValidDailyUsage(CodexDailyModelUsage item) =>
+        item is not null
+        && DateOnly.TryParseExact(
+            item.LocalDate,
+            "yyyy-MM-dd",
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.None,
+            out _)
+        && !string.IsNullOrWhiteSpace(item.PricingTier)
+        && item.InputTokens >= 0
+        && item.CachedInputTokens >= 0
+        && item.CacheWriteInputTokens >= 0
+        && item.CacheWriteInputTokens <= item.InputTokens
+        && item.CachedInputTokens <= item.InputTokens - item.CacheWriteInputTokens
+        && item.OutputTokens >= 0
+        && item.UnattributedTokens >= 0;
+
+    private static string? NormalizeModel(string? model) =>
+        string.IsNullOrWhiteSpace(model) ? null : model.Trim().ToLowerInvariant();
+
+    private static string NormalizeServiceTier(string? serviceTier)
+    {
+        if (string.IsNullOrWhiteSpace(serviceTier)) return StandardPricingTier;
+        var normalized = serviceTier.Trim().ToLowerInvariant();
+        return normalized is "default" or "auto" ? StandardPricingTier : normalized;
     }
 
     private static long TokensOnCurrentDay(
@@ -1134,8 +1921,17 @@ public sealed class CodexTokenUsageReader
     private static string FileKey(string fileName) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(fileName))).ToLowerInvariant();
 
+    internal static DateOnly LocalCalendarDate(DateTimeOffset value, TimeZoneInfo timeZone)
+    {
+        ArgumentNullException.ThrowIfNull(timeZone);
+        return DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(value, timeZone).DateTime);
+    }
+
     private static string LocalDate(DateTimeOffset value) =>
-        value.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        FormatLocalDate(LocalCalendarDate(value, TimeZoneInfo.Local));
+
+    private static string FormatLocalDate(DateOnly value) =>
+        value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
     private static long PositiveDelta(long previous, long current) =>
         current >= previous ? current - previous : current;
@@ -1159,4 +1955,16 @@ public sealed class CodexTokenUsageReader
         CodexTokenUsageEvent? First,
         CodexTokenUsageEvent? Latest,
         IReadOnlyList<CodexTokenUsageEvent> Events);
+
+    private sealed class SpendScanState
+    {
+        public string? Model { get; set; }
+        public string? ServiceTier { get; set; }
+        public long? LastTotalTokens { get; set; }
+        public long? LastInputTokens { get; set; }
+        public long? LastCachedInputTokens { get; set; }
+        public long? LastCacheWriteInputTokens { get; set; }
+        public long? LastOutputTokens { get; set; }
+        public bool AwaitingForkBaseline { get; set; }
+    }
 }

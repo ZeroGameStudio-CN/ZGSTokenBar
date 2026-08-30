@@ -7,8 +7,8 @@
   "runtime": "builtin",
   "required": false,
   "commandNamespace": "claude",
-  "capabilities": ["quota", "health", "settings", "commands"],
-  "defaultEnabled": true,
+  "capabilities": ["quota", "health", "settings", "commands", "local-credentials"],
+  "defaultEnabled": false,
   "order": 100,
   "requires": []
 }

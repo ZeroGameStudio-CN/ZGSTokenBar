@@ -6,23 +6,15 @@ public sealed class QuotaCoordinator : IDisposable
     internal static readonly TimeSpan ExhaustedProviderRefreshInterval = TimeSpan.FromMinutes(30);
 
     private readonly HttpClient _httpClient = QuotaHttp.Create();
-    private readonly HttpClient _aiGatewayHttpClient = QuotaHttp.CreateAiGateway();
     private readonly ClaudeQuotaService _claude;
     private readonly CodexQuotaService _codex;
-    private readonly AiGatewayUsageService _aiGatewayUsage;
     private readonly Dictionary<ProviderKind, DateTimeOffset> _lastProviderAttemptAt = [];
 
     public QuotaCoordinator()
     {
         _claude = new ClaudeQuotaService(_httpClient);
         _codex = new CodexQuotaService(_httpClient);
-        _aiGatewayUsage = new AiGatewayUsageService(_aiGatewayHttpClient);
     }
-
-    public Task<AiGatewayUsageFetchResult> FetchAiGatewayUsageAsync(
-        DateTimeOffset now,
-        CancellationToken cancellationToken = default) =>
-        _aiGatewayUsage.FetchAsync(now, cancellationToken);
 
     public async Task<QuotaSnapshot> RefreshAsync(
         AppSettings settings,
@@ -368,6 +360,5 @@ public sealed class QuotaCoordinator : IDisposable
     public void Dispose()
     {
         _httpClient.Dispose();
-        _aiGatewayHttpClient.Dispose();
     }
 }

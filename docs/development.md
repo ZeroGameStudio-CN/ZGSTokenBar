@@ -14,6 +14,7 @@ src/ZGSTokenBar.Core/          provider, settings, cache, pace, Radar
 src/ZGSTokenBar.App/           WinForms bar, popovers, tray, settings
 src/ZGSTokenBar.PluginSdk/     stable plugin and local API contracts
 src/ZGSTokenBar.Host/          plugin lifecycle and typed dispatcher
+src/ProcessPlugins/            isolated packaged Provider processes
 src/ZGSTokenBar.Transport.NamedPipe/ current-user local transport
 src/Plugins/                   four public built-in plugins
 tests/ZGSTokenBar.Tests/       executable contract suite and visual captures
@@ -42,6 +43,8 @@ dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj -c Release
 ```
 
 `npm run verify` is the graduation gate: static and Node contracts, .NET contracts, single-file App and NativeAOT CLI publication, isolated process-plugin acceptance, deterministic captures, and whitespace validation.
+
+`scripts/build-ai-gateway-observer-plugin.ps1` builds the independently verifiable DeepSeek Harness package. The portable build embeds that exact package so a normal application start can idempotently install the missing bundled version before local-only Provider discovery runs. No runtime package or pricing download is required.
 
 ## Acceptance
 

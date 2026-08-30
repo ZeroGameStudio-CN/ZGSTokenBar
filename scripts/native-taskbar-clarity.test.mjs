@@ -11,6 +11,7 @@ const planBadgePresentation = fs.readFileSync('src/ZGSTokenBar.App/PlanBadgePres
 const hintPopoverForm = fs.readFileSync('src/ZGSTokenBar.App/TaskbarHintPopoverForm.cs', 'utf8');
 const radarPopoverForm = fs.readFileSync('src/ZGSTokenBar.App/ProviderRadarPopoverForm.cs', 'utf8');
 const radarRenderer = fs.readFileSync('src/ZGSTokenBar.App/RadarPopoverRenderer.cs', 'utf8');
+const spendHistoryLayout = fs.readFileSync('src/ZGSTokenBar.Core/CodexSpendHistoryLayout.cs', 'utf8');
 const radarResetTiming = fs.readFileSync('src/ZGSTokenBar.App/RadarResetTiming.cs', 'utf8');
 const nativeProject = fs.readFileSync('src/ZGSTokenBar.App/ZGSTokenBar.App.csproj', 'utf8');
 const settingsForm = fs.readFileSync('src/ZGSTokenBar.App/SettingsForm.cs', 'utf8');
@@ -86,6 +87,30 @@ test('Radar row emphasis follows distinctions instead of source position', () =>
   assert.match(body, /modelColor = strongest[\s\S]*?\? StrongestColor[\s\S]*?: recommendationColor/);
   assert.match(body, /if \(multipleDistinctions\)[\s\S]*?DrawRainbowText\([\s\S]*?row\.ModelText/);
   assert.doesNotMatch(body, /SourceIndex == 0/);
+});
+
+test('Codex spend history reserves a compact 30-day chart and three-model composition', () => {
+  assert.match(spendHistoryLayout, /LogicalNarrowWidth = 360/);
+  assert.match(spendHistoryLayout, /LogicalWideWidth = RadarPopoverLayout\.LogicalWidth/);
+  assert.match(spendHistoryLayout, /LogicalHeight = 270/);
+  assert.match(spendHistoryLayout, /new List<Rectangle>\(4\)/);
+  assert.match(spendHistoryLayout, /CreateBarBounds\(chartBounds, dayCount/);
+  assert.match(spendHistoryLayout, /Rect\(12, 201, innerWidth, 18\)[\s\S]*?Rect\(12, 222, innerWidth, 18\)[\s\S]*?Rect\(12, 243, innerWidth, 18\)/);
+  assert.match(radarRenderer, /var firstRecentIndex = Math\.Max\(0, count - 7\)/);
+  assert.match(radarRenderer, /isRecent[\s\S]*?Color\.FromArgb\(190, 129, 140, 248\)/);
+  assert.match(radarRenderer, /HasUnpricedUsage[\s\S]*?Color\.FromArgb\(251, 191, 36\)/);
+  assert.match(radarRenderer, /\.Take\(layout\.ModelRowBounds\.Count\)/);
+});
+
+test('developer captures keep separate narrow and wide bilingual spend-history references', () => {
+  assert.match(testProgram, /static CodexTokenUsageSummary SpendHistoryCaptureUsage\(/);
+  assert.match(testProgram, /new CodexSpendHistory\(days, models, last7Days\)/);
+  assert.match(testProgram, /new CodexSpendModel\("gpt-5\.6-sol"/);
+  assert.match(testProgram, /new CodexSpendModel\("gpt-5\.6-terra"/);
+  assert.match(testProgram, /new CodexSpendModel\("gpt-5\.6-luna"/);
+  assert.match(testProgram, /renderer\.DrawSpendHistory\(/);
+  assert.match(testProgram, /taskbar-mini-codex-spend-history-\{locale\}-\{dpi\}dpi\.png/);
+  assert.match(testProgram, /native-localization-spend-history-\{locale\}-\{dpi\}dpi\.png/);
 });
 
 test('Radar uses distinct local scenario markers in the compact footer', () => {
@@ -733,7 +758,9 @@ test('settings use a compact navigation shell with explicit draft semantics', ()
   assert.match(settingsForm, /LogicalCompactNavigationWidth = 72/);
   assert.match(settingsForm, /LogicalResponsiveBreakpoint = 640/);
   assert.match(settingsForm, /RowStyle\(SizeType\.Absolute, Scale\(64\)\)/);
-  assert.match(settingsForm, /AutoScroll = true/);
+  assert.match(settingsForm, /AutoScroll = false/);
+  assert.match(settingsForm, /private sealed class SettingsScrollBar : Control/);
+  assert.match(settingsForm, /Tag = "settings\.scrollbar"/);
   assert.match(settingsForm, /AddNavigation\("general"/);
   assert.match(settingsForm, /AddNavigation\("providers"/);
   assert.match(settingsForm, /AddNavigation\("notifications"/);
