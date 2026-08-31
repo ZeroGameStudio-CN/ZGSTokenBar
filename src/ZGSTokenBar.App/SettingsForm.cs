@@ -44,7 +44,6 @@ internal sealed class SettingsForm : Form
     private readonly ToggleSwitch _codexLocalUsage;
     private readonly ToggleSwitch _sub2ApiPool;
     private readonly ToggleSwitch _openAtLogin;
-    private readonly ToggleSwitch _keepRunning;
     private readonly ToggleSwitch _usageAlerts;
     private readonly ToggleSwitch _animations;
     private readonly ToggleSwitch _radar;
@@ -72,7 +71,6 @@ internal sealed class SettingsForm : Form
     private bool _sub2ApiPoolBeforeDisable;
     private bool _lastCodexEnabled;
     private bool _updatingCodexDependency;
-    private bool _updatingStartupDependency;
     private bool _allowClose;
     private bool _applyingLayout;
 
@@ -194,8 +192,7 @@ internal sealed class SettingsForm : Form
         _openAtLogin = CreateToggle(
             _text.StartWithWindows,
             _text.StartWithWindowsHint,
-            settings.OpenAtLogin || settings.KeepRunning);
-        _keepRunning = CreateToggle(_text.KeepRunning, _text.KeepRunningHint, settings.KeepRunning);
+            settings.OpenAtLogin);
         _usageAlerts = CreateToggle(_text.UsageAlertsTitle, _text.UsageAlerts, settings.EnableAlerts);
         _animations = CreateToggle(_text.AnimationsTitle, _text.Animations, settings.EnableAnimations);
         _radar = CreateToggle(_text.ShowRadarTitle, _text.ShowRadar, settings.EnableRadar);
@@ -350,8 +347,7 @@ internal sealed class SettingsForm : Form
         }
         _radar.CheckedChanged += (_, _) => UpdateRadarDependency();
         _codexEconomyBar.CheckedChanged += (_, _) => RefreshDirtyState();
-        _keepRunning.CheckedChanged += (_, _) => UpdateStartupDependencies(keepRunningChanged: true);
-        _openAtLogin.CheckedChanged += (_, _) => UpdateStartupDependencies(keepRunningChanged: false);
+        _openAtLogin.CheckedChanged += (_, _) => RefreshDirtyState();
         _radarAlerts.CheckedChanged += (_, _) =>
         {
             if (!_updatingRadarDependency && _radar.Checked)
@@ -453,7 +449,6 @@ internal sealed class SettingsForm : Form
         general.Add(new ValueSettingRow(_text.Language, _text.LanguageHint, _locale, Scale(196), _theme, _scale));
         general.Add(new ValueSettingRow(_text.AutomaticRefresh, _text.AutomaticRefreshHint, _refreshMinutes, Scale(196), _theme, _scale));
         general.Add(new ToggleSettingRow(_openAtLogin, _text.StartWithWindows, _text.StartWithWindowsHint, _theme, _scale));
-        general.Add(new ToggleSettingRow(_keepRunning, _text.KeepRunning, _text.KeepRunningHint, _theme, _scale));
         general.Add(new ToggleSettingRow(_animations, _text.AnimationsTitle, _text.Animations, _theme, _scale));
 
         var providers = AddPage("providers", _text.Modules);
@@ -792,28 +787,6 @@ internal sealed class SettingsForm : Form
         RefreshDirtyState();
     }
 
-    private void UpdateStartupDependencies(bool keepRunningChanged)
-    {
-        if (_updatingStartupDependency) return;
-        _updatingStartupDependency = true;
-        try
-        {
-            if (keepRunningChanged && _keepRunning.Checked)
-            {
-                _openAtLogin.Checked = true;
-            }
-            else if (!keepRunningChanged && !_openAtLogin.Checked)
-            {
-                _keepRunning.Checked = false;
-            }
-        }
-        finally
-        {
-            _updatingStartupDependency = false;
-        }
-        RefreshDirtyState();
-    }
-
     private void UpdateRadarDependency(bool initializing = false)
     {
         if (_updatingRadarDependency) return;
@@ -917,7 +890,6 @@ internal sealed class SettingsForm : Form
             RefreshMinutes = refresh?.Minutes ?? _original.RefreshMinutes,
             AutoRefreshClaudeOAuth = _refreshClaudeOAuth.Checked,
             OpenAtLogin = _openAtLogin.Checked,
-            KeepRunning = _keepRunning.Checked,
             EnableAlerts = _usageAlerts.Checked,
             UseTaskbarRings = true,
             EnableAnimations = _animations.Checked,
@@ -977,7 +949,6 @@ internal sealed class SettingsForm : Form
         && left.RefreshMinutes == right.RefreshMinutes
         && left.AutoRefreshClaudeOAuth == right.AutoRefreshClaudeOAuth
         && left.OpenAtLogin == right.OpenAtLogin
-        && left.KeepRunning == right.KeepRunning
         && left.EnableAlerts == right.EnableAlerts
         && left.EnableAnimations == right.EnableAnimations
         && left.EnableRadar == right.EnableRadar
@@ -1004,7 +975,6 @@ internal sealed class SettingsForm : Form
             RefreshMinutes = settings.RefreshMinutes,
             AutoRefreshClaudeOAuth = settings.AutoRefreshClaudeOAuth,
             OpenAtLogin = settings.OpenAtLogin,
-            KeepRunning = settings.KeepRunning,
             EnableAlerts = settings.EnableAlerts,
             UseTaskbarRings = true,
             EnableAnimations = settings.EnableAnimations,

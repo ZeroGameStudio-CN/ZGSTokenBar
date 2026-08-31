@@ -238,7 +238,7 @@ var tests = new (string Name, Action Run)[]
     ("Codex Radar state persistence", TestRadarStatePersistence),
     ("Settings normalization", TestSettingsNormalization),
     ("Settings data directory override", TestSettingsDataDirectoryOverride),
-    ("Keep-running watchdog policy", TestKeepRunningWatchdogPolicy),
+    ("Windows startup registration policy", TestWindowsStartupRegistrationPolicy),
     ("Release update discovery", TestReleaseUpdateDiscovery),
     ("Settings v2 plugin migration", TestSettingsV2PluginMigration),
     ("Provider local credential auto-discovery", TestProviderLocalCredentialAutoDiscovery),
@@ -10260,8 +10260,6 @@ static void TestNativeLocalization()
     Equal("en", en.Locale, "English locale");
     Equal("设置", zh.Settings, "Chinese settings");
     Equal("Settings", en.Settings, "English settings");
-    Equal("常驻运行", zh.KeepRunning, "Chinese keep-running setting");
-    Equal("Keep running", en.KeepRunning, "English keep-running setting");
     Equal("最强", zh.RadarStrongestTitle, "Chinese strongest title");
     Equal("STRONGEST", en.RadarStrongestTitle, "English strongest title");
     Equal("IQ", zh.RadarIqHeader, "Chinese current IQ header");
@@ -12722,12 +12720,6 @@ static void TestSettingsNormalization()
     Equal(false, new AppSettings().EnableRadarAlerts, "Radar alerts are opt-in by default");
     Equal(true, new AppSettings().EnableCodexEconomyBar, "Codex economy Bar control defaults visible");
     Equal("midnight", new AppSettings().BackgroundPalette, "original background palette defaults on");
-    Equal(false, new AppSettings().KeepRunning, "keep-running watchdog is opt-in by default");
-
-    var keepRunning = new AppSettings { KeepRunning = true, OpenAtLogin = false };
-    keepRunning.Normalize();
-    Equal(true, keepRunning.OpenAtLogin, "keep-running mode also starts with Windows");
-
     var noProviders = new AppSettings { EnabledProviders = [] };
     noProviders.Normalize();
     Equal(0, noProviders.EnabledProviders.Length, "an explicit empty provider list remains independently disabled");
@@ -12891,21 +12883,17 @@ static void TestCodexMiniDisplayModeSettings()
     }
 }
 
-static void TestKeepRunningWatchdogPolicy()
+static void TestWindowsStartupRegistrationPolicy()
 {
     const string executablePath = @"C:\Program Files\ZGSTokenBar\ZGSTokenBar.exe";
     Equal<string?>(
         null,
-        StartupManager.BuildCommand(executablePath, openAtLogin: false, keepRunning: false),
+        StartupManager.BuildCommand(executablePath, openAtLogin: false),
         "disabled startup removes the Run command");
     Equal(
         $"\"{executablePath}\"",
-        StartupManager.BuildCommand(executablePath, openAtLogin: true, keepRunning: false),
+        StartupManager.BuildCommand(executablePath, openAtLogin: true),
         "ordinary startup launches the quoted executable directly");
-    Equal(
-        $"\"{executablePath}\" --watchdog",
-        StartupManager.BuildCommand(executablePath, openAtLogin: false, keepRunning: true),
-        "keep-running startup launches watchdog mode");
     Equal(
         StartupRegistrationAction.None,
         StartupManager.RequiredAction(null, null),
@@ -12921,22 +12909,32 @@ static void TestKeepRunningWatchdogPolicy()
             $"\"{executablePath}\""),
         "an upgraded executable path replaces the startup command");
     Equal(
-        StartupRegistrationAction.Set,
-        StartupManager.RequiredAction(
-            $"\"{executablePath}\"",
-            $"\"{executablePath}\" --watchdog"),
-        "changing keep-running mode replaces the startup command");
-    Equal(
         StartupRegistrationAction.Delete,
         StartupManager.RequiredAction($"\"{executablePath}\"", null),
         "disabling startup removes an existing command");
 
-    Equal(true, WatchdogManager.IsWatchdogRequest(["--WATCHDOG"]), "watchdog switch is case-insensitive");
-    Equal(false, WatchdogManager.IsWatchdogRequest(["--settings"]), "settings launch stays in the main app");
-    Equal(true, WatchdogManager.ShouldStartApplication(true, false), "missing main app is recovered");
-    Equal(false, WatchdogManager.ShouldStartApplication(true, true), "running main app is not duplicated");
-    Equal(false, WatchdogManager.ShouldStartApplication(false, false), "disabled watchdog does not recover the app");
-    Equal(2_000, WatchdogManager.PollMilliseconds, "watchdog restart attempts are throttled");
+    var directory = Path.Combine(Path.GetTempPath(), $"zgs-retired-watchdog-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(directory);
+    try
+    {
+        File.WriteAllText(
+            Path.Combine(directory, "settings.json"),
+            """
+            {
+              "schemaVersion": 3,
+              "openAtLogin": false,
+              "keepRunning": true,
+              "refreshMinutes": 10
+            }
+            """);
+        var migrated = new AppSettingsStore(directory).Load();
+        Equal(false, migrated.OpenAtLogin, "retired keepRunning does not enable login startup");
+        Equal(10, migrated.RefreshMinutes, "other settings survive the retired field");
+    }
+    finally
+    {
+        Directory.Delete(directory, recursive: true);
+    }
 }
 
 static void TestSettingsDataDirectoryOverride()

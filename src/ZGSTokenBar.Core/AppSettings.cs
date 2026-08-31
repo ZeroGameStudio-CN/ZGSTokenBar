@@ -31,7 +31,6 @@ public sealed class AppSettings
     public int RefreshMinutes { get; set; } = 5;
     public bool AutoRefreshClaudeOAuth { get; set; } = true;
     public bool OpenAtLogin { get; set; }
-    public bool KeepRunning { get; set; }
     public bool EnableAlerts { get; set; } = true;
     public bool UseTaskbarRings { get; set; }
     public bool TaskbarDocked { get; set; } = true;
@@ -223,7 +222,6 @@ public sealed class AppSettings
         }
 
         RefreshMinutes = Math.Clamp(RefreshMinutes, 1, 60);
-        if (KeepRunning) OpenAtLogin = true;
         var miniAreaLayouts = new Dictionary<string, MiniAreaLayout>(StringComparer.Ordinal);
         foreach (var entry in MiniAreaLayouts ?? new Dictionary<string, MiniAreaLayout>())
         {

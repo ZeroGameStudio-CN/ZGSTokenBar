@@ -16,24 +16,18 @@ internal static class Program
     private static void Main(string[] args)
     {
         var dataDirectory = ResolveDataDirectoryOverride(args);
-        var allowProcessSupervision = dataDirectory is null;
-        if (WatchdogManager.IsWatchdogRequest(args))
-        {
-            if (allowProcessSupervision) WatchdogManager.Run();
-            return;
-        }
+        var allowGlobalStartupRegistration = dataDirectory is null;
 
         var openSettingsOnStart = args.Any(value =>
             string.Equals(value, "--settings", StringComparison.OrdinalIgnoreCase)
             || string.Equals(value, "settings", StringComparison.OrdinalIgnoreCase));
         var store = new AppSettingsStore(dataDirectory);
         var settings = store.Load();
-        if (allowProcessSupervision)
+        if (allowGlobalStartupRegistration)
         {
             StartupManager.ReconcileRegistration(
                 Environment.ProcessPath ?? Application.ExecutablePath,
-                settings.OpenAtLogin,
-                settings.KeepRunning);
+                settings.OpenAtLogin);
         }
         using var activationEvent = new EventWaitHandle(
             false,
@@ -56,7 +50,7 @@ internal static class Program
             activationEvent,
             openSettingsOnStart,
             store,
-            allowProcessSupervision,
+            allowGlobalStartupRegistration,
             bundledPluginInstallFailed);
         Application.Run(context);
     }

@@ -63,8 +63,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     private readonly ToolStripMenuItem _quitMenuItem;
     private readonly QuotaMilestoneTracker _milestoneTracker;
     private readonly System.Windows.Forms.Timer _clockTimer;
-    private readonly System.Windows.Forms.Timer _watchdogTimer;
-    private readonly bool _allowProcessSupervision;
+    private readonly bool _allowGlobalStartupRegistration;
     private readonly System.Windows.Forms.Timer _confirmationTimer;
     private readonly System.Windows.Forms.Timer _refreshTimer;
     private readonly System.Windows.Forms.Timer _providerActivityTimer;
@@ -90,7 +89,6 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     private ReleaseUpdateInfo? _availableUpdate;
     private Version? _notifiedUpdateVersion;
     private bool _quitting;
-    private bool _sessionEnding;
     private bool _rolloutImportRunning;
     private string? _rolloutImportSignature;
     private (QuotaSnapshot Snapshot, DateTimeOffset ObservedAt, string Signature)? _pendingRolloutImport;
@@ -103,10 +101,10 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         EventWaitHandle activationEvent,
         bool openSettingsOnStart = false,
         AppSettingsStore? store = null,
-        bool allowProcessSupervision = true,
+        bool allowGlobalStartupRegistration = true,
         bool bundledPluginInstallFailed = false)
     {
-        _allowProcessSupervision = allowProcessSupervision;
+        _allowGlobalStartupRegistration = allowGlobalStartupRegistration;
         _store = store ?? new AppSettingsStore();
         var now = DateTimeOffset.UtcNow;
         _settings = _store.Load();
@@ -129,9 +127,9 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                 false,
                 null),
             _radarState);
-        if (_allowProcessSupervision)
+        if (_allowGlobalStartupRegistration)
         {
-            StartupManager.Apply(_settings.OpenAtLogin, _settings.KeepRunning);
+            StartupManager.Apply(_settings.OpenAtLogin);
         }
 
         _snapshot = WithoutLegacyAiGateway(_store.LoadCache(now) ?? LoadingSnapshot(_settings, _text));
@@ -158,12 +156,6 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         _bar.CodexEconomyModeRequested += (_, request) => ApplyRecommendedCodexEconomyMode(request.Mode);
         _bar.MiniAreaLayoutChanged += (_, _) => SaveMiniAreaLayout();
         _bar.MiniAreaOrderChanged += (_, _) => SaveMiniAreaOrder();
-        _bar.FormClosing += (_, args) =>
-        {
-            if (args.CloseReason != CloseReason.WindowsShutDown) return;
-            _sessionEnding = true;
-            if (_allowProcessSupervision) WatchdogManager.Stop();
-        };
         _bar.FormClosed += (_, _) => Quit();
         _bar.SetRadarState(_radarViewState);
 
@@ -279,20 +271,6 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             {
                 _bar.Invalidate();
             }
-        };
-        _watchdogTimer = new System.Windows.Forms.Timer
-        {
-            Interval = 30_000,
-            Enabled = _allowProcessSupervision && _settings.KeepRunning,
-        };
-        _watchdogTimer.Tick += (_, _) =>
-        {
-            if (!_allowProcessSupervision) return;
-            StartupManager.ReconcileRegistration(
-                Application.ExecutablePath,
-                _settings.OpenAtLogin,
-                _settings.KeepRunning);
-            WatchdogManager.EnsureRunning();
         };
         _confirmationTimer = new System.Windows.Forms.Timer { Interval = 3_000 };
         _confirmationTimer.Tick += (_, _) =>
@@ -704,11 +682,10 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     {
         _settings = settings;
         _text = NativeText.For(_settings.Locale);
-        if (_allowProcessSupervision)
+        if (_allowGlobalStartupRegistration)
         {
-            StartupManager.Apply(_settings.OpenAtLogin, _settings.KeepRunning);
+            StartupManager.Apply(_settings.OpenAtLogin);
         }
-        _watchdogTimer.Enabled = _allowProcessSupervision && _settings.KeepRunning;
         ApplyRefreshInterval();
         _bar.ApplySettings(_settings);
         UpdateProviderActivity(requestRefresh: false);
@@ -1312,7 +1289,6 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             && previous.RefreshMinutes == next.RefreshMinutes
             && previous.AutoRefreshClaudeOAuth == next.AutoRefreshClaudeOAuth
             && previous.OpenAtLogin == next.OpenAtLogin
-            && previous.KeepRunning == next.KeepRunning
             && previous.EnableAlerts == next.EnableAlerts
             && previous.TaskbarDocked == next.TaskbarDocked
             && previous.EnableAnimations == next.EnableAnimations
@@ -2104,16 +2080,11 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     {
         if (_quitting) return;
         _quitting = true;
-        if (_allowProcessSupervision && _settings.KeepRunning && !_sessionEnding)
-        {
-            WatchdogManager.EnsureRunning();
-        }
         _shutdown.Cancel();
         _refreshTimer.Stop();
         _radarTimer.Stop();
         _updateTimer.Stop();
         _clockTimer.Stop();
-        _watchdogTimer.Stop();
         _confirmationTimer.Stop();
         _settingsDialog?.Dispose();
         _settingsDialog = null;
@@ -2162,7 +2133,6 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             _radarTimer.Dispose();
             _updateTimer.Dispose();
             _clockTimer.Dispose();
-            _watchdogTimer.Dispose();
             _confirmationTimer.Dispose();
             _activationWait.Unregister(null);
             _settingsDialog?.Dispose();

@@ -6,7 +6,6 @@ const program = fs.readFileSync('src/ZGSTokenBar.App/Program.cs', 'utf8');
 const application = fs.readFileSync('src/ZGSTokenBar.App/QuotaApplicationContext.cs', 'utf8');
 const settings = fs.readFileSync('src/ZGSTokenBar.App/SettingsForm.cs', 'utf8');
 const startup = fs.readFileSync('src/ZGSTokenBar.App/StartupManager.cs', 'utf8');
-const watchdog = fs.readFileSync('src/ZGSTokenBar.App/WatchdogManager.cs', 'utf8');
 const update = fs.readFileSync('src/ZGSTokenBar.App/ReleaseUpdateChecker.cs', 'utf8');
 const legacyCli = fs.readFileSync('tools/ZGSTokenBar.Cli/CliApplication.Legacy.cs', 'utf8');
 const host = fs.readFileSync('src/ZGSTokenBar.Host/ZgsTokenBarHost.cs', 'utf8');
@@ -46,37 +45,21 @@ test('single-instance settings activation is queued until the Bar handle is read
     'the Bar handle must exist before plugin events can marshal to it');
 });
 
-test('optional keep-running mode supervises the app without entering the UI path', () => {
-  assert.ok(
-    program.indexOf('WatchdogManager.IsWatchdogRequest(args)') < program.indexOf('new EventWaitHandle('),
-    'watchdog mode must branch before the main app creates activation resources');
-  assert.match(program, /WatchdogManager\.Run\(\);[\s\S]*?return;/);
-  assert.match(startup, /keepRunning \? \$"\{command\} --watchdog" : command/);
-  assert.match(watchdog, /new Mutex\(true, MutexName, out var firstInstance\)/);
-  assert.match(watchdog, /if \(!firstInstance\) return;/);
-  assert.match(watchdog, /if \(!IsApplicationRunning\(\)\)[\s\S]*?KeepRunningEnabled\(store\)[\s\S]*?StartApplication\(\)/);
-  assert.match(watchdog, /stopEvent\.WaitOne\(PollMilliseconds\)/);
-  assert.match(watchdog, /if \(stopEvent\.WaitOne\(PollMilliseconds\)\) return;/);
-  assert.match(application, /Interval = 30_000,[\s\S]*?Enabled = _allowProcessSupervision && _settings\.KeepRunning/);
-  assert.match(
-    application,
-    /_watchdogTimer\.Tick \+= \(_, _\) =>[\s\S]*?StartupManager\.ReconcileRegistration\([\s\S]*?WatchdogManager\.EnsureRunning\(\)/);
-  assert.match(application, /args\.CloseReason != CloseReason\.WindowsShutDown[\s\S]*?_sessionEnding = true;[\s\S]*?_allowProcessSupervision[\s\S]*?WatchdogManager\.Stop\(\)/);
-  assert.match(quit, /if \(_allowProcessSupervision && _settings\.KeepRunning && !_sessionEnding\)[\s\S]*?WatchdogManager\.EnsureRunning\(\)/);
-  assert.match(settings, /if \(keepRunningChanged && _keepRunning\.Checked\)[\s\S]*?_openAtLogin\.Checked = true/);
-  assert.match(settings, /!keepRunningChanged && !_openAtLogin\.Checked[\s\S]*?_keepRunning\.Checked = false/);
+test('watchdog supervision and keep-running settings are retired', () => {
+  assert.equal(fs.existsSync('src/ZGSTokenBar.App/WatchdogManager.cs'), false);
+  for (const source of [program, application, settings, startup]) {
+    assert.doesNotMatch(source, /WatchdogManager|KeepRunning|keepRunning|--watchdog|_watchdogTimer/);
+  }
 });
 
-test('custom data roots are isolated from global startup and watchdog supervision', () => {
-  assert.match(program, /var dataDirectory = ResolveDataDirectoryOverride\(args\);[\s\S]*?var allowProcessSupervision = dataDirectory is null;/);
+test('custom data roots are isolated from global startup registration', () => {
+  assert.match(program, /var dataDirectory = ResolveDataDirectoryOverride\(args\);[\s\S]*?var allowGlobalStartupRegistration = dataDirectory is null;/);
   assert.match(
     program,
     /ResolveDataDirectoryOverride[\s\S]*?ResolveDataDirectoryArgument\(args\)[\s\S]*?if \(argument is not null\) return argument;[\s\S]*?DataDirectoryEnvironmentVariable[\s\S]*?Path\.IsPathFullyQualified\(configured\)/);
-  assert.match(program, /if \(WatchdogManager\.IsWatchdogRequest\(args\)\)[\s\S]*?if \(allowProcessSupervision\) WatchdogManager\.Run\(\);[\s\S]*?return;/);
-  assert.match(program, /if \(allowProcessSupervision\)[\s\S]*?StartupManager\.ReconcileRegistration/);
-  assert.match(program, /new QuotaApplicationContext\([\s\S]*?store,[\s\S]*?allowProcessSupervision,[\s\S]*?bundledPluginInstallFailed\)/);
-  assert.match(application, /if \(_allowProcessSupervision\)[\s\S]*?StartupManager\.Apply/);
-  assert.match(application, /_watchdogTimer\.Enabled = _allowProcessSupervision && _settings\.KeepRunning/);
+  assert.match(program, /if \(allowGlobalStartupRegistration\)[\s\S]*?StartupManager\.ReconcileRegistration/);
+  assert.match(program, /new QuotaApplicationContext\([\s\S]*?store,[\s\S]*?allowGlobalStartupRegistration,[\s\S]*?bundledPluginInstallFailed\)/);
+  assert.match(application, /if \(_allowGlobalStartupRegistration\)[\s\S]*?StartupManager\.Apply/);
 });
 
 test('legacy AI Gateway CLI is retired without accepting or mutating credentials', () => {

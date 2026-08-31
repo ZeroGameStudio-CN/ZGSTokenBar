@@ -8,15 +8,14 @@ internal static class StartupManager
     private const string RegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string ValueName = "ZGSTokenBar";
 
-    public static void Apply(bool openAtLogin, bool keepRunning)
+    public static void Apply(bool openAtLogin)
     {
-        ReconcileRegistration(Application.ExecutablePath, openAtLogin, keepRunning);
-        WatchdogManager.Apply(keepRunning);
+        ReconcileRegistration(Application.ExecutablePath, openAtLogin);
     }
 
-    public static void ReconcileRegistration(string executablePath, bool openAtLogin, bool keepRunning)
+    public static void ReconcileRegistration(string executablePath, bool openAtLogin)
     {
-        var command = BuildCommand(executablePath, openAtLogin, keepRunning);
+        var command = BuildCommand(executablePath, openAtLogin);
         var intendedAction = command is null ? "remove" : "set";
         try
         {
@@ -44,11 +43,9 @@ internal static class StartupManager
         }
     }
 
-    internal static string? BuildCommand(string executablePath, bool openAtLogin, bool keepRunning)
+    internal static string? BuildCommand(string executablePath, bool openAtLogin)
     {
-        if (!openAtLogin && !keepRunning) return null;
-        var command = $"\"{executablePath}\"";
-        return keepRunning ? $"{command} --watchdog" : command;
+        return openAtLogin ? $"\"{executablePath}\"" : null;
     }
 
     internal static StartupRegistrationAction RequiredAction(

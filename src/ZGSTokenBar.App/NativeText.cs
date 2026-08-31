@@ -49,10 +49,6 @@ internal sealed class NativeText
     public string AutomaticRefreshHint => T("设置配额与使用数据的刷新频率。", "Choose how often quota and usage data refresh.");
     public string StartWithWindows => T("随 Windows 启动", "Start with Windows");
     public string StartWithWindowsHint => T("登录 Windows 时自动启动 ZGSTokenBar。", "Start ZGSTokenBar automatically when you sign in.");
-    public string KeepRunning => T("常驻运行", "Keep running");
-    public string KeepRunningHint => T(
-        "同时随 Windows 启动；退出或异常结束后自动重启。关闭此选项后恢复普通退出。",
-        "Also start with Windows and restart after exit or failure. Turn this off to allow a normal exit.");
     public string UsageAlertsTitle => T("用量提醒", "Usage alerts");
     public string UsageAlerts => T(
         "用量达到 25 / 50 / 75 / 90 / 100% 时提醒",

@@ -9,7 +9,7 @@ ZGSTokenBar is an open-source, local-first Windows taskbar companion for monitor
 - Local Codex token summaries and Today, Yesterday, and 30-day API-equivalent USD estimates. Estimates follow a dated model-price snapshot and are not subscription invoices.
 - Multiple Codex accounts are grouped with Pro accounts before Plus accounts, then sorted by remaining quota within each plan.
 - Independent, reorderable and resizable Mini areas with quota details and reset countdowns.
-- Optional start-at-login and keep-running supervision. When keep-running is enabled, a watchdog restarts the app after an unexpected exit until the option is disabled.
+- Optional start-at-login registration.
 - Typed Provider SDK, strict manifests, generated built-in registry, and isolated process-plugin support.
 - Local named-pipe control API and a NativeAOT command-line client.
 - No telemetry or cloud sync.
