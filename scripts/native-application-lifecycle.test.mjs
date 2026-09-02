@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const program = fs.readFileSync('src/ZGSTokenBar.App/Program.cs', 'utf8');
 const application = fs.readFileSync('src/ZGSTokenBar.App/QuotaApplicationContext.cs', 'utf8');
+const barForm = fs.readFileSync('src/ZGSTokenBar.App/BarForm.cs', 'utf8');
 const settings = fs.readFileSync('src/ZGSTokenBar.App/SettingsForm.cs', 'utf8');
 const startup = fs.readFileSync('src/ZGSTokenBar.App/StartupManager.cs', 'utf8');
 const update = fs.readFileSync('src/ZGSTokenBar.App/ReleaseUpdateChecker.cs', 'utf8');
@@ -19,6 +20,18 @@ test('application context has one owner and menu-backed controls survive until t
   assert.match(quit, /_tray\.Visible = false;[\s\S]*?ExitThread\(\);/);
   assert.doesNotMatch(quit, /_tray\.Dispose\(\)|_bar\.Dispose\(\)/);
   assert.match(dispose, /_tray\.Dispose\(\);[\s\S]*?_bar\.Dispose\(\);/);
+});
+
+test('user-closing the bar hides it to the tray while explicit quit still exits', () => {
+  assert.match(application, /_bar\.FormClosing \+= BarFormClosing;/);
+  assert.match(
+    application,
+    /BarFormClosing[\s\S]*?_quitting \|\| eventArgs\.CloseReason != CloseReason\.UserClosing[\s\S]*?eventArgs\.Cancel = true;[\s\S]*?_bar\.HideToTray\(\);/);
+  assert.match(application, /EnsureVisible[\s\S]*?_bar\.RestoreFromTray\(\);[\s\S]*?if \(_bar\.IsTaskbarDocked\)/);
+  assert.match(barForm, /public void HideToTray\(\)[\s\S]*?_hiddenToTray = true;[\s\S]*?Hide\(\);/);
+  assert.match(barForm, /public void RestoreFromTray\(\)[\s\S]*?_hiddenToTray = false;[\s\S]*?Show\(\);/);
+  assert.match(barForm, /public void SyncTaskbarPlacement\(\)[\s\S]*?if \(_hiddenToTray/);
+  assert.match(application, /_quitMenuItem = new ToolStripMenuItem\([\s\S]*?\(_, _\) => Quit\(\)\)/);
 });
 
 test('settings dropdown stays alive until WinForms finishes closing it', () => {
@@ -43,6 +56,9 @@ test('single-instance settings activation is queued until the Bar handle is read
   assert.ok(
     application.indexOf('_bar.Show();') < application.indexOf('_pluginEventTask = WatchPluginEventsAsync();'),
     'the Bar handle must exist before plugin events can marshal to it');
+  assert.match(
+    application,
+    /RegisterWaitForSingleObject[\s\S]*?_bar\.BeginInvoke\(\(\) =>[\s\S]*?EnsureVisible\(\);[\s\S]*?OpenSettings\(\);/);
 });
 
 test('watchdog supervision and keep-running settings are retired', () => {

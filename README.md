@@ -16,7 +16,7 @@ ZGSTokenBar is an open-source, local-first Windows taskbar companion for monitor
 
 ## Use
 
-Drag the Mini's card area to reposition it along the taskbar or pull it onto the desktop. Hover a real Mini quota capsule to see its exact reset time, live countdown, freshness, and usage details; click to pin the popover. Click outside or press Escape to close it. To open the optional Radar view, hover a Codex logo in Mini when that public data source is enabled.
+Drag the Mini's card area to reposition it along the taskbar or pull it onto the desktop. Closing the bar hides the app to the system tray; click the tray icon to restore it, or use the tray menu's Quit command to exit completely. Hover a real Mini quota capsule to see its exact reset time, live countdown, freshness, and usage details; click to pin the popover. Click outside or press Escape to close it. To open the optional Radar view, hover a Codex logo in Mini when that public data source is enabled.
 
 Claude, Codex, and DeepSeek Harness reuse credentials already configured by their own local tools. ZGSTokenBar has no Provider API-key field. Unknown or unsupported Codex price classes remain visibly unpriced; a mixed period is shown as a lower-bound estimate such as `≈$1.23+` instead of a false zero.
 

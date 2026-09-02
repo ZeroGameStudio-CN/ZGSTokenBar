@@ -150,6 +150,7 @@ internal sealed class BarForm : Form
     private bool _taskbarDragMoved;
     private int _taskbarPlacementMisses;
     private bool _taskbarPlacementEstablished;
+    private bool _hiddenToTray;
     private nint _foregroundChangedHook;
     private int _taskbarSyncQueued;
     private bool _popoverPinned;
@@ -777,7 +778,7 @@ internal sealed class BarForm : Form
         else
         {
             RestoreActiveFloatingPosition();
-            if (!Visible) Show();
+            if (!Visible && !_hiddenToTray) Show();
         }
         if (activation?.MigrationCommit is { } migration) PlacementCommitted?.Invoke(this, migration);
         RefreshHintPopover();
@@ -786,7 +787,12 @@ internal sealed class BarForm : Form
 
     public void SyncTaskbarPlacement()
     {
-        if (!_taskbarDocked || _taskbarDragging || _reorderingMiniAreaId is not null || IsDisposed || !IsHandleCreated)
+        if (_hiddenToTray
+            || !_taskbarDocked
+            || _taskbarDragging
+            || _reorderingMiniAreaId is not null
+            || IsDisposed
+            || !IsHandleCreated)
         {
             if (!_taskbarDocked)
             {
@@ -864,6 +870,19 @@ internal sealed class BarForm : Form
         var x = Math.Clamp(Left, area.Left, Math.Max(area.Left, area.Right - Width));
         var y = Math.Clamp(Top, area.Top, Math.Max(area.Top, area.Bottom - Height));
         Location = new Point(x, y);
+    }
+
+    public void HideToTray()
+    {
+        _hiddenToTray = true;
+        HidePopovers();
+        if (Visible) Hide();
+    }
+
+    public void RestoreFromTray()
+    {
+        _hiddenToTray = false;
+        if (!Visible) Show();
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -1107,7 +1126,7 @@ internal sealed class BarForm : Form
         else
         {
             MoveToFloatingPosition(topology, activation.Profile);
-            if (!Visible) Show();
+            if (!Visible && !_hiddenToTray) Show();
         }
         if (activation.MigrationCommit is { } migration) PlacementCommitted?.Invoke(this, migration);
     }

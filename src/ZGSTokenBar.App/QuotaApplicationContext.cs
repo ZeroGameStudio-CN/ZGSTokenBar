@@ -156,6 +156,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         _bar.CodexEconomyModeRequested += (_, request) => ApplyRecommendedCodexEconomyMode(request.Mode);
         _bar.MiniAreaLayoutChanged += (_, _) => SaveMiniAreaLayout();
         _bar.MiniAreaOrderChanged += (_, _) => SaveMiniAreaOrder();
+        _bar.FormClosing += BarFormClosing;
         _bar.FormClosed += (_, _) => Quit();
         _bar.SetRadarState(_radarViewState);
 
@@ -312,7 +313,11 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                 if (timedOut || _bar.IsDisposed) return;
                 try
                 {
-                    _bar.BeginInvoke(OpenSettings);
+                    _bar.BeginInvoke(() =>
+                    {
+                        EnsureVisible();
+                        OpenSettings();
+                    });
                 }
                 catch (InvalidOperationException)
                 {
@@ -1433,14 +1438,21 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     private void EnsureVisible()
     {
         if (_bar.IsDisposed) return;
+        _bar.RestoreFromTray();
         if (_bar.IsTaskbarDocked)
         {
             _bar.SyncTaskbarPlacement();
             return;
         }
         _bar.ClampToVisibleScreen();
-        if (!_bar.Visible) _bar.Show();
         _bar.BringToFront();
+    }
+
+    private void BarFormClosing(object? sender, FormClosingEventArgs eventArgs)
+    {
+        if (_quitting || eventArgs.CloseReason != CloseReason.UserClosing) return;
+        eventArgs.Cancel = true;
+        _bar.HideToTray();
     }
 
     private async Task CheckForUpdatesAsync()
