@@ -15409,6 +15409,10 @@ static void TestTaskbarCompactAiGatewayBalance()
     Equal("¥1.2K", AiGatewayBalanceFormatting.CompactAmount(1_234m), "compact balance abbreviates thousands");
     Equal("¥1.2M", AiGatewayBalanceFormatting.CompactAmount(1_234_000m), "compact balance abbreviates millions");
     Equal("—", AiGatewayBalanceFormatting.CompactAmount(null), "compact balance keeps an unavailable value explicit");
+    Equal(
+        "¥42",
+        BarForm.CompactPluginValue(new ContributionValue("currency", Text: "CNY", Decimal: 42.36m)),
+        "collapsed generic balance cards retain their compact amount");
     Equal(254, TaskbarMiniLayoutMath.ContentWidth([
         TaskbarMiniLayoutMath.AreaWidth(TaskbarMiniLayoutMath.ServiceCardWidth, false),
     ]), "service-only Mini includes its area handle");

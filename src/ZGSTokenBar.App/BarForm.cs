@@ -1358,7 +1358,7 @@ internal sealed class BarForm : Form
             }
             else if (area.Plugin is { } pluginCard)
             {
-                DrawPluginMiniCard(graphics, bounds, pluginCard);
+                DrawPluginMiniCard(graphics, bounds, pluginCard, layout.Collapsed);
                 _taskbarPluginBounds.Add((bounds, pluginCard));
             }
             else if (string.Equals(area.AreaId, MiniAreaIds.RadarReset, StringComparison.Ordinal))
@@ -1491,10 +1491,13 @@ internal sealed class BarForm : Form
     private void DrawPluginMiniCard(
         Graphics graphics,
         RectangleF bounds,
-        PluginMiniCardView view)
+        PluginMiniCardView view,
+        bool collapsed)
     {
         DrawTaskbarCardShell(graphics, bounds);
-        var iconBounds = new RectangleF(bounds.X + 5, bounds.Y + 6, 24, 24);
+        var iconBounds = collapsed
+            ? new RectangleF(bounds.X + 3, bounds.Y + 3, 15, 15)
+            : new RectangleF(bounds.X + 5, bounds.Y + 6, 24, 24);
         if (_pluginIcons.TryGetValue(view.PluginId, out var image))
         {
             graphics.DrawImage(image, iconBounds);
@@ -1517,7 +1520,25 @@ internal sealed class BarForm : Form
             iconBounds,
             StringAlignment.Center);
         }
-        if (AreaLayout(view.PluginId).Collapsed) return;
+        if (collapsed)
+        {
+            if (view.Card.Kind == ContributionKind.Balance)
+            {
+                var compactSummary = view.Card.Summary.FirstOrDefault();
+                var color = PluginCompactStatusColor(compactSummary?.Status);
+                using var statusBrush = new SolidBrush(color);
+                graphics.FillEllipse(statusBrush, bounds.Right - 7, bounds.Top + 4, 4, 4);
+                using var valueBrush = new SolidBrush(color);
+                DrawString(
+                    graphics,
+                    compactSummary is null ? "—" : CompactPluginValue(compactSummary.Value),
+                    _badgeFont,
+                    valueBrush,
+                    new RectangleF(bounds.X + 2, bounds.Bottom - 12, bounds.Width - 4, 9),
+                    StringAlignment.Center);
+            }
+            return;
+        }
 
         using var title = new SolidBrush(Color.FromArgb(203, 213, 225));
         using var value = new SolidBrush(Color.FromArgb(248, 250, 252));
@@ -5875,6 +5896,21 @@ internal sealed class BarForm : Form
             "HH:mm",
             System.Globalization.CultureInfo.CurrentCulture)
         ?? "—";
+
+    internal static string CompactPluginValue(ContributionValue value) =>
+        value.Kind == "currency"
+            && value.Decimal is { } currency
+            && string.Equals(value.Text, "CNY", StringComparison.OrdinalIgnoreCase)
+            ? AiGatewayBalanceFormatting.CompactAmount(currency)
+            : PluginValue(value);
+
+    private static Color PluginCompactStatusColor(string? status) => status switch
+    {
+        "available" => Color.FromArgb(52, 211, 153),
+        "cached" or "stale" => Color.FromArgb(251, 191, 36),
+        "unavailable" => Color.FromArgb(251, 113, 133),
+        _ => Color.FromArgb(100, 116, 139),
+    };
 
     private Image ProviderLogo(ProviderKind provider) => provider switch
     {

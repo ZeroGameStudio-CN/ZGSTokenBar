@@ -475,6 +475,13 @@ test('collapsed quota and balance providers share a compact semantic summary wit
   assert.doesNotMatch(barForm, /FetchAiGateway|HttpClient/);
 });
 
+test('collapsed generic balance plugins retain their primary amount', () => {
+  assert.match(barForm, /DrawPluginMiniCard\(graphics, bounds, pluginCard, layout\.Collapsed\)/);
+  assert.match(barForm, /view\.Card\.Kind == ContributionKind\.Balance/);
+  assert.match(barForm, /CompactPluginValue\(compactSummary\.Value\)/);
+  assert.match(barForm, /AiGatewayBalanceFormatting\.CompactAmount\(currency\)/);
+});
+
 test('provider visibility follows active App or CLI processes', () => {
   assert.match(processActivity, /\[ProviderKind\.Claude\] = \["claude", "claude-code", "claude_desktop"\]/);
   assert.match(processActivity, /\[ProviderKind\.Codex\] = \["chatgpt", "codex", "codex-cli"\]/);
