@@ -1,6 +1,6 @@
 # 宿主 Job 生命周期隔离
 
-- 状态：Implemented
+- 状态：Closed
 - 最后更新：2026-09-03
 - 基线：`d3c35ae4e1af429da689828c51b5fa71667b48b0`
 - 设计与执行授权：已授权；用户要求修复 Codex 更新导致 ZGSTokenBar 退出
@@ -53,4 +53,4 @@
 - 聚焦生命周期契约 16/16、.NET 回归 110/110、完整 `npm run verify` 通过；完整门禁包含 107 项 Node 测试、Release 构建、原生 HWND 生命周期、单文件发布、NativeAOT CLI、隔离插件、确定性截图和差异检查。
 - 未修改生产配置。已运行 `npm run dist` 部署未签名的本机自用便携版；`ZGSTokenBar.exe` SHA-256 为 `D2C80F8679C2E1B5A4CE82036E275D9B6DB6F6B12C5194723FE8F577B79A3F84`，便携 ZIP SHA-256 为 `8AC56A49F46E817F687CE95AF5E474DE559079C9148758D1F44563FB3DD5BE4B`，校验文件中的三项哈希均已复算匹配。
 - 已启动部署目录中的 PID `140936`；进程响应正常，CLI `status --json` 返回 `running=true`、相同 PID、版本 `3.0.0` 及相同构建哈希。外部进程探针返回 `JobQuerySucceeded=True`、`IsInJob=False`，登录启动项仍精确指向该部署路径。
-- 源码和本说明纳入本次授权的 Git 提交与推送；公开发布不在本次范围。
+- 源码和本说明已由提交 `77b5816` 推送到 `origin/main`；公开发布不在本次范围。
