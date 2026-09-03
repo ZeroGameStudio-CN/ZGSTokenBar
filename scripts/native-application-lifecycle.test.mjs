@@ -7,6 +7,7 @@ const application = fs.readFileSync('src/ZGSTokenBar.App/QuotaApplicationContext
 const barForm = fs.readFileSync('src/ZGSTokenBar.App/BarForm.cs', 'utf8');
 const settings = fs.readFileSync('src/ZGSTokenBar.App/SettingsForm.cs', 'utf8');
 const startup = fs.readFileSync('src/ZGSTokenBar.App/StartupManager.cs', 'utf8');
+const hostJobIsolation = fs.readFileSync('src/ZGSTokenBar.App/HostJobLifetimeIsolation.cs', 'utf8');
 const update = fs.readFileSync('src/ZGSTokenBar.App/ReleaseUpdateChecker.cs', 'utf8');
 const legacyCli = fs.readFileSync('tools/ZGSTokenBar.Cli/CliApplication.Legacy.cs', 'utf8');
 const host = fs.readFileSync('src/ZGSTokenBar.Host/ZgsTokenBarHost.cs', 'utf8');
@@ -59,6 +60,27 @@ test('single-instance settings activation is queued until the Bar handle is read
   assert.match(
     application,
     /RegisterWaitForSingleObject[\s\S]*?_bar\.BeginInvoke\(\(\) =>[\s\S]*?EnsureVisible\(\);[\s\S]*?OpenSettings\(\);/);
+});
+
+test('normal desktop startup escapes a terminating host job before touching persistent state', () => {
+  assert.ok(
+    program.indexOf('TryRelaunchOutsideTerminatingJob(') < program.indexOf('new AppSettingsStore('),
+    'host-job isolation must precede settings and startup registration');
+  assert.ok(
+    program.indexOf('TryRelaunchOutsideTerminatingJob(') < program.indexOf('new Mutex('),
+    'host-job isolation must precede the single-instance decision');
+  assert.match(program, /hasIsolatedDataRoot: !allowGlobalStartupRegistration/);
+  assert.match(program, /RelaunchArguments\(args\)/);
+  assert.match(hostJobIsolation, /KillOnJobClose/);
+  assert.match(hostJobIsolation, /Process\.GetProcessesByName\("explorer"\)/);
+  assert.match(hostJobIsolation, /ParentProcessAttribute/);
+  assert.match(hostJobIsolation, /ExtendedStartupInformationPresent/);
+  assert.match(hostJobIsolation, /CreateUnicodeEnvironment/);
+  assert.match(hostJobIsolation, /CreateNoWindow/);
+  assert.match(hostJobIsolation, /Environment\.GetEnvironmentVariables\(\)/);
+  assert.match(hostJobIsolation, /BuildCommandLine\(executablePath, arguments\)/);
+  assert.match(hostJobIsolation, /CloseHandle\(process\.ThreadHandle\);[\s\S]*?CloseHandle\(process\.ProcessHandle\);/);
+  assert.doesNotMatch(hostJobIsolation, /Registry|settings\.json|File\.|Directory\./);
 });
 
 test('watchdog supervision and keep-running settings are retired', () => {

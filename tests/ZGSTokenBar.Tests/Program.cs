@@ -16,6 +16,25 @@ using ZGSTokenBar.Host;
 using ZGSTokenBar.PluginSdk;
 using ZGSTokenBar.Plugin.AiGatewayObserver;
 
+if (args.Length == 2
+    && string.Equals(args[0], "--host-job-lifetime-probe", StringComparison.OrdinalIgnoreCase))
+{
+    if (HostJobLifetimeIsolation.TryRelaunchOutsideTerminatingJob(
+            hasIsolatedDataRoot: false,
+            arguments: args))
+    {
+        return 0;
+    }
+
+    var querySucceeded = HostJobLifetimeIsolation.TryReadCurrentJob(
+        out var isInJob,
+        out var limitFlags);
+    File.WriteAllText(
+        args[1],
+        string.Join('|', querySucceeded, isInJob, limitFlags));
+    return 0;
+}
+
 if (args.Length > 0
     && string.Equals(args[0], "quota-import-fixture", StringComparison.OrdinalIgnoreCase))
 {
@@ -239,6 +258,7 @@ var tests = new (string Name, Action Run)[]
     ("Settings normalization", TestSettingsNormalization),
     ("Settings data directory override", TestSettingsDataDirectoryOverride),
     ("Windows startup registration policy", TestWindowsStartupRegistrationPolicy),
+    ("Host job lifetime isolation policy", TestHostJobLifetimeIsolationPolicy),
     ("Release update discovery", TestReleaseUpdateDiscovery),
     ("Settings v2 plugin migration", TestSettingsV2PluginMigration),
     ("Provider local credential auto-discovery", TestProviderLocalCredentialAutoDiscovery),
@@ -12934,6 +12954,100 @@ static void TestWindowsStartupRegistrationPolicy()
     finally
     {
         Directory.Delete(directory, recursive: true);
+    }
+}
+
+static void TestHostJobLifetimeIsolationPolicy()
+{
+    var terminatingJob = HostJobLifetimeIsolation.KillOnJobClose;
+    Equal(
+        true,
+        HostJobLifetimeIsolation.ShouldRelaunch(false, false, true, terminatingJob),
+        "a normal app detaches from a terminating host job");
+    Equal(
+        false,
+        HostJobLifetimeIsolation.ShouldRelaunch(true, false, true, terminatingJob),
+        "an isolated data root remains owned by its launcher");
+    Equal(
+        false,
+        HostJobLifetimeIsolation.ShouldRelaunch(false, true, true, terminatingJob),
+        "a completed shell-parent attempt cannot relaunch recursively");
+    Equal(
+        false,
+        HostJobLifetimeIsolation.ShouldRelaunch(false, false, false, terminatingJob),
+        "a process outside a job starts directly");
+    Equal(
+        false,
+        HostJobLifetimeIsolation.ShouldRelaunch(false, false, true, 0),
+        "a non-terminating job retains ownership");
+    Equal(
+        "\"C:\\Program Files\\ZGS\\ZGSTokenBar.exe\" \"--settings\" \"value with spaces\" \"quoted\\\"value\" \"trailing\\\\\"",
+        HostJobLifetimeIsolation.BuildCommandLine(
+            @"C:\Program Files\ZGS\ZGSTokenBar.exe",
+            ["--settings", "value with spaces", "quoted\"value", @"trailing\"]),
+        "the shell-parent child receives Windows-safe executable and argument quoting");
+    Equal(
+        "\"C:\\Windows\\System32\\cmd.exe\" /d /s /v:off /c \"\"C:\\Program Files\\ZGS\\ZGSTokenBar.exe\" \"--settings\"\"",
+        HostJobLifetimeIsolation.BuildBrokerCommandLine(
+            @"C:\Windows\System32\cmd.exe",
+            "\"C:\\Program Files\\ZGS\\ZGSTokenBar.exe\" \"--settings\""),
+        "the hidden desktop-shell broker executes one complete application command");
+    Equal(
+        true,
+        ZGSTokenBar.App.Program.RelaunchArguments(["--settings", "ignored", "settings"])
+            .SequenceEqual(["--settings", "settings"]),
+        "the production broker forwards only supported default-root arguments");
+
+    var currentJobReadable = HostJobLifetimeIsolation.TryReadCurrentJob(
+        out var currentIsInJob,
+        out var currentFlags);
+    using var currentProcess = Process.GetCurrentProcess();
+    var desktopShellAvailable = Process.GetProcessesByName("explorer")
+        .Any(process =>
+        {
+            using (process)
+            {
+                try { return process.SessionId == currentProcess.SessionId; }
+                catch (InvalidOperationException) { return false; }
+            }
+        });
+    if (!currentJobReadable
+        || !currentIsInJob
+        || (currentFlags & HostJobLifetimeIsolation.KillOnJobClose) == 0
+        || !desktopShellAvailable)
+    {
+        return;
+    }
+
+    var probePath = Path.Combine(
+        Path.GetTempPath(),
+        $"zgstokenbar-job-lifetime-{Guid.NewGuid():N}.txt");
+    try
+    {
+        using var probe = Process.Start(new ProcessStartInfo(
+            Environment.ProcessPath!,
+            $"--host-job-lifetime-probe \"{probePath}\"")
+        {
+            UseShellExecute = false,
+        }) ?? throw new InvalidOperationException("Could not start the host-job lifetime probe.");
+        Equal(
+            true,
+            SpinWait.SpinUntil(() => File.Exists(probePath), TimeSpan.FromSeconds(10)),
+            "the detached probe completes through the current host job chain");
+        var fields = File.ReadAllText(probePath).Split('|');
+        Equal(3, fields.Length, "the detached probe reports a complete job state");
+        Equal(true, bool.Parse(fields[0]), "the detached probe can query its final job state");
+        var finalIsInJob = bool.Parse(fields[1]);
+        var finalFlags = uint.Parse(fields[2], CultureInfo.InvariantCulture);
+        Equal(
+            false,
+            finalIsInJob,
+            "the desktop-shell child inherits no Codex host job");
+        Equal(0u, finalFlags, "an out-of-job child reports no inherited job limits");
+    }
+    finally
+    {
+        if (File.Exists(probePath)) File.Delete(probePath);
     }
 }
 

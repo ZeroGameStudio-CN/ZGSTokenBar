@@ -17,6 +17,12 @@ internal static class Program
     {
         var dataDirectory = ResolveDataDirectoryOverride(args);
         var allowGlobalStartupRegistration = dataDirectory is null;
+        if (HostJobLifetimeIsolation.TryRelaunchOutsideTerminatingJob(
+                hasIsolatedDataRoot: !allowGlobalStartupRegistration,
+                arguments: RelaunchArguments(args)))
+        {
+            return;
+        }
 
         var openSettingsOnStart = args.Any(value =>
             string.Equals(value, "--settings", StringComparison.OrdinalIgnoreCase)
@@ -105,6 +111,12 @@ internal static class Program
         }
         return null;
     }
+
+    internal static IReadOnlyList<string> RelaunchArguments(IReadOnlyList<string> args) => args
+        .Where(value =>
+            string.Equals(value, "--settings", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "settings", StringComparison.OrdinalIgnoreCase))
+        .ToArray();
 
     internal static string? ResolveDataDirectoryOverride(IReadOnlyList<string> args)
     {
