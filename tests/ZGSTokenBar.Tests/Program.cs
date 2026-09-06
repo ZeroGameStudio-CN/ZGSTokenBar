@@ -145,6 +145,12 @@ if (args.Length == 1
     return 0;
 }
 
+if (args.Length == 2 && args[0] == "--radar-group-captures")
+{
+    TestRadarModelGroups(args[1]);
+    return 0;
+}
+
 var radarCli = await RadarDeveloperCli.TryRunAsync(args, Console.Out, Console.Error);
 if (radarCli.Handled)
 {
@@ -252,6 +258,7 @@ var tests = new (string Name, Action Run)[]
     ("Taskbar popover motion geometry", TestTaskbarPopoverMotionGeometry),
     ("Codex Radar stable ranking", TestRadarStableRanking),
     ("Codex Radar pixel layout", TestRadarPopoverLayout),
+    ("Radar dynamic model groups", () => TestRadarModelGroups()),
     ("Codex spend history pixel layout", TestCodexSpendHistoryLayout),
     ("Codex Radar alert contract", TestRadarAlertContract),
     ("Codex Radar state persistence", TestRadarStatePersistence),
@@ -7457,6 +7464,26 @@ static void TestRadarRequestPrivacy()
 
     service.FetchAsync().GetAwaiter().GetResult();
     Equal(4, handler.Calls, "supplemental feeds are cached for ten minutes");
+
+    using var largeHandler = new RadarRequestHandler
+    {
+        MeasurementPayload = JsonSerializer.Serialize(new
+        {
+            points = new[] { "low", "medium", "high", "xhigh", "max", "ultra" }
+                .Select(effort => new { model = "gpt-6-astra", effort, iq = 100, valid_tasks = 100 }),
+            padding = new string(' ', 5 * 1024 * 1024),
+        }),
+    };
+    var clock = DateTimeOffset.UtcNow;
+    using var largeService = new RadarService(largeHandler, () => clock);
+    var largeSnapshot = largeService.FetchAsync().GetAwaiter().GetResult();
+    Equal(6, largeSnapshot.Comparisons.Count(model => model.Model == "gpt-6-astra"),
+        "HTTP responses beyond the old 4 MiB limit retain all Astra efforts");
+    largeHandler.MeasurementPayload = new string(' ', 17 * 1024 * 1024);
+    clock = clock.AddMinutes(11);
+    var oversizedSnapshot = largeService.FetchAsync().GetAwaiter().GetResult();
+    Equal(6, oversizedSnapshot.Comparisons.Count(model => model.Model == "gpt-6-astra"),
+        "responses beyond the bounded limit preserve the last usable measurements");
 }
 static void TestRadarRecommendationContinuity()
 {
@@ -7948,6 +7975,32 @@ static void TestRadarPresentation()
         }));
     Equal(4, codexPresentation.Rows.Count, "Codex Radar keeps only non-DeepSeek model rows");
     Equal(true, codexPresentation.Rows.All(row => !RadarPresentation.IsDeepSeekModel(row.Model)), "Codex filter excludes all DeepSeek rows");
+    var astraFeed = RadarMeasurementsParser.Parse(JsonSerializer.Serialize(new
+    {
+        points = new[] { "low", "medium", "high", "xhigh", "max", "ultra" }
+            .Select(effort => new
+            {
+                model = "gpt-6-astra",
+                effort,
+                iq = 100,
+                valid_tasks = 120,
+            }),
+    }));
+    var refreshedSnapshot = RadarMeasurementsParser.Merge(snapshot with
+    {
+        Primary = cheapest with { Model = "GPT-5.6-LUNA", Score = 200 },
+        Comparisons = [primary, faster, unselected with { Model = "GPT-5.6-TERRA", Score = 190 }],
+    }, astraFeed);
+    var refreshedPresentation = RadarPresentation.CodexOnly(RadarPresentation.Build(refreshedSnapshot));
+    Equal(10, refreshedPresentation.Rows.Count, "refreshed Radar retains every model and upstream Astra effort");
+    Equal(6, refreshedPresentation.Rows.Count(row => row.Model.Model == "gpt-6-astra"), "Astra measurements reach the displayed rows");
+    Equal(true, refreshedPresentation.Rows.Take(6).All(row => row.Model.Model == "gpt-6-astra"), "all Astra efforts precede older model groups");
+    Equal(true, refreshedPresentation.Rows.Skip(6).Select(row => row.SourceIndex)
+        .SequenceEqual(RadarPresentation.Build(refreshedSnapshot).Rows.Where(row => row.Model.Model != "gpt-6-astra").Select(row => row.SourceIndex)),
+        "pinning Astra preserves other model ordering");
+    Equal("GPT-6 Astra Ultra", refreshedPresentation.Rows.First(row => row.Model.Model == "gpt-6-astra").ModelText, "Astra label and effort order");
+    Equal(refreshedSnapshot.Primary, refreshedPresentation.IqLeader, "folding does not change model ranking");
+    Equal(9, refreshedSnapshot.Comparisons.Count, "display filtering leaves source measurements intact");
     Equal("DSH deepseek-v4-pro max", RadarPresentation.FormatModelLabel(dshDeepSeek), "DSH lane is labeled instead of looking like a duplicate");
     Equal("77/112 (69%)", RadarPresentation.FormatPass(primary), "pass/valid percentage");
     Equal("$9.06", RadarPresentation.FormatAverageCost(primary), "average cost");
@@ -10987,6 +11040,135 @@ static void TestRadarStableRanking()
     Equal<int?>(null, presentation.Rows[1].Rank, "runner-up has no visible rank");
     Equal(1, presentation.Rows[2].Rank, "faster exact tie ranks first");
     Equal<int?>(null, presentation.Rows[3].Rank, "missing tie breakers rank after awarded rows");
+}
+
+static void TestRadarModelGroups(string? captureDirectory = null)
+{
+    var now = DateTimeOffset.Parse("2026-09-06T12:00:00+08:00");
+    var models = new[] { "gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "future-model" }
+        .SelectMany((model, index) => new[] { "max", "high", "low" }.Select(effort =>
+            new RadarModel(model, model, effort, 100 - index, "green", 80, 100, 1, 120, null)))
+        .ToArray();
+    var snapshot = new ProviderRadarSnapshot(ProviderKind.Codex, "groups", now, now, models[0], models[1..]);
+    var presentation = RadarPresentation.CodexOnly(RadarPresentation.Build(snapshot));
+    var keys = presentation.Rows.Select(row => row.Model.Model).ToArray();
+    var groups = new RadarModelGroupState();
+    var original = RadarPopoverLayout.CreateGrouped(96, keys, groups.CollapsedModels, false);
+    Equal(5, original.GroupHeaders.Count, "every upstream model gets a group, including unknown families");
+    Equal(true, original.GroupHeaders.Single(group => group.ModelKey == "gpt-5.6-terra").Collapsed, "Terra defaults collapsed");
+    Equal(true, original.GroupHeaders.Single(group => group.ModelKey == "gpt-5.6-luna").Collapsed, "Luna defaults collapsed");
+    Equal(false, original.GroupHeaders.Single(group => group.ModelKey == "gpt-6-astra").Collapsed, "Astra defaults expanded");
+    Equal(false, original.GroupHeaders.Single(group => group.ModelKey == "future-model").Collapsed, "unknown future models default expanded");
+    Equal(9, original.RowBounds.Count(bounds => !bounds.IsEmpty), "collapsed groups remove only their effort rows");
+    groups.Toggle("GPT-5.6-TERRA");
+    groups.Toggle("gpt-6-astra");
+    var settingsDirectory = Path.Combine(Path.GetTempPath(), $"radar-group-settings-{Guid.NewGuid():N}");
+    try
+    {
+        var settingsStore = new AppSettingsStore(settingsDirectory);
+        var saved = new AppSettings { RadarModelGroups = AppSettings.CopyRadarModelGroups(groups.Overrides) };
+        settingsStore.Save(saved);
+        var loaded = new AppSettingsStore(settingsDirectory).Load();
+        var restarted = new RadarModelGroupState();
+        restarted.Restore(loaded.RadarModelGroups);
+        Equal(false, restarted.CollapsedModels.Contains("gpt-5.6-terra"), "explicit Terra expansion survives restart");
+        Equal(true, restarted.CollapsedModels.Contains("GPT-6-ASTRA"), "explicit Astra collapse survives restart ignoring case");
+        Equal(true, restarted.CollapsedModels.Contains("gpt-5.6-luna"), "untouched Luna retains default");
+        Equal(false, restarted.CollapsedModels.Contains("brand-new-model"), "new models remain expanded after restart");
+        var fromDialog = new AppSettings();
+        fromDialog.CopyMiniAreaLayoutsFrom(loaded);
+        Equal(true, fromDialog.RadarModelGroups["gpt-6-astra"], "settings dialog merge preserves folding choices");
+        fromDialog.RadarModelGroups["gpt-6-astra"] = false;
+        Equal(true, loaded.RadarModelGroups["gpt-6-astra"], "settings copies do not share folding dictionaries");
+        restarted.Restore(null);
+        Equal(true, restarted.CollapsedModels.Contains("gpt-5.6-terra"), "legacy settings without saved state retain defaults");
+    }
+    finally
+    {
+        if (Directory.Exists(settingsDirectory)) Directory.Delete(settingsDirectory, true);
+    }
+    var refreshed = RadarPopoverLayout.CreateGrouped(96, [.. keys.Select(key => key.ToUpperInvariant()), "new-provider-model"], groups.CollapsedModels, false);
+    Equal(false, refreshed.GroupHeaders.Single(group => group.ModelKey == "GPT-5.6-TERRA").Collapsed, "manual expansion survives refresh and casing changes");
+    Equal(true, refreshed.GroupHeaders.Single(group => group.ModelKey == "GPT-6-ASTRA").Collapsed, "manual folding survives refresh");
+    Equal(false, refreshed.GroupHeaders.Last().Collapsed, "new model is automatically added expanded during refresh");
+    Equal(true, groups.CollapsedModels.Contains("gpt-6-astra"), "missing models do not clear stored folding choices");
+    Equal(models.Length, presentation.Rows.Count, "grouping never removes underlying measurements");
+    Equal("gpt-6-astra", presentation.IqLeader?.Model, "folding leaves IQ leader unchanged");
+    var allCollapsed = keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+    var closed = RadarPopoverLayout.CreateGrouped(96, keys, allCollapsed, false);
+    Equal(5, closed.GroupHeaders.Count, "all folded retains every group header");
+    Equal(true, closed.RowBounds.All(bounds => bounds.IsEmpty), "all folded hides all effort rows");
+    Equal(true, closed.BodySize.Height < original.BodySize.Height, "folding shrinks the popover");
+    var empty = RadarPopoverLayout.CreateGrouped(96, [], groups.CollapsedModels, false);
+    Equal(0, empty.GroupHeaders.Count, "empty feed has no manufactured models");
+
+    var futureFeed = RadarMeasurementsParser.Parse(JsonSerializer.Serialize(new
+    {
+        points = new[] { new { model = "unknown-new-model", effort = "high", iq = 90, valid_tasks = 100 } },
+    }));
+    var updated = RadarPresentation.CodexOnly(RadarPresentation.Build(RadarMeasurementsParser.Merge(snapshot, futureFeed)));
+    Equal(true, RadarPopoverLayout.CreateGrouped(96, updated.Rows.Select(row => row.Model.Model).ToArray(), groups.CollapsedModels, false)
+        .GroupHeaders.Any(group => group.ModelKey == "unknown-new-model" && !group.Collapsed), "future model flows from parsed upstream measurements into the layout");
+
+    if (captureDirectory is not null) Directory.CreateDirectory(captureDirectory);
+    using var renderer = new RadarPopoverRenderer();
+    using var logo = LoadNativeAsset("ZGSTokenBar.App.Assets.openai-official-ios-icon.png");
+    foreach (var dpi in new[] { 96, 144, 192 })
+    {
+        var cap = 360 * dpi / 96;
+        var expanded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var top = RadarPopoverLayout.CreateGrouped(dpi, keys, expanded, true, true, true, cap);
+        var bottom = RadarPopoverLayout.CreateGrouped(dpi, keys, expanded, true, true, true, cap, int.MaxValue);
+        Equal(true, top.BodySize.Height <= cap, "group viewport respects the DPI-scaled height cap");
+        Equal(true, top.MaximumScrollOffset > 0, "overflow enables scrolling");
+        Equal(top.MaximumScrollOffset, bottom.ScrollOffset, "oversized scroll offset is clamped to the end");
+        Equal(top.MaximumScrollOffset, top.ScrollOffsetForThumbTop(top.ScrollTrackBounds.Bottom), "thumb dragging maps to the last row");
+        Equal(0, top.ScrollOffsetForThumbTop(-100), "thumb dragging above track clamps to start");
+        Equal(true, bottom.RowBounds.Last().Bottom <= bottom.TableViewport.Bottom, "last effort row is reachable at scroll end");
+        Equal(true, top.TableViewport.Top > top.SeparatorY, "scrolling does not overwrite column headers");
+        Equal(true, top.TableViewport.Bottom <= top.ErrorBounds.Top && top.ErrorBounds.Bottom <= top.FooterSpendBounds.Top,
+            "table and error do not overlap spend footer");
+        Equal(true, top.FooterSpendBounds.Bottom <= top.FooterLegendBounds.Top, "spend and legend do not overlap");
+        var first = top.GroupHeaders[0];
+        Equal(first.ModelKey, top.ModelGroupAt(new Point(first.Bounds.Left + 2, first.Bounds.Top + 2)), "header hit testing matches rendered bounds");
+        Equal<string?>(null, bottom.ModelGroupAt(new Point(first.Bounds.Left, top.TableViewport.Top - 1)), "clipped headers cannot intercept fixed chrome");
+        var folded = RadarPopoverLayout.CreateGrouped(dpi, keys, allCollapsed, false, maximumBodyHeight: cap, scrollOffset: int.MaxValue);
+        Equal(0, folded.ScrollOffset, "folding clamps obsolete scrolling to zero");
+        Equal(true, folded.ScrollTrackBounds.IsEmpty, "short folded list has no scrollbar");
+        var crowdedKeys = Enumerable.Range(0, 64).SelectMany(index => new[] { $"future-{index}", $"future-{index}" }).ToArray();
+        var crowded = RadarPopoverLayout.CreateGrouped(dpi, crowdedKeys, expanded, false, maximumBodyHeight: cap, scrollOffset: int.MaxValue);
+        Equal(64, crowded.GroupHeaders.Count, "many new model families are not dropped by the layout");
+        Equal(true, crowded.RowBounds.Last().Bottom <= crowded.TableViewport.Bottom, "large feeds retain access to the last row");
+        foreach (var locale in new[] { "zh-CN", "en" })
+        {
+            foreach (var (name, layout) in new[]
+            {
+                ("defaults", RadarPopoverLayout.CreateGrouped(dpi, keys, new RadarModelGroupState().CollapsedModels, false)),
+                ("expanded", RadarPopoverLayout.CreateGrouped(dpi, keys, expanded, false, maximumBodyHeight: cap)),
+                ("scrolled", RadarPopoverLayout.CreateGrouped(dpi, keys, expanded, false, maximumBodyHeight: cap, scrollOffset: int.MaxValue)),
+                ("collapsed", folded),
+            })
+            {
+                using var bitmap = new Bitmap(layout.BodySize.Width, layout.BodySize.Height + layout.TailSize);
+                using (var graphics = Graphics.FromImage(bitmap))
+                {
+                    renderer.Draw(graphics, layout, PopoverTailSide.Bottom, layout.BodySize.Width / 2,
+                        new RadarViewState(snapshot, now, false, null), presentation, logo, NativeText.For(locale));
+                }
+                var header = layout.GroupHeaders.First(group => layout.TableViewport.Contains(group.Bounds));
+                var colors = new HashSet<int>();
+                for (var y = header.Bounds.Top; y < header.Bounds.Bottom; y++)
+                    for (var x = header.Bounds.Left; x < header.Bounds.Right; x++) colors.Add(bitmap.GetPixel(x, y).ToArgb());
+                Equal(true, colors.Count > 4, "group header renders text and disclosure icon pixels");
+                if (captureDirectory is not null)
+                {
+                    var path = Path.GetFullPath(Path.Combine(captureDirectory, $"radar-groups-{locale}-{dpi}dpi-{name}.png"));
+                    bitmap.Save(path, ImageFormat.Png);
+                    Console.WriteLine(path);
+                }
+            }
+        }
+    }
 }
 
 static void TestRadarPopoverLayout()
@@ -16863,6 +17045,7 @@ sealed class ClaudeOAuthRefreshHandler : HttpMessageHandler
 
 sealed class RadarRequestHandler : HttpMessageHandler
 {
+    public string? MeasurementPayload { get; set; }
     public int Calls { get; private set; }
     public List<Uri> RequestUris { get; } = [];
     public bool AcceptsJson { get; private set; } = true;
@@ -16913,7 +17096,7 @@ sealed class RadarRequestHandler : HttpMessageHandler
             HasCookie |= request.Headers.Contains("Cookie");
             if (isRecommendations) _recommendationCalls++;
             content = isMeasurements
-                ? Measurements
+                ? MeasurementPayload ?? Measurements
                 : isRecommendations
                 ? ReturnEmptyRecommendations
                     || ReturnEmptyRecommendationsAfterFirst && _recommendationCalls > 1

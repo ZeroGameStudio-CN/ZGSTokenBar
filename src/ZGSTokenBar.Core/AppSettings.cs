@@ -37,6 +37,7 @@ public sealed class AppSettings
     public bool EnableAnimations { get; set; } = true;
     public bool EnableRadar { get; set; }
     public bool EnableRadarAlerts { get; set; }
+    public Dictionary<string, bool> RadarModelGroups { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public bool EnableCodexEconomyBar { get; set; } = true;
     public bool EnableAiGatewayBalance { get; set; }
     public bool EnableSub2ApiPool { get; set; }
@@ -181,6 +182,7 @@ public sealed class AppSettings
 
     public void Normalize()
     {
+        RadarModelGroups = CopyRadarModelGroups(RadarModelGroups);
         SchemaVersion = CurrentSchemaVersion;
         EnabledProviders = (EnabledProviders ?? [])
             .Where(value => !string.IsNullOrWhiteSpace(value))
@@ -332,6 +334,7 @@ public sealed class AppSettings
 
     public void CopyMiniAreaLayoutsFrom(AppSettings source)
     {
+        RadarModelGroups = CopyRadarModelGroups(source.RadarModelGroups);
         MiniAreaLayouts = CopyMiniAreaLayouts(source.MiniAreaLayouts);
         MiniAreaOrder = CopyMiniAreaOrder(source.MiniAreaOrder);
     }
@@ -341,6 +344,16 @@ public sealed class AppSettings
         (source ?? new Dictionary<string, MiniAreaLayout>())
             .Where(entry => entry.Value is not null)
             .ToDictionary(entry => entry.Key, entry => entry.Value with { }, StringComparer.Ordinal);
+
+    public static Dictionary<string, bool> CopyRadarModelGroups(IReadOnlyDictionary<string, bool>? source)
+    {
+        var result = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in source ?? new Dictionary<string, bool>())
+        {
+            if (!string.IsNullOrWhiteSpace(entry.Key)) result[entry.Key.Trim()] = entry.Value;
+        }
+        return result;
+    }
 
     public static string[] CopyMiniAreaOrder(IEnumerable<string>? source) =>
         (source ?? [])

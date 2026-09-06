@@ -202,6 +202,25 @@ test('Codex spend history reuses the pinned Radar popover with an in-place back 
   assert.doesNotMatch(barForm, /_spendHistoryPopover|SpendHistoryPopoverForm/);
 });
 
+test('Radar model groups use dynamic rows and retain collapse state across refreshes', () => {
+  assert.match(radarPopover, /readonly RadarModelGroupState _modelGroups = new\(\)/);
+  assert.match(radarPopover, /_presentation\?\.Rows\.Select\(row => row\.Model\.Model\)/);
+  assert.match(radarPopover, /RadarPopoverLayout\.CreateGrouped/);
+  assert.match(radarPopover, /ModelGroupAt\(BodyPoint\(e\.Location\)\)[\s\S]*?_modelGroups\.Toggle\(modelKey\)/);
+  assert.match(barForm, /ModelGroupInteraction \+= \(_, _\) => PinVisibleRadarPopoverForHistory\(\)/);
+  assert.match(radarPopover, /protected override void OnMouseWheel/);
+  assert.match(radarPopover, /ScrollOffsetForThumbTop/);
+  assert.match(radarPopover, /Capture = true/);
+  assert.match(radarPopover, /if \(_scrollGesture\)[\s\S]*?_scrollGesture = false;[\s\S]*?return;/);
+  assert.match(radarPopover, /WorkingArea\.Height/);
+  assert.match(radarRenderer, /graphics\.SetClip\(Offset\(layout\.TableViewport/);
+  assert.match(radarRenderer, /rowBounds\.IsEmpty/);
+  assert.match(radarPopover, /ModelGroupsChanged\?\.Invoke/);
+  assert.match(barForm, /SetRadarModelGroups\(settings\.RadarModelGroups\)/);
+  assert.match(applicationContext, /RadarModelGroupsChanged \+= \(_, _\) => SaveRadarModelGroups\(\)/);
+  assert.match(applicationContext, /TrySaveSettings\(_settings, showError: true\)[\s\S]*?_bar\.SetRadarModelGroups\(previous\)/);
+});
+
 test('Codex logo hover owns local token totals and cache hit rate without coupling them to quota or Radar fetches', () => {
   assert.match(barForm, /HasProviderOverview\(card\.Provider, radarEnabled, _codexTokenUsage\)/);
   assert.match(barForm, /radarEnabled \|\| provider == ProviderKind\.Codex && codexTokenUsage is not null/);
@@ -276,7 +295,7 @@ test('Codex quota hover separates source-qualified raw-token references', () => 
 test('Radar uses upstream measurements but keeps exactly four local scenario picks', () => {
   assert.match(radarService, /RecommendationsUri = new\("https:\/\/codexradar\.com\/api\/radar-insights"\)/);
   assert.match(radarService, /MeasurementsUri = new\("https:\/\/codexradar\.com\/data\/intelligence-efficiency\.json"\)/);
-  assert.match(radarService, /MaxResponseContentBufferSize = 4 \* 1024 \* 1024/);
+  assert.match(radarService, /MaxResponseContentBufferSize = 16 \* 1024 \* 1024/);
   assert.match(radarService, /class RadarRecommendationsParser/);
   assert.match(radarService, /class RadarMeasurementsParser/);
   assert.match(radarService, /ArrayProperty\("points"\)/);

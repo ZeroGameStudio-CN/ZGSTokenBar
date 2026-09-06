@@ -44,7 +44,8 @@ internal sealed class RadarPopoverRenderer : IDisposable
         AiGatewayUsageSummary? aiGatewayUsage = null,
         bool pinned = false,
         string? radarTitle = null,
-        bool spendCardHovered = false)
+        bool spendCardHovered = false,
+        string? hoveredModelGroup = null)
     {
         var fonts = Fonts(layout.Dpi);
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
@@ -91,7 +92,21 @@ internal sealed class RadarPopoverRenderer : IDisposable
         else
         {
             DrawTableHeader(graphics, layout, body.Location, fonts, text);
+            var tableState = graphics.Save();
+            if (!layout.TableViewport.IsEmpty)
+            {
+                graphics.SetClip(Offset(layout.TableViewport, body.Location), CombineMode.Intersect);
+                DrawModelGroups(graphics, layout, body.Location, presentation, fonts, hoveredModelGroup);
+            }
             DrawRows(graphics, layout, body.Location, presentation, fonts, text);
+            graphics.Restore(tableState);
+            if (!layout.ScrollTrackBounds.IsEmpty)
+            {
+                using var track = new SolidBrush(Color.FromArgb(30, 41, 59));
+                using var thumb = new SolidBrush(Color.FromArgb(100, 116, 139));
+                graphics.FillRectangle(track, Offset(layout.ScrollTrackBounds, body.Location));
+                graphics.FillRectangle(thumb, Offset(layout.ScrollThumbBounds, body.Location));
+            }
             if (!layout.ErrorBounds.IsEmpty && state.Error is { } error)
             {
                 DrawText(
@@ -871,6 +886,34 @@ internal sealed class RadarPopoverRenderer : IDisposable
         graphics.SmoothingMode = previousSmoothing;
     }
 
+    private static void DrawModelGroups(
+        Graphics graphics,
+        RadarPopoverLayout layout,
+        Point origin,
+        RadarPresentationResult presentation,
+        RadarPopoverFonts fonts,
+        string? hoveredModelGroup)
+    {
+        foreach (var group in layout.GroupHeaders)
+        {
+            if (!group.Bounds.IntersectsWith(layout.TableViewport)) continue;
+            var bounds = Offset(group.Bounds, origin);
+            using var fill = new SolidBrush(string.Equals(group.ModelKey, hoveredModelGroup, StringComparison.OrdinalIgnoreCase)
+                ? Color.FromArgb(40, 53, 70)
+                : Color.FromArgb(23, 32, 46));
+            graphics.FillRectangle(fill, bounds);
+            var model = presentation.Rows.First(row => string.Equals(row.Model.Model, group.ModelKey, StringComparison.OrdinalIgnoreCase)).Model;
+            var label = RadarPresentation.FormatModelLabel(model with { ReasoningEffort = null, Label = model.Model });
+            DrawText(graphics, group.Collapsed ? "\uE76C" : "\uE70D", fonts.Icon,
+                Color.FromArgb(148, 163, 184),
+                new Rectangle(bounds.Left, bounds.Top, Scale(layout.Dpi, 22), bounds.Height),
+                CellTextFlags | TextFormatFlags.HorizontalCenter);
+            DrawText(graphics, label, fonts.EmphasizedModel, Color.FromArgb(226, 232, 240),
+                new Rectangle(bounds.Left + Scale(layout.Dpi, 24), bounds.Top,
+                    bounds.Width - Scale(layout.Dpi, 30), bounds.Height), CellTextFlags);
+        }
+    }
+
     private static void DrawRows(
         Graphics graphics,
         RadarPopoverLayout layout,
@@ -884,6 +927,7 @@ internal sealed class RadarPopoverRenderer : IDisposable
         {
             var row = presentation.Rows[index];
             var rowBounds = layout.RowBounds[index];
+            if (rowBounds.IsEmpty || (!layout.TableViewport.IsEmpty && !rowBounds.IntersectsWith(layout.TableViewport))) continue;
             var strongest = row.Rank == 1;
             var distinctionCount = (strongest ? 1 : 0)
                 + row.RecommendationGroupIndexes.Count;
@@ -897,6 +941,9 @@ internal sealed class RadarPopoverRenderer : IDisposable
                 ? StrongestColor
                 : recommendationColor;
             var modelFont = distinguished ? fonts.EmphasizedModel : fonts.Model;
+            var modelLabel = layout.GroupHeaders.Count > 0
+                ? RadarPresentation.FormatEffort(row.Model.ReasoningEffort) ?? row.ModelText
+                : row.ModelText;
             var numberFont = distinguished ? fonts.EmphasizedNumber : fonts.Number;
 
             if (multipleDistinctions)
@@ -932,13 +979,13 @@ internal sealed class RadarPopoverRenderer : IDisposable
             {
                 DrawRainbowText(
                     graphics,
-                    row.ModelText,
+                    modelLabel,
                     modelFont,
                     Offset(layout.Columns.Model.InRow(rowBounds), origin));
             }
             else
             {
-                DrawColumnText(graphics, row.ModelText, modelFont, modelColor, layout.Columns.Model, rowBounds, origin);
+                DrawColumnText(graphics, modelLabel, modelFont, modelColor, layout.Columns.Model, rowBounds, origin);
             }
             if (distinguished)
             {
@@ -1915,6 +1962,7 @@ internal sealed class RadarPopoverRenderer : IDisposable
             Number = Create("Cascadia Mono", 8.5, FontStyle.Regular, dpi);
             EmphasizedNumber = Create("Cascadia Mono", 8.5, FontStyle.Bold, dpi);
             SpendNumber = Create("Cascadia Mono", 10.5, FontStyle.Bold, dpi);
+            Icon = Create("Segoe Fluent Icons", 9, FontStyle.Regular, dpi);
         }
 
         public int Dpi { get; }
@@ -1927,6 +1975,7 @@ internal sealed class RadarPopoverRenderer : IDisposable
         public Font Number { get; }
         public Font EmphasizedNumber { get; }
         public Font SpendNumber { get; }
+        public Font Icon { get; }
 
         public void Dispose()
         {
@@ -1939,6 +1988,7 @@ internal sealed class RadarPopoverRenderer : IDisposable
             Number.Dispose();
             EmphasizedNumber.Dispose();
             SpendNumber.Dispose();
+            Icon.Dispose();
         }
 
         private static Font Create(string family, double logicalPixels, FontStyle style, int dpi) =>

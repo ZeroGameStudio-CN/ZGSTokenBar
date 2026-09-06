@@ -156,6 +156,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         _bar.CodexEconomyModeRequested += (_, request) => ApplyRecommendedCodexEconomyMode(request.Mode);
         _bar.MiniAreaLayoutChanged += (_, _) => SaveMiniAreaLayout();
         _bar.MiniAreaOrderChanged += (_, _) => SaveMiniAreaOrder();
+        _bar.RadarModelGroupsChanged += (_, _) => SaveRadarModelGroups();
         _bar.FormClosing += BarFormClosing;
         _bar.FormClosed += (_, _) => Quit();
         _bar.SetRadarState(_radarViewState);
@@ -910,6 +911,22 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         }
     }
 
+    private void SaveRadarModelGroups()
+    {
+        if (_quitting) return;
+        var previous = _settings.RadarModelGroups;
+        _settings.RadarModelGroups = AppSettings.CopyRadarModelGroups(_bar.RadarModelGroups);
+        if (!TrySaveSettings(_settings, showError: true))
+        {
+            _settings.RadarModelGroups = previous;
+            _bar.SetRadarModelGroups(previous);
+        }
+        else
+        {
+            _uiRevision++;
+        }
+    }
+
     internal static bool ApplyCodexUsageActivityTransition(
         bool wasActive,
         bool isActive,
@@ -1299,6 +1316,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             && previous.EnableAnimations == next.EnableAnimations
             && previous.EnableRadar == next.EnableRadar
             && previous.EnableRadarAlerts == next.EnableRadarAlerts
+            && PluginEnabledEqual(previous.RadarModelGroups, next.RadarModelGroups)
             && previous.EnableCodexEconomyBar == next.EnableCodexEconomyBar
             && previous.EnableAiGatewayBalance == next.EnableAiGatewayBalance
             && previous.EnableSub2ApiPool == next.EnableSub2ApiPool

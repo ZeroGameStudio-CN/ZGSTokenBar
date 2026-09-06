@@ -13,6 +13,13 @@ internal sealed class ProviderRadarPopoverForm : Form
     private readonly System.Windows.Forms.Timer _motionTimer = new() { Interval = 16 };
     private readonly System.Windows.Forms.Timer _countdownTimer = new() { Interval = 1_000 };
     private readonly RadarPopoverRenderer _renderer = new();
+    private readonly RadarModelGroupState _modelGroups = new();
+    private readonly ToolTip _groupToolTip = new();
+    private string? _hoveredModelGroup;
+    private int _scrollOffset;
+    private int _wheelRemainder;
+    private int? _scrollDragOffset;
+    private bool _scrollGesture;
     private RadarViewState _state = new(null, null, false, null);
     private RadarPresentationResult? _presentation;
     private RadarPopoverLayout _layout = RadarPopoverLayout.Create(96, 0, false);
@@ -57,6 +64,17 @@ internal sealed class ProviderRadarPopoverForm : Form
     }
 
     public event EventHandler? SpendHistoryRequested;
+    public event EventHandler? ModelGroupInteraction;
+    public event EventHandler? ModelGroupsChanged;
+    public IReadOnlyDictionary<string, bool> ModelGroups => _modelGroups.Overrides;
+
+    public void RestoreModelGroups(IReadOnlyDictionary<string, bool> groups)
+    {
+        _modelGroups.Restore(groups);
+        if (_layout.TokenOnly) return;
+        _layout = BuildGroupedLayout(_layout.Dpi);
+        if (Visible) ApplyCurrentPlacement();
+    }
 
     protected override bool ShowWithoutActivation => true;
 
@@ -89,6 +107,7 @@ internal sealed class ProviderRadarPopoverForm : Form
         _exiting = false;
         _animateMotion = animateMotion;
         _pinned = pinned;
+        if (_deepSeekOnly != deepSeekOnly) _scrollOffset = 0;
         _deepSeekOnly = deepSeekOnly;
         _state = state;
         _text = text;
@@ -106,17 +125,9 @@ internal sealed class ProviderRadarPopoverForm : Form
         var dpi = Math.Max(
             96,
             (int)Math.Round(scale * 96, MidpointRounding.AwayFromZero));
-        var hasInlineError = radarEnabled && _presentation is not null && state.Error is not null;
-        var modelKeys = _presentation?.Rows
-            .Select(row => row.Model.Model)
-            .ToArray() ?? [];
+        _anchorScreen = anchorScreen;
         _layout = radarEnabled
-            ? RadarPopoverLayout.Create(
-                dpi,
-                modelKeys,
-                hasInlineError,
-                state.Snapshot?.ResetWindow?.Open == true,
-                tokenUsage is not null)
+            ? BuildGroupedLayout(dpi)
             : RadarPopoverLayout.CreateTokenUsage(dpi);
         _historyLayout = !deepSeekOnly && HasSpendHistory(tokenUsage)
             ? CodexSpendHistoryLayout.Create(
@@ -125,7 +136,6 @@ internal sealed class ProviderRadarPopoverForm : Form
                 Math.Min(CodexSpendHistoryLayout.MaximumTrendDays, tokenUsage!.SpendHistory!.Days.Count))
             : null;
         if (_historyLayout is null) _historyVisible = false;
-        _anchorScreen = anchorScreen;
         var placement = CurrentPlacement();
         _tailSide = placement.TailSide;
         _tailOffset = placement.TailOffset;
@@ -273,12 +283,18 @@ internal sealed class ProviderRadarPopoverForm : Form
             radarTitle: _deepSeekOnly
                 ? _text.DeepSeekRadarTitle
                 : _text.RadarTitle,
-            spendCardHovered: _spendCardHovered);
+            spendCardHovered: _spendCardHovered,
+            hoveredModelGroup: _hoveredModelGroup);
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
+        if (_scrollDragOffset is { } dragOffset)
+        {
+            ScrollTableTo(_layout.ScrollOffsetForThumbTop(BodyPoint(e.Location).Y - dragOffset));
+            return;
+        }
         if (_historyVisible && _historyLayout is { } historyLayout)
         {
             var backHovered = historyLayout
@@ -298,16 +314,22 @@ internal sealed class ProviderRadarPopoverForm : Form
         }
 
         var hovered = HasSpendHistory(_tokenUsage) && SpendCardBounds().Contains(e.Location);
-        if (hovered == _spendCardHovered) return;
+        var hoveredGroup = _layout.ModelGroupAt(BodyPoint(e.Location));
+        Cursor = hovered || hoveredGroup is not null ? Cursors.Hand : Cursors.Default;
+        if (hovered == _spendCardHovered && hoveredGroup == _hoveredModelGroup) return;
         _spendCardHovered = hovered;
-        Cursor = hovered ? Cursors.Hand : Cursors.Default;
+        _hoveredModelGroup = hoveredGroup;
+        _groupToolTip.SetToolTip(this, hoveredGroup is null ? null
+            : _text.RadarModelGroupAction(_modelGroups.CollapsedModels.Contains(hoveredGroup)));
         Invalidate();
     }
 
     protected override void OnMouseLeave(EventArgs e)
     {
         base.OnMouseLeave(e);
-        if (!_spendCardHovered && !_backHovered) return;
+        if (!_spendCardHovered && !_backHovered && _hoveredModelGroup is null) return;
+        _hoveredModelGroup = null;
+        _groupToolTip.SetToolTip(this, null);
         _spendCardHovered = false;
         _backHovered = false;
         Cursor = Cursors.Default;
@@ -318,6 +340,11 @@ internal sealed class ProviderRadarPopoverForm : Form
     {
         base.OnMouseClick(e);
         if (e.Button != MouseButtons.Left) return;
+        if (_scrollGesture)
+        {
+            _scrollGesture = false;
+            return;
+        }
         if (_historyVisible && _historyLayout is { } historyLayout)
         {
             if (historyLayout.InWindow(historyLayout.BackBounds, _tailSide).Contains(e.Location))
@@ -327,6 +354,18 @@ internal sealed class ProviderRadarPopoverForm : Form
                 _selectedHistoryDayIndex = -1;
                 ApplyCurrentPlacement();
             }
+            return;
+        }
+        if (_layout.ModelGroupAt(BodyPoint(e.Location)) is { } modelKey)
+        {
+            _modelGroups.Toggle(modelKey);
+            ModelGroupsChanged?.Invoke(this, EventArgs.Empty);
+            _layout = BuildGroupedLayout(_layout.Dpi);
+            _pinned = true;
+            ModelGroupInteraction?.Invoke(this, EventArgs.Empty);
+            ApplyCurrentPlacement();
+            _hoveredModelGroup = null;
+            _groupToolTip.SetToolTip(this, null);
             return;
         }
         if (_historyLayout is null
@@ -358,6 +397,84 @@ internal sealed class ProviderRadarPopoverForm : Form
             : RadarPopoverRenderer.CreateWindowRegion(_layout, _tailSide, _tailOffset);
         Region?.Dispose();
         Region = next;
+    }
+
+    private RadarPopoverLayout BuildGroupedLayout(int dpi)
+    {
+        var maximumHeight = Screen.FromRectangle(_anchorScreen).WorkingArea.Height
+            - (int)Math.Ceiling((RadarPopoverLayout.LogicalTail + RadarPopoverLayout.LogicalGap * 2) * dpi / 96d);
+        var layout = RadarPopoverLayout.CreateGrouped(dpi,
+            _presentation?.Rows.Select(row => row.Model.Model).ToArray() ?? [],
+            _modelGroups.CollapsedModels,
+            _presentation is not null && _state.Error is not null,
+            _state.Snapshot?.ResetWindow?.Open == true,
+            _tokenUsage is not null, maximumHeight, _scrollOffset);
+        _scrollOffset = layout.ScrollOffset;
+        return layout;
+    }
+
+    private Point BodyPoint(Point location)
+    {
+        var body = RadarPopoverRenderer.BodyBounds(_layout, _tailSide);
+        return new Point(location.X - body.Left, location.Y - body.Top);
+    }
+
+    private void ScrollTableTo(int offset)
+    {
+        _scrollOffset = Math.Clamp(offset, 0, _layout.MaximumScrollOffset);
+        _layout = BuildGroupedLayout(_layout.Dpi);
+        _hoveredModelGroup = null;
+        _groupToolTip.SetToolTip(this, null);
+        Invalidate();
+    }
+
+    protected override void OnMouseWheel(MouseEventArgs e)
+    {
+        base.OnMouseWheel(e);
+        if (_historyVisible || _layout.MaximumScrollOffset == 0) return;
+        _wheelRemainder += e.Delta;
+        var notches = _wheelRemainder / SystemInformation.MouseWheelScrollDelta;
+        if (notches == 0) return;
+        _wheelRemainder -= notches * SystemInformation.MouseWheelScrollDelta;
+        var lines = SystemInformation.MouseWheelScrollLines;
+        var distance = lines < 0 ? _layout.TableViewport.Height
+            : (int)Math.Round(Math.Max(1, lines) * RadarPopoverLayout.LogicalRowHeight * _layout.Dpi / 96d);
+        ScrollTableTo(_scrollOffset - notches * distance);
+        if (e is HandledMouseEventArgs handled) handled.Handled = true;
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        _scrollGesture = false;
+        if (e.Button != MouseButtons.Left || _historyVisible) return;
+        var point = BodyPoint(e.Location);
+        if (!_layout.ScrollTrackBounds.Contains(point)) return;
+        _scrollGesture = true;
+        _pinned = true;
+        ModelGroupInteraction?.Invoke(this, EventArgs.Empty);
+        if (_layout.ScrollThumbBounds.Contains(point))
+        {
+            _scrollDragOffset = point.Y - _layout.ScrollThumbBounds.Top;
+            Capture = true;
+        }
+        else
+        {
+            ScrollTableTo(_scrollOffset + (point.Y < _layout.ScrollThumbBounds.Top ? -1 : 1) * _layout.TableViewport.Height);
+        }
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+        _scrollDragOffset = null;
+        Capture = false;
+    }
+
+    protected override void OnMouseCaptureChanged(EventArgs e)
+    {
+        base.OnMouseCaptureChanged(e);
+        if (!Capture) _scrollDragOffset = null;
     }
 
     protected override void WndProc(ref Message message)
@@ -430,6 +547,11 @@ internal sealed class ProviderRadarPopoverForm : Form
 
     private void ResetHistoryView()
     {
+        Capture = false;
+        _scrollDragOffset = null;
+        _scrollGesture = false;
+        _hoveredModelGroup = null;
+        _groupToolTip.SetToolTip(this, null);
         _historyVisible = false;
         _spendCardHovered = false;
         _backHovered = false;
@@ -446,6 +568,7 @@ internal sealed class ProviderRadarPopoverForm : Form
             _motionTimer.Stop();
             _motionTimer.Dispose();
             _renderer.Dispose();
+            _groupToolTip.Dispose();
         }
         base.Dispose(disposing);
     }

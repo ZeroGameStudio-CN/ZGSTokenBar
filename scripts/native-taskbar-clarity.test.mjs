@@ -85,7 +85,7 @@ test('Radar row emphasis follows distinctions instead of source position', () =>
   assert.match(body, /modelFont = distinguished \? fonts\.EmphasizedModel : fonts\.Model/);
   assert.match(body, /recommendationColor = row\.RecommendationGroupIndexes\.Count[\s\S]*?RecommendationColor/);
   assert.match(body, /modelColor = strongest[\s\S]*?\? StrongestColor[\s\S]*?: recommendationColor/);
-  assert.match(body, /if \(multipleDistinctions\)[\s\S]*?DrawRainbowText\([\s\S]*?row\.ModelText/);
+  assert.match(body, /if \(multipleDistinctions\)[\s\S]*?DrawRainbowText\([\s\S]*?modelLabel/);
   assert.doesNotMatch(body, /SourceIndex == 0/);
 });
 
@@ -130,7 +130,7 @@ test('Radar uses distinct local scenario markers in the compact footer', () => {
   assert.match(rowsBody, /multipleDistinctions = distinctionCount > 1/);
   assert.match(rowsBody, /else if \(distinguished\)[\s\S]*?highlightColor = strongest[\s\S]*?recommendationColor/);
   assert.match(rowsBody, /DrawRainbowSurface\([\s\S]*?highlightBounds[\s\S]*?168/);
-  assert.match(rowsBody, /DrawRainbowText\([\s\S]*?row\.ModelText/);
+  assert.match(rowsBody, /DrawRainbowText\([\s\S]*?modelLabel/);
   assert.match(radarRenderer, /new LinearGradientBrush\([\s\S]*?LinearGradientMode\.Horizontal/);
   assert.match(radarRenderer, /InterpolationColors = new ColorBlend/);
   assert.match(radarRenderer, /DrawRainbowText\([\s\S]*?MeasureString\([\s\S]*?RainbowBrush\(spectrumBounds, 255\)[\s\S]*?graphics\.DrawString/);
@@ -716,7 +716,8 @@ test('native bar micro-motion stays subtle and follows the animation preference'
   assert.match(radarRenderer, /StrongestColor = Color\.FromArgb\(246, 196, 83\)/);
   assert.match(radarRenderer, /RecommendationColors/);
   assert.match(radarRenderer, /var modelColor = strongest[\s\S]*?\? StrongestColor[\s\S]*?: recommendationColor/);
-  assert.match(radarRenderer, /row\.ModelText, modelFont, modelColor/);
+  assert.match(radarRenderer, /modelLabel, modelFont, modelColor/);
+  assert.match(radarRenderer, /layout\.GroupHeaders\.Count > 0[\s\S]*?FormatEffort\(row\.Model\.ReasoningEffort\) \?\? row\.ModelText/);
   assert.match(settingsForm, /_text\.Animations/);
   assert.match(nativeText, /Enable subtle transitions and refresh animation/);
 });

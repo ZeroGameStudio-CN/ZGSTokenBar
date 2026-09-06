@@ -213,6 +213,15 @@ internal sealed class BarForm : Form
     public event EventHandler<CodexEconomyModeRequest>? CodexEconomyModeRequested;
     public event EventHandler? MiniAreaLayoutChanged;
     public event EventHandler? MiniAreaOrderChanged;
+    public event EventHandler? RadarModelGroupsChanged;
+    private Dictionary<string, bool> _radarModelGroups = new(StringComparer.OrdinalIgnoreCase);
+    public IReadOnlyDictionary<string, bool> RadarModelGroups => _radarModelGroups;
+
+    public void SetRadarModelGroups(IReadOnlyDictionary<string, bool> groups)
+    {
+        _radarModelGroups = AppSettings.CopyRadarModelGroups(groups);
+        _radarPopover?.RestoreModelGroups(_radarModelGroups);
+    }
 
     public BarForm(
         AppSettings settings,
@@ -241,6 +250,7 @@ internal sealed class BarForm : Form
         _taskbarDocked = settings.TaskbarDocked;
         _miniAreaLayouts = AppSettings.CopyMiniAreaLayouts(settings.MiniAreaLayouts);
         _miniAreaOrder = AppSettings.CopyMiniAreaOrder(settings.MiniAreaOrder);
+        SetRadarModelGroups(settings.RadarModelGroups);
         _codexMiniDisplayMode = CodexMiniDisplayModes.Normalize(settings.CodexMiniDisplayMode);
         _showSystemMetrics = settings.IsPluginEnabled("zgstokenbar.metrics.system", true);
         _showCodexEconomyBar = settings.EnableCodexEconomyBar;
@@ -722,6 +732,7 @@ internal sealed class BarForm : Form
 
     public void ApplySettings(AppSettings settings)
     {
+        SetRadarModelGroups(settings.RadarModelGroups);
         _text = NativeText.For(settings.Locale);
         _backgroundTheme = QuotaBackgroundPalette.Resolve(settings.BackgroundPalette);
         BackColor = _backgroundTheme.Outer;
@@ -5076,7 +5087,14 @@ internal sealed class BarForm : Form
         if (_radarPopover is null)
         {
             _radarPopover = new ProviderRadarPopoverForm();
+            _radarPopover.RestoreModelGroups(_radarModelGroups);
+            _radarPopover.ModelGroupsChanged += (_, _) =>
+            {
+                _radarModelGroups = AppSettings.CopyRadarModelGroups(_radarPopover.ModelGroups);
+                RadarModelGroupsChanged?.Invoke(this, EventArgs.Empty);
+            };
             _radarPopover.SpendHistoryRequested += (_, _) => PinVisibleRadarPopoverForHistory();
+            _radarPopover.ModelGroupInteraction += (_, _) => PinVisibleRadarPopoverForHistory();
         }
         var tokenUsage = target.DeepSeekOnly
             ? null

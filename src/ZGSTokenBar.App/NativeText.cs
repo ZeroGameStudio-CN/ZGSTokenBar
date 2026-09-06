@@ -1057,6 +1057,9 @@ internal sealed class NativeText
     }
 
     public string RadarTitle => "Codex Radar";
+    public string RadarModelGroupAction(bool collapsed) => collapsed
+        ? T("展开模型", "Expand model")
+        : T("折叠模型", "Collapse model");
     public string DeepSeekRadarTitle => "DeepSeek Radar";
     public string RadarPopoverSubtitle(bool pinned) => pinned
         ? T("已固定 · Esc / 点击外部", "PINNED · ESC / CLICK OUTSIDE")

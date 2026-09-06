@@ -207,10 +207,9 @@ public sealed class RadarService : IProviderRadarModule, IDisposable
             ? new HttpClient(new HttpClientHandler { UseCookies = false })
             : new HttpClient(handler);
         _httpClient.Timeout = TimeSpan.FromSeconds(12);
-        // The public intelligence feed is currently about 1.3 MiB and grows
-        // with its bounded history. Keep a bounded buffer without dropping
-        // the supplemental measurements (including DeepSeek rows).
-        _httpClient.MaxResponseContentBufferSize = 4 * 1024 * 1024;
+        // Historical measurements already exceed 4 MiB. Allow growth while
+        // retaining a bounded buffer for all public Radar responses.
+        _httpClient.MaxResponseContentBufferSize = 16 * 1024 * 1024;
         _utcNow = utcNow;
     }
 

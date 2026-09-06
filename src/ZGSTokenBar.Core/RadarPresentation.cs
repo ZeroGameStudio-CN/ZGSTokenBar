@@ -64,7 +64,12 @@ public static class RadarPresentation
 
     public static RadarPresentationResult CodexOnly(RadarPresentationResult presentation)
     {
-        return Filter(presentation, model => !IsDeepSeekModel(model));
+        var filtered = Filter(presentation, model => !IsDeepSeekModel(model));
+        return filtered with
+        {
+            Rows = filtered.Rows.OrderBy(row => string.Equals(
+                row.Model.Model, "gpt-6-astra", StringComparison.OrdinalIgnoreCase) ? 0 : 1).ToArray(),
+        };
     }
 
     public static bool IsDeepSeekModel(RadarModel model)
@@ -258,7 +263,7 @@ public static class RadarPresentation
             .Where(part => !string.IsNullOrWhiteSpace(part)));
     }
 
-    private static string? FormatEffort(string? effort)
+    public static string? FormatEffort(string? effort)
     {
         if (string.IsNullOrWhiteSpace(effort)) return null;
         return effort.Equals("xhigh", StringComparison.OrdinalIgnoreCase)
@@ -318,4 +323,35 @@ public static class RadarPresentation
 
     private static bool IsFinite(double? value) => value is { } number && double.IsFinite(number);
     private static double FiniteOrMax(double? value) => IsFinite(value) ? value!.Value : double.MaxValue;
+}
+
+public sealed class RadarModelGroupState
+{
+    private Dictionary<string, bool> _overrides = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _collapsedModels = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+    };
+
+    public IReadOnlySet<string> CollapsedModels => _collapsedModels;
+    public IReadOnlyDictionary<string, bool> Overrides => _overrides;
+
+    public void Restore(IReadOnlyDictionary<string, bool>? overrides)
+    {
+        _overrides = AppSettings.CopyRadarModelGroups(overrides);
+        _collapsedModels.Clear();
+        _collapsedModels.UnionWith(["gpt-5.6-terra", "gpt-5.6-luna"]);
+        foreach (var entry in _overrides)
+        {
+            if (entry.Value) _collapsedModels.Add(entry.Key);
+            else _collapsedModels.Remove(entry.Key);
+        }
+    }
+
+    public void Toggle(string modelKey)
+    {
+        if (!_collapsedModels.Remove(modelKey)) _collapsedModels.Add(modelKey);
+        _overrides[modelKey] = _collapsedModels.Contains(modelKey);
+    }
 }

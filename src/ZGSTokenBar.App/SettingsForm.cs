@@ -904,6 +904,7 @@ internal sealed class SettingsForm : Form
             EnableSub2ApiPool = _codex.Checked && _sub2ApiPool.Checked,
             MiniAreaLayouts = AppSettings.CopyMiniAreaLayouts(_original.MiniAreaLayouts),
             MiniAreaOrder = AppSettings.CopyMiniAreaOrder(_original.MiniAreaOrder),
+            RadarModelGroups = AppSettings.CopyRadarModelGroups(_original.RadarModelGroups),
             CodexMiniDisplayMode = (_codexDisplayMode.SelectedItem as CodexMiniDisplayModeChoice)?.Mode
                 ?? _original.CodexMiniDisplayMode,
             BackgroundPalette = _backgroundPalette,
@@ -985,6 +986,7 @@ internal sealed class SettingsForm : Form
             EnableSub2ApiPool = settings.EnableSub2ApiPool,
             MiniAreaLayouts = AppSettings.CopyMiniAreaLayouts(settings.MiniAreaLayouts),
             MiniAreaOrder = AppSettings.CopyMiniAreaOrder(settings.MiniAreaOrder),
+            RadarModelGroups = AppSettings.CopyRadarModelGroups(settings.RadarModelGroups),
             CodexMiniDisplayMode = CodexMiniDisplayModes.Normalize(settings.CodexMiniDisplayMode),
             BackgroundPalette = AppSettings.NormalizeBackgroundPalette(settings.BackgroundPalette),
             Locale = settings.Locale,

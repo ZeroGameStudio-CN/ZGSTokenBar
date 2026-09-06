@@ -20,6 +20,8 @@ public sealed record RadarPopoverColumns(
     RadarPopoverColumn AverageTime,
     RadarPopoverColumn Cost);
 
+public sealed record RadarModelGroupHeader(string ModelKey, bool Collapsed, Rectangle Bounds);
+
 public sealed class RadarPopoverLayout
 {
     public const int LogicalWidth = 476;
@@ -27,6 +29,7 @@ public sealed class RadarPopoverLayout
     public const int LogicalGap = 3;
     public const int LogicalRowHeight = 19;
     public const int LogicalModelGroupGap = 6;
+    public const int LogicalModelGroupHeaderHeight = 22;
     public const int LogicalFooterExpansion = 16;
     public const int LogicalSpendSummaryHeight = 34;
     public const int LogicalSpendCardHeight = 28;
@@ -97,6 +100,24 @@ public sealed class RadarPopoverLayout
     public Rectangle FooterSourceBounds { get; }
     public Rectangle FooterLegendBounds { get; }
     public RadarPopoverColumns Columns { get; }
+    public IReadOnlyList<RadarModelGroupHeader> GroupHeaders { get; private init; } = [];
+    public Rectangle TableViewport { get; private init; }
+    public int ScrollOffset { get; private init; }
+    public int MaximumScrollOffset { get; private init; }
+    public Rectangle ScrollTrackBounds { get; private init; }
+    public Rectangle ScrollThumbBounds { get; private init; }
+
+    public static RadarPopoverLayout CreateGrouped(
+        int dpi,
+        IReadOnlyList<string?> modelKeys,
+        IReadOnlySet<string> collapsedModels,
+        bool hasInlineError,
+        bool hasOpenResetWindow = false,
+        bool hasSpendSummary = false,
+        int maximumBodyHeight = int.MaxValue,
+        int scrollOffset = 0) =>
+        CreateCore(dpi, modelKeys.Count, modelKeys, hasInlineError, hasOpenResetWindow,
+            hasSpendSummary, collapsedModels, maximumBodyHeight, scrollOffset);
 
     public static RadarPopoverLayout Create(
         int dpi,
@@ -137,7 +158,10 @@ public sealed class RadarPopoverLayout
         IReadOnlyList<string?>? modelKeys,
         bool hasInlineError,
         bool hasOpenResetWindow,
-        bool hasSpendSummary)
+        bool hasSpendSummary,
+        IReadOnlySet<string>? collapsedModels = null,
+        int maximumBodyHeight = int.MaxValue,
+        int scrollOffset = 0)
     {
         dpi = Math.Max(96, dpi);
         rowCount = Math.Max(0, rowCount);
@@ -168,17 +192,76 @@ public sealed class RadarPopoverLayout
             new(Scale(14 + left), Scale(14 + right));
 
         var rows = new List<Rectangle>(rowCount);
+        var headers = new List<RadarModelGroupHeader>();
         var rowY = 68 + resetBannerOffset;
-        for (var index = 0; index < rowCount; index++)
+        if (collapsedModels is not null && modelKeys is not null && rowCount > 0)
         {
-            rows.Add(Rect(14, rowY, 448, LogicalRowHeight));
-            rowY += LogicalRowHeight;
-            if (IsModelGroupStart(index + 1, rowCount, modelKeys))
+            rows.AddRange(Enumerable.Repeat(Rectangle.Empty, rowCount));
+            foreach (var group in modelKeys.Select((key, index) => (key, index))
+                .GroupBy(item => item.key ?? string.Empty, StringComparer.OrdinalIgnoreCase))
             {
-                rowY += LogicalModelGroupGap;
+                if (headers.Count > 0) rowY += LogicalModelGroupGap;
+                var collapsed = collapsedModels.Contains(group.Key);
+                headers.Add(new RadarModelGroupHeader(group.Key, collapsed,
+                    Rect(14, rowY, 448, LogicalModelGroupHeaderHeight)));
+                rowY += LogicalModelGroupHeaderHeight;
+                if (collapsed) continue;
+                foreach (var item in group)
+                {
+                    rows[item.index] = Rect(14, rowY, 448, LogicalRowHeight);
+                    rowY += LogicalRowHeight;
+                }
+            }
+            logicalHeight = rowY + 52 + logicalErrorHeight
+                + (hasSpendSummary ? LogicalSpendSummaryHeight : 0);
+        }
+        else
+        {
+            for (var index = 0; index < rowCount; index++)
+            {
+                rows.Add(Rect(14, rowY, 448, LogicalRowHeight));
+                rowY += LogicalRowHeight;
+                if (IsModelGroupStart(index + 1, rowCount, modelKeys)) rowY += LogicalModelGroupGap;
             }
         }
         var rowsBottom = rowY;
+        var maximumScrollOffset = 0;
+        var viewport = Rectangle.Empty;
+        var scrollTrack = Rectangle.Empty;
+        var scrollThumb = Rectangle.Empty;
+        if (headers.Count > 0)
+        {
+            var contentHeight = Scale(rowY) - Scale(68 + resetBannerOffset);
+            var chromeHeight = logicalHeight - rowY + 68 + resetBannerOffset;
+            var maximumLogicalHeight = (int)Math.Min(int.MaxValue, maximumBodyHeight * 96d / dpi);
+            logicalHeight = Math.Min(logicalHeight, Math.Max(chromeHeight + LogicalModelGroupHeaderHeight, maximumLogicalHeight));
+            rowsBottom = logicalHeight - (chromeHeight - 68 - resetBannerOffset);
+            viewport = Rect(14, 68 + resetBannerOffset, 448, rowsBottom - 68 - resetBannerOffset);
+            maximumScrollOffset = Math.Max(0, contentHeight - viewport.Height);
+            scrollOffset = Math.Clamp(scrollOffset, 0, maximumScrollOffset);
+            for (var index = 0; index < rows.Count; index++)
+            {
+                if (!rows[index].IsEmpty)
+                {
+                    var bounds = rows[index];
+                    bounds.Offset(0, -scrollOffset);
+                    rows[index] = bounds;
+                }
+            }
+            headers = headers.Select(header => header with
+            {
+                Bounds = new Rectangle(header.Bounds.X, header.Bounds.Y - scrollOffset,
+                    header.Bounds.Width, header.Bounds.Height),
+            }).ToList();
+            if (maximumScrollOffset > 0)
+            {
+                scrollTrack = new Rectangle(Scale(464), viewport.Top, Scale(8), viewport.Height);
+                var thumbHeight = Math.Min(viewport.Height, Math.Max(Scale(20),
+                    (int)((long)viewport.Height * viewport.Height / contentHeight)));
+                var thumbTop = viewport.Top + (int)((long)scrollOffset * (viewport.Height - thumbHeight) / maximumScrollOffset);
+                scrollThumb = new Rectangle(scrollTrack.Left, thumbTop, scrollTrack.Width, thumbHeight);
+            }
+        }
         return new RadarPopoverLayout(
             dpi,
             false,
@@ -215,7 +298,26 @@ public sealed class RadarPopoverLayout
                 Column(232, 264),
                 Column(270, 310),
                 Column(318, 366),
-                Column(382, 440)));
+                Column(382, 440)))
+        {
+            GroupHeaders = headers,
+            TableViewport = viewport,
+            ScrollOffset = scrollOffset,
+            MaximumScrollOffset = maximumScrollOffset,
+            ScrollTrackBounds = scrollTrack,
+            ScrollThumbBounds = scrollThumb,
+        };
+    }
+
+    public string? ModelGroupAt(Point bodyPoint) => TableViewport.Contains(bodyPoint)
+        ? GroupHeaders.FirstOrDefault(header => header.Bounds.Contains(bodyPoint))?.ModelKey
+        : null;
+
+    public int ScrollOffsetForThumbTop(int top)
+    {
+        var travel = ScrollTrackBounds.Height - ScrollThumbBounds.Height;
+        return travel <= 0 ? 0 : (int)Math.Clamp(
+            (long)(top - ScrollTrackBounds.Top) * MaximumScrollOffset / travel, 0, MaximumScrollOffset);
     }
 
     private static int CountModelGroupGaps(
