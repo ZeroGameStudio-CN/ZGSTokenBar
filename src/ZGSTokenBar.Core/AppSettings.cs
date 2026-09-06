@@ -883,6 +883,9 @@ public sealed class AppSettingsStore
             {
                 throw new JsonException("Invalid Codex token usage index.");
             }
+            if (index.HistoricalBaselineTokens is < 0
+                || (index.HistoricalBaselineTokens is null) != (index.HistoricalBaselineAt is null))
+                throw new JsonException("Invalid historical Token baseline.");
             index.Files ??= [];
             index.SchemaVersion = CodexTokenUsageIndex.CurrentSchemaVersion;
             ClearWriteProtection(CodexTokenUsageIndexPath);

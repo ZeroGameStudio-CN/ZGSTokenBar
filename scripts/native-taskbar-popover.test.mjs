@@ -227,7 +227,8 @@ test('Codex logo hover owns local token totals and cache hit rate without coupli
   assert.match(barForm, /if \(requestRefresh && radarEnabled\)[\s\S]*?RadarPreviewRequested\?\.Invoke/);
   assert.match(tokenUsageReader, /public CodexTokenUsageSummary\? Snapshot\(DateTimeOffset now\)/);
   assert.match(tokenUsageReader, /capturedAt: LatestIndexedWriteAt\(now\)/);
-  assert.match(applicationContext, /_cachedCodexTokenUsage = CodexTokenUsageSummary\.ApplyCumulativeFloor\([\s\S]*?_codexTokenUsageReader\.Snapshot\(now\)/);
+  assert.match(applicationContext, /_cachedCodexTokenUsage = _codexTokenUsageReader\.Snapshot\(now\)/);
+  assert.doesNotMatch(applicationContext, /ApplyCumulativeFloor/);
   assert.match(applicationContext, /ApplyCodexUsageActivityTransition\([\s\S]*?_cachedCodexTokenUsage/);
   assert.match(applicationContext, /setUsage\(cachedSummary\);[\s\S]*?publishUsage\(cachedSummary,[\s\S]*?requestRefreshAction\(\)/);
   assert.match(applicationContext, /&& _activeProviders\.Contains\(ProviderKind\.Codex\)[\s\S]*?_bar\.SetCodexTokenUsage\(summary\)/);

@@ -114,10 +114,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         _quotaPaceTracker = new QuotaPaceTracker(_store.LoadQuotaRateHistory(now));
         _codexQuotaTokenTracker = new CodexQuotaTokenTracker(_store.LoadCodexQuotaTokenHistory());
         _codexTokenUsageReader = new CodexTokenUsageReader(_store.LoadCodexTokenUsageIndex());
-        _cachedCodexTokenUsage = CodexTokenUsageSummary.ApplyCumulativeFloor(
-            _codexTokenUsageReader.Snapshot(now),
-            _codexQuotaTokenTracker.GetProfileLifetimeTotal(),
-            now);
+        _cachedCodexTokenUsage = _codexTokenUsageReader.Snapshot(now);
         _radarState = _store.LoadRadarState();
         _radarService.RestoreRecommendationCache(_radarState.LastSnapshot);
         _radarViewState = WithRadarUnreadState(
@@ -1125,10 +1122,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             var result = await Task.Run(
                 () => _codexTokenUsageReader.Refresh(observedAt, _shutdown.Token),
                 _shutdown.Token);
-            var summary = CodexTokenUsageSummary.ApplyCumulativeFloor(
-                result.Summary,
-                _codexQuotaTokenTracker.GetProfileLifetimeTotal(),
-                observedAt);
+            var summary = result.Summary;
             _cachedCodexTokenUsage = summary;
             if (result.Changed)
             {

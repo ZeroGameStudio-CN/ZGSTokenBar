@@ -145,6 +145,88 @@ if (args.Length == 1
     return 0;
 }
 
+if (args.Length == 4 && args[0] == "--token-ledger-baseline")
+{
+    var source = Path.GetFullPath(args[1]);
+    var store = new AppSettingsStore(Path.GetFullPath(args[3]));
+    if (string.Equals(source, store.CodexTokenUsageIndexPath, StringComparison.OrdinalIgnoreCase))
+        throw new ArgumentException("Baseline must be staged separately.");
+    var index = JsonSerializer.Deserialize<CodexTokenUsageIndex>(File.ReadAllText(source),
+        new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? throw new InvalidDataException();
+    var refreshed = new CodexTokenUsageReader(index).Refresh(DateTimeOffset.UtcNow);
+    var baseline = refreshed.Index.WithHistoricalBaseline(long.Parse(args[2], CultureInfo.InvariantCulture), DateTimeOffset.UtcNow);
+    store.SaveCodexTokenUsageIndex(baseline);
+    Console.WriteLine(JsonSerializer.Serialize(new { baseline.HistoricalBaselineTokens, baseline.HistoricalBaselineAt, Output = store.CodexTokenUsageIndexPath }));
+    return 0;
+}
+
+if (args.Length == 4 && args[0] == "--token-ledger-import")
+{
+    var source = Path.GetFullPath(args[1]);
+    var store = new AppSettingsStore(Path.GetFullPath(args[3]));
+    if (string.Equals(source, store.CodexTokenUsageIndexPath, StringComparison.OrdinalIgnoreCase))
+        throw new ArgumentException("Import must write to a separate staging ledger.");
+    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+    var index = JsonSerializer.Deserialize<CodexTokenUsageIndex>(File.ReadAllText(source), options)
+        ?? throw new InvalidDataException("Missing input index.");
+    var reader = new CodexTokenUsageReader(index);
+    var homes = new[] { CodexQuotaService.CodexHome(), Path.GetFullPath(args[2]) }
+        .Concat(CockpitCodexInstanceActivity.ReadTokenUsageHomes()).ToArray();
+    var result = reader.Refresh(homes, DateTimeOffset.UtcNow);
+    store.SaveCodexTokenUsageIndex(result.Index);
+    Console.WriteLine(JsonSerializer.Serialize(new
+    {
+        result.Summary?.LocalTokens, result.Summary?.TodayTokens, result.Summary?.SessionCount,
+        Unresolved = result.Index.Files.Count(file => file.AccountingVersion != CodexTokenUsageIndex.CurrentAccountingVersion),
+        Output = store.CodexTokenUsageIndexPath,
+    }));
+    return 0;
+}
+
+if (args.Length == 1 && args[0] == "--token-usage-recount")
+{
+    var store = new AppSettingsStore();
+    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+    var index = File.Exists(store.CodexTokenUsageIndexPath)
+        ? JsonSerializer.Deserialize<CodexTokenUsageIndex>(File.ReadAllText(store.CodexTokenUsageIndexPath), options)
+        : null;
+    var history = File.Exists(store.CodexQuotaTokenHistoryPath)
+        ? JsonSerializer.Deserialize<CodexQuotaTokenHistory>(File.ReadAllText(store.CodexQuotaTokenHistoryPath), options)
+        : null;
+    var now = DateTimeOffset.UtcNow;
+    var reader = new CodexTokenUsageReader(index);
+    var before = reader.Snapshot(now);
+    var homes = new[] { CodexQuotaService.CodexHome() }.Concat(CockpitCodexInstanceActivity.ReadTokenUsageHomes())
+        .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    Console.Error.WriteLine($"Recounting {homes.Length} registered local homes without saving state.");
+    var result = reader.Refresh(homes, now);
+    var floor = new CodexQuotaTokenTracker(history).GetProfileLifetimeTotal();
+    var display = result.Summary;
+    var previousFiles = (index?.Files ?? []).ToDictionary(file => file.Key, StringComparer.Ordinal);
+    long Contribution(CodexTokenUsageFileIndex file) => file.HasTokenData
+        && (file.AccountingVersion == CodexTokenUsageIndex.CurrentAccountingVersion || file.LegacyLifetimeOnly == true)
+            ? file.TotalTokens : 0;
+    var changes = result.Index.Files.Select(file => new
+    {
+        category = !previousFiles.TryGetValue(file.Key, out var old) ? "new-session"
+            : old.AccountingVersion != file.AccountingVersion ? "legacy-reaccounting" : "existing-session",
+        delta = Contribution(file) - (old is null ? 0 : Contribution(old)),
+    }).Where(change => change.delta != 0).GroupBy(change => change.category)
+        .Select(group => new { category = group.Key, files = group.Count(), tokens = group.Sum(change => change.delta) }).ToArray();
+    Console.WriteLine(JsonSerializer.Serialize(new
+    {
+        homes,
+        previousLocalTokens = before?.LocalTokens,
+        localTokens = result.Summary?.LocalTokens,
+        todayTokens = result.Summary?.TodayTokens,
+        sessionCount = result.Summary?.SessionCount,
+        profileHistoryTokens = floor,
+        displayTokens = display?.LocalTokens,
+        changes,
+    }));
+    return 0;
+}
+
 if (args.Length == 2 && args[0] == "--radar-group-captures")
 {
     TestRadarModelGroups(args[1]);
@@ -237,6 +319,7 @@ var tests = new (string Name, Action Run)[]
     ("Codex rollout bounded scanner", TestCodexRolloutBoundedScanner),
     ("Codex quota token tracker", TestCodexQuotaTokenTracker),
     ("Codex local token aggregation", TestCodexTokenUsageAggregation),
+    ("Codex multi-instance token aggregation", TestCodexMultiInstanceTokenUsage),
     ("Codex API-equivalent pricing", TestCodexApiEquivalentPricing),
     ("Codex spend history projection", TestCodexSpendHistoryProjection),
     ("Codex startup cache activation", TestCodexStartupCacheActivation),
@@ -2274,6 +2357,112 @@ static void TestCockpitCodexInstanceActivity()
     finally
     {
         Directory.Delete(directory, true);
+    }
+}
+
+static void TestCodexMultiInstanceTokenUsage()
+{
+    var root = Path.Combine(Path.GetTempPath(), $"token-multi-instance-{Guid.NewGuid():N}");
+    var defaultHome = Path.Combine(root, "default");
+    var cockpitHome = Path.Combine(root, "cockpit");
+    var firstHome = Path.Combine(cockpitHome, "instances", "codex", "first");
+    var secondHome = Path.Combine(cockpitHome, "instances", "codex", "stopped");
+    var unboundHome = Path.Combine(cockpitHome, "instances", "codex", "unbound");
+    var now = new DateTimeOffset(2026, 9, 6, 12, 0, 0, TimeSpan.Zero);
+    foreach (var home in new[] { defaultHome, firstHome, secondHome, unboundHome })
+        Directory.CreateDirectory(Path.Combine(home, "sessions"));
+    try
+    {
+        var registry = Path.Combine(cockpitHome, "codex_instances.json");
+        File.WriteAllText(registry, JsonSerializer.Serialize(new
+        {
+            instances = new[]
+            {
+                new { bindAccountId = "same-account", lastPid = 1, userDataDir = firstHome },
+                new { bindAccountId = "same-account", lastPid = 0, userDataDir = secondHome },
+                new { bindAccountId = "", lastPid = 0, userDataDir = unboundHome },
+                new { bindAccountId = "duplicate", lastPid = 1, userDataDir = firstHome },
+                new { bindAccountId = "outside", lastPid = 1, userDataDir = defaultHome },
+                new { bindAccountId = "invalid", lastPid = 1, userDataDir = "\0" },
+            },
+        }));
+        var discovered = CockpitCodexInstanceActivity.ReadTokenUsageHomes(cockpitHome);
+        Equal(3, discovered.Count, "all distinct registered homes including same-account, stopped and unbound instances");
+        Equal(false, discovered.Contains(defaultHome), "registry cannot escape managed roots");
+        Equal(2, CockpitCodexInstanceActivity.ReadRolloutSources(cockpitHome).Count, "quota source grouping still follows account identity");
+        void WriteSession(string home, string name, long tokens) => File.WriteAllText(
+            Path.Combine(home, "sessions", name),
+            TokenSessionMetaJsonLine(now.AddHours(-1)) + "\n" + TokenUsageJsonLine(now, tokens, tokens, tokens / 2) + "\n");
+        WriteSession(defaultHome, "shared.jsonl", 100);
+        WriteSession(firstHome, "shared.jsonl", 100);
+        WriteSession(firstHome, "first-only.jsonl", 200);
+        WriteSession(secondHome, "stopped-only.jsonl", 300);
+        WriteSession(unboundHome, "unbound-only.jsonl", 400);
+        var reader = new CodexTokenUsageReader();
+        var single = reader.Refresh(defaultHome, now);
+        Equal(100L, single.Summary?.LocalTokens, "single-root overload remains isolated");
+        var homes = new[] { defaultHome }.Concat(discovered).ToArray();
+        var all = reader.Refresh(homes, now);
+        Equal(1_000L, all.Summary?.LocalTokens, "unique sessions from every instance contribute once");
+        Equal(4, all.Summary?.SessionCount, "shared rollout is deduplicated across roots");
+        Equal(1_000L, reader.Refresh(homes.Reverse().ToArray(), now).Summary?.LocalTokens, "root order and repeated refresh cannot inflate total");
+        Equal(1_000L, new CodexTokenUsageReader(all.Index).Refresh(defaultHome, now).Summary?.LocalTokens, "restart and temporarily missing roots preserve previously indexed history");
+
+        var incrementalHome = Path.Combine(root, "incremental");
+        Directory.CreateDirectory(Path.Combine(incrementalHome, "sessions"));
+        var incrementalPath = Path.Combine(incrementalHome, "sessions", "ledger.jsonl");
+        WriteSession(incrementalHome, "ledger.jsonl", 100);
+        var ledgerReader = new CodexTokenUsageReader();
+        ledgerReader.Refresh(incrementalHome, now);
+        var originalContent = File.ReadAllText(incrementalPath);
+        File.AppendAllText(incrementalPath, TokenUsageJsonLine(now, 150, 150, 75) + "\n"
+            + TokenUsageJsonLine(now, 20, 20, 10) + "\n" + TokenUsageJsonLine(now, 50, 50, 25) + "\n");
+        var ledger = ledgerReader.Refresh(incrementalHome, now);
+        Equal(200L, ledger.Summary?.LocalTokens, "incremental ledger reads all counter epochs, not just the final tail");
+        Equal(200L, ledger.Summary?.TodayTokens, "today includes all appended counter epochs");
+        File.WriteAllText(incrementalPath, originalContent);
+        Equal(200L, new CodexTokenUsageReader(ledger.Index).Refresh(incrementalHome, now).Summary?.LocalTokens,
+            "restoring an older shorter copy cannot erase accounted usage");
+        File.Delete(incrementalPath);
+        Equal(200L, new CodexTokenUsageReader(ledger.Index).Refresh(incrementalHome, now).Summary?.LocalTokens,
+            "archiving a source does not remove its ledger contribution");
+        var seeded = ledger.Index.WithHistoricalBaseline(10_000, now);
+        var seededReader = new CodexTokenUsageReader(seeded);
+        Equal(10_000L, seededReader.Snapshot(now)?.LocalTokens, "historical baseline replaces, rather than adds to, existing totals");
+        WriteSession(incrementalHome, "old-import.jsonl", 500);
+        var oldImported = seededReader.Refresh(incrementalHome, now.AddMinutes(1));
+        Equal(10_000L, oldImported.Summary?.LocalTokens, "newly discovered old archive cannot inflate the fixed baseline");
+        var oldPath = Path.Combine(incrementalHome, "sessions", "old-import.jsonl");
+        File.AppendAllText(oldPath, TokenUsageJsonLine(now.AddMinutes(2), 550, 550, 275) + "\n");
+        File.WriteAllText(Path.Combine(incrementalHome, "sessions", "new-session.jsonl"),
+            TokenSessionMetaJsonLine(now.AddMinutes(1)) + "\n" + TokenUsageJsonLine(now.AddMinutes(2), 70, 70, 35) + "\n");
+        var seededAdvanced = new CodexTokenUsageReader(oldImported.Index).Refresh(incrementalHome, now.AddMinutes(3));
+        Equal(10_120L, seededAdvanced.Summary?.LocalTokens, "post-cutover increments from old and new sessions are added once");
+        var baselineStore = new AppSettingsStore(Path.Combine(root, "baseline-store"));
+        baselineStore.SaveCodexTokenUsageIndex(seededAdvanced.Index);
+        var resumedBaseline = new CodexTokenUsageReader(baselineStore.LoadCodexTokenUsageIndex());
+        Equal(10_120L, resumedBaseline.Refresh(incrementalHome, now.AddMinutes(3)).Summary?.LocalTokens, "restart preserves baseline, watermarks and increment without double counting");
+        var rejectedReseed = false;
+        try { seeded.WithHistoricalBaseline(20_000, now); }
+        catch (InvalidOperationException) { rejectedReseed = true; }
+        Equal(true, rejectedReseed, "accidental reseeding is rejected");
+
+        const string parentId = "11111111-1111-1111-1111-111111111111";
+        const string childId = "22222222-2222-2222-2222-222222222222";
+        var forkedAt = now.AddMinutes(-30);
+        File.WriteAllText(Path.Combine(defaultHome, "sessions", $"rollout-{parentId}.jsonl"),
+            TokenSessionMetaJsonLine(now.AddHours(-1)) + "\n" + TokenUsageJsonLine(forkedAt.AddMinutes(-1), 1_000, 800, 600) + "\n");
+        File.WriteAllText(Path.Combine(secondHome, "sessions", $"rollout-{childId}.jsonl"),
+            TokenForkSessionMetaJsonLine(forkedAt, childId, parentId) + "\n" + TokenUsageJsonLine(now, 1_200, 960, 720) + "\n");
+        var withFork = reader.Refresh(homes, now);
+        Equal(2_200L, withFork.Summary?.LocalTokens, "cross-instance fork excludes inherited parent tokens");
+        Equal(2_200L, withFork.Summary?.TodayTokens, "today uses the same de-duplicated multi-instance scope");
+        File.WriteAllText(registry, "{broken");
+        Equal(0, CockpitCodexInstanceActivity.ReadTokenUsageHomes(cockpitHome).Count, "invalid registry fails closed without filesystem fallback");
+    }
+    finally
+    {
+        Directory.Delete(root, true);
     }
 }
 

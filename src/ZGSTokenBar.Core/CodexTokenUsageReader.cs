@@ -60,12 +60,28 @@ public sealed record CodexSpendHistory(
 
 public sealed class CodexTokenUsageIndex
 {
-    public const int CurrentSchemaVersion = 7;
+    public const int CurrentSchemaVersion = 8;
     public const int CurrentAccountingVersion = 2;
     public const int CurrentSpendAccountingVersion = 3;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public List<CodexTokenUsageFileIndex> Files { get; set; } = [];
+    public long? HistoricalBaselineTokens { get; set; }
+    public DateTimeOffset? HistoricalBaselineAt { get; set; }
+
+    public CodexTokenUsageIndex WithHistoricalBaseline(long tokens, DateTimeOffset at)
+    {
+        if (tokens < 0 || HistoricalBaselineTokens is not null) throw new InvalidOperationException("A non-negative historical baseline can only be established once.");
+        return new CodexTokenUsageIndex
+        {
+            HistoricalBaselineTokens = tokens,
+            HistoricalBaselineAt = at,
+            Files = Files.Select(file => file with
+            {
+                BaselineTokens = file.AccountingVersion == CurrentAccountingVersion ? file.TotalTokens : null,
+            }).ToList(),
+        };
+    }
 }
 
 public sealed record CodexDailyModelUsage(
@@ -105,7 +121,8 @@ public sealed record CodexTokenUsageFileIndex(
     long? SpendLastOutputTokens = null,
     int SpendAccountingVersion = 0,
     long? SpendLastCacheWriteInputTokens = null,
-    long? SpendScannedLength = null);
+    long? SpendScannedLength = null,
+    long? BaselineTokens = null);
 
 public sealed record CodexTokenUsageReadResult(
     CodexTokenUsageSummary? Summary,
@@ -148,13 +165,21 @@ public sealed class CodexTokenUsageReader
     private const string UnknownSpendModel = "unknown";
 
     private readonly Dictionary<string, CodexTokenUsageFileIndex> _files;
+    private readonly long? _historicalBaselineTokens;
+    private readonly DateTimeOffset? _historicalBaselineAt;
 
     public CodexTokenUsageReader(CodexTokenUsageIndex? index = null)
     {
+        if (index?.HistoricalBaselineTokens is < 0
+            || (index?.HistoricalBaselineTokens is null) != (index?.HistoricalBaselineAt is null))
+            throw new InvalidDataException("Invalid historical Token baseline.");
+        _historicalBaselineTokens = index?.HistoricalBaselineTokens;
+        _historicalBaselineAt = index?.HistoricalBaselineAt;
         _files = (index?.Files ?? [])
             .Where(file => !string.IsNullOrWhiteSpace(file.Key)
                 && file.Length >= 0
                 && file.TotalTokens >= 0
+                && file.BaselineTokens is null or >= 0
                 && file.LastTotalTokens >= 0
                 && file.LatestDayTokens >= 0
                 && file.AccountingVersion is >= 0 and <= CodexTokenUsageIndex.CurrentAccountingVersion
@@ -202,14 +227,20 @@ public sealed class CodexTokenUsageReader
     public CodexTokenUsageReadResult Refresh(
         DateTimeOffset now,
         CancellationToken cancellationToken = default) =>
-        Refresh(CodexQuotaService.CodexHome(), now, cancellationToken);
+        Refresh([CodexQuotaService.CodexHome(), .. CockpitCodexInstanceActivity.ReadTokenUsageHomes()], now, cancellationToken);
 
     internal CodexTokenUsageReadResult Refresh(
         string codexHome,
         DateTimeOffset now,
+        CancellationToken cancellationToken = default) =>
+        Refresh([codexHome], now, cancellationToken);
+
+    internal CodexTokenUsageReadResult Refresh(
+        IReadOnlyList<string> codexHomes,
+        DateTimeOffset now,
         CancellationToken cancellationToken = default)
     {
-        var candidates = CandidateFiles(codexHome);
+        var candidates = CandidateFiles(codexHomes);
         var forkBaselines = ResolveForkBaselines(candidates, now, cancellationToken);
         var next = new Dictionary<string, CodexTokenUsageFileIndex>(_files, StringComparer.Ordinal);
         var changed = false;
@@ -234,6 +265,19 @@ public sealed class CodexTokenUsageReader
                     forkBaseline,
                     now,
                     cancellationToken);
+                if (_historicalBaselineAt is { } cutoff
+                    && current.BaselineTokens is null
+                    && current.AccountingVersion == CodexTokenUsageIndex.CurrentAccountingVersion)
+                {
+                    var state = new SpendScanState { TokenCutoff = cutoff };
+                    if (forkBaseline?.InheritedUsage is { } inherited)
+                    {
+                        state.LastTotalTokens = inherited.TotalTokens;
+                        state.AwaitingForkBaseline = true;
+                    }
+                    ScanSpendRange(pair.Value.FullName, 0, pair.Value.Length, state, [], now, cancellationToken);
+                    current = current with { BaselineTokens = Math.Max(0, current.TotalTokens - state.TokenDelta) };
+                }
                 next[pair.Key] = current;
                 if (previous != current) changed = true;
             }
@@ -256,6 +300,8 @@ public sealed class CodexTokenUsageReader
             new CodexTokenUsageIndex
             {
                 Files = _files.Values.OrderBy(file => file.Key, StringComparer.Ordinal).ToList(),
+                HistoricalBaselineTokens = _historicalBaselineTokens,
+                HistoricalBaselineAt = _historicalBaselineAt,
             },
             changed);
     }
@@ -322,6 +368,12 @@ public sealed class CodexTokenUsageReader
         }
 
         var yesterday = spendWindowDates.Yesterday;
+        if (_historicalBaselineTokens is { } historicalTokens)
+        {
+            localTokens = historicalTokens;
+            foreach (var file in _files.Values.Where(file => file.HasTokenData && file.BaselineTokens is not null))
+                localTokens = SaturatingAdd(localTokens, Math.Max(0, file.TotalTokens - file.BaselineTokens!.Value));
+        }
         var last30DaysCutoff = spendWindowDates.Last30DaysCutoff;
         var spendBuckets = _files.Values
             .Where(file => file.SpendAccountingVersion
@@ -343,7 +395,7 @@ public sealed class CodexTokenUsageReader
                 .ToArray(),
             LocalCalendarDate(now, TimeZoneInfo.Local));
 
-        return sessionCount == 0
+        return sessionCount == 0 && _historicalBaselineTokens is null
             ? null
             : new CodexTokenUsageSummary(
                 todayTokens,
@@ -756,9 +808,10 @@ public sealed class CodexTokenUsageReader
         return Guid.TryParse(candidate, out _) ? candidate : null;
     }
 
-    private static Dictionary<string, FileInfo> CandidateFiles(string codexHome)
+    private static Dictionary<string, FileInfo> CandidateFiles(IReadOnlyList<string> codexHomes)
     {
         var files = new Dictionary<string, FileInfo>(StringComparer.Ordinal);
+        foreach (var codexHome in codexHomes.Distinct(StringComparer.OrdinalIgnoreCase))
         foreach (var directoryName in new[] { "sessions", "archived_sessions" })
         {
             var directory = Path.Combine(codexHome, directoryName);
@@ -805,6 +858,9 @@ public sealed class CodexTokenUsageReader
         file.Refresh();
         var length = file.Length;
         var lastWriteTicks = file.LastWriteTimeUtc.Ticks;
+        // An older restored copy must not replace the durable session ledger.
+        if (previous is { AccountingVersion: CodexTokenUsageIndex.CurrentAccountingVersion }
+            && length < previous.Length) return previous;
         if (previous is not null
             && previous.AccountingVersion == CodexTokenUsageIndex.CurrentAccountingVersion
             && previous.SpendAccountingVersion == CodexTokenUsageIndex.CurrentSpendAccountingVersion
@@ -812,14 +868,7 @@ public sealed class CodexTokenUsageReader
             && previous.SpendScannedLength <= previous.Length
             && SpendRetentionIsCurrent(previous, now)
             && previous.Length == length
-            && previous.LastWriteTimeUtcTicks == lastWriteTicks
-            && previous.InputTokens is not null
-            && previous.CachedInputTokens is not null
-            && previous.LastInputTokens is not null
-            && previous.LastCachedInputTokens is not null
-            && (previous.LatestLocalDate != LocalDate(now)
-                || previous.LatestDayInputTokens is not null
-                && previous.LatestDayCachedInputTokens is not null))
+            && previous.LastWriteTimeUtcTicks == lastWriteTicks)
         {
             return previous;
         }
@@ -1053,7 +1102,7 @@ public sealed class CodexTokenUsageReader
             {
                 Model = previous!.SpendCurrentModel,
                 ServiceTier = previous.SpendCurrentServiceTier,
-                LastTotalTokens = previous.SpendLastTotalTokens,
+                LastTotalTokens = previous.SpendLastTotalTokens ?? previous.LastTotalTokens,
                 LastInputTokens = previous.SpendLastInputTokens,
                 LastCachedInputTokens = previous.SpendLastCachedInputTokens,
                 LastCacheWriteInputTokens = previous.SpendLastCacheWriteInputTokens,
@@ -1093,6 +1142,14 @@ public sealed class CodexTokenUsageReader
         dailyUsage = TrimAndCombineDailyUsage(dailyUsage, now);
         return current with
         {
+            TotalTokens = canIncrement
+                ? SaturatingAdd(previous!.TotalTokens, state.TokenDelta)
+                : current.TotalTokens,
+            LatestLocalDate = canIncrement ? state.TokenDay ?? previous!.LatestLocalDate : current.LatestLocalDate,
+            LatestDayTokens = canIncrement
+                ? state.TokenDay is null ? previous!.LatestDayTokens
+                    : SaturatingAdd(previous!.LatestLocalDate == state.TokenDay ? previous.LatestDayTokens : 0, state.TokenDayDelta)
+                : current.LatestDayTokens,
             DailyModelUsage = dailyUsage,
             SpendCurrentModel = state.Model,
             SpendCurrentServiceTier = state.ServiceTier,
@@ -1274,6 +1331,12 @@ public sealed class CodexTokenUsageReader
         }
 
         var totalDelta = PositiveDelta(state.LastTotalTokens.Value, item.TotalTokens);
+        if (state.TokenCutoff is null || item.CapturedAt > state.TokenCutoff)
+            state.TokenDelta = SaturatingAdd(state.TokenDelta, totalDelta);
+        var tokenDay = LocalDate(item.CapturedAt);
+        if (state.TokenDay != tokenDay) state.TokenDayDelta = 0;
+        state.TokenDay = tokenDay;
+        state.TokenDayDelta = SaturatingAdd(state.TokenDayDelta, totalDelta);
         var inputDelta = CounterDelta(state.LastInputTokens, item.InputTokens);
         var cachedDelta = CounterDelta(state.LastCachedInputTokens, item.CachedInputTokens);
         var cacheWriteDelta = CounterDelta(
@@ -1958,6 +2021,10 @@ public sealed class CodexTokenUsageReader
 
     private sealed class SpendScanState
     {
+        public long TokenDelta { get; set; }
+        public DateTimeOffset? TokenCutoff { get; set; }
+        public string? TokenDay { get; set; }
+        public long TokenDayDelta { get; set; }
         public string? Model { get; set; }
         public string? ServiceTier { get; set; }
         public long? LastTotalTokens { get; set; }

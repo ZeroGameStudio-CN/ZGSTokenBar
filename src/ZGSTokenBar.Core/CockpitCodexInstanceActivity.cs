@@ -68,7 +68,24 @@ internal static class CockpitCodexInstanceActivity
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             ".antigravity_cockpit"));
 
-    internal static IReadOnlyList<CockpitCodexRolloutSource> ReadRolloutSources(string home)
+    internal static IReadOnlyList<CockpitCodexRolloutSource> ReadRolloutSources(string home) =>
+        ReadInstanceDirectories(home)
+            .Where(source => !string.IsNullOrWhiteSpace(source.AccountId))
+            .Select(source => new CockpitCodexRolloutSource(source.AccountId!,
+                CodexQuotaService.StableCardKey($"cockpit:{source.AccountId}"), source.CodexHome))
+            .GroupBy(source => source.CardKey, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .OrderBy(source => source.CardKey, StringComparer.Ordinal)
+            .ToArray();
+
+    internal static IReadOnlyList<string> ReadTokenUsageHomes(string? home = null) =>
+        ReadInstanceDirectories(home ?? Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".antigravity_cockpit"))
+            .Select(source => source.CodexHome)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+    private static IReadOnlyList<(string? AccountId, string CodexHome)> ReadInstanceDirectories(string home)
     {
         try
         {
@@ -87,36 +104,31 @@ internal static class CockpitCodexInstanceActivity
                 return [];
             }
 
-            var result = new List<CockpitCodexRolloutSource>();
+            var result = new List<(string? AccountId, string CodexHome)>();
             foreach (var instance in instances.EnumerateArray())
             {
                 var accountId = instance.StringProperty("bindAccountId");
                 var configuredDirectory = instance.StringProperty("userDataDir");
-                if (string.IsNullOrWhiteSpace(accountId)
-                    || string.IsNullOrWhiteSpace(configuredDirectory))
+                if (string.IsNullOrWhiteSpace(configuredDirectory))
                 {
                     continue;
                 }
 
-                var directory = Path.GetFullPath(configuredDirectory);
-                if (!directory.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase)
-                    || !Directory.Exists(directory)
-                    || ContainsReparsePoint(instancesRoot, directory))
+                try
                 {
-                    continue;
+                    var directory = Path.GetFullPath(configuredDirectory);
+                    if (!directory.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase)
+                        || !Directory.Exists(directory)
+                        || ContainsReparsePoint(instancesRoot, directory)) continue;
+                    result.Add((accountId, directory));
                 }
-
-                result.Add(new CockpitCodexRolloutSource(
-                    accountId,
-                    CodexQuotaService.StableCardKey($"cockpit:{accountId}"),
-                    directory));
+                catch (Exception exception) when (exception is ArgumentException or NotSupportedException or IOException or UnauthorizedAccessException)
+                {
+                    // One invalid instance must not hide the remaining registered directories.
+                }
             }
 
-            return result
-                .GroupBy(source => source.CardKey, StringComparer.Ordinal)
-                .Select(group => group.First())
-                .OrderBy(source => source.CardKey, StringComparer.Ordinal)
-                .ToArray();
+            return result;
         }
         catch
         {

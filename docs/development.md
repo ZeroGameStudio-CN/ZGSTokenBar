@@ -58,3 +58,38 @@ All acceptance is non-interactive and CLI-only. Do not use desktop automation, i
 If an acceptance requirement has no CLI evidence route, add a focused test, fixture, capture command, or probe before treating it as passed. Starting or replacing a running app is deployment, not acceptance.
 
 The app is self-contained and single-file. Unsigned packages are supported for local use; public releases require Authenticode signing and timestamp verification.
+
+## Token Ledger
+
+`codex-token-usage-index.json` is the local per-session ledger. It retains accounted
+sessions after source files move or disappear. Default and registered Cockpit
+homes are combined before deduplication; unchanged files are not reparsed, and
+appends resume from the last complete JSONL line. The total no longer uses an old
+account-wide Profile counter as a floor. Keep this ledger with the app's data
+directory when moving machines; do not add totals from separate copies together.
+
+An explicitly accepted historical starting amount can be established once with
+`--token-ledger-baseline <input-index> <tokens> <output-data-directory>` on the
+test executable. Schema 8 retains the fixed amount, cutoff timestamp and per-session
+watermarks. The displayed total is then the accepted amount plus post-cutover
+increments, not the amount plus all observed historical sessions. Late-discovered
+sessions are scanned once to exclude pre-cutover usage. The old historical amount
+remains an accepted estimate; this operation does not prove it was accurate.
+Back up the ledger before installing it; rolling back to a pre-schema-8 app also
+requires its matching backup ledger.
+
+For an explicit one-time cold-history import, prepare only missing or older-accounting
+sessions from SHA-256 manifests using `scripts/prepare-token-history.ps1` with
+`-PackageRoot`, `-IndexPath`, and a new `-StagingRoot`. Optional `-DependencyIdsPath`
+selects parent session IDs needed to resolve forks. This command requires local
+7-Zip and may hydrate online-only archives; it never deletes original packages.
+Each package has a resumable verification receipt.
+
+Run the test executable with `--token-ledger-import <input-index> <staging-home>
+<output-data-directory>` to merge prepared JSONL and current local sessions into
+a separate output ledger. Review the unresolved count, stop the app, back up its
+ledger and merge the latest local increments before replacing it. Remove only
+task-created extraction files after verifying the installed ledger. NAS cleanup
+must use the storage provider's release-space operation, never package deletion.
+Neither import tool is called during ordinary app refresh. Missing source data
+cannot be reconstructed from a cumulative total alone.
