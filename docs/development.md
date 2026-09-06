@@ -59,6 +59,10 @@ If an acceptance requirement has no CLI evidence route, add a focused test, fixt
 
 The app is self-contained and single-file. Unsigned packages are supported for local use; public releases require Authenticode signing and timestamp verification.
 
+For local replacement builds, publish with a fresh temporary `--artifacts-path`
+and output directory. Verify live behavior after restarting the installed file;
+its on-disk hash alone does not prove the running behavior matches the source.
+
 ## Token Ledger
 
 `codex-token-usage-index.json` is the local per-session ledger. It retains accounted
