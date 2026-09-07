@@ -50,7 +50,8 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     private readonly QuotaSnapshotStabilizer _snapshotStabilizer = new();
     private readonly QuotaPaceTracker _quotaPaceTracker;
     private readonly CodexQuotaTokenTracker _codexQuotaTokenTracker;
-    private readonly CodexTokenUsageReader _codexTokenUsageReader;
+    private CodexTokenUsageReader? _codexTokenUsageReader;
+    private bool _radarRestorePending;
     private readonly SystemUsageSampler _systemUsageSampler = new();
     private readonly CodexEconomyRouter _codexEconomyRouter = new();
     private readonly ReleaseUpdateChecker _updateChecker = new();
@@ -113,9 +114,10 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         _codexAccounts = CockpitCodexAccountDirectory.Read();
         _quotaPaceTracker = new QuotaPaceTracker(_store.LoadQuotaRateHistory(now));
         _codexQuotaTokenTracker = new CodexQuotaTokenTracker(_store.LoadCodexQuotaTokenHistory());
-        _codexTokenUsageReader = new CodexTokenUsageReader(_store.LoadCodexTokenUsageIndex());
-        _cachedCodexTokenUsage = _codexTokenUsageReader.Snapshot(now);
-        _radarState = _store.LoadRadarState();
+        _codexTokenUsageReader = _store.TryLoadCodexTokenUsageIndex(out var tokenIndex)
+            ? new CodexTokenUsageReader(tokenIndex) : null;
+        _cachedCodexTokenUsage = _codexTokenUsageReader?.Snapshot(now);
+        _radarRestorePending = !_store.TryLoadRadarState(out _radarState);
         _radarService.RestoreRecommendationCache(_radarState.LastSnapshot);
         _radarViewState = WithRadarUnreadState(
             new(
@@ -789,6 +791,20 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         if (!_bar.IsDisposed) _bar.SetRadarState(_radarViewState);
         try
         {
+            if (_radarRestorePending)
+            {
+                if (!_store.TryLoadRadarState(out var restored))
+                    throw new IOException("Radar state is temporarily unavailable.");
+                _radarState = restored;
+                stateBeforeFetch = restored;
+                _radarService.RestoreRecommendationCache(restored.LastSnapshot);
+                _radarViewState = WithRadarUnreadState(_radarViewState with
+                {
+                    Snapshot = restored.LastSnapshot,
+                    LastSuccessfulFetchAt = restored.LastSuccessfulFetchAt,
+                }, restored);
+                _radarRestorePending = false;
+            }
             var next = await _radarService.FetchAsync(_shutdown.Token);
             if (_shutdown.IsCancellationRequested || _bar.IsDisposed || !_settings.EnableRadar) return;
             var decision = _radarService.Evaluate(_radarState, next);
@@ -1120,8 +1136,17 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         try
         {
             var result = await Task.Run(
-                () => _codexTokenUsageReader.Refresh(observedAt, _shutdown.Token),
+                () =>
+                {
+                    if (_codexTokenUsageReader is null)
+                    {
+                        if (!_store.TryLoadCodexTokenUsageIndex(out var index)) return null;
+                        _codexTokenUsageReader = new CodexTokenUsageReader(index);
+                    }
+                    return _codexTokenUsageReader.Refresh(observedAt, _shutdown.Token);
+                },
                 _shutdown.Token);
+            if (result is null) return;
             var summary = result.Summary;
             _cachedCodexTokenUsage = summary;
             if (result.Changed)
@@ -2014,7 +2039,18 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                 _bar.IsHandleCreated && !_bar.IsDisposed,
                 ToUiBounds(_bar.Bounds),
                 _bar.TopMost,
-                _bar.DeviceDpi),
+                _bar.DeviceDpi)
+            {
+                AppModuleId = typeof(QuotaApplicationContext).Module.ModuleVersionId.ToString(),
+                CoreModuleId = typeof(CodexTokenUsageReader).Module.ModuleVersionId.ToString(),
+                DisplayedTokenTotal = _bar.DisplayedTokenTotal,
+                RadarVisible = _bar.RadarVisible,
+                RadarModelGroups = _bar.DisplayedRadarModelGroups,
+                CachedRadarModelGroups = _radarViewState.Snapshot is { } radarSnapshot
+                    ? RadarPresentation.CodexOnly(RadarPresentation.Build(radarSnapshot)).Rows
+                        .Select(row => row.Model.Model).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
+                    : null,
+            },
             cancellationToken));
 
     public async ValueTask RequestRefreshAsync(

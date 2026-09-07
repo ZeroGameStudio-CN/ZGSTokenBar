@@ -62,6 +62,9 @@ The app is self-contained and single-file. Unsigned packages are supported for l
 For local replacement builds, publish with a fresh temporary `--artifacts-path`
 and output directory. Verify live behavior after restarting the installed file;
 its on-disk hash alone does not prove the running behavior matches the source.
+`window inspect` reports the loaded App/Core module IDs, the actual UI Token
+total, and actual/open versus cached Radar model groups. Compare module IDs
+with the built DLLs instead of relying on a hash computed from a path after launch.
 
 ## Token Ledger
 
@@ -71,6 +74,10 @@ homes are combined before deduplication; unchanged files are not reparsed, and
 appends resume from the last complete JSONL line. The total no longer uses an old
 account-wide Profile counter as a floor. Keep this ledger with the app's data
 directory when moving machines; do not add totals from separate copies together.
+Transient startup read failures defer local recomputation until the ledger can
+be loaded; they must not turn a protected on-disk baseline into a lower in-memory
+total. Radar likewise retries restoring its cached supplemental models before
+refreshing after a transient cache-read failure.
 
 An explicitly accepted historical starting amount can be established once with
 `--token-ledger-baseline <input-index> <tokens> <output-data-directory>` on the

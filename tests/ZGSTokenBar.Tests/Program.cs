@@ -4385,6 +4385,29 @@ static void TestPersistentHistoryIoProtection()
             () => store.SaveRadarState(radar),
             "Radar state");
 
+        var seededIndex = new CodexTokenUsageIndex().WithHistoricalBaseline(10_000, now);
+        store.SaveCodexTokenUsageIndex(seededIndex);
+        var bootStore = new AppSettingsStore(directory);
+        using (new FileStream(store.CodexTokenUsageIndexPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            Equal(false, bootStore.TryLoadCodexTokenUsageIndex(out _), "locked startup ledger must not become a usable empty ledger");
+            Equal(false, bootStore.TryLoadCodexTokenUsageIndex(out _), "retries while locked still defer raw-token recomputation");
+        }
+        Equal(true, bootStore.TryLoadCodexTokenUsageIndex(out var restoredIndex), "startup ledger recovers after its lock is released");
+        Equal(10_000L, new CodexTokenUsageReader(restoredIndex).Snapshot(now)?.LocalTokens, "recovery restores the fixed baseline, not the local-only total");
+        bootStore.SaveCodexTokenUsageIndex(restoredIndex);
+        Equal(10_000L, new AppSettingsStore(directory).LoadCodexTokenUsageIndex().HistoricalBaselineTokens, "recovered baseline survives the next save and restart");
+
+        radar.LastSnapshot = new ProviderRadarSnapshot(ProviderKind.Codex, "io-recovery", now, now,
+            ScenarioRadarModel("gpt-5.6-sol", "max", 90, 1, 2),
+            [ScenarioRadarModel("gpt-6-astra", "max", 100, 1, 2)]);
+        store.SaveRadarState(radar);
+        using (new FileStream(store.RadarStatePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            Equal(false, bootStore.TryLoadRadarState(out _), "locked radar cache remains pending instead of losing supplemental models");
+        Equal(true, bootStore.TryLoadRadarState(out var restoredRadar), "radar cache recovers without an app restart");
+        Equal("gpt-6-astra", RadarPresentation.CodexOnly(RadarPresentation.Build(restoredRadar.LastSnapshot!)).Rows[0].Model.Model,
+            "restored cache retains Astra in the first group");
+
         var firstBackup = Encoding.UTF8.GetBytes("first recovery copy");
         File.WriteAllBytes(store.QuotaRateHistoryPath + ".corrupt.bak", firstBackup);
         File.WriteAllText(store.QuotaRateHistoryPath, "{invalid");
@@ -7938,6 +7961,17 @@ static RadarModel ScenarioRadarModel(
 
 static void TestRadarPresentation()
 {
+    var inspection = new WindowInspection(true, 1, null, true, new UiBounds(0, 0, 100, 100), true, 96)
+    {
+        AppModuleId = "app-module", CoreModuleId = "core-module", DisplayedTokenTotal = 123,
+        RadarVisible = true, RadarModelGroups = ["gpt-6-astra"], CachedRadarModelGroups = ["gpt-6-astra", "gpt-5.6-sol"],
+    };
+    using (var diagnostics = JsonDocument.Parse(JsonSerializer.Serialize(inspection, ApiJsonContext.Default.WindowInspection)))
+    {
+        Equal("app-module", diagnostics.RootElement.GetProperty("appModuleId").GetString(), "window inspection returns loaded app identity");
+        Equal(123L, diagnostics.RootElement.GetProperty("displayedTokenTotal").GetInt64(), "window inspection returns UI token state");
+        Equal("gpt-6-astra", diagnostics.RootElement.GetProperty("radarModelGroups")[0].GetString(), "window inspection preserves actual group order");
+    }
     var capturedAt = DateTimeOffset.Parse("2026-07-28T13:09:56+08:00");
     var primary = new RadarModel(
         "gpt-5.6-sol",

@@ -67,6 +67,7 @@ internal sealed class ProviderRadarPopoverForm : Form
     public event EventHandler? ModelGroupInteraction;
     public event EventHandler? ModelGroupsChanged;
     public IReadOnlyDictionary<string, bool> ModelGroups => _modelGroups.Overrides;
+    public string[] DisplayedModelGroups => _layout.GroupHeaders.Select(group => group.ModelKey).ToArray();
 
     public void RestoreModelGroups(IReadOnlyDictionary<string, bool> groups)
     {

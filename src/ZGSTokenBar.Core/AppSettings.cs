@@ -861,6 +861,12 @@ public sealed class AppSettingsStore
         }
     }
 
+    public bool TryLoadCodexTokenUsageIndex(out CodexTokenUsageIndex index)
+    {
+        index = LoadCodexTokenUsageIndex();
+        lock (_writeProtectionSync) return !_writeProtectedPaths.Contains(CodexTokenUsageIndexPath);
+    }
+
     public CodexTokenUsageIndex LoadCodexTokenUsageIndex()
     {
         try
@@ -988,6 +994,12 @@ public sealed class AppSettingsStore
         {
             throw new IOException("Codex quota token history file is busy. Please retry.");
         }
+    }
+
+    public bool TryLoadRadarState(out RadarAlertState state)
+    {
+        state = LoadRadarState();
+        lock (_writeProtectionSync) return !_writeProtectedPaths.Contains(RadarStatePath);
     }
 
     public RadarAlertState LoadRadarState()

@@ -89,7 +89,15 @@ public sealed record WindowInspection(
     bool Responsive,
     UiBounds Bounds,
     bool Topmost,
-    int Dpi);
+    int Dpi)
+{
+    public string? AppModuleId { get; init; }
+    public string? CoreModuleId { get; init; }
+    public long? DisplayedTokenTotal { get; init; }
+    public bool RadarVisible { get; init; }
+    public string[]? RadarModelGroups { get; init; }
+    public string[]? CachedRadarModelGroups { get; init; }
+}
 
 public sealed record SnapshotSummary(
     HostRevisions Revisions,

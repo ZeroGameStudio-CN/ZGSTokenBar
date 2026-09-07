@@ -216,6 +216,9 @@ internal sealed class BarForm : Form
     public event EventHandler? RadarModelGroupsChanged;
     private Dictionary<string, bool> _radarModelGroups = new(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyDictionary<string, bool> RadarModelGroups => _radarModelGroups;
+    internal long? DisplayedTokenTotal => _codexTokenUsage?.LocalTokens;
+    internal bool RadarVisible => _radarPopover?.Visible == true;
+    internal string[]? DisplayedRadarModelGroups => _radarPopover?.DisplayedModelGroups;
 
     public void SetRadarModelGroups(IReadOnlyDictionary<string, bool> groups)
     {

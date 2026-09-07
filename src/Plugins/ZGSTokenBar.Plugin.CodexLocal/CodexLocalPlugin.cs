@@ -21,7 +21,12 @@ public sealed class CodexLocalPlugin : BuiltinPluginBase, IDataSource
         PluginRefreshContext context,
         CancellationToken cancellationToken)
     {
-        _reader ??= new CodexTokenUsageReader(_store.LoadCodexTokenUsageIndex());
+        if (_reader is null)
+        {
+            if (!_store.TryLoadCodexTokenUsageIndex(out var index))
+                throw new IOException("Token ledger is temporarily unavailable.");
+            _reader = new CodexTokenUsageReader(index);
+        }
         var result = _reader.Refresh(context.Now, cancellationToken);
         _reader = new CodexTokenUsageReader(result.Index);
         if (result.Changed)

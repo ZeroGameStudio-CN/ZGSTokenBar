@@ -219,6 +219,10 @@ test('Radar model groups use dynamic rows and retain collapse state across refre
   assert.match(barForm, /SetRadarModelGroups\(settings\.RadarModelGroups\)/);
   assert.match(applicationContext, /RadarModelGroupsChanged \+= \(_, _\) => SaveRadarModelGroups\(\)/);
   assert.match(applicationContext, /TrySaveSettings\(_settings, showError: true\)[\s\S]*?_bar\.SetRadarModelGroups\(previous\)/);
+  assert.match(applicationContext, /AppModuleId = typeof\(QuotaApplicationContext\)\.Module\.ModuleVersionId/);
+  assert.match(applicationContext, /DisplayedTokenTotal = _bar\.DisplayedTokenTotal/);
+  assert.match(applicationContext, /RadarModelGroups = _bar\.DisplayedRadarModelGroups/);
+  assert.match(radarPopover, /DisplayedModelGroups => _layout\.GroupHeaders\.Select/);
 });
 
 test('Codex logo hover owns local token totals and cache hit rate without coupling them to quota or Radar fetches', () => {
@@ -227,7 +231,9 @@ test('Codex logo hover owns local token totals and cache hit rate without coupli
   assert.match(barForm, /if \(requestRefresh && radarEnabled\)[\s\S]*?RadarPreviewRequested\?\.Invoke/);
   assert.match(tokenUsageReader, /public CodexTokenUsageSummary\? Snapshot\(DateTimeOffset now\)/);
   assert.match(tokenUsageReader, /capturedAt: LatestIndexedWriteAt\(now\)/);
-  assert.match(applicationContext, /_cachedCodexTokenUsage = _codexTokenUsageReader\.Snapshot\(now\)/);
+  assert.match(applicationContext, /_cachedCodexTokenUsage = _codexTokenUsageReader\?\.Snapshot\(now\)/);
+  assert.match(applicationContext, /if \(!_store\.TryLoadCodexTokenUsageIndex\(out var index\)\) return null/);
+  assert.match(applicationContext, /if \(_radarRestorePending\)[\s\S]*?TryLoadRadarState/);
   assert.doesNotMatch(applicationContext, /ApplyCumulativeFloor/);
   assert.match(applicationContext, /ApplyCodexUsageActivityTransition\([\s\S]*?_cachedCodexTokenUsage/);
   assert.match(applicationContext, /setUsage\(cachedSummary\);[\s\S]*?publishUsage\(cachedSummary,[\s\S]*?requestRefreshAction\(\)/);
