@@ -13,24 +13,39 @@ internal static class HostJobLifetimeIsolation
     private const uint ExtendedStartupInformationPresent = 0x00080000;
     private const uint CreateUnicodeEnvironment = 0x00000400;
     private const uint CreateNoWindow = 0x08000000;
+    private const uint CreateBreakawayFromJob = 0x01000000;
     private const nuint ParentProcessAttribute = 0x00020000;
     private const string RelaunchAttemptVariable = "ZGSTOKENBAR_JOB_BREAKAWAY_ATTEMPTED";
+    private const string HandshakePrefix = @"Local\ZGSTokenBar.Isolation.";
 
     internal static bool TryRelaunchOutsideTerminatingJob(
         bool hasIsolatedDataRoot,
-        IReadOnlyList<string> arguments)
+        IReadOnlyList<string> arguments,
+        Action<HostJobIsolationDiagnostic>? report = null)
     {
+        if (hasIsolatedDataRoot) return false;
+        var attempt = Environment.GetEnvironmentVariable(RelaunchAttemptVariable);
+        Environment.SetEnvironmentVariable(RelaunchAttemptVariable, null);
+        var isReplacement = Guid.TryParseExact(attempt, "N", out _);
+        void Report(string outcome, bool querySucceeded, bool inJob, uint flags, int error = 0)
+        {
+            try { report?.Invoke(new(outcome, querySucceeded, inJob, flags, error)); }
+            catch { /* Diagnostics must not own application lifetime. */ }
+        }
         try
         {
-            var alreadyAttempted = string.Equals(
-                Environment.GetEnvironmentVariable(RelaunchAttemptVariable),
-                "1",
-                StringComparison.Ordinal);
-            if (!TryReadCurrentJob(out var isInJob, out var limitFlags)
-                || !ShouldRelaunch(hasIsolatedDataRoot, alreadyAttempted, isInJob, limitFlags))
+            var readable = TryReadCurrentJob(out var isInJob, out var limitFlags);
+            Report("observed", readable, isInJob, limitFlags);
+            if (isReplacement)
             {
-                return false;
+                // A broker being created is not evidence that its application escaped.
+                // Late or still-bound replacements must not compete for the app mutex.
+                var accepted = readable && !isInJob && ConfirmReplacement(attempt!);
+                Report(accepted ? "replacement-confirmed" : "replacement-rejected",
+                    readable, isInJob, limitFlags);
+                return !accepted;
             }
+            if (readable && !ShouldRelaunch(false, false, isInJob, limitFlags)) return false;
 
             var executablePath = Environment.ProcessPath;
             if (string.IsNullOrWhiteSpace(executablePath)) return false;
@@ -38,35 +53,56 @@ internal static class HostJobLifetimeIsolation
                 Environment.GetFolderPath(Environment.SpecialFolder.System),
                 "cmd.exe");
 
-            var previousAttempt = Environment.GetEnvironmentVariable(RelaunchAttemptVariable);
-            Environment.SetEnvironmentVariable(RelaunchAttemptVariable, "1");
-            try
-            {
-                if (!TryCreateWithDesktopShellParent(
-                        commandInterpreter,
-                        BuildBrokerCommandLine(
-                            commandInterpreter,
-                        BuildCommandLine(executablePath, arguments)),
-                        Environment.CurrentDirectory,
-                        out var errorCode))
-                {
-                    Trace.TraceWarning(
-                        "ZGSTokenBar could not detach from its terminating host job (Win32 {0}).",
-                        errorCode);
-                    return false;
-                }
-                return true;
-            }
-            finally
-            {
-                Environment.SetEnvironmentVariable(RelaunchAttemptVariable, previousAttempt);
-            }
+            var errorCode = 0;
+            var detached = RunRelaunchAttempt(token => TryCreateWithDesktopShellParent(
+                commandInterpreter,
+                BuildBrokerCommandLine(commandInterpreter, BuildCommandLine(executablePath, arguments)),
+                Environment.CurrentDirectory,
+                token,
+                out errorCode));
+            Report(detached ? "shell-confirmed" : "shell-failed", readable, isInJob, limitFlags, errorCode);
+            if (detached) return true;
+
+            // Supported breakaway is a fallback when Explorer is unavailable. Windows
+            // rejects this if the containing jobs do not permit it; never change their limits.
+            detached = RunRelaunchAttempt(token => TryCreateWithParent(
+                nint.Zero, executablePath, BuildCommandLine(executablePath, arguments),
+                Environment.CurrentDirectory, token, out errorCode));
+            Report(detached ? "breakaway-confirmed" : "continuing-host-bound",
+                readable, isInJob, limitFlags, errorCode);
+            return detached;
         }
         catch (Exception exception)
         {
             Trace.TraceWarning(
                 "ZGSTokenBar host-job lifetime isolation failed ({0}).",
                 exception.GetType().Name);
+            Report("isolation-error", false, false, 0, exception.HResult);
+            return isReplacement;
+        }
+    }
+
+    internal static bool RunRelaunchAttempt(Func<string, bool> launch, TimeSpan? timeout = null)
+    {
+        var token = Guid.NewGuid().ToString("N");
+        using var ready = new EventWaitHandle(false, EventResetMode.AutoReset, HandshakePrefix + token);
+        using var accepted = new EventWaitHandle(false, EventResetMode.AutoReset, HandshakePrefix + token + ".accepted");
+        if (!launch(token) || !ready.WaitOne(timeout ?? TimeSpan.FromSeconds(5))) return false;
+        accepted.Set();
+        return true;
+    }
+
+    private static bool ConfirmReplacement(string token)
+    {
+        try
+        {
+            using var ready = EventWaitHandle.OpenExisting(HandshakePrefix + token);
+            using var accepted = EventWaitHandle.OpenExisting(HandshakePrefix + token + ".accepted");
+            ready.Set();
+            return accepted.WaitOne(TimeSpan.FromSeconds(5));
+        }
+        catch (WaitHandleCannotBeOpenedException)
+        {
             return false;
         }
     }
@@ -78,8 +114,9 @@ internal static class HostJobLifetimeIsolation
         uint limitFlags) =>
         !hasIsolatedDataRoot
         && !relaunchAlreadyAttempted
-        && isInJob
-        && (limitFlags & KillOnJobClose) != 0;
+        // QueryInformationJobObject(NULL) sees only the nearest job. An outer job
+        // can terminate us even when the nearest job has no KILL_ON_JOB_CLOSE flag.
+        && isInJob;
 
     internal static string BuildCommandLine(
         string executablePath,
@@ -146,6 +183,7 @@ internal static class HostJobLifetimeIsolation
         string executablePath,
         string commandLine,
         string currentDirectory,
+        string attempt,
         out int errorCode)
     {
         errorCode = 0;
@@ -174,6 +212,7 @@ internal static class HostJobLifetimeIsolation
                                 executablePath,
                                 commandLine,
                                 currentDirectory,
+                                attempt,
                                 out errorCode))
                         {
                             return true;
@@ -199,6 +238,7 @@ internal static class HostJobLifetimeIsolation
         string executablePath,
         string commandLine,
         string currentDirectory,
+        string attempt,
         out int errorCode)
     {
         errorCode = 0;
@@ -225,7 +265,7 @@ internal static class HostJobLifetimeIsolation
 
             parentValue = Marshal.AllocHGlobal(nint.Size);
             Marshal.WriteIntPtr(parentValue, parentProcess);
-            if (!UpdateProcThreadAttribute(
+            if (parentProcess != nint.Zero && !UpdateProcThreadAttribute(
                     attributeList,
                     0,
                     ParentProcessAttribute,
@@ -238,15 +278,17 @@ internal static class HostJobLifetimeIsolation
                 return false;
             }
 
-            environment = CreateEnvironmentBlock();
+            environment = CreateEnvironmentBlock(attempt);
 
             var startup = new StartupInformationEx
             {
                 StartupInformation = new StartupInformation
                 {
-                    Size = Marshal.SizeOf<StartupInformationEx>(),
+                    Size = parentProcess != nint.Zero
+                        ? Marshal.SizeOf<StartupInformationEx>()
+                        : Marshal.SizeOf<StartupInformation>(),
                 },
-                AttributeList = attributeList,
+                AttributeList = parentProcess != nint.Zero ? attributeList : nint.Zero,
             };
             if (!CreateProcess(
                     executablePath,
@@ -254,7 +296,8 @@ internal static class HostJobLifetimeIsolation
                     nint.Zero,
                     nint.Zero,
                     false,
-                    ExtendedStartupInformationPresent | CreateUnicodeEnvironment | CreateNoWindow,
+                    (parentProcess != nint.Zero ? ExtendedStartupInformationPresent : CreateBreakawayFromJob)
+                        | CreateUnicodeEnvironment | CreateNoWindow,
                     environment,
                     currentDirectory,
                     ref startup,
@@ -277,11 +320,13 @@ internal static class HostJobLifetimeIsolation
         }
     }
 
-    private static nint CreateEnvironmentBlock()
+    private static nint CreateEnvironmentBlock(string attempt)
     {
         var entries = Environment.GetEnvironmentVariables()
             .Cast<DictionaryEntry>()
+            .Where(entry => !string.Equals(entry.Key.ToString(), RelaunchAttemptVariable, StringComparison.OrdinalIgnoreCase))
             .Select(entry => $"{entry.Key}={entry.Value}")
+            .Append($"{RelaunchAttemptVariable}={attempt}")
             .OrderBy(entry => entry, StringComparer.OrdinalIgnoreCase);
         return Marshal.StringToHGlobalUni(string.Join('\0', entries) + "\0\0");
     }
@@ -426,3 +471,6 @@ internal static class HostJobLifetimeIsolation
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CloseHandle(nint handle);
 }
+
+internal sealed record HostJobIsolationDiagnostic(
+    string Outcome, bool QuerySucceeded, bool IsInJob, uint LimitFlags, int ErrorCode);

@@ -10,6 +10,8 @@ Local Codex rollout logs are scanned on the machine, and only bounded date/model
 
 Application state is stored under `%APPDATA%\ZGSTokenBar`. Explicit plugin credential slots use Windows Credential Manager targets under `ZGSTokenBar:plugin:<plugin-id>:<slot>`. The current-user named-pipe API never returns credentials.
 
+Desktop startup isolation diagnostics are stored only under `%LOCALAPPDATA%\ZGSTokenBar\diagnostics\startup-isolation.jsonl`, rotated at approximately 64 KiB with one previous file. They contain timestamps, process/module IDs, isolation outcomes, Job flags and numeric error codes, never command lines, environment variables, account data or exception messages. Custom-data-directory test instances do not write this default log.
+
 Process plugins are installed from either an explicit local `.zgsplugin` package with an explicit digest or a package embedded in the application build. The bundled DeepSeek package is installed only when its version is missing; an existing same-version directory is never overwritten. Archive paths, sizes, declared files, hashes, schemas, timeouts, and post-install drift are validated. Plugin processes are attached to a kill-on-close Job Object, but they still run with the current user's permissions; install only trusted packages.
 
 Disabled Providers make no Provider requests. The public build contains no organization-private endpoints, credentials, deployment topology, or machine-specific paths.

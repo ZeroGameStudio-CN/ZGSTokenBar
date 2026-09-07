@@ -19,7 +19,8 @@ internal static class Program
         var allowGlobalStartupRegistration = dataDirectory is null;
         if (HostJobLifetimeIsolation.TryRelaunchOutsideTerminatingJob(
                 hasIsolatedDataRoot: !allowGlobalStartupRegistration,
-                arguments: RelaunchArguments(args)))
+                arguments: RelaunchArguments(args),
+                report: StartupIsolationLog.WriteDefault))
         {
             return;
         }

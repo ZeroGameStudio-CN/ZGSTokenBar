@@ -16,6 +16,8 @@ using ZGSTokenBar.Host;
 using ZGSTokenBar.PluginSdk;
 using ZGSTokenBar.Plugin.AiGatewayObserver;
 
+if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJobExitCode;
+
 if (args.Length == 2
     && string.Equals(args[0], "--host-job-lifetime-probe", StringComparison.OrdinalIgnoreCase))
 {
@@ -349,6 +351,7 @@ var tests = new (string Name, Action Run)[]
     ("Settings data directory override", TestSettingsDataDirectoryOverride),
     ("Windows startup registration policy", TestWindowsStartupRegistrationPolicy),
     ("Host job lifetime isolation policy", TestHostJobLifetimeIsolationPolicy),
+    ("Host job exit survival and diagnostics", HostJobLifetimeFixture.Test),
     ("Release update discovery", TestReleaseUpdateDiscovery),
     ("Settings v2 plugin migration", TestSettingsV2PluginMigration),
     ("Provider local credential auto-discovery", TestProviderLocalCredentialAutoDiscovery),
@@ -13382,9 +13385,9 @@ static void TestHostJobLifetimeIsolationPolicy()
         HostJobLifetimeIsolation.ShouldRelaunch(false, false, false, terminatingJob),
         "a process outside a job starts directly");
     Equal(
-        false,
+        true,
         HostJobLifetimeIsolation.ShouldRelaunch(false, false, true, 0),
-        "a non-terminating job retains ownership");
+        "a nearest job without kill limits cannot prove its outer jobs are safe");
     Equal(
         "\"C:\\Program Files\\ZGS\\ZGSTokenBar.exe\" \"--settings\" \"value with spaces\" \"quoted\\\"value\" \"trailing\\\\\"",
         HostJobLifetimeIsolation.BuildCommandLine(

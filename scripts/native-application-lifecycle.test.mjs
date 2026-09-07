@@ -71,12 +71,16 @@ test('normal desktop startup escapes a terminating host job before touching pers
     'host-job isolation must precede the single-instance decision');
   assert.match(program, /hasIsolatedDataRoot: !allowGlobalStartupRegistration/);
   assert.match(program, /RelaunchArguments\(args\)/);
+  assert.match(program, /report: StartupIsolationLog.WriteDefault/);
   assert.match(hostJobIsolation, /KillOnJobClose/);
   assert.match(hostJobIsolation, /Process\.GetProcessesByName\("explorer"\)/);
   assert.match(hostJobIsolation, /ParentProcessAttribute/);
   assert.match(hostJobIsolation, /ExtendedStartupInformationPresent/);
   assert.match(hostJobIsolation, /CreateUnicodeEnvironment/);
   assert.match(hostJobIsolation, /CreateNoWindow/);
+  assert.match(hostJobIsolation, /CreateBreakawayFromJob/);
+  assert.match(hostJobIsolation, /readable && !isInJob && ConfirmReplacement/);
+  assert.match(hostJobIsolation, /ready.WaitOne/);
   assert.match(hostJobIsolation, /Environment\.GetEnvironmentVariables\(\)/);
   assert.match(hostJobIsolation, /BuildCommandLine\(executablePath, arguments\)/);
   assert.match(hostJobIsolation, /CloseHandle\(process\.ThreadHandle\);[\s\S]*?CloseHandle\(process\.ProcessHandle\);/);
