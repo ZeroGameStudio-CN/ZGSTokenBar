@@ -1,5 +1,7 @@
 # Development
 
+Default agent closeout and standing local-update authorization are defined in [AGENTS.md](../AGENTS.md). This page owns the technical build and verification details.
+
 ## Requirements
 
 - Windows 10 or 11
