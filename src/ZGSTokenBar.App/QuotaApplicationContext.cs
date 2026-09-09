@@ -152,7 +152,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             RequestRadarPreview(request.Provider, request.SurfaceId);
         _bar.SystemUsageDetailsRequested += (_, _) => _ = RefreshSystemUsageDetailsAsync();
         _bar.CodexEconomyStatusRefreshRequested += (_, _) => RefreshBarCodexEconomyStatus();
-        _bar.CodexEconomyModeRequested += (_, request) => ApplyRecommendedCodexEconomyMode(request.Mode);
+        _bar.CodexEconomyInstallRequested += (_, _) => InstallRecommendedCodexAssistant();
         _bar.MiniAreaLayoutChanged += (_, _) => SaveMiniAreaLayout();
         _bar.MiniAreaOrderChanged += (_, _) => SaveMiniAreaOrder();
         _bar.RadarModelGroupsChanged += (_, _) => SaveRadarModelGroups();
@@ -453,7 +453,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             codexEconomyStatus: InspectRecommendedCodexEconomyProfile(economyProfiles),
             codexEconomyProfiles: economyProfiles,
             inspectCodexEconomy: _codexEconomyRouter.Inspect,
-            setCodexEconomyMode: _codexEconomyRouter.SetMode);
+            installCodexEconomy: _codexEconomyRouter.Install);
         _settingsDialog = dialog;
         dialog.RadarTestNotificationRequested += (_, _) => ShowRadarTestNotification();
         dialog.CodexEconomyStatusChanged += (_, _) => RefreshBarCodexEconomyStatus();
@@ -538,13 +538,13 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         catch { _bar.SetCodexEconomyStatus(null); }
     }
 
-    private void ApplyRecommendedCodexEconomyMode(CodexEconomyMode mode)
+    private void InstallRecommendedCodexAssistant()
     {
         if (_quitting || _bar.IsDisposed) return;
         try
         {
             var profile = DefaultCodexEconomyProfile();
-            var applied = _codexEconomyRouter.SetMode(profile, mode);
+            var applied = _codexEconomyRouter.Install(profile);
             _bar.SetCodexEconomyStatus(applied);
             _settingsDialog?.RefreshCodexEconomyStatus();
         }

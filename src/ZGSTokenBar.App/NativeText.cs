@@ -100,103 +100,52 @@ internal sealed class NativeText
     public string ClaudeRefreshHint => T(
         "默认开启；关闭后由 Claude Code 负责刷新。",
         "On by default; disable to leave refresh to Claude Code.");
-    public string CodexEconomyBarTitle => T("Bar 快捷组件", "Bar quick control");
+    public string CodexEconomyBarTitle => T("Bar 助手入口", "Bar assistant shortcut");
     public string CodexEconomyBarHint => T(
-        "在 Bar 显示可独立折叠、排序并快速切换关闭 / 询问 / 开启的组件。",
-        "Show an independently collapsible and reorderable Bar control for switching Off / Ask / On.");
-    public string CodexEconomyBarAreaTitle => T("经济", "Economy");
-    public string CodexEconomyBarMenuTitle => T("经济模式", "Economy mode");
-    public string CodexEconomyBarMenuHint => T("仅影响后续新任务", "Affects new tasks only");
-    public string CodexEconomyBarModeDescription(CodexEconomyMode mode) => mode switch
-    {
-        CodexEconomyMode.Off => T("不自动使用经济子代理", "Don't auto-use economy subagents"),
-        CodexEconomyMode.Ask => T("使用前先询问", "Ask before using one"),
-        CodexEconomyMode.On => T("优先使用 Luna Max", "Prefer Luna Max"),
-        _ => string.Empty,
-    };
-    public string CodexEconomyDialogTitle => T("Codex 经济模式管理", "Manage Codex economy mode");
+        "在 Bar 显示 Luna 助手状态与安装/更新入口。",
+        "Show the Luna assistant status and install/update shortcut in the Bar.");
+    public string CodexEconomyBarAreaTitle => T("助手", "Luna");
+    public string CodexEconomyBarMenuTitle => T("Luna 执行助手", "Luna task assistant");
+    public string CodexEconomyBarMenuHint => T("只确认本次委托", "Confirm this task only");
+    public string CodexEconomyDialogTitle => T("Luna 执行助手", "Luna task assistant");
     public string CodexEconomyDialogDescription => T(
-        "每次应用只更新下方明确选中的 Codex Profile，并仅影响后续新任务。",
-        "Each Apply updates only the explicitly selected Codex profile below and affects new tasks only.");
+        "每个新任务先做简短判断；适合时询问是否委托 Luna Max，由主模型审核。",
+        "Assess each new task briefly. Ask before using Luna Max; keep decisions and review in the main agent.");
+    public string CodexEconomyTaskHint => T(
+        "只确认本次任务，不更改主模型或全局子代理默认值。更新后请重新加载 Codex。",
+        "Consent applies only to this task. Root and global child defaults stay unchanged. Reload Codex after updating.");
     public string CodexEconomyProfileLabel => "Codex Profile";
-    public string CodexEconomyProfileHint => T(
-        "选择要读取和管理的本机 Codex Home。",
-        "Choose the local Codex Home to inspect and manage.");
-    public string CodexEconomyModeLabel => T("模式", "Mode");
-    public string CodexEconomyModeHint => T(
-        "选择后不会立即写入；只有点击“应用”才会更改配置。",
-        "Choosing a mode does not write immediately; configuration changes only after Apply.");
+    public string CodexEconomyProfileHint => T("选择要安装助手的本机 Codex Home。", "Choose the local Codex Home for the assistant.");
     public string CodexEconomyCurrentStatus => T("当前状态", "Current status");
-    public string CodexEconomyConfigPath => T("基础配置路径", "Base config path");
-    public string CodexEconomySkillPath => T("用户级 Skill 路径", "User-level Skill path");
-    public string CodexEconomyApply => T("应用", "Apply");
+    public string CodexEconomyConfigPath => T("配置路径", "Config path");
+    public string CodexEconomySkillPath => T("Skill 路径", "Skill path");
+    public string CodexEconomyApply => T("安装/更新", "Install / update");
     public string CodexEconomyApplyHint => T(
-        "将所选模式写入当前 Profile，并立即回读验证。",
-        "Write the selected mode to the current profile and immediately verify it by reading it back.");
-    public string CodexEconomyNoProfiles => T(
-        "未发现可管理的 Codex Profile。",
-        "No manageable Codex profiles were found.");
-    public string CodexEconomyReadFailed(string detail) => T(
-        $"无法读取当前 Profile：{detail}",
-        $"Could not inspect the current profile: {detail}");
-    public string CodexEconomyApplyFailedTitle => T("未能应用 Codex 经济模式", "Codex economy mode was not applied");
+        "安装助手并迁移本工具的旧配置；保留手动设置。",
+        "Install the assistant and migrate this tool's legacy configuration; preserve manual settings.");
+    public string CodexEconomyNoProfiles => T("未发现可管理的 Codex Profile。", "No manageable Codex profiles were found.");
+    public string CodexEconomyReadFailed(string detail) => T($"无法读取当前 Profile：{detail}", $"Could not inspect the current profile: {detail}");
+    public string CodexEconomyApplyFailedTitle => T("未能更新 Luna 助手", "Luna assistant was not updated");
     public string CodexEconomyApplyFailed(string detail) => T(
-        $"目标未通过写入后回读验证。请检查路径和配置后重试。\n\n{detail}",
-        $"The target did not pass post-write read-back verification. Check the paths and configuration, then try again.\n\n{detail}");
+        $"请检查目标路径或配置冲突后重试。\n\n{detail}",
+        $"Check the target path or configuration conflict, then try again.\n\n{detail}");
     public string CodexEconomyReadBackMismatch(CodexEconomyMode expected, CodexEconomyMode actual) => T(
-        $"回读模式不匹配：期望 {CodexEconomyModeName(expected)}，实际 {CodexEconomyModeName(actual)}。",
-        $"Read-back mode mismatch: expected {CodexEconomyModeName(expected)}, got {CodexEconomyModeName(actual)}.");
-    public string CodexEconomyProfileChoice(CodexEconomyProfile profile) =>
-        $"{profile.DisplayName} — {profile.HomeDirectory}";
+        $"回读状态不匹配：期望 {CodexEconomyModeName(expected)}，实际 {CodexEconomyModeName(actual)}。",
+        $"Read-back state mismatch: expected {CodexEconomyModeName(expected)}, got {CodexEconomyModeName(actual)}.");
+    public string CodexEconomyProfileChoice(CodexEconomyProfile profile) => $"{profile.DisplayName} — {profile.HomeDirectory}";
     public string CodexEconomyModeName(CodexEconomyMode mode) => mode switch
     {
-        CodexEconomyMode.Off => T("关闭", "Off"),
-        CodexEconomyMode.Ask => T("询问", "Ask"),
-        CodexEconomyMode.On => T("开启", "On"),
-        CodexEconomyMode.Inconsistent => T("配置冲突", "Inconsistent"),
-        _ => T("未配置", "Unconfigured"),
+        CodexEconomyMode.Task => T("逐任务询问", "Per-task confirmation"),
+        CodexEconomyMode.Off or CodexEconomyMode.Ask or CodexEconomyMode.On => T("旧配置待迁移", "Legacy setup"),
+        CodexEconomyMode.Inconsistent => T("配置冲突", "Configuration conflict"),
+        _ => T("未配置", "Not configured"),
     };
-    public string CodexEconomyModeDescription(CodexEconomyMode mode) => mode switch
-    {
-        CodexEconomyMode.Off => T(
-            "禁用该 Skill，并移除本工具管理的子代理默认值。",
-            "Disable the Skill and remove subagent defaults managed by this tool."),
-        CodexEconomyMode.Ask => T(
-            "启用该 Skill，但不设置默认子代理模型。",
-            "Enable the Skill without setting a default subagent model."),
-        CodexEconomyMode.On => T(
-            "启用该 Skill，并为后续子代理设置 Luna Max 默认值。",
-            "Enable the Skill and set Luna Max defaults for future subagents."),
-        _ => string.Empty,
-    };
-    public string CodexEconomyInstalled(bool installed) => installed
-        ? T("已安装", "Installed")
-        : T("未安装", "Not installed");
-    public string CodexEconomyNamedLayers(bool found) => found
-        ? T("命名层：覆盖警告", "Named-layer warning")
-        : T("无命名层", "No named layers");
-    public string CodexEconomyNamedLayersDetail(bool found) => found
-        ? T(
-            "检测到顶层 *.config.toml；使用命名配置层的任务可能覆盖基础 config.toml。",
-            "Top-level *.config.toml files were found; tasks using a named layer may override the base config.toml.")
-        : T(
-            "当前 Codex Home 未检测到顶层 *.config.toml。",
-            "No top-level *.config.toml files were detected in this Codex Home.");
-    public string CodexEconomyNamedLayersUnknown => T(
-        "命名配置层状态未知。",
-        "Named config layer status is unavailable.");
+    public string CodexEconomyInstalled(bool installed) => installed ? T("已安装", "Installed") : T("需安装/更新", "Install/update required");
     public string CodexEconomyStatusSummary(CodexEconomyStatus? status)
     {
-        if (status is null)
-        {
-            return T(
-                "模式：不可用 · Skill：未知 · 命名配置层：未知",
-                "Mode: unavailable · Skill: unknown · named layers: unknown");
-        }
-
-        return T(
-            $"模式：{CodexEconomyModeName(status.Mode)} · Skill：{CodexEconomyInstalled(status.SkillInstalled)} · {CodexEconomyNamedLayers(status.HasNamedConfigLayers)}",
-            $"Mode: {CodexEconomyModeName(status.Mode)} · Skill: {CodexEconomyInstalled(status.SkillInstalled)} · {CodexEconomyNamedLayers(status.HasNamedConfigLayers)}");
+        if (status is null) return T("状态暂不可用", "Status unavailable");
+        if (status.Ready) return T("已就绪 · 逐任务询问", "Ready · Per-task confirmation");
+        return $"{CodexEconomyModeName(status.Mode)} · {CodexEconomyInstalled(status.SkillInstalled)}";
     }
     public string Save => T("保存", "Save");
     public string Cancel => T("取消", "Cancel");

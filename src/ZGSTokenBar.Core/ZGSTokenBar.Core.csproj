@@ -8,7 +8,6 @@
   <ItemGroup>
     <EmbeddedResource Include="Skills\sol-luna-delegation\SKILL.md" LogicalName="ZGSTokenBar.Core.Skills.sol-luna-delegation.SKILL.md" />
     <EmbeddedResource Include="Skills\sol-luna-delegation\agents\openai.yaml" LogicalName="ZGSTokenBar.Core.Skills.sol-luna-delegation.agents.openai.yaml" />
-    <EmbeddedResource Include="Skills\sol-luna-delegation\scripts\set_economy_mode.py" LogicalName="ZGSTokenBar.Core.Skills.sol-luna-delegation.scripts.set_economy_mode.py" />
     <EmbeddedResource Include="Skills\sol-luna-delegation\scripts\verify_subagent_runtime.py" LogicalName="ZGSTokenBar.Core.Skills.sol-luna-delegation.scripts.verify_subagent_runtime.py" />
   </ItemGroup>
 </Project>
