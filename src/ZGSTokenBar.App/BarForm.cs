@@ -32,7 +32,6 @@ internal sealed class BarForm : Form
             HoverTarget.MiniCollapse,
             HoverTarget.MiniReorder,
             HoverTarget.Settings,
-            HoverTarget.CodexEconomy,
             HoverTarget.QuotaWindow,
             HoverTarget.SystemUsage,
             HoverTarget.CodexAccounts,
@@ -96,8 +95,6 @@ internal sealed class BarForm : Form
     private string[] _miniAreaOrder;
     private string _codexMiniDisplayMode;
     private bool _showSystemMetrics;
-    private bool _showCodexEconomyBar;
-    private CodexEconomyStatus? _codexEconomyStatus;
     private CodexAccountInfo[] _codexAccounts;
     private QuotaCard[] _visibleCards = [];
     private TaskbarMiniAreaContent[] _taskbarContentAreas = [];
@@ -106,7 +103,6 @@ internal sealed class BarForm : Form
     private RectangleF _refreshBounds;
     private RectangleF _settingsBounds;
     private RectangleF _systemUsageBounds;
-    private RectangleF _codexEconomyBounds;
     private HoverTarget _hoverTarget;
     private HoverTarget _pressedTarget;
     private bool _refreshing;
@@ -177,7 +173,6 @@ internal sealed class BarForm : Form
     private TaskbarHintPopoverForm? _hintPopover;
     private ProviderRadarPopoverForm? _radarPopover;
     private SystemUsagePopoverForm? _systemUsagePopover;
-    private ContextMenuStrip? _codexEconomyMenu;
     private RadarViewState _radarState = new(null, null, false, null);
     private HashSet<ProviderKind> _radarProviders;
     private IReadOnlyDictionary<string, QuotaPaceEstimate> _quotaPaceEstimates =
@@ -204,7 +199,6 @@ internal sealed class BarForm : Form
     public event EventHandler<WindowPlacementCommit>? PlacementCommitted;
     public event EventHandler<RadarPreviewRequest>? RadarPreviewRequested;
     public event EventHandler? SystemUsageDetailsRequested;
-    public event EventHandler? CodexEconomyStatusRefreshRequested;
     public event EventHandler? MiniAreaLayoutChanged;
     public event EventHandler? MiniAreaOrderChanged;
     public event EventHandler? RadarModelGroupsChanged;
@@ -250,7 +244,6 @@ internal sealed class BarForm : Form
         SetRadarModelGroups(settings.RadarModelGroups);
         _codexMiniDisplayMode = CodexMiniDisplayModes.Normalize(settings.CodexMiniDisplayMode);
         _showSystemMetrics = settings.IsPluginEnabled("zgstokenbar.metrics.system", true);
-        _showCodexEconomyBar = settings.EnableCodexEconomyBar;
         _animationsEnabled = settings.EnableAnimations && SystemInformation.IsMenuAnimationEnabled;
         _radarProviders = settings.EnableRadar
             ? new HashSet<ProviderKind>(radarProviders ?? [])
@@ -369,34 +362,10 @@ internal sealed class BarForm : Form
         RefreshCodexAccountsPopover();
         Invalidate();
     }
-    internal ContextMenuStrip CreateCodexEconomyMenuForAcceptance()
-    {
-        if (!_renderOnly) throw new InvalidOperationException("Economy menu inspection is render-only.");
-        return CreateCodexEconomyMenu();
-    }
 
-    internal (RectangleF Button, RectangleF Collapse, RectangleF Reorder, RectangleF Resize)
-        GetCodexEconomyHitBoundsForAcceptance()
-    {
-        if (!_renderOnly) throw new InvalidOperationException("Economy hit testing is render-only.");
-        var target = _taskbarAreaBounds.Single(item => string.Equals(
-            item.AreaId,
-            MiniAreaIds.CodexEconomy,
-            StringComparison.Ordinal));
-        return (_codexEconomyBounds, target.HandleBounds, target.ReorderBounds, target.ResizeBounds);
-    }
-
-    internal bool IsCodexEconomyButtonPointForAcceptance(PointF point)
-    {
-        if (!_renderOnly) throw new InvalidOperationException("Economy hit testing is render-only.");
-        return CodexEconomyTargetAt(point);
-    }
-
-    public void SetCodexEconomyStatus(CodexEconomyStatus? status)
-    {
-        _codexEconomyStatus = status;
-        Invalidate();
-    }
+    internal RectangleF SystemUsageBoundsForAcceptance => _renderOnly
+        ? _systemUsageBounds
+        : throw new InvalidOperationException("System usage hit testing is render-only.");
 
     public void SetQuotaPaceEstimates(IReadOnlyDictionary<string, QuotaPaceEstimate> estimates)
     {
@@ -488,11 +457,6 @@ internal sealed class BarForm : Form
     internal bool SetMiniAreaFromCommand(string areaId, bool? collapsed, int? width)
     {
         if (!VisibleMiniAreaIds().Contains(areaId, StringComparer.Ordinal)) return false;
-        if (string.Equals(areaId, MiniAreaIds.CodexEconomy, StringComparison.Ordinal)
-            && width is not null)
-        {
-            return false;
-        }
         return ApplyMiniAreaLayout(areaId, collapsed, width, preserveAnchor: true);
     }
 
@@ -540,9 +504,7 @@ internal sealed class BarForm : Form
                     layout.Collapsed,
                     layout.Width ?? area.DefaultWidth,
                     TaskbarMiniLayoutMath.MinimumAreaContentWidthFor(area.AreaId),
-                    string.Equals(area.AreaId, MiniAreaIds.CodexEconomy, StringComparison.Ordinal)
-                        ? TaskbarMiniLayoutMath.CodexEconomyContentWidth
-                        : TaskbarMiniLayoutMath.MaximumAreaContentWidth);
+                    TaskbarMiniLayoutMath.MaximumAreaContentWidth);
             })
             .ToArray();
 
@@ -741,12 +703,10 @@ internal sealed class BarForm : Form
         var previousMiniAreaOrder = _miniAreaOrder;
         var previousCodexMiniDisplayMode = _codexMiniDisplayMode;
         var previousShowSystemMetrics = _showSystemMetrics;
-        var previousShowCodexEconomyBar = _showCodexEconomyBar;
         _miniAreaLayouts = AppSettings.CopyMiniAreaLayouts(settings.MiniAreaLayouts);
         _miniAreaOrder = AppSettings.CopyMiniAreaOrder(settings.MiniAreaOrder);
         _codexMiniDisplayMode = CodexMiniDisplayModes.Normalize(settings.CodexMiniDisplayMode);
         _showSystemMetrics = settings.IsPluginEnabled("zgstokenbar.metrics.system", true);
-        _showCodexEconomyBar = settings.EnableCodexEconomyBar;
         _placementCoordinator.Reload(settings);
         WindowPlacementActivation? activation = null;
         if (_placementCoordinator.ActiveTopology is { } topology)
@@ -763,11 +723,9 @@ internal sealed class BarForm : Form
             || !MiniAreaLayoutsEqual(previousMiniAreaLayouts, _miniAreaLayouts)
             || !previousMiniAreaOrder.SequenceEqual(_miniAreaOrder, StringComparer.Ordinal)
             || !string.Equals(previousCodexMiniDisplayMode, _codexMiniDisplayMode, StringComparison.Ordinal)
-            || previousShowSystemMetrics != _showSystemMetrics
-            || previousShowCodexEconomyBar != _showCodexEconomyBar)
+            || previousShowSystemMetrics != _showSystemMetrics)
         {
             HidePopovers();
-            _codexEconomyMenu?.Close();
         }
         if (!settings.EnableRadar) SetRadarProviders([]);
         _animationsEnabled = settings.EnableAnimations && SystemInformation.IsMenuAnimationEnabled;
@@ -1265,7 +1223,6 @@ internal sealed class BarForm : Form
         _taskbarPluginBounds.Clear();
         _taskbarCodexAccountBounds.Clear();
         _taskbarAreaBounds.Clear();
-        _codexEconomyBounds = RectangleF.Empty;
         var x = (float)TaskbarMiniLayoutMath.OuterPadding;
         foreach (var area in _visibleTaskbarAreas)
         {
@@ -1280,9 +1237,7 @@ internal sealed class BarForm : Form
                 areaBounds,
                 handleBounds,
                 TaskbarReorderHandleBounds(areaBounds),
-                string.Equals(area.AreaId, MiniAreaIds.CodexEconomy, StringComparison.Ordinal)
-                    ? RectangleF.Empty
-                    : ResizeBounds(areaBounds, layout.Collapsed),
+                ResizeBounds(areaBounds, layout.Collapsed),
                 layout.Collapsed,
                 Reorderable: true);
             _taskbarAreaBounds.Add(target);
@@ -1397,11 +1352,6 @@ internal sealed class BarForm : Form
                 _systemUsageBounds = bounds;
                 DrawSystemUsageCard(graphics, bounds, layout.Collapsed);
             }
-            else if (string.Equals(area.AreaId, MiniAreaIds.CodexEconomy, StringComparison.Ordinal))
-            {
-                _codexEconomyBounds = bounds;
-                DrawCodexEconomyCard(graphics, bounds, layout.Collapsed);
-            }
             DrawTaskbarCollapseHandle(graphics, target);
             DrawTaskbarReorderGrip(graphics, target);
             DrawTaskbarResizeGrip(graphics, target);
@@ -1415,10 +1365,6 @@ internal sealed class BarForm : Form
             if (string.Equals(area.AreaId, MiniAreaIds.SystemMetrics, StringComparison.Ordinal))
             {
                 _systemUsageBounds = RectangleF.Empty;
-            }
-            else if (string.Equals(area.AreaId, MiniAreaIds.CodexEconomy, StringComparison.Ordinal))
-            {
-                _codexEconomyBounds = RectangleF.Empty;
             }
             TraceTaskbarRenderFailure(area.AreaId, exception);
             try
@@ -2205,51 +2151,6 @@ internal sealed class BarForm : Form
     private static void TrimToCount<T>(List<T> items, int count)
     {
         if (items.Count > count) items.RemoveRange(count, items.Count - count);
-    }
-
-    private void DrawCodexEconomyCard(Graphics graphics, RectangleF bounds, bool collapsed)
-    {
-        var mode = _codexEconomyStatus?.Mode ?? CodexEconomyMode.Unconfigured;
-        var color = mode switch
-        {
-            CodexEconomyMode.Task when _codexEconomyStatus?.Ready == true => Color.FromArgb(52, 211, 153),
-            CodexEconomyMode.Inconsistent => Color.FromArgb(251, 113, 133),
-            _ => Color.FromArgb(148, 163, 184),
-        };
-        var hover = HoverProgress(HoverTarget.CodexEconomy);
-        var pressed = _pressedTarget == HoverTarget.CodexEconomy;
-        var buttonBounds = RectangleF.Inflate(bounds, -1, -1);
-        var fillColor = MixColor(
-            _backgroundTheme.QuotaGroup,
-            Color.FromArgb(37, 55, 82),
-            hover * .72f);
-        if (pressed) fillColor = MixColor(fillColor, Color.FromArgb(49, 46, 129), .55f);
-        using var path = RoundedRectangle(buttonBounds, 6);
-        using var fill = new SolidBrush(fillColor);
-        using var border = new Pen(MixColor(
-            Color.FromArgb(64, 100, 116, 139),
-            Color.FromArgb(132, 147, 197, 253),
-            hover));
-        graphics.FillPath(fill, path);
-        graphics.DrawPath(border, path);
-        using var accent = new SolidBrush(color);
-        using var primary = new SolidBrush(Color.FromArgb(226, 232, 240));
-        var label = collapsed
-            ? "L"
-            : _text.CodexEconomyBarAreaTitle;
-        var labelWidth = Math.Min(
-            Math.Max(1, bounds.Width - 18),
-            MeasureWidth(graphics, label, _badgeFont) + 4);
-        var contentWidth = 6 + 4 + labelWidth;
-        var contentLeft = bounds.Left + Math.Max(4, (bounds.Width - contentWidth) / 2);
-        graphics.FillEllipse(accent, contentLeft, bounds.Top + (bounds.Height - 6) / 2, 6, 6);
-        DrawString(
-            graphics,
-            label,
-            _badgeFont,
-            primary,
-            new RectangleF(contentLeft + 10, bounds.Top, labelWidth, bounds.Height),
-            StringAlignment.Center);
     }
 
     private RectangleF DrawTaskbarProviderLogo(
@@ -3854,12 +3755,11 @@ internal sealed class BarForm : Form
             return;
         }
         _hoverReorderAreaId = null;
-        var economyTarget = CodexEconomyTargetAt(logical);
-        var systemUsageTarget = !economyTarget && SystemUsageTargetAt(logical);
+        var systemUsageTarget = SystemUsageTargetAt(logical);
         var miniAreaTarget = TaskbarCollapseTargetAt(logical);
         var miniCollapseTarget = miniAreaTarget is not null;
         _hoverMiniAreaId = miniAreaTarget?.AreaId;
-        var radarTarget = !economyTarget && !systemUsageTarget && !miniCollapseTarget
+        var radarTarget = !systemUsageTarget && !miniCollapseTarget
             ? TaskbarRadarTargetAt(logical)
             : null;
         var codexAccountTarget = radarTarget is null && !systemUsageTarget && !miniCollapseTarget
@@ -3879,7 +3779,7 @@ internal sealed class BarForm : Form
             && pluginTarget is null && !miniCollapseTarget
             ? TaskbarQuotaTargetAt(logical)
             : null;
-        if (economyTarget || systemUsageTarget || miniCollapseTarget) quotaTarget = null;
+        if (systemUsageTarget || miniCollapseTarget) quotaTarget = null;
         UpdateSystemUsageHover(systemUsageTarget);
         UpdateRadarHover(radarTarget);
         UpdateCodexAccountsHover(codexAccountTarget);
@@ -3888,8 +3788,6 @@ internal sealed class BarForm : Form
                 ? HoverTarget.Refresh
             : miniCollapseTarget
                 ? HoverTarget.MiniCollapse
-            : economyTarget
-                ? HoverTarget.CodexEconomy
             : _settingsBounds.Contains(logical)
                 ? HoverTarget.Settings
                 : codexAccountTarget is not null
@@ -4062,11 +3960,6 @@ internal sealed class BarForm : Form
         if (TaskbarCollapseTargetAt(logical) is { } miniArea)
         {
             ToggleMiniAreaCollapsed(miniArea.AreaId);
-            return;
-        }
-        if (CodexEconomyTargetAt(logical))
-        {
-            ShowCodexEconomyMenu();
             return;
         }
         if (SystemUsageTargetAt(logical))
@@ -4657,97 +4550,6 @@ internal sealed class BarForm : Form
             return;
         }
         ShowSystemUsagePopover(pinned: true);
-    }
-
-    private void ShowCodexEconomyMenu()
-    {
-        CodexEconomyStatusRefreshRequested?.Invoke(this, EventArgs.Empty);
-        _codexEconomyMenu?.Dispose();
-        var menu = CreateCodexEconomyMenu();
-        _codexEconomyMenu = menu;
-        menu.Show(this, PointToClient(Cursor.Position));
-    }
-
-    private ContextMenuStrip CreateCodexEconomyMenu()
-    {
-        var menuWidth = Scale(232);
-        var surface = _backgroundTheme.Popover;
-        var hover = MixColor(surface, Color.FromArgb(37, 55, 82), .84f);
-        var border = MixColor(surface, Color.FromArgb(100, 116, 139), .62f);
-        var text = Color.FromArgb(226, 232, 240);
-        var muted = Color.FromArgb(148, 163, 184);
-        var titleFont = new Font("Segoe UI", 10.5f * _scale, FontStyle.Bold, GraphicsUnit.Pixel);
-        var descriptionFont = new Font("Segoe UI", 9f * _scale, FontStyle.Regular, GraphicsUnit.Pixel);
-        var renderer = new CodexEconomyMenuRenderer(surface, hover, border, text, muted, _scale);
-        var menu = new ContextMenuStrip
-        {
-            AutoSize = false,
-            Width = menuWidth,
-            BackColor = surface,
-            ForeColor = text,
-            Font = titleFont,
-            ShowImageMargin = false,
-            ShowCheckMargin = false,
-            Padding = new Padding(Scale(4)),
-            Renderer = renderer,
-            AccessibleName = _text.CodexEconomyBarMenuTitle,
-        };
-        menu.Disposed += (_, _) =>
-        {
-            titleFont.Dispose();
-            descriptionFont.Dispose();
-        };
-        menu.Items.Add(new CodexEconomyMenuHeaderItem(
-            _text.CodexEconomyBarMenuTitle, _text.CodexEconomyBarMenuHint, titleFont, descriptionFont)
-        {
-            AutoSize = false,
-            Width = menuWidth - menu.Padding.Horizontal,
-            Height = Scale(42),
-            Tag = "bar.economy.header",
-        });
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add(new ToolStripMenuItem(_text.CodexEconomyStatusSummary(_codexEconomyStatus))
-        {
-            AutoSize = false,
-            Width = menuWidth - menu.Padding.Horizontal,
-            Height = Scale(32),
-            Enabled = false,
-            Tag = "bar.economy.status",
-        });
-        var refresh = new ToolStripMenuItem(_text.CodexEconomyRefresh)
-        {
-            AutoSize = false,
-            Width = menuWidth - menu.Padding.Horizontal,
-            Height = Scale(32),
-            Tag = "bar.economy.refresh",
-        };
-        refresh.Click += (_, _) => DismissCodexEconomyMenuAndRequestRefresh(menu);
-        menu.Items.Add(refresh);
-        var settings = new ToolStripMenuItem(_text.SettingsTitle)
-        {
-            AutoSize = false,
-            Width = menuWidth - menu.Padding.Horizontal,
-            Height = Scale(32),
-        };
-        settings.Click += (_, _) => SettingsRequested?.Invoke(this, EventArgs.Empty);
-        menu.Items.Add(settings);
-        menu.Height = menu.Items.Cast<ToolStripItem>().Sum(item => item.Height) + menu.Padding.Vertical;
-        void ApplyRegion() => renderer.ApplyRoundedRegion(menu);
-        menu.HandleCreated += (_, _) => ApplyRegion();
-        menu.SizeChanged += (_, _) => ApplyRegion();
-        ApplyRegion();
-        return menu;
-    }
-
-    private void DismissCodexEconomyMenuAndRequestRefresh(ContextMenuStrip menu)
-    {
-        menu.Close(ToolStripDropDownCloseReason.ItemClicked);
-        if (IsDisposed || Disposing || !IsHandleCreated) return;
-        BeginInvoke(new Action(() =>
-        {
-            if (IsDisposed || Disposing) return;
-            CodexEconomyStatusRefreshRequested?.Invoke(this, EventArgs.Empty);
-        }));
     }
 
     private void ShowSystemUsagePopover(bool pinned)
@@ -5347,10 +5149,6 @@ internal sealed class BarForm : Form
             .Select(TaskbarMiniAreaContent.ForGroup)
             .Concat(_pluginMiniCards.Select(TaskbarMiniAreaContent.ForPlugin))
             .ToList();
-        if (_showCodexEconomyBar)
-        {
-            defaultAreas.Add(TaskbarMiniAreaContent.ForCodexEconomy(_text.CodexEconomyBarAreaTitle));
-        }
         if (_showSystemMetrics)
         {
             defaultAreas.Add(TaskbarMiniAreaContent.ForSystem(_text.SystemUsageTitle));
@@ -5537,9 +5335,6 @@ internal sealed class BarForm : Form
     private MiniAreaTarget? TaskbarCollapseTargetAt(PointF point) =>
         _taskbarAreaBounds.FirstOrDefault(target => target.HandleBounds.Contains(point));
 
-    private bool CodexEconomyTargetAt(PointF point) =>
-        !_codexEconomyBounds.IsEmpty && _codexEconomyBounds.Contains(point);
-
     private MiniAreaTarget? TaskbarReorderTargetAt(PointF point) =>
         _taskbarAreaBounds.FirstOrDefault(target =>
             target.Reorderable && target.ReorderBounds.Contains(point));
@@ -5719,13 +5514,6 @@ internal sealed class BarForm : Form
         if (area.Group is { } group) return TaskbarGroupWidth(group);
         if (area.Plugin is { } plugin) return PluginMiniCardWidth(plugin);
         var layout = AreaLayout(area.AreaId);
-        if (string.Equals(area.AreaId, MiniAreaIds.CodexEconomy, StringComparison.Ordinal))
-        {
-            return TaskbarMiniLayoutMath.AreaWidth(
-                TaskbarMiniLayoutMath.CodexEconomyContentWidth,
-                layout.Collapsed,
-                area.AreaId);
-        }
         return TaskbarMiniLayoutMath.AreaWidth(
             layout.Width ?? area.DefaultWidth,
             layout.Collapsed,
@@ -5737,9 +5525,7 @@ internal sealed class BarForm : Form
         var normalized = _miniAreaLayouts.TryGetValue(areaId, out var layout)
             ? layout.Normalized(areaId)
             : new MiniAreaLayout();
-        return string.Equals(areaId, MiniAreaIds.CodexEconomy, StringComparison.Ordinal)
-            ? normalized with { Width = null }
-            : normalized;
+        return normalized;
     }
 
     private int AreaDefaultWidth(string areaId) =>
@@ -5805,13 +5591,11 @@ internal sealed class BarForm : Form
     {
         var visibleIds = areas
             .Where(area => !string.Equals(area.AreaId, MiniAreaIds.SystemMetrics, StringComparison.Ordinal)
-                && !string.Equals(area.AreaId, MiniAreaIds.RadarReset, StringComparison.Ordinal)
-                && !string.Equals(area.AreaId, MiniAreaIds.CodexEconomy, StringComparison.Ordinal))
+                && !string.Equals(area.AreaId, MiniAreaIds.RadarReset, StringComparison.Ordinal))
             .Take(TaskbarMiniLayoutMath.MaximumCards)
             .Select(area => area.AreaId)
             .ToHashSet(StringComparer.Ordinal);
         visibleIds.Add(MiniAreaIds.RadarReset);
-        visibleIds.Add(MiniAreaIds.CodexEconomy);
         visibleIds.Add(MiniAreaIds.SystemMetrics);
         return areas.Where(area => visibleIds.Contains(area.AreaId)).ToArray();
     }
@@ -5944,7 +5728,6 @@ internal sealed class BarForm : Form
             _hintPopover?.Dispose();
             _radarPopover?.Dispose();
             _systemUsagePopover?.Dispose();
-            _codexEconomyMenu?.Dispose();
             _titleFont.Dispose();
             _subtitleFont.Dispose();
             _cardTitleFont.Dispose();
@@ -6073,13 +5856,6 @@ internal sealed class BarForm : Form
             null,
             null);
 
-        public static TaskbarMiniAreaContent ForCodexEconomy(string title) => new(
-            MiniAreaIds.CodexEconomy,
-            title,
-            TaskbarMiniLayoutMath.CodexEconomyContentWidth,
-            null,
-            null);
-
         public static TaskbarMiniAreaContent ForRadarReset(string title) => new(
             MiniAreaIds.RadarReset,
             title,
@@ -6095,7 +5871,6 @@ internal sealed class BarForm : Form
         MiniCollapse,
         MiniReorder,
         Settings,
-        CodexEconomy,
         Plugin,
         QuotaWindow,
         CodexAccounts,

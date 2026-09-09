@@ -48,7 +48,6 @@ internal static partial class CliApplication
         if (command is "status") return PrintStatusAlias(commandLine.Json);
         if (command is "ai-gateway") return await AiGatewayCommandAsync(commandArgs, commandLine.Json);
         if (command is "sub2api") return await Sub2ApiCommandAsync(commandArgs, commandLine.Json);
-        if (command is "economy") return EconomyCommand(commandArgs, commandLine.Json);
         if (command is "version") return PrintVersion(commandLine.Json);
         if (command is "help" or "h" or "?") return PrintHelp(commandLine.Json);
 

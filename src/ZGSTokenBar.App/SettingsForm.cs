@@ -48,7 +48,6 @@ internal sealed class SettingsForm : Form
     private readonly ToggleSwitch _animations;
     private readonly ToggleSwitch _radar;
     private readonly ToggleSwitch _radarAlerts;
-    private readonly ToggleSwitch _codexEconomyBar;
     private readonly ToggleSwitch _refreshClaudeOAuth;
     private readonly SettingsComboBox _refreshMinutes;
     private readonly SettingsComboBox _locale;
@@ -58,7 +57,6 @@ internal sealed class SettingsForm : Form
     private readonly Dictionary<string, ToggleSwitch> _externalPluginToggles = new(StringComparer.Ordinal);
     private readonly IReadOnlyList<PluginStatus> _plugins;
     private readonly RoundedButton _testRadar;
-    private readonly CodexEconomySettingsPanel _codexEconomyPanel;
     private readonly RoundedButton _save;
     private readonly Label _dirtyLabel;
     private SettingsPage _activePage = null!;
@@ -82,10 +80,7 @@ internal sealed class SettingsForm : Form
         int targetDpi,
         bool renderOnly = false,
         Rectangle? renderWorkingArea = null,
-        IReadOnlyList<PluginStatus>? plugins = null,
-        CodexEconomyStatus? codexEconomyStatus = null,
-        IReadOnlyList<CodexEconomyProfile>? codexEconomyProfiles = null,
-        Func<CodexEconomyProfile, CodexEconomyStatus>? inspectCodexEconomy = null)
+        IReadOnlyList<PluginStatus>? plugins = null)
     {
         if (!renderOnly && renderWorkingArea is not null)
         {
@@ -195,10 +190,6 @@ internal sealed class SettingsForm : Form
         _animations = CreateToggle(_text.AnimationsTitle, _text.Animations, settings.EnableAnimations);
         _radar = CreateToggle(_text.ShowRadarTitle, _text.ShowRadar, settings.EnableRadar);
         _radarAlerts = CreateToggle(_text.RadarAlertsTitle, _text.RadarAlerts, settings.EnableRadarAlerts);
-        _codexEconomyBar = CreateToggle(
-            _text.CodexEconomyBarTitle,
-            _text.CodexEconomyBarHint,
-            settings.EnableCodexEconomyBar);
         _refreshClaudeOAuth = CreateToggle(_text.AllowClaudeRefresh, _text.ClaudeRefreshHint, settings.AutoRefreshClaudeOAuth);
         foreach (var plugin in _plugins
                      .Where(plugin => !BuiltinPluginIds.Contains(plugin.Manifest.Id))
@@ -247,19 +238,6 @@ internal sealed class SettingsForm : Form
             AccessibleDescription = _text.RadarTestNotificationHint,
         };
         _testRadar.Click += (_, _) => RadarTestNotificationRequested?.Invoke(this, EventArgs.Empty);
-
-        var economyProfiles = codexEconomyProfiles
-            ?? (codexEconomyStatus is null ? [] : [codexEconomyStatus.Profile]);
-        CodexEconomyStatus InspectEconomy(CodexEconomyProfile profile) =>
-            inspectCodexEconomy?.Invoke(profile)
-            ?? codexEconomyStatus
-            ?? new CodexEconomyStatus(CodexEconomyMode.Unconfigured, profile, false, false, null);
-        _codexEconomyPanel = new CodexEconomySettingsPanel(
-            _text,
-            targetDpi,
-            renderOnly,
-            economyProfiles,
-            InspectEconomy);
 
         var root = new TableLayoutPanel
         {
@@ -342,7 +320,6 @@ internal sealed class SettingsForm : Form
             toggle.CheckedChanged += (_, _) => RefreshDirtyState();
         }
         _radar.CheckedChanged += (_, _) => UpdateRadarDependency();
-        _codexEconomyBar.CheckedChanged += (_, _) => RefreshDirtyState();
         _openAtLogin.CheckedChanged += (_, _) => RefreshDirtyState();
         _radarAlerts.CheckedChanged += (_, _) =>
         {
@@ -383,9 +360,6 @@ internal sealed class SettingsForm : Form
     internal void SetScrollOffsetForAcceptance(int value) => _activePage.ScrollTo(value);
 
     internal void SelectPageForRendering(string key) => SelectPage(key, focusPage: false);
-
-    internal CodexEconomyStatus? CurrentCodexEconomyStatus => _codexEconomyPanel.CurrentStatus;
-    internal void RefreshCodexEconomyStatus() => _codexEconomyPanel.RefreshStatus();
 
     internal void ShowDirtyStateForRendering()
     {
@@ -469,12 +443,6 @@ internal sealed class SettingsForm : Form
             _theme,
             _scale));
         providers.Add(new ToggleSettingRow(_radar, _text.ShowRadarTitle, _text.ShowRadar, _theme, _scale));
-        providers.Add(new ToggleSettingRow(
-            _codexEconomyBar,
-            _text.CodexEconomyBarTitle,
-            _text.CodexEconomyBarHint,
-            _theme,
-            _scale));
         foreach (var plugin in _plugins
                      .Where(plugin => _externalPluginToggles.ContainsKey(plugin.Manifest.Id))
                      .OrderBy(plugin => plugin.Manifest.Order)
@@ -523,7 +491,6 @@ internal sealed class SettingsForm : Form
             _text.ClaudeRefreshHint,
             _theme,
             _scale));
-        advanced.Add(_codexEconomyPanel);
 
         var about = AddPage("about", _text.About);
         about.Add(new AboutRow(
@@ -891,7 +858,6 @@ internal sealed class SettingsForm : Form
             EnableAnimations = _animations.Checked,
             EnableRadar = _radar.Checked,
             EnableRadarAlerts = _radar.Checked && _radarAlerts.Checked,
-            EnableCodexEconomyBar = _codexEconomyBar.Checked,
             EnableAiGatewayBalance = _externalPluginToggles.TryGetValue(
                 MiniAreaIds.AiGateway,
                 out var aiGatewayToggle)
@@ -950,7 +916,6 @@ internal sealed class SettingsForm : Form
         && left.EnableAnimations == right.EnableAnimations
         && left.EnableRadar == right.EnableRadar
         && left.EnableRadarAlerts == right.EnableRadarAlerts
-        && left.EnableCodexEconomyBar == right.EnableCodexEconomyBar
         && left.EnableAiGatewayBalance == right.EnableAiGatewayBalance
         && left.EnableSub2ApiPool == right.EnableSub2ApiPool
         && left.IsPluginEnabled("zgstokenbar.metrics.system", true)
@@ -977,7 +942,6 @@ internal sealed class SettingsForm : Form
             EnableAnimations = settings.EnableAnimations,
             EnableRadar = settings.EnableRadar,
             EnableRadarAlerts = settings.EnableRadarAlerts,
-            EnableCodexEconomyBar = settings.EnableCodexEconomyBar,
             EnableAiGatewayBalance = settings.EnableAiGatewayBalance,
             EnableSub2ApiPool = settings.EnableSub2ApiPool,
             MiniAreaLayouts = AppSettings.CopyMiniAreaLayouts(settings.MiniAreaLayouts),

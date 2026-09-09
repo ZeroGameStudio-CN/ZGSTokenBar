@@ -812,7 +812,7 @@ test('settings visual treatment uses the approved dark palette and local control
   assert.match(settingsForm, /TopMost = false/);
   const openSettingsStart = applicationContext.indexOf('    private void OpenSettings()');
   const openSettingsEnd = applicationContext.indexOf(
-    '    private CodexEconomyStatus? InspectRecommendedCodexEconomyProfile()',
+    '    private void SettingsDialogClosed(',
     openSettingsStart);
   assert.notEqual(openSettingsStart, -1);
   assert.notEqual(openSettingsEnd, -1);

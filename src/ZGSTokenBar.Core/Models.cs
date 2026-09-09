@@ -347,7 +347,6 @@ public static class TaskbarMiniLayoutMath
     public const int CodexPoolCardWidth = 184;
     public const int ServiceCardWidth = 104;
     public const int RadarResetContentWidth = 92;
-    public const int CodexEconomyContentWidth = 44;
     public const int CollapsedCardWidth = 34;
     public const int ProviderCollapseHandleWidth = 9;
     public const int MinimumAreaContentWidth = 88;
@@ -423,10 +422,7 @@ public static class TaskbarMiniLayoutMath
     public static int NormalizeAreaContentWidth(int width, string? areaId) =>
         Math.Clamp(width, MinimumAreaContentWidthFor(areaId), MaximumAreaContentWidth);
 
-    public static int MinimumAreaContentWidthFor(string? areaId) =>
-        string.Equals(areaId, MiniAreaIds.CodexEconomy, StringComparison.Ordinal)
-            ? CodexEconomyContentWidth
-            : MinimumAreaContentWidth;
+    public static int MinimumAreaContentWidthFor(string? areaId) => MinimumAreaContentWidth;
 
     public static int AreaWidth(int contentWidth, bool collapsed) =>
         ProviderCollapseHandleWidth
@@ -662,7 +658,6 @@ public static class MiniAreaIds
     public const string Codex = "zgstokenbar.provider.codex";
     public const string AiGateway = "zgstokenbar.provider.ai-gateway";
     public const string RadarReset = "zgstokenbar.radar.reset";
-    public const string CodexEconomy = "zgstokenbar.codex.economy";
     public const string SystemMetrics = "zgstokenbar.metrics.system";
 }
 

@@ -100,45 +100,6 @@ internal sealed class NativeText
     public string ClaudeRefreshHint => T(
         "默认开启；关闭后由 Claude Code 负责刷新。",
         "On by default; disable to leave refresh to Claude Code.");
-    public string CodexEconomyBarTitle => T("Bar 助手入口", "Bar assistant shortcut");
-    public string CodexEconomyBarHint => T(
-        "在 Bar 显示外部 Luna Skill 的只读状态。",
-        "Show read-only status of the external Luna skill in the Bar.");
-    public string CodexEconomyBarAreaTitle => T("助手", "Luna");
-    public string CodexEconomyBarMenuTitle => T("Luna 执行助手", "Luna task assistant");
-    public string CodexEconomyBarMenuHint => T("Skill 仓库管理 · 只读", "Skill source managed · Read only");
-    public string CodexEconomyDialogTitle => T("Luna 执行助手", "Luna task assistant");
-    public string CodexEconomyDialogDescription => T(
-        "Skill、策略与价格由你的 Skill 源库维护；TokenBar 不再安装或修改它。",
-        "Your skill source owns the skill, policy and prices. TokenBar does not install or modify them.");
-    public string CodexEconomyTaskHint => T(
-        "这里只检查文件与配置，不代表当前任务已加载。安装或更新请使用 Skill 源库。",
-        "Checks files and config only, not current-task loading. Install or update through your skill source.");
-    public string CodexEconomyProfileLabel => "Codex Profile";
-    public string CodexEconomyProfileHint => T("选择要查看的本机 Codex Home。", "Choose the local Codex Home to inspect.");
-    public string CodexEconomyCurrentStatus => T("当前状态", "Current status");
-    public string CodexEconomyConfigPath => T("配置路径", "Config path");
-    public string CodexEconomySkillPath => T("Skill 路径", "Skill path");
-    public string CodexEconomyRefresh => T("刷新状态", "Refresh status");
-    public string CodexEconomyRefreshHint => T("只读检查，不修改 Skill 或 Codex 配置。", "Read-only check; never modifies skills or Codex config.");
-    public string CodexEconomyNoProfiles => T("未发现可管理的 Codex Profile。", "No manageable Codex profiles were found.");
-    public string CodexEconomyReadFailed(string detail) => T($"无法读取当前 Profile：{detail}", $"Could not inspect the current profile: {detail}");
-    public string CodexEconomyProfileChoice(CodexEconomyProfile profile) => $"{profile.DisplayName} — {profile.HomeDirectory}";
-    public string CodexEconomyModeName(CodexEconomyMode mode) => mode switch
-    {
-        CodexEconomyMode.Task => T("外部管理", "Externally managed"),
-        CodexEconomyMode.Off => T("已禁用", "Disabled"),
-        CodexEconomyMode.Ask or CodexEconomyMode.On => T("旧配置待迁移", "Legacy setup"),
-        CodexEconomyMode.Inconsistent => T("配置冲突", "Configuration conflict"),
-        _ => T("未配置", "Not configured"),
-    };
-    public string CodexEconomyInstalled(bool installed) => installed ? T("已安装", "Installed") : T("未发现文件", "File not found");
-    public string CodexEconomyStatusSummary(CodexEconomyStatus? status)
-    {
-        if (status is null) return T("状态暂不可用", "Status unavailable");
-        if (status.Ready) return T("已发现 · 外部管理", "Detected · Externally managed");
-        return $"{CodexEconomyModeName(status.Mode)} · {CodexEconomyInstalled(status.SkillInstalled)}";
-    }
     public string Save => T("保存", "Save");
     public string Cancel => T("取消", "Cancel");
     public string Language => T("语言", "Language");

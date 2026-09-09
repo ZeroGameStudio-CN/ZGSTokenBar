@@ -53,7 +53,6 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     private CodexTokenUsageReader? _codexTokenUsageReader;
     private bool _radarRestorePending;
     private readonly SystemUsageSampler _systemUsageSampler = new();
-    private readonly CodexEconomyRouter _codexEconomyRouter = new();
     private readonly ReleaseUpdateChecker _updateChecker = new();
     private readonly BarForm _bar;
     private readonly NotifyIcon _tray;
@@ -144,14 +143,12 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         _bar.SetCodexTokenUsage(_activeProviders.Contains(ProviderKind.Codex)
             ? _cachedCodexTokenUsage
             : null);
-        RefreshBarCodexEconomyStatus();
         _bar.RefreshRequested += (_, _) => _ = RefreshAsync(userInitiated: true);
         _bar.SettingsRequested += (_, _) => OpenSettings();
         _bar.PlacementCommitted += (_, commit) => SavePlacement(commit);
         _bar.RadarPreviewRequested += (_, request) =>
             RequestRadarPreview(request.Provider, request.SurfaceId);
         _bar.SystemUsageDetailsRequested += (_, _) => _ = RefreshSystemUsageDetailsAsync();
-        _bar.CodexEconomyStatusRefreshRequested += (_, _) => RefreshBarCodexEconomyStatus();
         _bar.MiniAreaLayoutChanged += (_, _) => SaveMiniAreaLayout();
         _bar.MiniAreaOrderChanged += (_, _) => SaveMiniAreaOrder();
         _bar.RadarModelGroupsChanged += (_, _) => SaveRadarModelGroups();
@@ -443,15 +440,11 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             return;
         }
 
-        var economyProfiles = DiscoverCodexEconomyProfiles();
         var pluginStatuses = _pluginHost.ListPlugins();
         var dialog = new SettingsForm(
             _settings,
             _bar.DeviceDpi,
-            plugins: pluginStatuses,
-            codexEconomyStatus: InspectRecommendedCodexEconomyProfile(economyProfiles),
-            codexEconomyProfiles: economyProfiles,
-            inspectCodexEconomy: _codexEconomyRouter.Inspect);
+            plugins: pluginStatuses);
         _settingsDialog = dialog;
         dialog.RadarTestNotificationRequested += (_, _) => ShowRadarTestNotification();
         dialog.FormClosed += SettingsDialogClosed;
@@ -508,47 +501,6 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         return new Point(
             fallbackWorkingArea.Left + Math.Max(0, (fallbackWorkingArea.Width - bounds.Width) / 2),
             fallbackWorkingArea.Top + Math.Max(0, (fallbackWorkingArea.Height - bounds.Height) / 2));
-    }
-
-    private CodexEconomyStatus? InspectRecommendedCodexEconomyProfile() =>
-        InspectRecommendedCodexEconomyProfile(DiscoverCodexEconomyProfiles());
-
-    private CodexEconomyStatus? InspectRecommendedCodexEconomyProfile(
-        IReadOnlyList<CodexEconomyProfile> profiles)
-    {
-        try
-        {
-            var profile = profiles.FirstOrDefault(candidate => candidate.Recommended)
-                ?? profiles.FirstOrDefault();
-            return profile is null ? null : _codexEconomyRouter.Inspect(profile);
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private void RefreshBarCodexEconomyStatus()
-    {
-        if (_quitting || _bar.IsDisposed) return;
-        try { _bar.SetCodexEconomyStatus(_codexEconomyRouter.Inspect(DefaultCodexEconomyProfile())); }
-        catch { _bar.SetCodexEconomyStatus(null); }
-    }
-
-    private static IReadOnlyList<CodexEconomyProfile> DiscoverCodexEconomyProfiles()
-    {
-        try { return CodexEconomyRouter.DiscoverProfiles(); }
-        catch { return []; }
-    }
-
-    private static CodexEconomyProfile DefaultCodexEconomyProfile()
-    {
-        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        if (string.IsNullOrWhiteSpace(userProfile))
-        {
-            throw new CodexEconomyException("The Windows user profile directory is unavailable.");
-        }
-        return CodexEconomyRouter.ResolveProfile(Path.Combine(userProfile, ".codex"));
     }
 
     private void SettingsDialogClosed(object? sender, FormClosedEventArgs eventArgs)
@@ -1311,7 +1263,6 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             && previous.EnableRadar == next.EnableRadar
             && previous.EnableRadarAlerts == next.EnableRadarAlerts
             && PluginEnabledEqual(previous.RadarModelGroups, next.RadarModelGroups)
-            && previous.EnableCodexEconomyBar == next.EnableCodexEconomyBar
             && previous.EnableAiGatewayBalance == next.EnableAiGatewayBalance
             && previous.EnableSub2ApiPool == next.EnableSub2ApiPool
             && PluginEnabledEqual(previous.PluginEnabled, next.PluginEnabled)
