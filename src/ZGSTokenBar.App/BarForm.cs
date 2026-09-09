@@ -205,7 +205,6 @@ internal sealed class BarForm : Form
     public event EventHandler<RadarPreviewRequest>? RadarPreviewRequested;
     public event EventHandler? SystemUsageDetailsRequested;
     public event EventHandler? CodexEconomyStatusRefreshRequested;
-    public event EventHandler? CodexEconomyInstallRequested;
     public event EventHandler? MiniAreaLayoutChanged;
     public event EventHandler? MiniAreaOrderChanged;
     public event EventHandler? RadarModelGroupsChanged;
@@ -4671,8 +4670,6 @@ internal sealed class BarForm : Form
 
     private ContextMenuStrip CreateCodexEconomyMenu()
     {
-        var available = _codexEconomyStatus is not null
-            && _codexEconomyStatus.Mode != CodexEconomyMode.Inconsistent;
         var menuWidth = Scale(232);
         var surface = _backgroundTheme.Popover;
         var hover = MixColor(surface, Color.FromArgb(37, 55, 82), .84f);
@@ -4717,16 +4714,15 @@ internal sealed class BarForm : Form
             Enabled = false,
             Tag = "bar.economy.status",
         });
-        var install = new ToolStripMenuItem(_text.CodexEconomyApply)
+        var refresh = new ToolStripMenuItem(_text.CodexEconomyRefresh)
         {
             AutoSize = false,
             Width = menuWidth - menu.Padding.Horizontal,
             Height = Scale(32),
-            Enabled = available,
-            Tag = "bar.economy.install",
+            Tag = "bar.economy.refresh",
         };
-        install.Click += (_, _) => DismissCodexEconomyMenuAndRequestInstall(menu);
-        menu.Items.Add(install);
+        refresh.Click += (_, _) => DismissCodexEconomyMenuAndRequestRefresh(menu);
+        menu.Items.Add(refresh);
         var settings = new ToolStripMenuItem(_text.SettingsTitle)
         {
             AutoSize = false,
@@ -4743,14 +4739,14 @@ internal sealed class BarForm : Form
         return menu;
     }
 
-    private void DismissCodexEconomyMenuAndRequestInstall(ContextMenuStrip menu)
+    private void DismissCodexEconomyMenuAndRequestRefresh(ContextMenuStrip menu)
     {
         menu.Close(ToolStripDropDownCloseReason.ItemClicked);
         if (IsDisposed || Disposing || !IsHandleCreated) return;
         BeginInvoke(new Action(() =>
         {
             if (IsDisposed || Disposing) return;
-            CodexEconomyInstallRequested?.Invoke(this, EventArgs.Empty);
+            CodexEconomyStatusRefreshRequested?.Invoke(this, EventArgs.Empty);
         }));
     }
 

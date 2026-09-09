@@ -9,7 +9,6 @@ internal sealed class CodexEconomySettingsPanel : Panel
     private readonly float _scale;
     private readonly IReadOnlyList<CodexEconomyProfile> _profiles;
     private readonly Func<CodexEconomyProfile, CodexEconomyStatus> _inspect;
-    private readonly Func<CodexEconomyProfile, CodexEconomyStatus>? _install;
     private readonly Color _content;
     private readonly Color _surface;
     private readonly Color _textColor;
@@ -27,16 +26,14 @@ internal sealed class CodexEconomySettingsPanel : Panel
     private readonly TextBox _configPath;
     private readonly Label _skillLabel;
     private readonly TextBox _skillPath;
-    private readonly Button _apply;
-    private bool _applying;
+    private readonly Button _refresh;
 
     internal CodexEconomySettingsPanel(
         NativeText text,
         int targetDpi,
         bool renderOnly = false,
         IReadOnlyList<CodexEconomyProfile>? profiles = null,
-        Func<CodexEconomyProfile, CodexEconomyStatus>? inspect = null,
-        Func<CodexEconomyProfile, CodexEconomyStatus>? install = null)
+        Func<CodexEconomyProfile, CodexEconomyStatus>? inspect = null)
     {
         if (renderOnly && (profiles is null || inspect is null))
             throw new ArgumentException("Render-only assistant panels require injected profiles and inspection.");
@@ -46,7 +43,6 @@ internal sealed class CodexEconomySettingsPanel : Panel
         var router = new CodexEconomyRouter();
         _profiles = (profiles ?? CodexEconomyRouter.DiscoverProfiles()).ToArray();
         _inspect = inspect ?? router.Inspect;
-        _install = renderOnly ? install : install ?? router.Install;
         if (SystemInformation.HighContrast)
         {
             _content = SystemColors.Window;
@@ -96,26 +92,26 @@ internal sealed class CodexEconomySettingsPanel : Panel
         _configPath = CreateReadOnlyPath(_text.CodexEconomyConfigPath, 1, "economy.config.path");
         _skillLabel = CreateLabel(_text.CodexEconomySkillPath, 8.5f, FontStyle.Bold, _textColor, "economy.skill.label");
         _skillPath = CreateReadOnlyPath(_text.CodexEconomySkillPath, 2, "economy.skill.path");
-        _apply = new Button
+        _refresh = new Button
         {
             BackColor = _accent,
             FlatStyle = FlatStyle.Flat,
             Font = FontAt(9f, FontStyle.Bold),
             ForeColor = Color.White,
-            Text = _text.CodexEconomyApply,
+            Text = _text.CodexEconomyRefresh,
             UseVisualStyleBackColor = false,
-            Tag = "economy.apply",
-            AccessibleName = _text.CodexEconomyApply,
-            AccessibleDescription = _text.CodexEconomyApplyHint,
+            Tag = "economy.refresh",
+            AccessibleName = _text.CodexEconomyRefresh,
+            AccessibleDescription = _text.CodexEconomyRefreshHint,
             TabIndex = 3,
         };
         Controls.AddRange([
             _heading, _description, _profileLabel, _profile, _statusLabel, _status,
-            _policy, _configLabel, _configPath, _skillLabel, _skillPath, _apply,
+            _policy, _configLabel, _configPath, _skillLabel, _skillPath, _refresh,
         ]);
 
         _profile.SelectedIndexChanged += (_, _) => LoadSelectedProfile();
-        _apply.Click += (_, _) => InstallSelectedProfile();
+        _refresh.Click += (_, _) => LoadSelectedProfile();
         foreach (var profile in _profiles)
             _profile.Items.Add(new ProfileChoice(profile, _text.CodexEconomyProfileChoice(profile)));
         if (_profile.Items.Count > 0)
@@ -127,12 +123,10 @@ internal sealed class CodexEconomySettingsPanel : Panel
         {
             ShowNoProfiles();
         }
-        UpdateApplyEnabled();
+        UpdateRefreshEnabled();
     }
 
     internal CodexEconomyStatus? CurrentStatus { get; private set; }
-    internal CodexEconomyStatus? AppliedStatus { get; private set; }
-    internal event EventHandler? StatusChanged;
     internal IReadOnlyList<CodexEconomyProfile> AvailableProfiles => _profiles;
     internal CodexEconomyProfile? SelectedProfile => (_profile.SelectedItem as ProfileChoice)?.Profile;
     internal string CurrentStatusText => _status.Text;
@@ -141,7 +135,7 @@ internal sealed class CodexEconomySettingsPanel : Panel
     protected override void OnLayout(LayoutEventArgs levent)
     {
         base.OnLayout(levent);
-        if (_heading is null || _apply is null) return;
+        if (_heading is null || _refresh is null) return;
         var width = Math.Max(1, ClientSize.Width);
         _heading.SetBounds(0, 0, width, Scale(34));
         _description.SetBounds(0, Scale(34), width, Scale(48));
@@ -150,7 +144,7 @@ internal sealed class CodexEconomySettingsPanel : Panel
         var statusWidth = Math.Max(1, width - Scale(144));
         _statusLabel.SetBounds(0, Scale(168), statusWidth, Scale(22));
         _status.SetBounds(0, Scale(192), statusWidth, Scale(26));
-        _apply.SetBounds(Math.Max(0, width - Scale(128)), Scale(178), Scale(128), Scale(34));
+        _refresh.SetBounds(Math.Max(0, width - Scale(128)), Scale(178), Scale(128), Scale(34));
         _policy.SetBounds(0, Scale(223), width, Scale(44));
         _configLabel.SetBounds(0, Scale(280), width, Scale(21));
         _configPath.SetBounds(0, Scale(304), width, Scale(34));
@@ -174,7 +168,7 @@ internal sealed class CodexEconomySettingsPanel : Panel
             _status.AccessibleName = _status.Text;
             _status.ForeColor = _warning;
         }
-        UpdateApplyEnabled();
+        UpdateRefreshEnabled();
     }
 
     private void ShowStatus(CodexEconomyStatus status)
@@ -194,48 +188,10 @@ internal sealed class CodexEconomySettingsPanel : Panel
         _status.Text = _text.CodexEconomyNoProfiles;
         _status.AccessibleName = _status.Text;
         _status.ForeColor = _warning;
-        UpdateApplyEnabled();
+        UpdateRefreshEnabled();
     }
 
-    private void UpdateApplyEnabled() =>
-        _apply.Enabled = SelectedProfile is not null && CurrentStatus is not null
-            && CurrentStatus.Mode != CodexEconomyMode.Inconsistent && _install is not null && !_applying;
-
-    private void InstallSelectedProfile()
-    {
-        var profile = SelectedProfile;
-        if (profile is null || _install is null) return;
-        _applying = true;
-        UseWaitCursor = true;
-        _profile.Enabled = false;
-        UpdateApplyEnabled();
-        try
-        {
-            _install(profile);
-            var readBack = _inspect(profile);
-            if (!readBack.Ready)
-                throw new CodexEconomyException(_text.CodexEconomyReadBackMismatch(CodexEconomyMode.Task, readBack.Mode));
-            ShowStatus(readBack);
-            AppliedStatus = readBack;
-            StatusChanged?.Invoke(this, EventArgs.Empty);
-        }
-        catch (Exception exception)
-        {
-            LoadSelectedProfile();
-            MessageBox.Show(this, _text.CodexEconomyApplyFailed(exception.Message), _text.CodexEconomyApplyFailedTitle,
-                MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
-        finally
-        {
-            if (!IsDisposed)
-            {
-                _applying = false;
-                UseWaitCursor = false;
-                _profile.Enabled = _profiles.Count > 0;
-                UpdateApplyEnabled();
-            }
-        }
-    }
+    private void UpdateRefreshEnabled() => _refresh.Enabled = SelectedProfile is not null;
 
     private TextBox CreateReadOnlyPath(string name, int tabIndex, string tag) => new()
     {

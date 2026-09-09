@@ -10584,11 +10584,11 @@ static void TestNativeLocalization()
     Equal("PINNED · ESC / CLICK OUTSIDE", en.RadarPopoverSubtitle(true), "English Radar pinned subtitle");
     Equal("本机日志 · 点击固定", zh.CodexTokenPopoverSubtitle(false), "Chinese token preview subtitle");
     Equal("PINNED · ESC / CLICK OUTSIDE", en.CodexTokenPopoverSubtitle(true), "English token pinned subtitle");
-    Equal("逐任务询问", zh.CodexEconomyModeName(CodexEconomyMode.Task), "Chinese task-scoped policy");
-    Equal("Per-task confirmation", en.CodexEconomyModeName(CodexEconomyMode.Task), "English task-scoped policy");
+    Equal("外部管理", zh.CodexEconomyModeName(CodexEconomyMode.Task), "Chinese task-scoped policy");
+    Equal("Externally managed", en.CodexEconomyModeName(CodexEconomyMode.Task), "English task-scoped policy");
     Equal("旧配置待迁移", zh.CodexEconomyModeName(CodexEconomyMode.On), "legacy modes are migration state only");
-    Equal("安装/更新", zh.CodexEconomyApply, "Chinese assistant setup action");
-    Equal("Install / update", en.CodexEconomyApply, "English assistant setup action");
+    Equal("刷新状态", zh.CodexEconomyRefresh, "Chinese assistant setup action");
+    Equal("Refresh status", en.CodexEconomyRefresh, "English assistant setup action");
     Equal(
         false,
         zh.CodexEconomyBarHint.Contains("Off", StringComparison.Ordinal),
@@ -13966,341 +13966,63 @@ static void TestCodexEconomyRouter()
     Directory.CreateDirectory(directory);
     try
     {
-        var home = Path.Combine(directory, "profile");
-        Directory.CreateDirectory(home);
-        var profile = CodexEconomyRouter.ResolveProfile(home);
+        var profile = CodexEconomyRouter.ResolveProfile(Path.Combine(directory, "profile"));
         var router = new CodexEconomyRouter();
-        var initial = router.Inspect(profile);
-        Equal(CodexEconomyMode.Unconfigured, initial.Mode, "new Codex profile is unconfigured");
-        Equal(false, initial.SkillInstalled, "new Codex profile has no installed Skill");
+        Equal(false, router.Inspect(profile).Ready, "missing skill is not detected");
+        Equal(false, Directory.Exists(profile.HomeDirectory), "inspection creates no Codex home");
+        Directory.CreateDirectory(profile.SkillDirectory);
+        File.WriteAllText(profile.SkillPath, "external skill content\n");
+        const string config = "model = \"manual-root\"\r\n[agents]\r\ndefault_subagent_model = \"manual-child\"\r\n";
+        File.WriteAllText(profile.ConfigPath, config, new UTF8Encoding(true));
+        var original = File.ReadAllBytes(profile.ConfigPath);
+        Equal(true, router.Inspect(profile).Ready, "source-managed skill needs no TokenBar manifest");
+        Equal("externally_managed_read_only", router.Inspect(profile).Diagnostic, "read-only ownership is explicit");
+        Equal(true, original.AsSpan().SequenceEqual(File.ReadAllBytes(profile.ConfigPath)), "BOM, root and manual settings remain byte-identical");
+        Equal(false, File.Exists(Path.Combine(profile.SkillDirectory, ".zgstokenbar-skill.json")), "observation never claims ownership");
 
-        const string originalText = "model = \"gpt-test\"\r\n\r\n[agents]\r\nmax_concurrent_threads_per_session = 4\r\n";
-        var originalBody = Encoding.UTF8.GetBytes(originalText);
-        var originalBytes = Encoding.UTF8.GetPreamble().Concat(originalBody).ToArray();
-        File.WriteAllBytes(profile.ConfigPath, originalBytes);
-
-        var installed = router.Install(profile);
-        Equal(true, installed.Ready, "single task assistant is ready after installation");
-        Equal(CodexEconomyMode.Task, installed.Mode, "task-scoped policy is explicit");
-        Equal(true, File.Exists(profile.SkillPath), "installed Skill entrypoint exists");
-        var installedBytes = File.ReadAllBytes(profile.ConfigPath);
-        Equal(true, installedBytes.AsSpan().StartsWith(Encoding.UTF8.Preamble), "config UTF-8 BOM is preserved");
-        var installedText = Encoding.UTF8.GetString(installedBytes[Encoding.UTF8.Preamble.Length..]);
-        Equal(true, installedText.StartsWith(originalText, StringComparison.Ordinal), "root settings and CRLF remain intact");
-        Equal(false, installedText.Contains("default_subagent_model", StringComparison.Ordinal), "assistant does not install child defaults");
-        router.Install(profile);
-        Equal(true, installedBytes.AsSpan().SequenceEqual(File.ReadAllBytes(profile.ConfigPath)), "reinstall is byte-idempotent");
-
-        string LegacyConfig(CodexEconomyProfile target, CodexEconomyMode mode)
+        var skillEntry = $"[[skills.config]]\npath = {JsonSerializer.Serialize(profile.SkillPath)}\n";
+        foreach (var enabled in new[] { true, false })
         {
-            var defaults = mode == CodexEconomyMode.On
+            var text = config + skillEntry + $"enabled = {enabled.ToString().ToLowerInvariant()}\n";
+            File.WriteAllText(profile.ConfigPath, text);
+            Equal(enabled, router.Inspect(profile).Ready, "external explicit enabled state is respected");
+            Equal(text, File.ReadAllText(profile.ConfigPath), "explicit external configuration is never changed");
+        }
+        File.WriteAllText(profile.ConfigPath, "[agents]\nenabled = false\n");
+        Equal(false, router.Inspect(profile).Ready, "disabled native agents are not reported ready");
+        File.WriteAllText(profile.ConfigPath, "agents = { enabled = false }\n");
+        Equal(CodexEconomyMode.Inconsistent, router.Inspect(profile).Mode, "unsupported inline config remains uncertain");
+
+        foreach (var legacy in new[] { CodexEconomyMode.Off, CodexEconomyMode.Ask, CodexEconomyMode.On })
+        {
+            var defaults = legacy == CodexEconomyMode.On
                 ? $"{CodexEconomyRouter.AgentBegin}\ndefault_subagent_model = \"gpt-5.6-luna\"\ndefault_subagent_reasoning_effort = \"max\"\n{CodexEconomyRouter.AgentEnd}\n"
-                : string.Empty;
-            return "model = \"root-fixture\"\n[agents]\nmax_concurrent_threads_per_session = 4\n"
-                + defaults + $"\n{CodexEconomyRouter.SkillBegin}\n[[skills.config]]\npath = {JsonSerializer.Serialize(target.SkillPath)}\n"
-                + $"enabled = {(mode == CodexEconomyMode.Off ? "false" : "true")}\n{CodexEconomyRouter.SkillEnd}\n";
+                : "";
+            var text = "[agents]\n" + defaults + $"{CodexEconomyRouter.SkillBegin}\n" + skillEntry
+                + $"enabled = {(legacy == CodexEconomyMode.Off ? "false" : "true")}\n{CodexEconomyRouter.SkillEnd}\n";
+            File.WriteAllText(profile.ConfigPath, text);
+            Equal(legacy, router.Inspect(profile).Mode, "legacy configuration is observable but not migrated");
+            Equal(text, File.ReadAllText(profile.ConfigPath), "legacy observation is read-only");
         }
-
-        foreach (var legacyMode in new[] { CodexEconomyMode.Off, CodexEconomyMode.Ask, CodexEconomyMode.On })
+        foreach (var malformed in new[]
         {
-            var legacy = CodexEconomyRouter.ResolveProfile(Path.Combine(directory, $"legacy-{legacyMode}"));
-            Directory.CreateDirectory(legacy.HomeDirectory);
-            File.WriteAllText(legacy.ConfigPath, LegacyConfig(legacy, legacyMode));
-            Equal(legacyMode, router.Inspect(legacy).Mode, "legacy state is inspectable before migration");
-            Equal(true, router.Install(legacy).Ready, "every managed legacy mode migrates to task-scoped confirmation");
-            var migrated = File.ReadAllText(legacy.ConfigPath);
-            Equal(false, migrated.Contains("default_subagent_model", StringComparison.Ordinal), "owned global defaults are removed");
-            Equal(true, migrated.Contains("max_concurrent_threads_per_session = 4", StringComparison.Ordinal), "manual capacity is retained");
-            Equal(true, migrated.StartsWith("model = \"root-fixture\"\n", StringComparison.Ordinal), "legacy root model is retained");
+            $"{CodexEconomyRouter.SkillBegin}\n[[skills.config]]\n",
+            "PROMPT = \"\"\"\n[agents]\n",
+            skillEntry + "enabled = true\n" + skillEntry + "enabled = false\n",
+        })
+        {
+            File.WriteAllText(profile.ConfigPath, malformed);
+            Equal(CodexEconomyMode.Inconsistent, router.Inspect(profile).Mode, "conflicting or incomplete config stays uncertain");
+            Equal(malformed, File.ReadAllText(profile.ConfigPath), "malformed config is preserved");
         }
-
-        File.WriteAllText(Path.Combine(home, "team.config.toml"), "model = \"team\"\n");
-        var named = router.Inspect(profile);
-        Equal(true, named.HasNamedConfigLayers, "named layers remain informational");
-        Equal(null, named.Diagnostic, "the assistant does not claim a global child-default override warning");
-
-        foreach (var manual in new[]
-                 {
-                     "[agents]\ndefault_subagent_model = \"other\"\ndefault_subagent_reasoning_effort = \"low\"\n",
-                     "[\"agents\"]\n\"default_subagent_model\" = \"other\"\n",
-                     "[ agents ] # user formatting\nmax_concurrent_threads_per_session = 6\n",
-                 })
-        {
-            var target = CodexEconomyRouter.ResolveProfile(Path.Combine(directory, Guid.NewGuid().ToString("N")));
-            Directory.CreateDirectory(target.HomeDirectory);
-            File.WriteAllText(target.ConfigPath, manual);
-            Equal(true, router.Install(target).Ready, "manual agent choices do not block task-scoped setup");
-            Equal(true, File.ReadAllText(target.ConfigPath).StartsWith(manual, StringComparison.Ordinal), "manual defaults and formatting are preserved");
-        }
-
-        var disabled = CodexEconomyRouter.ResolveProfile(Path.Combine(directory, "native-disabled"));
-        Directory.CreateDirectory(disabled.HomeDirectory);
-        const string disabledText = "[agents]\nenabled = false\n";
-        File.WriteAllText(disabled.ConfigPath, disabledText);
-        var disabledRejected = false;
-        try { router.Install(disabled); }
-        catch (CodexEconomyException) { disabledRejected = true; }
-        Equal(true, disabledRejected, "installation never enables a disabled native capability");
-        Equal(disabledText, File.ReadAllText(disabled.ConfigPath), "disabled capability config is unchanged");
-        Equal(false, Directory.Exists(disabled.SkillDirectory), "capability preflight fails before installing files");
-
-        var inlineAgentsHome = Path.Combine(directory, "inline-agents");
-        Directory.CreateDirectory(inlineAgentsHome);
-        var inlineAgentsProfile = CodexEconomyRouter.ResolveProfile(inlineAgentsHome);
-        const string inlineAgentsText = "agents = { enabled = false }\n";
-        File.WriteAllText(inlineAgentsProfile.ConfigPath, inlineAgentsText);
-        var inlineAgentsRejected = false;
-        try
-        {
-            router.Install(inlineAgentsProfile);
-        }
-        catch (CodexEconomyException)
-        {
-            inlineAgentsRejected = true;
-        }
-        Equal(true, inlineAgentsRejected, "inline agents tables fail closed instead of bypassing enabled=false");
-        Equal(inlineAgentsText, File.ReadAllText(inlineAgentsProfile.ConfigPath), "inline agents conflict preserves config bytes");
-
-        var inlineSkillsHome = Path.Combine(directory, "inline-skills");
-        Directory.CreateDirectory(inlineSkillsHome);
-        var inlineSkillsProfile = CodexEconomyRouter.ResolveProfile(inlineSkillsHome);
-        const string inlineSkillsText = "[skills]\nconfig = [{ name = \"sol-luna-delegation\", enabled = false }]\n";
-        File.WriteAllText(inlineSkillsProfile.ConfigPath, inlineSkillsText);
-        var inlineSkillsRejected = false;
-        try
-        {
-            router.Install(inlineSkillsProfile);
-        }
-        catch (CodexEconomyException)
-        {
-            inlineSkillsRejected = true;
-        }
-        Equal(true, inlineSkillsRejected, "inline skills config arrays fail closed before appending an array table");
-        Equal(inlineSkillsText, File.ReadAllText(inlineSkillsProfile.ConfigPath), "inline skills conflict preserves config bytes");
-
-        var multilineHome = Path.Combine(directory, "multiline-values");
-        Directory.CreateDirectory(multilineHome);
-        var multilineProfile = CodexEconomyRouter.ResolveProfile(multilineHome);
-        var multilineText = "[mcp_servers.fixture.env]\n"
-            + "PROMPT = \"\"\"\n"
-            + "[agents]\n"
-            + $"{CodexEconomyRouter.AgentBegin}\n"
-            + $"{CodexEconomyRouter.AgentEnd}\n"
-            + "\"\"\"\n"
-            + "LITERAL = '''\n"
-            + $"{CodexEconomyRouter.SkillBegin}\n"
-            + "[[skills.config]]\n"
-            + $"{CodexEconomyRouter.SkillEnd}\n"
-            + "'''\n";
-        File.WriteAllText(multilineProfile.ConfigPath, multilineText);
-        Equal(
-            CodexEconomyMode.Task,
-            router.Install(multilineProfile).Mode,
-            "headers and markers inside multiline TOML strings are ignored lexically");
-        Equal(
-            true,
-            File.ReadAllText(multilineProfile.ConfigPath).StartsWith(multilineText, StringComparison.Ordinal),
-            "multiline TOML string contents remain byte-for-byte intact before managed blocks");
-
-        var unterminatedHome = Path.Combine(directory, "unterminated-multiline");
-        Directory.CreateDirectory(unterminatedHome);
-        var unterminatedProfile = CodexEconomyRouter.ResolveProfile(unterminatedHome);
-        const string unterminatedText = "PROMPT = \"\"\"\n[agents]\n";
-        File.WriteAllText(unterminatedProfile.ConfigPath, unterminatedText);
-        Equal(CodexEconomyMode.Inconsistent, router.Inspect(unterminatedProfile).Mode, "unterminated multiline TOML is inconsistent");
-        var unterminatedRejected = false;
-        try
-        {
-            router.Install(unterminatedProfile);
-        }
-        catch (CodexEconomyException)
-        {
-            unterminatedRejected = true;
-        }
-        Equal(true, unterminatedRejected, "unterminated multiline TOML fails closed");
-        Equal(unterminatedText, File.ReadAllText(unterminatedProfile.ConfigPath), "unterminated multiline TOML remains untouched");
-
-        var spoofedMarkerHome = Path.Combine(directory, "spoofed-marker");
-        Directory.CreateDirectory(spoofedMarkerHome);
-        var spoofedMarkerProfile = CodexEconomyRouter.ResolveProfile(spoofedMarkerHome);
-        var encodedSpoofedSkillPath = JsonSerializer.Serialize(spoofedMarkerProfile.SkillPath);
-        var spoofedMarkerText = $"""
-            [agents]
-            default_subagent_model = "{CodexEconomyRouter.EconomyModel}"
-            default_subagent_reasoning_effort = "{CodexEconomyRouter.EconomyEffort}"
-
-            {CodexEconomyRouter.AgentBegin}
-            {CodexEconomyRouter.AgentEnd}
-            {CodexEconomyRouter.SkillBegin}
-            {CodexEconomyRouter.SkillEnd}
-
-            [[skills.config]]
-            path = {encodedSpoofedSkillPath}
-            enabled = true
-            """;
-        File.WriteAllText(spoofedMarkerProfile.ConfigPath, spoofedMarkerText);
-        Equal(
-            CodexEconomyMode.Inconsistent,
-            router.Inspect(spoofedMarkerProfile).Mode,
-            "empty markers cannot claim ownership of values outside their blocks");
-
-        var trailingHome = Path.Combine(directory, "trailing-whitespace");
-        Directory.CreateDirectory(trailingHome);
-        var trailingProfile = CodexEconomyRouter.ResolveProfile(trailingHome);
-        const string trailingText = "model = \"gpt-test\"  \n\n  \n";
-        File.WriteAllText(trailingProfile.ConfigPath, trailingText);
-        router.Install(trailingProfile);
-        Equal(
-            true,
-            File.ReadAllText(trailingProfile.ConfigPath).StartsWith(trailingText, StringComparison.Ordinal),
-            "unmanaged trailing whitespace is preserved before appended managed blocks");
-
-        var partialHome = Path.Combine(directory, "partial-marker");
-        Directory.CreateDirectory(partialHome);
-        var partialProfile = CodexEconomyRouter.ResolveProfile(partialHome);
-        var partialText = $"{CodexEconomyRouter.SkillBegin}\n[[skills.config]]\n";
-        File.WriteAllText(partialProfile.ConfigPath, partialText);
-        Equal(CodexEconomyMode.Inconsistent, router.Inspect(partialProfile).Mode, "partial marker is inconsistent");
-        var partialRejected = false;
-        try
-        {
-            router.Install(partialProfile);
-        }
-        catch (CodexEconomyException)
-        {
-            partialRejected = true;
-        }
-        Equal(true, partialRejected, "partial marker fails closed");
-        Equal(partialText, File.ReadAllText(partialProfile.ConfigPath), "partial marker preserves original config");
-
-        var unmanagedSkillHome = Path.Combine(directory, "unmanaged-skill");
-        var unmanagedSkillProfile = CodexEconomyRouter.ResolveProfile(unmanagedSkillHome);
-        Directory.CreateDirectory(unmanagedSkillProfile.SkillDirectory);
-        File.WriteAllText(unmanagedSkillProfile.SkillPath, "unmanaged");
-        var installRejected = false;
-        try
-        {
-            router.Install(unmanagedSkillProfile);
-        }
-        catch (CodexEconomyException)
-        {
-            installRejected = true;
-        }
-        Equal(true, installRejected, "different unmanaged Skill cannot be adopted");
-        Equal("unmanaged", File.ReadAllText(unmanagedSkillProfile.SkillPath), "unmanaged Skill remains untouched");
-
-        var invalidManifestHome = Path.Combine(directory, "invalid-ownership-manifest");
-        var invalidManifestProfile = CodexEconomyRouter.ResolveProfile(invalidManifestHome);
-        Directory.CreateDirectory(invalidManifestProfile.SkillDirectory);
-        File.WriteAllText(
-            Path.Combine(invalidManifestProfile.SkillDirectory, ".zgstokenbar-skill.json"),
-            """{"schemaVersion":"one","skill":42,"files":[]}""");
-        var invalidManifestRejected = false;
-        try
-        {
-            router.Install(invalidManifestProfile);
-        }
-        catch (CodexEconomyException)
-        {
-            invalidManifestRejected = true;
-        }
-        Equal(true, invalidManifestRejected, "invalid ownership manifest types fail as a controlled economy conflict");
-
-        var extraOwned = CodexEconomyRouter.ResolveProfile(Path.Combine(directory, "extra-owned-setting"));
-        Directory.CreateDirectory(extraOwned.HomeDirectory);
-        var extraOwnedText = LegacyConfig(extraOwned, CodexEconomyMode.On)
-            .Replace("max_concurrent_threads_per_session = 4\n", string.Empty, StringComparison.Ordinal)
-            .Replace(CodexEconomyRouter.AgentEnd, "max_concurrent_threads_per_session = 9\n" + CodexEconomyRouter.AgentEnd, StringComparison.Ordinal);
-        File.WriteAllText(extraOwned.ConfigPath, extraOwnedText);
-        Equal(CodexEconomyMode.Inconsistent, router.Inspect(extraOwned).Mode, "manual fields inside an owned block are not silently discarded");
-        var extraOwnedRejected = false;
-        try { router.Install(extraOwned); }
-        catch (CodexEconomyException) { extraOwnedRejected = true; }
-        Equal(true, extraOwnedRejected, "unexpected managed fields block migration");
-        Equal(extraOwnedText, File.ReadAllText(extraOwned.ConfigPath), "unexpected managed fields are preserved");
-
-        var edited = CodexEconomyRouter.ResolveProfile(Path.Combine(directory, "edited-managed-skill"));
-        router.Install(edited);
-        File.AppendAllText(edited.SkillPath, "\nlocal user change");
-        var editedConfig = File.ReadAllBytes(edited.ConfigPath);
-        var editedSkill = File.ReadAllBytes(edited.SkillPath);
-        var editedRejected = false;
-        try { router.Install(edited); }
-        catch (CodexEconomyException) { editedRejected = true; }
-        Equal(true, editedRejected, "local edits to managed assets are not overwritten");
-        Equal(true, editedSkill.AsSpan().SequenceEqual(File.ReadAllBytes(edited.SkillPath)), "edited asset is preserved");
-        Equal(true, editedConfig.AsSpan().SequenceEqual(File.ReadAllBytes(edited.ConfigPath)), "asset conflict preserves config");
-
-        var retired = CodexEconomyRouter.ResolveProfile(Path.Combine(directory, "retired-helper"));
-        var retiredPath = Path.Combine(retired.SkillDirectory, "scripts", "set_economy_mode.py");
-        Directory.CreateDirectory(Path.GetDirectoryName(retiredPath)!);
-        const string oldSkill = "old managed skill";
-        const string oldHelper = "old global mode helper";
-        File.WriteAllText(retired.SkillPath, oldSkill);
-        File.WriteAllText(retiredPath, oldHelper);
-        var extraPath = Path.Combine(retired.SkillDirectory, "user-note.txt");
-        File.WriteAllText(extraPath, "keep");
-        File.WriteAllText(Path.Combine(retired.SkillDirectory, ".zgstokenbar-skill.json"), JsonSerializer.Serialize(new
-        {
-            schemaVersion = 1,
-            skill = CodexEconomyRouter.SkillName,
-            files = new Dictionary<string, string>
-            {
-                ["SKILL.md"] = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(oldSkill))),
-                ["scripts/set_economy_mode.py"] = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(oldHelper))),
-            },
-        }));
-        File.WriteAllText(retired.ConfigPath, LegacyConfig(retired, CodexEconomyMode.On));
-        Equal(true, router.Install(retired).Ready, "owned legacy installation migrates");
-        Equal(false, File.Exists(retiredPath), "the owned global switch script is retired");
-        Equal("keep", File.ReadAllText(extraPath), "unrelated user files are retained");
-
-        var unowned = CodexEconomyRouter.ResolveProfile(Path.Combine(directory, "unowned-helper"));
-        var unownedHelper = Path.Combine(unowned.SkillDirectory, "scripts", "set_economy_mode.py");
-        Directory.CreateDirectory(Path.GetDirectoryName(unownedHelper)!);
-        File.WriteAllText(unownedHelper, "unowned helper");
-        var unownedRejected = false;
-        try { router.Install(unowned); }
-        catch (CodexEconomyException) { unownedRejected = true; }
-        Equal(true, unownedRejected, "unowned retired helper cannot be deleted");
-        Equal("unowned helper", File.ReadAllText(unownedHelper), "unowned helper stays intact");
-        Equal(false, File.Exists(unowned.SkillPath), "retirement ownership is checked before new assets are written");
-
-        var racePath = Path.Combine(directory, "race.toml");
-        var raceExpected = Encoding.UTF8.GetBytes("race\n");
-        File.WriteAllBytes(racePath, raceExpected);
-        using var start = new ManualResetEventSlim(false);
-        var first = Task.Run(() =>
-        {
-            start.Wait();
-            try
-            {
-                CodexEconomyRouter.AtomicWriteForTesting(racePath, Encoding.UTF8.GetBytes("first\n"), raceExpected);
-                return true;
-            }
-            catch (CodexEconomyException)
-            {
-                return false;
-            }
-        });
-        var second = Task.Run(() =>
-        {
-            start.Wait();
-            try
-            {
-                CodexEconomyRouter.AtomicWriteForTesting(racePath, Encoding.UTF8.GetBytes("second\n"), raceExpected);
-                return true;
-            }
-            catch (CodexEconomyException)
-            {
-                return false;
-            }
-        });
-        start.Set();
-        Task.WaitAll(first, second);
-        Equal(1, new[] { first.Result, second.Result }.Count(value => value), "one concurrent config writer wins");
-        Equal(true, File.ReadAllText(racePath) is "first\n" or "second\n", "concurrent winner remains intact");
-        Equal(0, Directory.GetFiles(directory, "*.tmp", SearchOption.AllDirectories).Length, "router temporary files cleaned");
+        var multiline = "PROMPT = \"\"\"\n[agents]\nenabled = false\n\"\"\"\n";
+        File.WriteAllText(profile.ConfigPath, multiline);
+        Equal(true, router.Inspect(profile).Ready, "TOML-looking multiline content is not configuration");
+        File.WriteAllText(Path.Combine(profile.HomeDirectory, "team.config.toml"), "model = \"team\"\n");
+        Equal(true, router.Inspect(profile).HasNamedConfigLayers, "named layers remain informational");
+        Equal("external skill content\n", File.ReadAllText(profile.SkillPath), "external content is never overwritten");
+        Equal(false, typeof(CodexEconomyRouter).GetMethods().Any(method => method.Name == "Install"), "router exposes no installation route");
+        Equal(false, typeof(CodexEconomyRouter).Assembly.GetManifestResourceNames().Any(name => name.Contains("sol-luna-delegation", StringComparison.Ordinal)), "TokenBar ships no private skill bundle");
 
         var discoveryUser = Path.Combine(directory, "discovery-user");
         var environmentHome = Path.Combine(directory, "environment-home");
@@ -15237,12 +14959,12 @@ static void TestTaskbarStackedCodexAccounts()
             economyHits.Reorder.Left + economyHits.Reorder.Width / 2,
             economyHits.Reorder.Top + economyHits.Reorder.Height / 2)),
         "reorder handle stays outside the economy menu target");
-    var requestedInstall = false;
-    var requestedInstallCount = 0;
-    economyForm.CodexEconomyInstallRequested += (_, _) =>
+    var requestedRefresh = false;
+    var requestedRefreshCount = 0;
+    economyForm.CodexEconomyStatusRefreshRequested += (_, _) =>
     {
-        requestedInstall = true;
-        requestedInstallCount++;
+        requestedRefresh = true;
+        requestedRefreshCount++;
     };
     using (var menu = economyForm.CreateCodexEconomyMenuForAcceptance())
     {
@@ -15257,20 +14979,21 @@ static void TestTaskbarStackedCodexAccounts()
             "economy menu carries a localized project-style header");
         var menuItems = menu.Items.OfType<System.Windows.Forms.ToolStripMenuItem>().ToArray();
         Equal(false, menuItems.Any(item => item.Tag is "bar.economy.off" or "bar.economy.ask" or "bar.economy.on"), "assistant menu has no global switches");
-        var install = menuItems.Single(item => Equals(item.Tag, "bar.economy.install"));
-        Equal("安装/更新", install.Text, "single assistant setup action is localized");
-        install.PerformClick();
+        var refresh = menuItems.Single(item => Equals(item.Tag, "bar.economy.refresh"));
+        Equal("刷新状态", refresh.Text, "read-only refresh action is localized");
+        Equal(false, menuItems.Any(item => Equals(item.Tag, "bar.economy.install")), "menu offers no skill installation");
+        refresh.PerformClick();
         Equal(
             false,
-            requestedInstall,
-            "economy Bar menu returns from the click before configuration work is dispatched");
+            requestedRefresh,
+            "economy Bar menu returns from the click before read-only inspection is dispatched");
         System.Windows.Forms.Application.DoEvents();
         Equal(
             true,
-            requestedInstall,
-            "assistant Bar menu emits installation on the next UI message");
+            requestedRefresh,
+            "assistant Bar menu emits inspection on the next UI message");
         System.Windows.Forms.Application.DoEvents();
-        Equal(1, requestedInstallCount, "assistant Bar menu dispatches installation exactly once");
+        Equal(1, requestedRefreshCount, "assistant Bar menu dispatches inspection exactly once");
     }
     economyForm.ApplySettings(new AppSettings { EnableRadar = false, EnableCodexEconomyBar = false });
     Equal(
@@ -16420,7 +16143,7 @@ static void TestNativeSettingsPanelContract()
     Equal(
         true,
         controls.Single(control => Equals(control.Tag, "economy.status"))
-            .Text.Contains("Per-task confirmation", StringComparison.Ordinal),
+            .Text.Contains("Externally managed", StringComparison.Ordinal),
         "Advanced exposes the injected Codex economy status without reading production config");
     draft.SelectPageForRendering("providers");
     System.Windows.Forms.Application.DoEvents();
@@ -16493,18 +16216,16 @@ static void TestCodexEconomySettingsPanelContract()
         foreach (var dpi in new[] { 96, 144, 192 })
         {
             var selectedMode = CodexEconomyMode.Task;
-            var writes = 0;
-            CodexEconomyStatus Inspect(CodexEconomyProfile profile) => new(
+            var inspections = 0;
+            CodexEconomyStatus Inspect(CodexEconomyProfile profile)
+            {
+                inspections++;
+                return new(
                 selectedMode,
                 profile,
                 true,
                 profile == first,
                 null);
-            CodexEconomyStatus Install(CodexEconomyProfile profile)
-            {
-                writes++;
-                selectedMode = CodexEconomyMode.Task;
-                return Inspect(profile);
             }
 
             using var panel = new CodexEconomySettingsPanel(
@@ -16512,14 +16233,13 @@ static void TestCodexEconomySettingsPanelContract()
                 dpi,
                 renderOnly: true,
                 profiles: [second, first],
-                inspect: Inspect,
-                install: Install);
+                inspect: Inspect);
             panel.Width = (int)Math.Round(640 * dpi / 96d);
             LayoutControlTree(panel);
             var controls = DescendantControls(panel).ToArray();
             Equal(first, panel.SelectedProfile, "embedded economy panel selects the explicitly recommended profile");
             Equal(true, panel.CurrentStatus?.Ready, "assistant panel reflects installed task-scoped policy");
-            Equal(0, writes, "opening and inspecting the embedded economy panel does not write config");
+            Equal(1, inspections, "opening the panel only inspects once");
             Equal(
                 0,
                 controls.OfType<System.Windows.Forms.RadioButton>()
@@ -16543,11 +16263,11 @@ static void TestCodexEconomySettingsPanelContract()
             var selector = controls.OfType<System.Windows.Forms.ComboBox>().Single();
             selector.SelectedIndex = 0;
             Equal(second, panel.SelectedProfile, "profile selection stays explicit");
-            Equal(0, writes, "selecting a profile does not write configuration");
-            PerformClick(controls.Single(control => Equals(control.Tag, "economy.apply")));
-            Equal(1, writes, "Apply performs exactly one economy write");
-            Equal(true, panel.AppliedStatus?.Ready, "installation records verified readiness");
-            Equal(second, panel.AppliedStatus?.Profile, "only the selected profile is installed");
+            Equal(2, inspections, "selecting a profile only inspects");
+            PerformClick(controls.Single(control => Equals(control.Tag, "economy.refresh")));
+            Equal(3, inspections, "refresh only re-inspects the selected profile");
+            Equal(second, panel.CurrentStatus?.Profile, "only the selected profile is observed");
+            Equal(false, controls.Any(control => Equals(control.Tag, "economy.apply")), "panel has no installation control");
         }
     }
 
@@ -16559,9 +16279,9 @@ static void TestCodexEconomySettingsPanelContract()
         inspect: profile => new CodexEconomyStatus(CodexEconomyMode.Off, profile, false, false, null));
     LayoutControlTree(readOnly);
     Equal(
-        false,
-        DescendantControls(readOnly).Single(control => Equals(control.Tag, "economy.apply")).Enabled,
-        "render-only embedded economy panel cannot write without an injected installation function");
+        true,
+        DescendantControls(readOnly).Single(control => Equals(control.Tag, "economy.refresh")).Enabled,
+        "disabled profiles can still be refreshed read-only");
 }
 
 static void LayoutControlTree(System.Windows.Forms.Control control)

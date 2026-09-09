@@ -1,7 +1,0 @@
-interface:
-  display_name: "Task-scoped Luna assistant"
-  short_description: "Assess briefly and ask before delegating this task"
-  default_prompt: "Use $sol-luna-delegation to assess this task briefly and ask before using a Luna Max subagent."
-
-policy:
-  allow_implicit_invocation: true
