@@ -7,79 +7,77 @@ const [cliPath, fixtureRoot] = process.argv.slice(2);
 if (!cliPath || !fixtureRoot) {
   throw new Error('Usage: node scripts/economy-cli-acceptance.mjs <cli-path> <fixture-root>');
 }
-
 fs.mkdirSync(fixtureRoot, { recursive: true });
 
-function run(args) {
-  const result = spawnSync(cliPath, args, {
-    encoding: 'utf8',
-    windowsHide: true,
-  });
+function json(args, expectedStatus = 0) {
+  const result = spawnSync(cliPath, ['--json', ...args], { encoding: 'utf8', windowsHide: true });
   if (result.error) throw result.error;
-  return result;
-}
-
-function json(args, expectedStatus) {
-  const result = run(args.includes('--json') ? args : ['--json', ...args]);
-  assert.equal(result.status, expectedStatus, `${args.join(' ')} exit code\n${result.stderr}`);
-  assert.equal(result.stderr, '', `${args.join(' ')} keeps JSON errors on stdout`);
+  assert.equal(result.status, expectedStatus, result.stdout + result.stderr);
+  assert.equal(result.stderr, '');
   return JSON.parse(result.stdout);
 }
 
-const profile = path.join(fixtureRoot, 'profile');
-fs.mkdirSync(profile, { recursive: true });
-const configPath = path.join(profile, 'config.toml');
 const originalConfig = 'model = "root-fixture"\nmodel_reasoning_effort = "high"\n';
-fs.writeFileSync(configPath, originalConfig);
-
-let payload = json(['economy', 'status', '--codex-home', profile], 0);
-assert.equal(payload.ok, true);
+function fixture(name, config = originalConfig) {
+  const home = path.join(fixtureRoot, name);
+  fs.mkdirSync(home, { recursive: true });
+  fs.writeFileSync(path.join(home, 'config.toml'), config);
+  return home;
+}
+const readConfig = home => fs.readFileSync(path.join(home, 'config.toml'), 'utf8');
+const profile = fixture('profile');
+let payload = json(['economy', 'status', '--codex-home', profile]);
 assert.equal(payload.result.mode, 'unconfigured');
-assert.equal(payload.result.skillInstalled, false);
+assert.equal(payload.result.ready, false);
 
-payload = json(['economy', 'install', '--codex-home', profile], 0);
-assert.equal(payload.result.mode, 'unconfigured');
+payload = json(['economy', 'install', '--codex-home', profile]);
+assert.equal(payload.result.mode, 'task');
+assert.equal(payload.result.policy, 'task-scoped-confirmation');
+assert.equal(payload.result.ready, true);
 assert.equal(payload.result.skillInstalled, true);
-assert.equal(fs.readFileSync(configPath, 'utf8'), originalConfig);
+assert.equal(readConfig(profile).startsWith(originalConfig), true);
+assert.doesNotMatch(readConfig(profile), /default_subagent_model|default_subagent_reasoning_effort/);
+assert.equal(fs.existsSync(path.join(profile, 'skills', 'sol-luna-delegation', 'scripts', 'set_economy_mode.py')), false);
+const installedConfig = readConfig(profile);
+json(['economy', 'install', '--codex-home', profile]);
+assert.equal(readConfig(profile), installedConfig);
 
-payload = json(['economy', 'set', 'ask', '--codex-home', profile], 0);
-assert.equal(payload.result.mode, 'ask');
-assert.equal(payload.result.skillInstalled, true);
+for (const mode of ['off', 'ask', 'on']) {
+  const home = fixture('legacy-' + mode);
+  const skillPath = path.join(home, 'skills', 'sol-luna-delegation', 'SKILL.md');
+  const defaults = mode === 'on'
+    ? '# BEGIN sol-luna-delegation economy agent defaults\ndefault_subagent_model = "gpt-5.6-luna"\ndefault_subagent_reasoning_effort = "max"\n# END sol-luna-delegation economy agent defaults\n'
+    : '';
+  const legacy = originalConfig + '[agents]\nmax_concurrent_threads_per_session = 3\n' + defaults
+    + '\n# BEGIN sol-luna-delegation economy skill switch\n[[skills.config]]\n'
+    + 'path = ' + JSON.stringify(skillPath) + '\nenabled = ' + (mode !== 'off')
+    + '\n# END sol-luna-delegation economy skill switch\n';
+  fs.writeFileSync(path.join(home, 'config.toml'), legacy);
+  assert.equal(json(['economy', 'status', '--codex-home', home]).result.mode, mode);
+  assert.equal(json(['economy', 'install', '--codex-home', home]).result.ready, true);
+  assert.equal(readConfig(home).startsWith(originalConfig), true);
+  assert.match(readConfig(home), /max_concurrent_threads_per_session = 3/);
+  assert.doesNotMatch(readConfig(home), /default_subagent_model|default_subagent_reasoning_effort/);
+}
 
-payload = json(['economy', 'status', '--codex-home', profile, '--json'], 0);
-assert.equal(payload.result.mode, 'ask');
+const manual = originalConfig + '[agents]\ndefault_subagent_model = "manual-model"\ndefault_subagent_reasoning_effort = "low"\n';
+const manualProfile = fixture('manual-defaults', manual);
+assert.equal(json(['economy', 'install', '--codex-home', manualProfile]).result.ready, true);
+assert.equal(readConfig(manualProfile).startsWith(manual), true);
 
-const onResult = run(['economy', 'set', 'on', '--codex-home', profile]);
-assert.equal(onResult.status, 0, onResult.stderr);
-assert.equal(onResult.stdout.split(/\r?\n/, 1)[0], 'on');
-const onConfig = fs.readFileSync(configPath, 'utf8');
-assert.equal(onConfig.startsWith(originalConfig), true);
-assert.match(onConfig, /^default_subagent_model = "gpt-5\.6-luna"$/m);
-assert.match(onConfig, /^default_subagent_reasoning_effort = "max"$/m);
+for (const mode of ['off', 'ask', 'on', 'turbo']) {
+  payload = json(['economy', 'set', mode, '--codex-home', profile], 2);
+  assert.equal(payload.error.code, 'invalid_arguments');
+  assert.equal(readConfig(profile), installedConfig);
+}
 
-payload = json(['economy', 'set', 'off', '--codex-home', profile], 0);
-assert.equal(payload.result.mode, 'off');
-assert.equal(payload.result.skillInstalled, true);
-const offConfig = fs.readFileSync(configPath, 'utf8');
-assert.equal(offConfig.startsWith(originalConfig), true);
-assert.doesNotMatch(offConfig, /default_subagent_model|default_subagent_reasoning_effort/);
-
-payload = json(['economy', 'set', '--codex-home', profile], 2);
-assert.equal(payload.ok, false);
-assert.equal(payload.error.code, 'invalid_arguments');
-payload = json(['economy', 'set', 'turbo', '--codex-home', profile], 2);
-assert.equal(payload.ok, false);
-assert.equal(payload.error.code, 'invalid_arguments');
-
-const conflictProfile = path.join(fixtureRoot, 'conflict');
-fs.mkdirSync(conflictProfile, { recursive: true });
-const conflictPath = path.join(conflictProfile, 'config.toml');
-const conflict = '[agents]\ndefault_subagent_model = "other"\n';
-fs.writeFileSync(conflictPath, conflict);
-payload = json(['economy', 'set', 'on', '--codex-home', conflictProfile], 4);
-assert.equal(payload.ok, false);
+const conflictProfile = path.join(fixtureRoot, 'unmanaged-skill');
+const conflictSkillPath = path.join(conflictProfile, 'skills', 'sol-luna-delegation', 'SKILL.md');
+const conflict = '[[skills.config]]\npath = ' + JSON.stringify(conflictSkillPath) + '\nenabled = false\n';
+fixture('unmanaged-skill', conflict);
+payload = json(['economy', 'install', '--codex-home', conflictProfile], 4);
 assert.equal(payload.error.code, 'codex_economy_conflict');
-assert.equal(fs.readFileSync(conflictPath, 'utf8'), conflict);
-assert.equal(fs.existsSync(path.join(conflictProfile, 'skills', 'sol-luna-delegation')), false);
+assert.equal(readConfig(conflictProfile), conflict);
+assert.equal(fs.existsSync(path.dirname(conflictSkillPath)), false);
 
-console.log('PASS economy CLI acceptance');
+console.log('PASS task-scoped assistant CLI acceptance');

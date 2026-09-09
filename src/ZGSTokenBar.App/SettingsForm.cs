@@ -87,7 +87,7 @@ internal sealed class SettingsForm : Form
         CodexEconomyStatus? codexEconomyStatus = null,
         IReadOnlyList<CodexEconomyProfile>? codexEconomyProfiles = null,
         Func<CodexEconomyProfile, CodexEconomyStatus>? inspectCodexEconomy = null,
-        Func<CodexEconomyProfile, CodexEconomyMode, CodexEconomyStatus>? setCodexEconomyMode = null)
+        Func<CodexEconomyProfile, CodexEconomyStatus>? installCodexEconomy = null)
     {
         if (!renderOnly && renderWorkingArea is not null)
         {
@@ -262,7 +262,7 @@ internal sealed class SettingsForm : Form
             renderOnly,
             economyProfiles,
             InspectEconomy,
-            setCodexEconomyMode);
+            installCodexEconomy);
         _codexEconomyPanel.StatusChanged += (_, _) => CodexEconomyStatusChanged?.Invoke(this, EventArgs.Empty);
 
         var root = new TableLayoutPanel

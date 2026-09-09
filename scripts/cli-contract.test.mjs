@@ -32,7 +32,8 @@ test('shipped CLI exposes canonical API commands and compatibility aliases', () 
   assert.match(cli, /command is "sub2api"/);
   assert.match(cli, /sub2api provision\|configure\|status\|disconnect/);
   assert.match(cli, /command is "economy"/);
-  assert.match(cli, /economy status\|install\|set off\|ask\|on/);
+  assert.match(cli, /economy status\|install \[--codex-home/);
+  assert.doesNotMatch(cli, /economy status\|install\|set off\|ask\|on/);
   assert.match(cli, /CodexEconomyRouter\.ResolveProfile/);
   assert.match(cli, /--codex-home/);
   assert.doesNotMatch(cli, /AppSettings.*Economy|Economy.*AppSettings/);

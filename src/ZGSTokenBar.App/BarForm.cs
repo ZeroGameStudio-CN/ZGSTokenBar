@@ -11,11 +11,6 @@ internal sealed class RadarPreviewRequest(ProviderKind provider, string surfaceI
     public string SurfaceId { get; } = surfaceId;
 }
 
-internal sealed class CodexEconomyModeRequest(CodexEconomyMode mode) : EventArgs
-{
-    public CodexEconomyMode Mode { get; } = mode;
-}
-
 internal sealed class BarForm : Form
 {
     private const string SettingsIconGlyph = "\uE713";
@@ -210,7 +205,7 @@ internal sealed class BarForm : Form
     public event EventHandler<RadarPreviewRequest>? RadarPreviewRequested;
     public event EventHandler? SystemUsageDetailsRequested;
     public event EventHandler? CodexEconomyStatusRefreshRequested;
-    public event EventHandler<CodexEconomyModeRequest>? CodexEconomyModeRequested;
+    public event EventHandler? CodexEconomyInstallRequested;
     public event EventHandler? MiniAreaLayoutChanged;
     public event EventHandler? MiniAreaOrderChanged;
     public event EventHandler? RadarModelGroupsChanged;
@@ -2218,8 +2213,7 @@ internal sealed class BarForm : Form
         var mode = _codexEconomyStatus?.Mode ?? CodexEconomyMode.Unconfigured;
         var color = mode switch
         {
-            CodexEconomyMode.On => Color.FromArgb(52, 211, 153),
-            CodexEconomyMode.Ask => Color.FromArgb(251, 191, 36),
+            CodexEconomyMode.Task when _codexEconomyStatus?.Ready == true => Color.FromArgb(52, 211, 153),
             CodexEconomyMode.Inconsistent => Color.FromArgb(251, 113, 133),
             _ => Color.FromArgb(148, 163, 184),
         };
@@ -2242,8 +2236,8 @@ internal sealed class BarForm : Form
         using var accent = new SolidBrush(color);
         using var primary = new SolidBrush(Color.FromArgb(226, 232, 240));
         var label = collapsed
-            ? EconomyCompactLabel(mode)
-            : _text.CodexEconomyModeName(mode);
+            ? "L"
+            : _text.CodexEconomyBarAreaTitle;
         var labelWidth = Math.Min(
             Math.Max(1, bounds.Width - 18),
             MeasureWidth(graphics, label, _badgeFont) + 4);
@@ -2258,15 +2252,6 @@ internal sealed class BarForm : Form
             new RectangleF(contentLeft + 10, bounds.Top, labelWidth, bounds.Height),
             StringAlignment.Center);
     }
-
-    private static string EconomyCompactLabel(CodexEconomyMode mode) => mode switch
-    {
-        CodexEconomyMode.Off => "O",
-        CodexEconomyMode.Ask => "A",
-        CodexEconomyMode.On => "N",
-        CodexEconomyMode.Inconsistent => "!",
-        _ => "?",
-    };
 
     private RectangleF DrawTaskbarProviderLogo(
         Graphics graphics,
@@ -4689,9 +4674,6 @@ internal sealed class BarForm : Form
         var available = _codexEconomyStatus is not null
             && _codexEconomyStatus.Mode != CodexEconomyMode.Inconsistent;
         var menuWidth = Scale(232);
-        var headerHeight = Scale(42);
-        var itemHeight = Scale(48);
-        var actionHeight = Scale(32);
         var surface = _backgroundTheme.Popover;
         var hover = MixColor(surface, Color.FromArgb(37, 55, 82), .84f);
         var border = MixColor(surface, Color.FromArgb(100, 116, 139), .62f);
@@ -4719,67 +4701,40 @@ internal sealed class BarForm : Form
             descriptionFont.Dispose();
         };
         menu.Items.Add(new CodexEconomyMenuHeaderItem(
-            _text.CodexEconomyBarMenuTitle,
-            _text.CodexEconomyBarMenuHint,
-            titleFont,
-            descriptionFont)
+            _text.CodexEconomyBarMenuTitle, _text.CodexEconomyBarMenuHint, titleFont, descriptionFont)
         {
             AutoSize = false,
             Width = menuWidth - menu.Padding.Horizontal,
-            Height = headerHeight,
+            Height = Scale(42),
             Tag = "bar.economy.header",
         });
         menu.Items.Add(new ToolStripSeparator());
-        if (!available)
+        menu.Items.Add(new ToolStripMenuItem(_text.CodexEconomyStatusSummary(_codexEconomyStatus))
         {
-            menu.Items.Add(new ToolStripMenuItem(_text.CodexEconomyStatusSummary(_codexEconomyStatus))
-            {
-                AutoSize = false,
-                Width = menuWidth - menu.Padding.Horizontal,
-                Height = actionHeight,
-                Enabled = false,
-            });
-            menu.Items.Add(new ToolStripSeparator());
-        }
-        foreach (var mode in new[] { CodexEconomyMode.Off, CodexEconomyMode.Ask, CodexEconomyMode.On })
+            AutoSize = false,
+            Width = menuWidth - menu.Padding.Horizontal,
+            Height = Scale(32),
+            Enabled = false,
+            Tag = "bar.economy.status",
+        });
+        var install = new ToolStripMenuItem(_text.CodexEconomyApply)
         {
-            var current = _codexEconomyStatus?.Mode == mode;
-            var accent = mode switch
-            {
-                CodexEconomyMode.On => Color.FromArgb(52, 211, 153),
-                CodexEconomyMode.Ask => Color.FromArgb(251, 191, 36),
-                _ => Color.FromArgb(148, 163, 184),
-            };
-            var item = new CodexEconomyModeMenuItem(
-                mode,
-                _text.CodexEconomyModeName(mode),
-                _text.CodexEconomyBarModeDescription(mode),
-                accent,
-                current,
-                titleFont,
-                descriptionFont)
-            {
-                AutoSize = false,
-                Width = menuWidth - menu.Padding.Horizontal,
-                Height = itemHeight,
-                Enabled = available,
-                Tag = $"bar.economy.{mode.ToString().ToLowerInvariant()}",
-            };
-            item.Click += (_, _) => DismissCodexEconomyMenuAndRequestMode(menu, mode);
-            menu.Items.Add(item);
-        }
-        if (!available)
+            AutoSize = false,
+            Width = menuWidth - menu.Padding.Horizontal,
+            Height = Scale(32),
+            Enabled = available,
+            Tag = "bar.economy.install",
+        };
+        install.Click += (_, _) => DismissCodexEconomyMenuAndRequestInstall(menu);
+        menu.Items.Add(install);
+        var settings = new ToolStripMenuItem(_text.SettingsTitle)
         {
-            menu.Items.Add(new ToolStripSeparator());
-            var settings = new ToolStripMenuItem(_text.SettingsTitle)
-            {
-                AutoSize = false,
-                Width = menuWidth - menu.Padding.Horizontal,
-                Height = actionHeight,
-            };
-            settings.Click += (_, _) => SettingsRequested?.Invoke(this, EventArgs.Empty);
-            menu.Items.Add(settings);
-        }
+            AutoSize = false,
+            Width = menuWidth - menu.Padding.Horizontal,
+            Height = Scale(32),
+        };
+        settings.Click += (_, _) => SettingsRequested?.Invoke(this, EventArgs.Empty);
+        menu.Items.Add(settings);
         menu.Height = menu.Items.Cast<ToolStripItem>().Sum(item => item.Height) + menu.Padding.Vertical;
         void ApplyRegion() => renderer.ApplyRoundedRegion(menu);
         menu.HandleCreated += (_, _) => ApplyRegion();
@@ -4788,16 +4743,14 @@ internal sealed class BarForm : Form
         return menu;
     }
 
-    private void DismissCodexEconomyMenuAndRequestMode(
-        ContextMenuStrip menu,
-        CodexEconomyMode mode)
+    private void DismissCodexEconomyMenuAndRequestInstall(ContextMenuStrip menu)
     {
         menu.Close(ToolStripDropDownCloseReason.ItemClicked);
         if (IsDisposed || Disposing || !IsHandleCreated) return;
         BeginInvoke(new Action(() =>
         {
             if (IsDisposed || Disposing) return;
-            CodexEconomyModeRequested?.Invoke(this, new CodexEconomyModeRequest(mode));
+            CodexEconomyInstallRequested?.Invoke(this, EventArgs.Empty);
         }));
     }
 

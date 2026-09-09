@@ -8,27 +8,12 @@ internal static partial class CliApplication
     {
         var subcommand = Subcommand(commandLine, "status");
         var offset = commandLine.Length == 0 ? 0 : 1;
-        CodexEconomyMode? requestedMode = null;
         if (subcommand == "set")
         {
-            if (commandLine.Length <= offset)
-            {
-                return CliOutput.Invalid(asJson, "economy set", "economy set requires off, ask, or on.");
-            }
-            requestedMode = commandLine[offset].ToLowerInvariant() switch
-            {
-                "off" => CodexEconomyMode.Off,
-                "ask" => CodexEconomyMode.Ask,
-                "on" => CodexEconomyMode.On,
-                _ => null,
-            };
-            if (requestedMode is null)
-            {
-                return CliOutput.Invalid(asJson, "economy set", "economy set requires off, ask, or on.");
-            }
-            offset++;
+            return CliOutput.Invalid(asJson, "economy set",
+                "Global mode switches have been removed. Use economy install for task-scoped confirmation; disable the Skill through Codex if needed.");
         }
-        else if (subcommand is not ("status" or "install"))
+        if (subcommand is not ("status" or "install"))
         {
             return CliOutput.Unknown($"economy {subcommand}", asJson);
         }
@@ -38,9 +23,7 @@ internal static partial class CliApplication
             return CliOutput.Invalid(asJson, $"economy {subcommand}", argumentError!);
         }
 
-        var command = requestedMode is { } mode
-            ? $"economy set {mode.ToString().ToLowerInvariant()}"
-            : $"economy {subcommand}";
+        var command = $"economy {subcommand}";
         try
         {
             var profile = CodexEconomyRouter.ResolveProfile(codexHome);
@@ -48,7 +31,6 @@ internal static partial class CliApplication
             var status = subcommand switch
             {
                 "install" => router.Install(profile),
-                "set" => router.SetMode(profile, requestedMode!.Value),
                 _ => router.Inspect(profile),
             };
             CliOutput.Write(
@@ -108,6 +90,8 @@ internal static partial class CliApplication
     private static System.Text.Json.JsonElement EconomyResult(CodexEconomyStatus status) =>
         CliOutput.ObjectElement(
             ("mode", status.Mode.ToString().ToLowerInvariant()),
+            ("policy", CodexEconomyRouter.PolicyName),
+            ("ready", status.Ready),
             ("codexHome", status.Profile.HomeDirectory),
             ("configPath", status.Profile.ConfigPath),
             ("skillPath", status.Profile.SkillPath),
@@ -117,12 +101,10 @@ internal static partial class CliApplication
 
     private static string EconomyText(CodexEconomyStatus status)
     {
-        var mode = status.Mode.ToString().ToLowerInvariant();
         var installed = status.SkillInstalled ? "installed" : "not installed";
-        var warning = status.HasNamedConfigLayers
-            ? $"{Environment.NewLine}Warning: named config layers may override this base configuration."
-            : string.Empty;
-        return $"{mode}{Environment.NewLine}Codex home: {status.Profile.HomeDirectory}"
-            + $"{Environment.NewLine}Skill: {installed}{warning}";
+        var readiness = status.Ready ? "ready" : "setup required";
+        return $"{readiness}{Environment.NewLine}Codex home: {status.Profile.HomeDirectory}"
+            + $"{Environment.NewLine}Skill: {installed}"
+            + $"{Environment.NewLine}Policy: assess each task; ask before delegating that task.";
     }
 }

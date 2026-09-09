@@ -54,9 +54,23 @@ All acceptance is non-interactive and CLI-only. Do not use desktop automation, i
 
 The Codex economy Skill is shipped from `src/ZGSTokenBar.Core/Skills/sol-luna-delegation/`
 as explicit embedded resources. Keep these assets in source control with LF endings.
-The default .NET suite tests installation and mode changes, and `npm run verify`
-also exercises the published NativeAOT CLI against temporary Codex profiles;
-neither route should modify the user's Codex configuration.
+It has one policy: assess new manual work briefly and request consent for a
+specific Luna Max package only when worthwhile. Consent never enables a global
+mode or carries into another task. The UI exposes status and installation/update,
+not mode switches; the independent Bar visibility preference remains available.
+
+`economy install` enables this task-scoped Skill for the explicitly selected
+profile and migrates only the tool-owned legacy Off/Ask/On blocks. Manual model
+choices and unrelated settings are preserved; edited owned assets or unexpected
+fields fail closed. The old global switch helper is removed only after its
+ownership digest matches. `economy set` is retired and rejects requests without
+writing. `economy status` reports readiness and any legacy migration state.
+
+The default .NET suite tests installation, migration, and preservation;
+`npm run verify` also runs parent-bound runtime-proof fixtures and exercises the
+published NativeAOT CLI against temporary Codex profiles. Tests never modify
+the user's Codex configuration. Installing into a real profile is a separate,
+explicitly authorized step; reload Codex afterward to load the new policy.
 
 - Behavior: deterministic .NET executable tests and Node source contracts.
 - Rendering: CLI-generated captures produced by the production renderers.

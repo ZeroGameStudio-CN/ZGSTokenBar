@@ -8,10 +8,12 @@ namespace ZGSTokenBar.Core;
 
 public enum CodexEconomyMode
 {
+    // Off/Ask/On are read-only migration states from previous installations.
     Unconfigured,
     Off,
     Ask,
     On,
+    Task,
     Inconsistent,
 }
 
@@ -31,7 +33,10 @@ public sealed record CodexEconomyStatus(
     CodexEconomyProfile Profile,
     bool SkillInstalled,
     bool HasNamedConfigLayers,
-    string? Diagnostic = null);
+    string? Diagnostic = null)
+{
+    public bool Ready => Mode == CodexEconomyMode.Task && SkillInstalled;
+}
 
 public sealed class CodexEconomyException : IOException
 {
@@ -44,13 +49,16 @@ public sealed class CodexEconomyRouter
     public const string SkillName = "sol-luna-delegation";
     public const string EconomyModel = "gpt-5.6-luna";
     public const string EconomyEffort = "max";
+    public const string PolicyName = "task-scoped-confirmation";
 
     internal const string AgentBegin = "# BEGIN sol-luna-delegation economy agent defaults";
     internal const string AgentEnd = "# END sol-luna-delegation economy agent defaults";
     internal const string SkillBegin = "# BEGIN sol-luna-delegation economy skill switch";
     internal const string SkillEnd = "# END sol-luna-delegation economy skill switch";
+    internal const string TaskPolicy = "# policy: " + PolicyName;
 
     private const string OwnershipManifestName = ".zgstokenbar-skill.json";
+    private const string RetiredSwitchPath = "scripts/set_economy_mode.py";
     private const int LockAttempts = 40;
     private const int LockDelayMilliseconds = 25;
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
@@ -58,7 +66,6 @@ public sealed class CodexEconomyRouter
     [
         new("SKILL.md", "ZGSTokenBar.Core.Skills.sol-luna-delegation.SKILL.md"),
         new("agents/openai.yaml", "ZGSTokenBar.Core.Skills.sol-luna-delegation.agents.openai.yaml"),
-        new("scripts/set_economy_mode.py", "ZGSTokenBar.Core.Skills.sol-luna-delegation.scripts.set_economy_mode.py"),
         new("scripts/verify_subagent_runtime.py", "ZGSTokenBar.Core.Skills.sol-luna-delegation.scripts.verify_subagent_runtime.py"),
     ];
 
@@ -125,37 +132,24 @@ public sealed class CodexEconomyRouter
         var hasNamedLayers = HasNamedConfigLayers(profile.HomeDirectory);
         var diagnostic = mode == CodexEconomyMode.Inconsistent
             ? "managed_configuration_inconsistent"
-            : hasNamedLayers
-                ? "named_config_layers_may_override_base"
+            : mode is CodexEconomyMode.Off or CodexEconomyMode.Ask or CodexEconomyMode.On
+                ? "legacy_economy_configuration"
                 : null;
         return new(mode, profile, installed, hasNamedLayers, diagnostic);
     }
 
     public CodexEconomyStatus Install(CodexEconomyProfile profile)
     {
-        InstallSkill(profile);
-        return Inspect(profile);
-    }
-
-    public CodexEconomyStatus SetMode(CodexEconomyProfile profile, CodexEconomyMode mode)
-    {
-        if (mode is not (CodexEconomyMode.Off or CodexEconomyMode.Ask or CodexEconomyMode.On))
-        {
-            throw new ArgumentOutOfRangeException(nameof(mode), "Only Off, Ask, or On can be applied.");
-        }
         var snapshot = ReadSnapshot(profile.ConfigPath);
         var decoded = DecodeConfig(snapshot.Bytes);
-        var updated = UpdateText(decoded.Text, profile.SkillPath, mode);
+        var updated = UpdateText(decoded.Text, profile.SkillPath);
         var candidateMode = InspectMode(updated, profile.SkillPath);
-        if (candidateMode != mode)
+        if (candidateMode != CodexEconomyMode.Task)
         {
             throw new CodexEconomyException(
-                $"Codex economy mode preflight mismatch: expected {mode}, got {candidateMode}.");
+                $"Task assistant preflight mismatch: expected Task, got {candidateMode}.");
         }
-        if (mode is CodexEconomyMode.Ask or CodexEconomyMode.On)
-        {
-            InstallSkill(profile);
-        }
+        InstallSkill(profile);
         var payload = EncodeConfig(updated, decoded.Newline, decoded.HasBom);
         if (!snapshot.Bytes.AsSpan().SequenceEqual(payload))
         {
@@ -163,10 +157,10 @@ public sealed class CodexEconomyRouter
         }
 
         var status = Inspect(profile);
-        if (status.Mode != mode)
+        if (!status.Ready)
         {
             throw new CodexEconomyException(
-                $"Codex economy mode read-back mismatch: expected {mode}, got {status.Mode}.");
+                "Task assistant installation did not pass read-back verification.");
         }
         return status;
     }
@@ -195,10 +189,17 @@ public sealed class CodexEconomyRouter
             }
             if (agentBlock is null && skillBlock is null) return CodexEconomyMode.Unconfigured;
             if (skillBlock is null) return CodexEconomyMode.Inconsistent;
+            if (!HasOnlyManagedFields(skillBlock.Body, skill: true)
+                || (agentBlock is not null && !HasOnlyManagedFields(agentBlock.Body, skill: false)))
+            {
+                return CodexEconomyMode.Inconsistent;
+            }
 
             var managedSkill = ParseRelevant(skillBlock.Body);
             if (managedSkill.SkillEntries.Count != 1
-                || !EntryTargetsSkill(managedSkill.SkillEntries[0], skillPath))
+                || !SamePath(managedSkill.SkillEntries[0].Path, skillPath)
+                || (managedSkill.SkillEntries[0].Name is { } name
+                    && !string.Equals(name.Trim(), SkillName, StringComparison.Ordinal)))
             {
                 return CodexEconomyMode.Inconsistent;
             }
@@ -209,7 +210,10 @@ public sealed class CodexEconomyRouter
                 if (skillEntry.Enabled == false) return CodexEconomyMode.Off;
                 if (skillEntry.Enabled == true && unmanagedConfig.AgentsEnabled != false)
                 {
-                    return CodexEconomyMode.Ask;
+                    return LexTomlLines(skillBlock.Body).Any(line => line.OutsideMultilineAtStart
+                            && string.Equals(line.Text.Trim(), TaskPolicy, StringComparison.Ordinal))
+                        ? CodexEconomyMode.Task
+                        : CodexEconomyMode.Ask;
                 }
                 return CodexEconomyMode.Inconsistent;
             }
@@ -231,7 +235,32 @@ public sealed class CodexEconomyRouter
         }
     }
 
-    internal static string UpdateText(string text, string skillPath, CodexEconomyMode mode)
+    private static bool HasOnlyManagedFields(string body, bool skill)
+    {
+        var allowed = skill ? new[] { "path", "name", "enabled" }
+            : new[] { "default_subagent_model", "default_subagent_reasoning_effort" };
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var headerSeen = false;
+        foreach (var physical in LexTomlLines(body))
+        {
+            if (!physical.OutsideMultilineAtStart) return false;
+            var line = StripComment(physical.Text).Trim();
+            if (line.Length == 0) continue;
+            if (skill && line.StartsWith("[[", StringComparison.Ordinal) && line.EndsWith("]]", StringComparison.Ordinal))
+            {
+                if (headerSeen || !PathEquals(ParseKeyPath(line[2..^2], "managed header"), "skills", "config")) return false;
+                headerSeen = true;
+                continue;
+            }
+            var equals = IndexOfEquals(line);
+            if (equals <= 0) return false;
+            var key = ParseKeyPath(line[..equals], "managed key");
+            if (key.Length != 1 || !allowed.Contains(key[0], StringComparer.Ordinal) || !seen.Add(key[0])) return false;
+        }
+        return !skill || headerSeen;
+    }
+
+    internal static string UpdateText(string text, string skillPath)
     {
         var current = InspectMode(text, skillPath);
         if (current == CodexEconomyMode.Inconsistent)
@@ -243,14 +272,8 @@ public sealed class CodexEconomyRouter
         var unmanaged = RemoveOwnedBlock(text, AgentBegin, AgentEnd);
         unmanaged = RemoveOwnedBlock(unmanaged, SkillBegin, SkillEnd);
         var parsed = ParseRelevant(unmanaged);
-        CheckUnmanagedConflicts(parsed, skillPath, mode);
-
-        var updated = unmanaged;
-        if (mode == CodexEconomyMode.On)
-        {
-            updated = AddAgentDefaults(updated);
-        }
-        return AddSkillSwitch(updated, skillPath, mode is CodexEconomyMode.Ask or CodexEconomyMode.On);
+        CheckUnmanagedConflicts(parsed, skillPath);
+        return AddTaskSkill(unmanaged, skillPath);
     }
 
     internal static void AtomicWriteForTesting(string path, byte[] bytes, byte[]? expectedBytes) =>
@@ -258,31 +281,12 @@ public sealed class CodexEconomyRouter
 
     private static void CheckUnmanagedConflicts(
         RelevantConfig parsed,
-        string skillPath,
-        CodexEconomyMode mode)
+        string skillPath)
     {
-        if ((mode is CodexEconomyMode.Ask or CodexEconomyMode.On)
-            && parsed.AgentsEnabled == false)
+        if (parsed.AgentsEnabled == false)
         {
             throw new CodexEconomyException(
                 "Native agents are disabled by unmanaged [agents].enabled = false.");
-        }
-        if (mode == CodexEconomyMode.On)
-        {
-            if (parsed.AgentsDottedSeen)
-            {
-                throw new CodexEconomyException(
-                    "Dotted agents configuration cannot be safely extended; use an [agents] table.");
-            }
-            if (parsed.DefaultModel is not null)
-            {
-                throw new CodexEconomyException("Unmanaged [agents].default_subagent_model already exists.");
-            }
-            if (parsed.DefaultEffort is not null)
-            {
-                throw new CodexEconomyException(
-                    "Unmanaged [agents].default_subagent_reasoning_effort already exists.");
-            }
         }
         if (parsed.SkillEntries.Any(entry => EntryTargetsSkill(entry, skillPath)))
         {
@@ -458,23 +462,6 @@ public sealed class CodexEconomyRouter
     private static bool PathEquals(string[]? actual, params string[] expected) =>
         actual is not null && actual.AsSpan().SequenceEqual(expected);
 
-    private static int FindTableContentStart(string text, params string[] expected)
-    {
-        foreach (var physicalLine in LexTomlLines(text))
-        {
-            if (!physicalLine.OutsideMultilineAtStart) continue;
-            var line = StripComment(physicalLine.Text).Trim();
-            if (line.StartsWith("[", StringComparison.Ordinal)
-                && !line.StartsWith("[[", StringComparison.Ordinal)
-                && line.EndsWith(']'))
-            {
-                var path = ParseKeyPath(line[1..^1], "TOML table header");
-                if (PathEquals(path, expected)) return physicalLine.NextStart;
-            }
-        }
-        return -1;
-    }
-
     private static IReadOnlyList<TomlPhysicalLine> LexTomlLines(string text)
     {
         var result = new List<TomlPhysicalLine>();
@@ -646,25 +633,14 @@ public sealed class CodexEconomyRouter
         }
     }
 
-    private static string AddAgentDefaults(string text)
-    {
-        var block = $"{AgentBegin}\n"
-            + $"default_subagent_model = \"{EconomyModel}\"\n"
-            + $"default_subagent_reasoning_effort = \"{EconomyEffort}\"\n"
-            + AgentEnd;
-        var insertion = FindTableContentStart(text, "agents");
-        if (insertion < 0) return AppendSection(text, $"[agents]\n{block}");
-        var prefix = insertion > 0 && text[insertion - 1] == '\n' ? string.Empty : "\n";
-        return text.Insert(insertion, $"{prefix}{block}\n");
-    }
-
-    private static string AddSkillSwitch(string text, string skillPath, bool enabled)
+    private static string AddTaskSkill(string text, string skillPath)
     {
         var encodedPath = EncodeTomlBasicString(Path.GetFullPath(skillPath));
         var block = $"{SkillBegin}\n"
+            + $"{TaskPolicy}\n"
             + "[[skills.config]]\n"
             + $"path = {encodedPath}\n"
-            + $"enabled = {(enabled ? "true" : "false")}\n"
+            + "enabled = true\n"
             + SkillEnd;
         return AppendSection(text, block);
     }
@@ -735,6 +711,9 @@ public sealed class CodexEconomyRouter
     private void InstallSkill(CodexEconomyProfile profile)
     {
         var payload = LoadSkillPayload();
+        Directory.CreateDirectory(profile.SkillDirectory);
+        using var installLock = AcquireWriteLock(Path.Combine(profile.SkillDirectory, ".zgstokenbar-install.lock"))
+            ?? throw new CodexEconomyException("Skill installation is busy.");
         var manifestPath = Path.Combine(profile.SkillDirectory, OwnershipManifestName);
         var manifest = ReadSnapshot(manifestPath);
         if (manifest.Exists && !IsOwnedManifest(manifest.Bytes))
@@ -743,40 +722,61 @@ public sealed class CodexEconomyRouter
                 $"Existing Skill ownership manifest is invalid: {manifestPath}");
         }
 
-        if (!manifest.Exists)
+        var targets = payload.Select(asset =>
         {
-            foreach (var asset in payload)
+            var path = Path.Combine(profile.SkillDirectory, asset.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+            return new { Asset = asset, Path = path, Snapshot = ReadSnapshot(path) };
+        }).ToArray();
+        foreach (var target in targets)
+        {
+            if (target.Snapshot.Exists
+                && !target.Snapshot.Bytes.AsSpan().SequenceEqual(target.Asset.Bytes)
+                && !MatchesOwnedDigest(manifest.Bytes, target.Asset.RelativePath, target.Snapshot.Bytes))
             {
-                var target = Path.Combine(profile.SkillDirectory, asset.RelativePath.Replace('/', Path.DirectorySeparatorChar));
-                var existing = ReadSnapshot(target);
-                if (existing.Exists && !existing.Bytes.AsSpan().SequenceEqual(asset.Bytes))
-                {
-                    throw new CodexEconomyException(
-                        $"Existing unmanaged Skill file differs and cannot be adopted: {target}");
-                }
+                throw new CodexEconomyException($"Skill file has unmanaged or local changes: {target.Path}");
             }
         }
-
-        foreach (var asset in payload)
+        var retiredPath = Path.Combine(profile.SkillDirectory, RetiredSwitchPath.Replace('/', Path.DirectorySeparatorChar));
+        var retired = ReadSnapshot(retiredPath);
+        if (retired.Exists && !MatchesOwnedDigest(manifest.Bytes, RetiredSwitchPath, retired.Bytes))
         {
-            var target = Path.Combine(profile.SkillDirectory, asset.RelativePath.Replace('/', Path.DirectorySeparatorChar));
-            var existing = ReadSnapshot(target);
-            if (!existing.Bytes.AsSpan().SequenceEqual(asset.Bytes))
+            throw new CodexEconomyException($"Retired switch helper has unmanaged or local changes: {retiredPath}");
+        }
+
+        foreach (var target in targets)
+        {
+            if (!target.Snapshot.Bytes.AsSpan().SequenceEqual(target.Asset.Bytes))
             {
-                AtomicWrite(target, asset.Bytes, existing);
+                AtomicWrite(target.Path, target.Asset.Bytes, target.Snapshot);
             }
+        }
+        if (retired.Exists)
+        {
+            using var retiredLock = AcquireWriteLock(Path.Combine(Path.GetDirectoryName(retiredPath)!, ".set_economy_mode.py.wmt.lock"))
+                ?? throw new CodexEconomyException($"File is busy: {retiredPath}");
+            if (!SnapshotMatches(retiredPath, retired))
+                throw new CodexEconomyException($"File changed during update; retry: {retiredPath}");
+            File.Delete(retiredPath);
         }
 
         var manifestBytes = BuildOwnershipManifest(payload);
-        var currentManifest = ReadSnapshot(manifestPath);
-        if (!currentManifest.Bytes.AsSpan().SequenceEqual(manifestBytes))
+        if (!manifest.Bytes.AsSpan().SequenceEqual(manifestBytes))
         {
-            AtomicWrite(manifestPath, manifestBytes, currentManifest);
+            AtomicWrite(manifestPath, manifestBytes, manifest);
         }
         if (!IsSkillInstalled(profile))
         {
             throw new CodexEconomyException("Skill installation read-back failed.");
         }
+    }
+
+    private static bool MatchesOwnedDigest(byte[] manifest, string relativePath, byte[] bytes)
+    {
+        if (!IsOwnedManifest(manifest)) return false;
+        using var document = JsonDocument.Parse(manifest);
+        return document.RootElement.GetProperty("files").TryGetProperty(relativePath, out var digest)
+            && digest.ValueKind == JsonValueKind.String
+            && string.Equals(digest.GetString(), Convert.ToHexString(SHA256.HashData(bytes)), StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsSkillInstalled(CodexEconomyProfile profile)
@@ -788,7 +788,8 @@ public sealed class CodexEconomyRouter
             {
                 return false;
             }
-            return payload.All(asset => ReadSnapshot(
+            return !File.Exists(Path.Combine(profile.SkillDirectory, RetiredSwitchPath.Replace('/', Path.DirectorySeparatorChar)))
+                && payload.All(asset => ReadSnapshot(
                     Path.Combine(profile.SkillDirectory, asset.RelativePath.Replace('/', Path.DirectorySeparatorChar)))
                 .Bytes.AsSpan().SequenceEqual(asset.Bytes));
         }

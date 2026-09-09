@@ -8601,7 +8601,7 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
                         renderDpi: dpi,
                         codexAccounts: codexAccounts);
                     form.SetCodexEconomyStatus(new CodexEconomyStatus(
-                        CodexEconomyMode.Ask,
+                        CodexEconomyMode.Task,
                         new CodexEconomyProfile(
                             "Codex default",
                             Path.Combine(Path.GetTempPath(), "wmt-mini-capture-codex"),
@@ -9797,7 +9797,7 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
         renderDpi: 96,
         codexAccounts: codexAccounts);
     economyForm.SetCodexEconomyStatus(new CodexEconomyStatus(
-        CodexEconomyMode.Ask,
+        CodexEconomyMode.Task,
         new CodexEconomyProfile(
             "Codex default",
             Path.Combine(Path.GetTempPath(), "wmt-mini-economy-menu-capture"),
@@ -10358,7 +10358,7 @@ static void RenderSettingsCaptures(string outputDirectory)
                     renderOnly: true,
                     renderWorkingArea: constrained ? new Rectangle(0, 0, 1024, 720) : null,
                     codexEconomyStatus: new CodexEconomyStatus(
-                        CodexEconomyMode.Ask,
+                        CodexEconomyMode.Task,
                         new CodexEconomyProfile(
                             "Codex default",
                             Path.Combine(Path.GetTempPath(), "wmt-settings-capture-codex"),
@@ -10584,14 +10584,11 @@ static void TestNativeLocalization()
     Equal("PINNED · ESC / CLICK OUTSIDE", en.RadarPopoverSubtitle(true), "English Radar pinned subtitle");
     Equal("本机日志 · 点击固定", zh.CodexTokenPopoverSubtitle(false), "Chinese token preview subtitle");
     Equal("PINNED · ESC / CLICK OUTSIDE", en.CodexTokenPopoverSubtitle(true), "English token pinned subtitle");
-    Equal("关闭", zh.CodexEconomyModeName(CodexEconomyMode.Off), "Chinese economy Off mode");
-    Equal("询问", zh.CodexEconomyModeName(CodexEconomyMode.Ask), "Chinese economy Ask mode");
-    Equal("开启", zh.CodexEconomyModeName(CodexEconomyMode.On), "Chinese economy On mode");
-    Equal("Off", en.CodexEconomyModeName(CodexEconomyMode.Off), "English economy Off mode");
-    Equal("Ask", en.CodexEconomyModeName(CodexEconomyMode.Ask), "English economy Ask mode");
-    Equal("On", en.CodexEconomyModeName(CodexEconomyMode.On), "English economy On mode");
-    Equal("应用", zh.CodexEconomyApply, "Chinese economy Apply action");
-    Equal("Apply", en.CodexEconomyApply, "English economy Apply action");
+    Equal("逐任务询问", zh.CodexEconomyModeName(CodexEconomyMode.Task), "Chinese task-scoped policy");
+    Equal("Per-task confirmation", en.CodexEconomyModeName(CodexEconomyMode.Task), "English task-scoped policy");
+    Equal("旧配置待迁移", zh.CodexEconomyModeName(CodexEconomyMode.On), "legacy modes are migration state only");
+    Equal("安装/更新", zh.CodexEconomyApply, "Chinese assistant setup action");
+    Equal("Install / update", en.CodexEconomyApply, "English assistant setup action");
     Equal(
         false,
         zh.CodexEconomyBarHint.Contains("Off", StringComparison.Ordinal),
@@ -13982,102 +13979,70 @@ static void TestCodexEconomyRouter()
         var originalBytes = Encoding.UTF8.GetPreamble().Concat(originalBody).ToArray();
         File.WriteAllBytes(profile.ConfigPath, originalBytes);
 
-        var ask = router.SetMode(profile, CodexEconomyMode.Ask);
-        Equal(CodexEconomyMode.Ask, ask.Mode, "ask mode read-back");
-        Equal(true, ask.SkillInstalled, "ask installs the embedded Skill");
+        var installed = router.Install(profile);
+        Equal(true, installed.Ready, "single task assistant is ready after installation");
+        Equal(CodexEconomyMode.Task, installed.Mode, "task-scoped policy is explicit");
         Equal(true, File.Exists(profile.SkillPath), "installed Skill entrypoint exists");
-        Equal(
-            true,
-            File.Exists(Path.Combine(profile.SkillDirectory, ".zgstokenbar-skill.json")),
-            "installed Skill has an ownership manifest");
-        var askBytes = File.ReadAllBytes(profile.ConfigPath);
-        Equal(true, askBytes.AsSpan().StartsWith(Encoding.UTF8.Preamble), "config UTF-8 BOM is preserved");
-        var askText = Encoding.UTF8.GetString(askBytes[Encoding.UTF8.Preamble.Length..]);
-        Equal(true, askText.Contains("\r\n", StringComparison.Ordinal), "config CRLF style is preserved");
-        Equal(
-            true,
-            askText.Contains("max_concurrent_threads_per_session = 4", StringComparison.Ordinal),
-            "unmanaged agent settings are preserved");
-        Equal(
-            false,
-            askText.Contains("default_subagent_model", StringComparison.Ordinal),
-            "ask does not install child defaults");
+        var installedBytes = File.ReadAllBytes(profile.ConfigPath);
+        Equal(true, installedBytes.AsSpan().StartsWith(Encoding.UTF8.Preamble), "config UTF-8 BOM is preserved");
+        var installedText = Encoding.UTF8.GetString(installedBytes[Encoding.UTF8.Preamble.Length..]);
+        Equal(true, installedText.StartsWith(originalText, StringComparison.Ordinal), "root settings and CRLF remain intact");
+        Equal(false, installedText.Contains("default_subagent_model", StringComparison.Ordinal), "assistant does not install child defaults");
+        router.Install(profile);
+        Equal(true, installedBytes.AsSpan().SequenceEqual(File.ReadAllBytes(profile.ConfigPath)), "reinstall is byte-idempotent");
 
-        var on = router.SetMode(profile, CodexEconomyMode.On);
-        Equal(CodexEconomyMode.On, on.Mode, "on mode read-back");
-        var onBytes = File.ReadAllBytes(profile.ConfigPath);
-        var onText = Encoding.UTF8.GetString(onBytes[Encoding.UTF8.Preamble.Length..]);
-        Equal(
-            true,
-            onText.Contains($"default_subagent_model = \"{CodexEconomyRouter.EconomyModel}\"", StringComparison.Ordinal),
-            "on installs Luna default");
-        Equal(
-            true,
-            onText.Contains($"default_subagent_reasoning_effort = \"{CodexEconomyRouter.EconomyEffort}\"", StringComparison.Ordinal),
-            "on installs Max effort default");
+        string LegacyConfig(CodexEconomyProfile target, CodexEconomyMode mode)
+        {
+            var defaults = mode == CodexEconomyMode.On
+                ? $"{CodexEconomyRouter.AgentBegin}\ndefault_subagent_model = \"gpt-5.6-luna\"\ndefault_subagent_reasoning_effort = \"max\"\n{CodexEconomyRouter.AgentEnd}\n"
+                : string.Empty;
+            return "model = \"root-fixture\"\n[agents]\nmax_concurrent_threads_per_session = 4\n"
+                + defaults + $"\n{CodexEconomyRouter.SkillBegin}\n[[skills.config]]\npath = {JsonSerializer.Serialize(target.SkillPath)}\n"
+                + $"enabled = {(mode == CodexEconomyMode.Off ? "false" : "true")}\n{CodexEconomyRouter.SkillEnd}\n";
+        }
 
-        var off = router.SetMode(profile, CodexEconomyMode.Off);
-        Equal(CodexEconomyMode.Off, off.Mode, "off mode read-back");
-        var offBytes = File.ReadAllBytes(profile.ConfigPath);
-        var offText = Encoding.UTF8.GetString(offBytes[Encoding.UTF8.Preamble.Length..]);
-        Equal(false, offText.Contains("default_subagent_model", StringComparison.Ordinal), "off removes managed defaults");
-        Equal(true, offText.Contains("enabled = false", StringComparison.Ordinal), "off disables the Skill");
-        router.SetMode(profile, CodexEconomyMode.Off);
-        Equal(
-            true,
-            offBytes.AsSpan().SequenceEqual(File.ReadAllBytes(profile.ConfigPath)),
-            "reapplying off is byte-idempotent");
+        foreach (var legacyMode in new[] { CodexEconomyMode.Off, CodexEconomyMode.Ask, CodexEconomyMode.On })
+        {
+            var legacy = CodexEconomyRouter.ResolveProfile(Path.Combine(directory, $"legacy-{legacyMode}"));
+            Directory.CreateDirectory(legacy.HomeDirectory);
+            File.WriteAllText(legacy.ConfigPath, LegacyConfig(legacy, legacyMode));
+            Equal(legacyMode, router.Inspect(legacy).Mode, "legacy state is inspectable before migration");
+            Equal(true, router.Install(legacy).Ready, "every managed legacy mode migrates to task-scoped confirmation");
+            var migrated = File.ReadAllText(legacy.ConfigPath);
+            Equal(false, migrated.Contains("default_subagent_model", StringComparison.Ordinal), "owned global defaults are removed");
+            Equal(true, migrated.Contains("max_concurrent_threads_per_session = 4", StringComparison.Ordinal), "manual capacity is retained");
+            Equal(true, migrated.StartsWith("model = \"root-fixture\"\n", StringComparison.Ordinal), "legacy root model is retained");
+        }
 
         File.WriteAllText(Path.Combine(home, "team.config.toml"), "model = \"team\"\n");
-        Equal(true, router.Inspect(profile).HasNamedConfigLayers, "named config layer warning is detected narrowly");
+        var named = router.Inspect(profile);
+        Equal(true, named.HasNamedConfigLayers, "named layers remain informational");
+        Equal(null, named.Diagnostic, "the assistant does not claim a global child-default override warning");
 
-        var conflictHome = Path.Combine(directory, "unmanaged-default");
-        Directory.CreateDirectory(conflictHome);
-        var conflictProfile = CodexEconomyRouter.ResolveProfile(conflictHome);
-        const string conflictText = "[agents]\ndefault_subagent_model = \"other\"\n";
-        File.WriteAllText(conflictProfile.ConfigPath, conflictText);
-        var conflictRejected = false;
-        try
+        foreach (var manual in new[]
+                 {
+                     "[agents]\ndefault_subagent_model = \"other\"\ndefault_subagent_reasoning_effort = \"low\"\n",
+                     "[\"agents\"]\n\"default_subagent_model\" = \"other\"\n",
+                     "[ agents ] # user formatting\nmax_concurrent_threads_per_session = 6\n",
+                 })
         {
-            router.SetMode(conflictProfile, CodexEconomyMode.On);
+            var target = CodexEconomyRouter.ResolveProfile(Path.Combine(directory, Guid.NewGuid().ToString("N")));
+            Directory.CreateDirectory(target.HomeDirectory);
+            File.WriteAllText(target.ConfigPath, manual);
+            Equal(true, router.Install(target).Ready, "manual agent choices do not block task-scoped setup");
+            Equal(true, File.ReadAllText(target.ConfigPath).StartsWith(manual, StringComparison.Ordinal), "manual defaults and formatting are preserved");
         }
-        catch (CodexEconomyException)
-        {
-            conflictRejected = true;
-        }
-        Equal(true, conflictRejected, "unmanaged child default blocks on mode");
-        Equal(conflictText, File.ReadAllText(conflictProfile.ConfigPath), "unmanaged conflict preserves config bytes");
-        Equal(false, Directory.Exists(conflictProfile.SkillDirectory), "config preflight conflict does not install the Skill");
 
-        var spacedHeaderHome = Path.Combine(directory, "spaced-agents-header");
-        Directory.CreateDirectory(spacedHeaderHome);
-        var spacedHeaderProfile = CodexEconomyRouter.ResolveProfile(spacedHeaderHome);
-        const string spacedHeaderText = "[ agents ] # formatting belongs to the user\nmax_concurrent_threads_per_session = 6\n";
-        File.WriteAllText(spacedHeaderProfile.ConfigPath, spacedHeaderText);
-        Equal(
-            CodexEconomyMode.On,
-            router.SetMode(spacedHeaderProfile, CodexEconomyMode.On).Mode,
-            "on mode extends a semantically equivalent spaced agents table");
-        var spacedHeaderUpdated = File.ReadAllText(spacedHeaderProfile.ConfigPath);
-        Equal(true, spacedHeaderUpdated.StartsWith("[ agents ] # formatting belongs to the user\n", StringComparison.Ordinal), "spaced agents header is preserved");
-        Equal(false, spacedHeaderUpdated.Contains("\n[agents]\n", StringComparison.Ordinal), "spaced agents header is not duplicated");
-
-        var quotedConflictHome = Path.Combine(directory, "quoted-agent-key");
-        Directory.CreateDirectory(quotedConflictHome);
-        var quotedConflictProfile = CodexEconomyRouter.ResolveProfile(quotedConflictHome);
-        const string quotedConflictText = "[\"agents\"]\n\"default_subagent_model\" = \"other\"\n";
-        File.WriteAllText(quotedConflictProfile.ConfigPath, quotedConflictText);
-        var quotedConflictRejected = false;
-        try
-        {
-            router.SetMode(quotedConflictProfile, CodexEconomyMode.On);
-        }
-        catch (CodexEconomyException)
-        {
-            quotedConflictRejected = true;
-        }
-        Equal(true, quotedConflictRejected, "quoted TOML keys cannot bypass unmanaged default conflict detection");
-        Equal(quotedConflictText, File.ReadAllText(quotedConflictProfile.ConfigPath), "quoted-key conflict fails before writing config");
+        var disabled = CodexEconomyRouter.ResolveProfile(Path.Combine(directory, "native-disabled"));
+        Directory.CreateDirectory(disabled.HomeDirectory);
+        const string disabledText = "[agents]\nenabled = false\n";
+        File.WriteAllText(disabled.ConfigPath, disabledText);
+        var disabledRejected = false;
+        try { router.Install(disabled); }
+        catch (CodexEconomyException) { disabledRejected = true; }
+        Equal(true, disabledRejected, "installation never enables a disabled native capability");
+        Equal(disabledText, File.ReadAllText(disabled.ConfigPath), "disabled capability config is unchanged");
+        Equal(false, Directory.Exists(disabled.SkillDirectory), "capability preflight fails before installing files");
 
         var inlineAgentsHome = Path.Combine(directory, "inline-agents");
         Directory.CreateDirectory(inlineAgentsHome);
@@ -14087,7 +14052,7 @@ static void TestCodexEconomyRouter()
         var inlineAgentsRejected = false;
         try
         {
-            router.SetMode(inlineAgentsProfile, CodexEconomyMode.Ask);
+            router.Install(inlineAgentsProfile);
         }
         catch (CodexEconomyException)
         {
@@ -14104,7 +14069,7 @@ static void TestCodexEconomyRouter()
         var inlineSkillsRejected = false;
         try
         {
-            router.SetMode(inlineSkillsProfile, CodexEconomyMode.Off);
+            router.Install(inlineSkillsProfile);
         }
         catch (CodexEconomyException)
         {
@@ -14129,8 +14094,8 @@ static void TestCodexEconomyRouter()
             + "'''\n";
         File.WriteAllText(multilineProfile.ConfigPath, multilineText);
         Equal(
-            CodexEconomyMode.On,
-            router.SetMode(multilineProfile, CodexEconomyMode.On).Mode,
+            CodexEconomyMode.Task,
+            router.Install(multilineProfile).Mode,
             "headers and markers inside multiline TOML strings are ignored lexically");
         Equal(
             true,
@@ -14146,7 +14111,7 @@ static void TestCodexEconomyRouter()
         var unterminatedRejected = false;
         try
         {
-            router.SetMode(unterminatedProfile, CodexEconomyMode.Off);
+            router.Install(unterminatedProfile);
         }
         catch (CodexEconomyException)
         {
@@ -14184,7 +14149,7 @@ static void TestCodexEconomyRouter()
         var trailingProfile = CodexEconomyRouter.ResolveProfile(trailingHome);
         const string trailingText = "model = \"gpt-test\"  \n\n  \n";
         File.WriteAllText(trailingProfile.ConfigPath, trailingText);
-        router.SetMode(trailingProfile, CodexEconomyMode.Ask);
+        router.Install(trailingProfile);
         Equal(
             true,
             File.ReadAllText(trailingProfile.ConfigPath).StartsWith(trailingText, StringComparison.Ordinal),
@@ -14199,7 +14164,7 @@ static void TestCodexEconomyRouter()
         var partialRejected = false;
         try
         {
-            router.SetMode(partialProfile, CodexEconomyMode.Off);
+            router.Install(partialProfile);
         }
         catch (CodexEconomyException)
         {
@@ -14240,6 +14205,66 @@ static void TestCodexEconomyRouter()
             invalidManifestRejected = true;
         }
         Equal(true, invalidManifestRejected, "invalid ownership manifest types fail as a controlled economy conflict");
+
+        var extraOwned = CodexEconomyRouter.ResolveProfile(Path.Combine(directory, "extra-owned-setting"));
+        Directory.CreateDirectory(extraOwned.HomeDirectory);
+        var extraOwnedText = LegacyConfig(extraOwned, CodexEconomyMode.On)
+            .Replace("max_concurrent_threads_per_session = 4\n", string.Empty, StringComparison.Ordinal)
+            .Replace(CodexEconomyRouter.AgentEnd, "max_concurrent_threads_per_session = 9\n" + CodexEconomyRouter.AgentEnd, StringComparison.Ordinal);
+        File.WriteAllText(extraOwned.ConfigPath, extraOwnedText);
+        Equal(CodexEconomyMode.Inconsistent, router.Inspect(extraOwned).Mode, "manual fields inside an owned block are not silently discarded");
+        var extraOwnedRejected = false;
+        try { router.Install(extraOwned); }
+        catch (CodexEconomyException) { extraOwnedRejected = true; }
+        Equal(true, extraOwnedRejected, "unexpected managed fields block migration");
+        Equal(extraOwnedText, File.ReadAllText(extraOwned.ConfigPath), "unexpected managed fields are preserved");
+
+        var edited = CodexEconomyRouter.ResolveProfile(Path.Combine(directory, "edited-managed-skill"));
+        router.Install(edited);
+        File.AppendAllText(edited.SkillPath, "\nlocal user change");
+        var editedConfig = File.ReadAllBytes(edited.ConfigPath);
+        var editedSkill = File.ReadAllBytes(edited.SkillPath);
+        var editedRejected = false;
+        try { router.Install(edited); }
+        catch (CodexEconomyException) { editedRejected = true; }
+        Equal(true, editedRejected, "local edits to managed assets are not overwritten");
+        Equal(true, editedSkill.AsSpan().SequenceEqual(File.ReadAllBytes(edited.SkillPath)), "edited asset is preserved");
+        Equal(true, editedConfig.AsSpan().SequenceEqual(File.ReadAllBytes(edited.ConfigPath)), "asset conflict preserves config");
+
+        var retired = CodexEconomyRouter.ResolveProfile(Path.Combine(directory, "retired-helper"));
+        var retiredPath = Path.Combine(retired.SkillDirectory, "scripts", "set_economy_mode.py");
+        Directory.CreateDirectory(Path.GetDirectoryName(retiredPath)!);
+        const string oldSkill = "old managed skill";
+        const string oldHelper = "old global mode helper";
+        File.WriteAllText(retired.SkillPath, oldSkill);
+        File.WriteAllText(retiredPath, oldHelper);
+        var extraPath = Path.Combine(retired.SkillDirectory, "user-note.txt");
+        File.WriteAllText(extraPath, "keep");
+        File.WriteAllText(Path.Combine(retired.SkillDirectory, ".zgstokenbar-skill.json"), JsonSerializer.Serialize(new
+        {
+            schemaVersion = 1,
+            skill = CodexEconomyRouter.SkillName,
+            files = new Dictionary<string, string>
+            {
+                ["SKILL.md"] = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(oldSkill))),
+                ["scripts/set_economy_mode.py"] = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(oldHelper))),
+            },
+        }));
+        File.WriteAllText(retired.ConfigPath, LegacyConfig(retired, CodexEconomyMode.On));
+        Equal(true, router.Install(retired).Ready, "owned legacy installation migrates");
+        Equal(false, File.Exists(retiredPath), "the owned global switch script is retired");
+        Equal("keep", File.ReadAllText(extraPath), "unrelated user files are retained");
+
+        var unowned = CodexEconomyRouter.ResolveProfile(Path.Combine(directory, "unowned-helper"));
+        var unownedHelper = Path.Combine(unowned.SkillDirectory, "scripts", "set_economy_mode.py");
+        Directory.CreateDirectory(Path.GetDirectoryName(unownedHelper)!);
+        File.WriteAllText(unownedHelper, "unowned helper");
+        var unownedRejected = false;
+        try { router.Install(unowned); }
+        catch (CodexEconomyException) { unownedRejected = true; }
+        Equal(true, unownedRejected, "unowned retired helper cannot be deleted");
+        Equal("unowned helper", File.ReadAllText(unownedHelper), "unowned helper stays intact");
+        Equal(false, File.Exists(unowned.SkillPath), "retirement ownership is checked before new assets are written");
 
         var racePath = Path.Combine(directory, "race.toml");
         var raceExpected = Encoding.UTF8.GetBytes("race\n");
@@ -15177,7 +15202,7 @@ static void TestTaskbarStackedCodexAccounts()
         true,
         "test");
     economyForm.SetCodexEconomyStatus(new CodexEconomyStatus(
-        CodexEconomyMode.Ask,
+        CodexEconomyMode.Task,
         economyProfile,
         true,
         false,
@@ -15212,12 +15237,12 @@ static void TestTaskbarStackedCodexAccounts()
             economyHits.Reorder.Left + economyHits.Reorder.Width / 2,
             economyHits.Reorder.Top + economyHits.Reorder.Height / 2)),
         "reorder handle stays outside the economy menu target");
-    CodexEconomyMode? requestedMode = null;
-    var requestedModeCount = 0;
-    economyForm.CodexEconomyModeRequested += (_, request) =>
+    var requestedInstall = false;
+    var requestedInstallCount = 0;
+    economyForm.CodexEconomyInstallRequested += (_, _) =>
     {
-        requestedMode = request.Mode;
-        requestedModeCount++;
+        requestedInstall = true;
+        requestedInstallCount++;
     };
     using (var menu = economyForm.CreateCodexEconomyMenuForAcceptance())
     {
@@ -15227,41 +15252,25 @@ static void TestTaskbarStackedCodexAccounts()
         Equal(Color.FromArgb(7, 12, 24), menu.BackColor, "economy menu follows the active Bar popover palette");
         Equal(232, menu.Width, "economy menu has room for localized two-line choices at 96 DPI");
         Equal(
-            "经济模式",
+            "Luna 执行助手",
             menu.Items.OfType<CodexEconomyMenuHeaderItem>().Single().Text,
             "economy menu carries a localized project-style header");
-        var modeItems = menu.Items
-            .OfType<CodexEconomyModeMenuItem>()
-            .Where(item => item.Tag is string tag && tag.StartsWith("bar.economy.", StringComparison.Ordinal))
-            .ToArray();
-        Equal(3, modeItems.Length, "economy Bar menu exposes three explicit choices");
-        Equal(true, modeItems.Single(item => Equals(item.Tag, "bar.economy.ask")).Checked, "economy Bar menu marks Ask as current");
+        var menuItems = menu.Items.OfType<System.Windows.Forms.ToolStripMenuItem>().ToArray();
+        Equal(false, menuItems.Any(item => item.Tag is "bar.economy.off" or "bar.economy.ask" or "bar.economy.on"), "assistant menu has no global switches");
+        var install = menuItems.Single(item => Equals(item.Tag, "bar.economy.install"));
+        Equal("安装/更新", install.Text, "single assistant setup action is localized");
+        install.PerformClick();
         Equal(
-            true,
-            modeItems.Select(item => item.Text).SequenceEqual(["关闭", "询问", "开启"]),
-            "economy Bar menu localizes all Chinese mode names");
-        Equal(
-            "使用前先询问",
-            modeItems.Single(item => Equals(item.Tag, "bar.economy.ask")).Description,
-            "economy Bar menu gives each choice a concise localized explanation");
-        Equal(
-            true,
-            modeItems.All(item => item.Text is { } text
-                && !text.Contains('⌄')
-                && !text.Contains('▾')),
-            "economy menu rows do not repeat a dropdown affordance");
-        modeItems.Single(item => Equals(item.Tag, "bar.economy.on")).PerformClick();
-        Equal<CodexEconomyMode?>(
-            null,
-            requestedMode,
+            false,
+            requestedInstall,
             "economy Bar menu returns from the click before configuration work is dispatched");
         System.Windows.Forms.Application.DoEvents();
         Equal(
-            CodexEconomyMode.On,
-            requestedMode,
-            "economy Bar menu emits the explicitly selected mode on the next UI message");
+            true,
+            requestedInstall,
+            "assistant Bar menu emits installation on the next UI message");
         System.Windows.Forms.Application.DoEvents();
-        Equal(1, requestedModeCount, "economy Bar menu dispatches the selected mode exactly once");
+        Equal(1, requestedInstallCount, "assistant Bar menu dispatches installation exactly once");
     }
     economyForm.ApplySettings(new AppSettings { EnableRadar = false, EnableCodexEconomyBar = false });
     Equal(
@@ -16282,7 +16291,7 @@ static void TestNativeSettingsPanelContract()
         renderOnly: true,
         plugins: [AiGatewayTestPluginStatus(enabled: false)],
         codexEconomyStatus: new CodexEconomyStatus(
-            CodexEconomyMode.Ask,
+            CodexEconomyMode.Task,
             new CodexEconomyProfile("Default Codex", Path.Combine(Path.GetTempPath(), "wmt-ui-default"), true, "test"),
             true,
             true,
@@ -16411,12 +16420,12 @@ static void TestNativeSettingsPanelContract()
     Equal(
         true,
         controls.Single(control => Equals(control.Tag, "economy.status"))
-            .Text.Contains("Ask", StringComparison.Ordinal),
+            .Text.Contains("Per-task confirmation", StringComparison.Ordinal),
         "Advanced exposes the injected Codex economy status without reading production config");
     draft.SelectPageForRendering("providers");
     System.Windows.Forms.Application.DoEvents();
     var economyBar = controls.OfType<System.Windows.Forms.CheckBox>()
-        .Single(toggle => toggle.AccessibleName == "Bar quick control");
+        .Single(toggle => toggle.AccessibleName == "Bar assistant shortcut");
     PerformClick(economyBar);
     Equal(true, save.Enabled, "the Bar economy component has an independent visibility switch");
     PerformClick(economyBar);
@@ -16483,7 +16492,7 @@ static void TestCodexEconomySettingsPanelContract()
     {
         foreach (var dpi in new[] { 96, 144, 192 })
         {
-            var selectedMode = CodexEconomyMode.Ask;
+            var selectedMode = CodexEconomyMode.Task;
             var writes = 0;
             CodexEconomyStatus Inspect(CodexEconomyProfile profile) => new(
                 selectedMode,
@@ -16491,10 +16500,10 @@ static void TestCodexEconomySettingsPanelContract()
                 true,
                 profile == first,
                 null);
-            CodexEconomyStatus SetMode(CodexEconomyProfile profile, CodexEconomyMode mode)
+            CodexEconomyStatus Install(CodexEconomyProfile profile)
             {
                 writes++;
-                selectedMode = mode;
+                selectedMode = CodexEconomyMode.Task;
                 return Inspect(profile);
             }
 
@@ -16504,18 +16513,18 @@ static void TestCodexEconomySettingsPanelContract()
                 renderOnly: true,
                 profiles: [second, first],
                 inspect: Inspect,
-                setMode: SetMode);
+                install: Install);
             panel.Width = (int)Math.Round(640 * dpi / 96d);
             LayoutControlTree(panel);
             var controls = DescendantControls(panel).ToArray();
             Equal(first, panel.SelectedProfile, "embedded economy panel selects the explicitly recommended profile");
-            Equal(CodexEconomyMode.Ask, panel.SelectedMode, "embedded economy panel reflects the inspected mode");
+            Equal(true, panel.CurrentStatus?.Ready, "assistant panel reflects installed task-scoped policy");
             Equal(0, writes, "opening and inspecting the embedded economy panel does not write config");
             Equal(
-                3,
+                0,
                 controls.OfType<System.Windows.Forms.RadioButton>()
                     .Count(option => option.Tag is string tag && tag.StartsWith("economy.mode.", StringComparison.Ordinal)),
-                $"{locale} {dpi} DPI exposes three textual economy modes");
+                $"{locale} {dpi} DPI exposes no policy mode switches");
             Equal(
                 true,
                 controls.Where(control => !string.IsNullOrWhiteSpace(control.Text)
@@ -16531,12 +16540,14 @@ static void TestCodexEconomySettingsPanelContract()
                     .All(control => control.Left >= 0 && control.Right <= control.Parent!.ClientSize.Width),
                 $"{locale} {dpi} DPI economy controls stay within their parent width");
 
-            PerformClick(controls.Single(control => Equals(control.Tag, "economy.mode.on")));
-            Equal(CodexEconomyMode.On, panel.SelectedMode, "choosing On updates only the local draft");
-            Equal(0, writes, "choosing an economy mode does not write before Apply");
+            var selector = controls.OfType<System.Windows.Forms.ComboBox>().Single();
+            selector.SelectedIndex = 0;
+            Equal(second, panel.SelectedProfile, "profile selection stays explicit");
+            Equal(0, writes, "selecting a profile does not write configuration");
             PerformClick(controls.Single(control => Equals(control.Tag, "economy.apply")));
             Equal(1, writes, "Apply performs exactly one economy write");
-            Equal(CodexEconomyMode.On, panel.AppliedStatus?.Mode, "Apply records the read-back verified mode in place");
+            Equal(true, panel.AppliedStatus?.Ready, "installation records verified readiness");
+            Equal(second, panel.AppliedStatus?.Profile, "only the selected profile is installed");
         }
     }
 
@@ -16550,7 +16561,7 @@ static void TestCodexEconomySettingsPanelContract()
     Equal(
         false,
         DescendantControls(readOnly).Single(control => Equals(control.Tag, "economy.apply")).Enabled,
-        "render-only embedded economy panel cannot write without an injected set-mode function");
+        "render-only embedded economy panel cannot write without an injected installation function");
 }
 
 static void LayoutControlTree(System.Windows.Forms.Control control)

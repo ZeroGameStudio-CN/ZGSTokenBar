@@ -7,6 +7,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Any, Iterable, Sequence
+from uuid import UUID
 
 
 EXPECTED_MODEL = "gpt-5.6-luna"
@@ -29,7 +30,10 @@ def _read_entries(path: Path) -> list[tuple[int, dict[str, Any]]]:
                 if not raw_line.strip():
                     continue
                 value = json.loads(raw_line)
-                if isinstance(value, dict):
+                if isinstance(value, dict) and value.get("type") in {
+                    "session_meta", "turn_context", "event_msg",
+                    "inter_agent_communication_metadata",
+                }:
                     entries.append((line_number, value))
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeProofError(f"invalid session record {path}: {exc}") from exc
@@ -59,9 +63,20 @@ def _event_type(entry: dict[str, Any]) -> str | None:
     return payload.get("type") if isinstance(payload, dict) else None
 
 
-def inspect_session(path: Path) -> dict[str, Any]:
+def inspect_session(
+    path: Path,
+    parent_thread_id: str,
+    session_id: str | None = None,
+    agent_path: str | None = None,
+) -> dict[str, Any]:
     entries = _read_entries(path)
     metadata_line, metadata = _child_metadata(entries)
+    if metadata.get("parent_thread_id") != parent_thread_id:
+        raise RuntimeProofError("child record belongs to a different parent task")
+    if session_id is not None and metadata.get("id") != session_id:
+        raise RuntimeProofError("child record has a different session identity")
+    if agent_path is not None and metadata.get("agent_path") != agent_path:
+        raise RuntimeProofError("child record has a different agent path")
     inherited_history = any(
         line_number > metadata_line
         and entry.get("type") == "session_meta"
@@ -139,10 +154,14 @@ def _default_sessions_root() -> Path:
     return Path(codex_home) / "sessions" if codex_home else Path.home() / ".codex" / "sessions"
 
 
-def find_session(sessions_root: Path, agent_path: str) -> Path:
+def find_session(sessions_root: Path, session_id: str, parent_thread_id: str) -> Path:
+    try:
+        canonical_id = str(UUID(session_id))
+    except ValueError as exc:
+        raise RuntimeProofError("session-id must be the native child UUID") from exc
     matches: list[Path] = []
     try:
-        candidates = sessions_root.rglob("*.jsonl")
+        candidates = sessions_root.rglob(f"*{canonical_id}.jsonl")
         for path in candidates:
             try:
                 with path.open(encoding="utf-8-sig") as stream:
@@ -155,14 +174,18 @@ def find_session(sessions_root: Path, agent_path: str) -> Path:
                 isinstance(entry, dict)
                 and entry.get("type") == "session_meta"
                 and isinstance(payload, dict)
-                and payload.get("agent_path") == agent_path
+                and payload.get("id") == canonical_id
             ):
+                if payload.get("parent_thread_id") != parent_thread_id:
+                    raise RuntimeProofError("child record belongs to a different parent task")
                 matches.append(path)
     except OSError as exc:
         raise RuntimeProofError(f"cannot search sessions root {sessions_root}: {exc}") from exc
     if not matches:
-        raise RuntimeProofPending(f"no session record found for {agent_path}")
-    return max(matches, key=lambda candidate: candidate.stat().st_mtime_ns)
+        raise RuntimeProofPending(f"no session record found for {canonical_id}")
+    if len(matches) != 1:
+        raise RuntimeProofError("multiple records match this child; supply the exact --session path")
+    return matches[0]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -171,7 +194,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--session", type=Path)
-    source.add_argument("--agent-path")
+    source.add_argument("--session-id")
+    parser.add_argument("--parent-thread-id", required=True)
+    parser.add_argument("--agent-path")
     parser.add_argument("--sessions-root", type=Path, default=_default_sessions_root())
     parser.add_argument("--expected-model", default=EXPECTED_MODEL)
     parser.add_argument("--expected-effort", default=EXPECTED_EFFORT)
@@ -185,12 +210,13 @@ def _emit(status: str, **values: Any) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        path = args.session or find_session(args.sessions_root, args.agent_path)
-        proof = inspect_session(path)
+        session_id = str(UUID(args.session_id)) if args.session_id else None
+        path = args.session or find_session(args.sessions_root, session_id, args.parent_thread_id)
+        proof = inspect_session(path, args.parent_thread_id, session_id, args.agent_path)
     except RuntimeProofPending as exc:
         _emit("pending", reason=str(exc))
         return 1
-    except RuntimeProofError as exc:
+    except (RuntimeProofError, ValueError) as exc:
         _emit("error", reason=str(exc))
         return 2
 
