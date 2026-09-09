@@ -111,6 +111,11 @@ test('CLI is a small native executable and part of the portable contract', () =>
   assert.equal(packageConfig.scripts.cli, 'dotnet run --project tools/ZGSTokenBar.Cli/ZGSTokenBar.Cli.csproj -c Release --');
 });
 
+test('graduation runs economy mode acceptance against the published CLI', () => {
+  assert.match(graduationGate, /'scripts\/economy-cli-acceptance\.mjs', join\(cliOutput, 'ZGSTokenBar\.Cli\.exe'\), economyAcceptanceOutput/);
+  assert.match(graduationGate, /const economyAcceptanceOutput = join\(artifactsPath, 'economy-acceptance'\)/);
+});
+
 test('portable UI rebuilds can reuse the verified bundled provider bytes', () => {
   assert.match(packaging, /BundledPluginPackagePath/);
   assert.match(packaging, /Test-Path -LiteralPath \$resolvedBundledPluginPackage -PathType Leaf/);

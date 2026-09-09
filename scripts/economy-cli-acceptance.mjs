@@ -28,6 +28,9 @@ function json(args, expectedStatus) {
 
 const profile = path.join(fixtureRoot, 'profile');
 fs.mkdirSync(profile, { recursive: true });
+const configPath = path.join(profile, 'config.toml');
+const originalConfig = 'model = "root-fixture"\nmodel_reasoning_effort = "high"\n';
+fs.writeFileSync(configPath, originalConfig);
 
 let payload = json(['economy', 'status', '--codex-home', profile], 0);
 assert.equal(payload.ok, true);
@@ -37,6 +40,7 @@ assert.equal(payload.result.skillInstalled, false);
 payload = json(['economy', 'install', '--codex-home', profile], 0);
 assert.equal(payload.result.mode, 'unconfigured');
 assert.equal(payload.result.skillInstalled, true);
+assert.equal(fs.readFileSync(configPath, 'utf8'), originalConfig);
 
 payload = json(['economy', 'set', 'ask', '--codex-home', profile], 0);
 assert.equal(payload.result.mode, 'ask');
@@ -48,6 +52,17 @@ assert.equal(payload.result.mode, 'ask');
 const onResult = run(['economy', 'set', 'on', '--codex-home', profile]);
 assert.equal(onResult.status, 0, onResult.stderr);
 assert.equal(onResult.stdout.split(/\r?\n/, 1)[0], 'on');
+const onConfig = fs.readFileSync(configPath, 'utf8');
+assert.equal(onConfig.startsWith(originalConfig), true);
+assert.match(onConfig, /^default_subagent_model = "gpt-5\.6-luna"$/m);
+assert.match(onConfig, /^default_subagent_reasoning_effort = "max"$/m);
+
+payload = json(['economy', 'set', 'off', '--codex-home', profile], 0);
+assert.equal(payload.result.mode, 'off');
+assert.equal(payload.result.skillInstalled, true);
+const offConfig = fs.readFileSync(configPath, 'utf8');
+assert.equal(offConfig.startsWith(originalConfig), true);
+assert.doesNotMatch(offConfig, /default_subagent_model|default_subagent_reasoning_effort/);
 
 payload = json(['economy', 'set', '--codex-home', profile], 2);
 assert.equal(payload.ok, false);

@@ -298,6 +298,7 @@ var tests = new (string Name, Action Run)[]
     ("Codex utilization normalization", TestCodexUtilization),
     ("Codex dynamic window classification", TestCodexDynamicWindows),
     ("Codex privacy-safe account labels", TestCodexAccountLabels),
+    ("Codex economy router", TestCodexEconomyRouter),
     ("Provider process activity detection", TestProviderProcessActivity),
     ("Cockpit Codex active instance mapping", TestCockpitCodexInstanceActivity),
     ("Cockpit Codex account directory", TestCockpitCodexAccountDirectory),
