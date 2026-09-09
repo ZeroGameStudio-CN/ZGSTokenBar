@@ -13,6 +13,7 @@ const artifactsPath = mkdtempSync(join(tmpdir(), 'zgstokenbar-verify-'));
 const appOutput = join(artifactsPath, 'app-publish');
 const cliOutput = join(artifactsPath, 'cli-publish');
 const acceptanceOutput = join(artifactsPath, 'plugin-acceptance');
+const economyAcceptanceOutput = join(artifactsPath, 'economy-acceptance');
 const captureOutput = join(artifactsPath, 'mini-captures');
 let artifactsRemoved = false;
 
@@ -67,6 +68,9 @@ const commands = [
   ]],
   [join(cliOutput, 'ZGSTokenBar.Cli.exe'), [
     '--json', 'acceptance', 'run', '--isolated', '--artifacts', acceptanceOutput,
+  ]],
+  ['node', [
+    'scripts/economy-cli-acceptance.mjs', join(cliOutput, 'ZGSTokenBar.Cli.exe'), economyAcceptanceOutput,
   ]],
   ['dotnet', [
     'run',

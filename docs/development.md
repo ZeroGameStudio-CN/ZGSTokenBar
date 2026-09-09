@@ -52,6 +52,12 @@ dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj -c Release
 
 All acceptance is non-interactive and CLI-only. Do not use desktop automation, injected pointer/keyboard input, or user-performed GUI interaction as required evidence.
 
+The Codex economy Skill is shipped from `src/ZGSTokenBar.Core/Skills/sol-luna-delegation/`
+as explicit embedded resources. Keep these assets in source control with LF endings.
+The default .NET suite tests installation and mode changes, and `npm run verify`
+also exercises the published NativeAOT CLI against temporary Codex profiles;
+neither route should modify the user's Codex configuration.
+
 - Behavior: deterministic .NET executable tests and Node source contracts.
 - Rendering: CLI-generated captures produced by the production renderers.
 - Packaged-window properties: `ZGSTokenBar.Cli window inspect`.

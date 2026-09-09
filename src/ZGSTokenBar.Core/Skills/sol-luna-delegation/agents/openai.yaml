@@ -1,0 +1,7 @@
+interface:
+  display_name: "Subagent Economy Mode"
+  short_description: "Choose off, ask, or Luna Max economy routing"
+  default_prompt: "Use $sol-luna-delegation to inspect or manage intelligent cost-first routing for native subagent work."
+
+policy:
+  allow_implicit_invocation: true
