@@ -31,12 +31,6 @@ test('shipped CLI exposes canonical API commands and compatibility aliases', () 
   assert.match(cli, /"buildId"/);
   assert.match(cli, /command is "sub2api"/);
   assert.match(cli, /sub2api provision\|configure\|status\|disconnect/);
-  assert.match(cli, /command is "economy"/);
-  assert.match(cli, /economy status \[--codex-home/);
-  assert.doesNotMatch(cli, /economy status\|install\|set off\|ask\|on/);
-  assert.match(cli, /CodexEconomyRouter\.ResolveProfile/);
-  assert.match(cli, /--codex-home/);
-  assert.doesNotMatch(cli, /AppSettings.*Economy|Economy.*AppSettings/);
   assert.match(cli, /RandomNumberGenerator\.GetBytes\(32\)/);
   assert.match(cli, /SHA256\.HashData/);
   assert.match(cli, /Local\\ZGSTokenBar\.App\.Activate/);
@@ -112,9 +106,9 @@ test('CLI is a small native executable and part of the portable contract', () =>
   assert.equal(packageConfig.scripts.cli, 'dotnet run --project tools/ZGSTokenBar.Cli/ZGSTokenBar.Cli.csproj -c Release --');
 });
 
-test('graduation runs read-only skill observation acceptance against the published CLI', () => {
-  assert.match(graduationGate, /'scripts\/economy-cli-acceptance\.mjs', join\(cliOutput, 'ZGSTokenBar\.Cli\.exe'\), economyAcceptanceOutput/);
-  assert.match(graduationGate, /const economyAcceptanceOutput = join\(artifactsPath, 'economy-acceptance'\)/);
+test('graduation verifies removed CLI routes stay unavailable', () => {
+  assert.match(graduationGate, /'scripts\/retired-commands-acceptance\.mjs', join\(cliOutput, 'ZGSTokenBar\.Cli\.exe'\), retiredCommandsOutput/);
+  assert.match(graduationGate, /const retiredCommandsOutput = join\(artifactsPath, 'retired-commands'\)/);
 });
 
 test('portable UI rebuilds can reuse the verified bundled provider bytes', () => {

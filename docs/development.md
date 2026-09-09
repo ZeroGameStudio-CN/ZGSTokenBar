@@ -52,20 +52,13 @@ dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj -c Release
 
 All acceptance is non-interactive and CLI-only. Do not use desktop automation, injected pointer/keyboard input, or user-performed GUI interaction as required evidence.
 
-The Luna delegation skill is external to TokenBar. Its source repository owns
-policy, static prices, installation, migration and runtime-proof helpers.
-TokenBar embeds no skill files and never writes its files or Codex configuration.
+Delegation skills and their policy, prices and installation belong entirely to
+their external source repositories. TokenBar has no skill discovery, status UI,
+configuration inspector or delegation commands. Removed commands use the normal
+unknown-command response without accessing a Codex profile.
 
-`economy status` and the optional Bar/settings panel only inspect local file
-presence and configuration. This is not evidence that a running task has loaded
-the skill. Legacy modes remain visible for diagnosis, but TokenBar does not
-migrate them. Both `economy install` and `economy set` are retired and reject
-requests without writing. The independent Bar visibility preference is retained.
-
-The default .NET suite and published NativeAOT CLI acceptance use temporary
-profiles to verify read-only inspection, external enable/disable handling,
-preservation and rejection of former write commands. Skill tests belong with
-the external skill source; tests never modify the user's Codex configuration.
+The default .NET suite verifies that old preferences cannot restore removed
+controls; published CLI acceptance verifies removed commands have no side effects.
 
 - Behavior: deterministic .NET executable tests and Node source contracts.
 - Rendering: CLI-generated captures produced by the production renderers.

@@ -38,7 +38,6 @@ public sealed class AppSettings
     public bool EnableRadar { get; set; }
     public bool EnableRadarAlerts { get; set; }
     public Dictionary<string, bool> RadarModelGroups { get; set; } = new(StringComparer.OrdinalIgnoreCase);
-    public bool EnableCodexEconomyBar { get; set; } = true;
     public bool EnableAiGatewayBalance { get; set; }
     public bool EnableSub2ApiPool { get; set; }
     public bool MiniProviderAreaCollapsed { get; set; }
@@ -229,12 +228,7 @@ public sealed class AppSettings
         {
             if (!IsPluginId(entry.Key) || entry.Value is null) continue;
             var normalized = entry.Value.Normalized(entry.Key);
-            miniAreaLayouts[entry.Key] = string.Equals(
-                entry.Key,
-                MiniAreaIds.CodexEconomy,
-                StringComparison.Ordinal)
-                ? normalized with { Width = null }
-                : normalized;
+            miniAreaLayouts[entry.Key] = normalized;
         }
         if (MiniProviderAreaCollapsed)
         {

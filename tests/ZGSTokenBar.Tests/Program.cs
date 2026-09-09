@@ -131,14 +131,6 @@ if (args.Length == 1
 }
 
 if (args.Length == 1
-    && string.Equals(args[0], "--codex-economy-router", StringComparison.OrdinalIgnoreCase))
-{
-    TestCodexEconomyRouter();
-    Console.WriteLine("PASS Codex economy router");
-    return 0;
-}
-
-if (args.Length == 1
     && string.Equals(args[0], "--codex-startup-cache", StringComparison.OrdinalIgnoreCase))
 {
     TestCodexSpendHistoryProjection();
@@ -298,7 +290,6 @@ var tests = new (string Name, Action Run)[]
     ("Codex utilization normalization", TestCodexUtilization),
     ("Codex dynamic window classification", TestCodexDynamicWindows),
     ("Codex privacy-safe account labels", TestCodexAccountLabels),
-    ("Codex economy router", TestCodexEconomyRouter),
     ("Provider process activity detection", TestProviderProcessActivity),
     ("Cockpit Codex active instance mapping", TestCockpitCodexInstanceActivity),
     ("Cockpit Codex account directory", TestCockpitCodexAccountDirectory),
@@ -387,6 +378,7 @@ var tests = new (string Name, Action Run)[]
     ("Codex pool presentation", TestCodexPoolPresentation),
     ("Taskbar Codex pool rendering", TestTaskbarCodexPoolRendering),
     ("Taskbar Mini render fault isolation", TestTaskbarMiniRenderFaultIsolation),
+    ("Retired delegation integration stays absent", TestRetiredDelegationIntegration),
     ("Taskbar compact provider summaries", TestTaskbarCompactProviderSummaries),
     ("Taskbar compact AI Gateway balance", TestTaskbarCompactAiGatewayBalance),
     ("Taskbar monitor selection", TestTaskbarMonitorSelection),
@@ -8600,16 +8592,6 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
                         renderOnly: true,
                         renderDpi: dpi,
                         codexAccounts: codexAccounts);
-                    form.SetCodexEconomyStatus(new CodexEconomyStatus(
-                        CodexEconomyMode.Task,
-                        new CodexEconomyProfile(
-                            "Codex default",
-                            Path.Combine(Path.GetTempPath(), "wmt-mini-capture-codex"),
-                            true,
-                            "capture"),
-                        true,
-                        false,
-                        null));
                     form.SetQuotaPaceEstimates(snapshot.Cards
                         .SelectMany(card => card.Windows.Select(window => new
                         {
@@ -9782,63 +9764,6 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
             Console.WriteLine($"{systemPath} {systemBitmap.Width}x{systemBitmap.Height}");
         }
     }
-
-    var economySnapshot = TaskbarMiniCaptureSnapshot(includeClaude: true);
-    using var economyForm = new BarForm(
-        new AppSettings
-        {
-            Locale = "zh-CN",
-            UseTaskbarRings = true,
-            EnableAnimations = false,
-            EnableRadar = false,
-        },
-        economySnapshot,
-        renderOnly: true,
-        renderDpi: 96,
-        codexAccounts: codexAccounts);
-    economyForm.SetCodexEconomyStatus(new CodexEconomyStatus(
-        CodexEconomyMode.Task,
-        new CodexEconomyProfile(
-            "Codex default",
-            Path.Combine(Path.GetTempPath(), "wmt-mini-economy-menu-capture"),
-            true,
-            "capture"),
-        true,
-        false,
-        null));
-    economyForm.SetSystemUsage(systemUsage);
-    economyForm.CreateControl();
-    using var economyBarBitmap = new Bitmap(
-        economyForm.ClientSize.Width,
-        economyForm.ClientSize.Height,
-        PixelFormat.Format32bppPArgb);
-    economyForm.DrawToBitmap(economyBarBitmap, new Rectangle(Point.Empty, economyBarBitmap.Size));
-    using var economyMenu = economyForm.CreateCodexEconomyMenuForAcceptance();
-    economyMenu.CreateControl();
-    economyMenu.PerformLayout();
-    using var economyMenuBitmap = new Bitmap(
-        economyMenu.Width,
-        economyMenu.Height,
-        PixelFormat.Format32bppPArgb);
-    economyMenu.DrawToBitmap(economyMenuBitmap, new Rectangle(Point.Empty, economyMenuBitmap.Size));
-    using var economyComposite = new Bitmap(
-        economyBarBitmap.Width,
-        economyMenuBitmap.Height + 4 + economyBarBitmap.Height,
-        PixelFormat.Format32bppPArgb);
-    using (var graphics = Graphics.FromImage(economyComposite))
-    {
-        graphics.Clear(Color.FromArgb(2, 6, 23));
-        graphics.DrawImageUnscaled(
-            economyMenuBitmap,
-            Math.Max(0, economyBarBitmap.Width - economyMenuBitmap.Width - 32),
-            0);
-        graphics.DrawImageUnscaled(economyBarBitmap, 0, economyMenuBitmap.Height + 4);
-    }
-    var economyPath = Path.GetFullPath(Path.Combine(
-        outputDirectory,
-        "taskbar-mini-codex-economy-menu-zh-CN-96dpi.png"));
-    economyComposite.Save(economyPath, ImageFormat.Png);
-    Console.WriteLine($"{economyPath} {economyComposite.Width}x{economyComposite.Height}");
 }
 
 static void ValidateCapturePaceScenario(QuotaPopoverContent content)
@@ -10356,17 +10281,7 @@ static void RenderSettingsCaptures(string outputDirectory)
                     settings,
                     dpi,
                     renderOnly: true,
-                    renderWorkingArea: constrained ? new Rectangle(0, 0, 1024, 720) : null,
-                    codexEconomyStatus: new CodexEconomyStatus(
-                        CodexEconomyMode.Task,
-                        new CodexEconomyProfile(
-                            "Codex default",
-                            Path.Combine(Path.GetTempPath(), "wmt-settings-capture-codex"),
-                            true,
-                            "capture"),
-                        true,
-                        false,
-                        null));
+                    renderWorkingArea: constrained ? new Rectangle(0, 0, 1024, 720) : null);
                 form.Show();
                 System.Windows.Forms.Application.DoEvents();
                 LayoutControlTree(form);
@@ -10584,15 +10499,6 @@ static void TestNativeLocalization()
     Equal("PINNED · ESC / CLICK OUTSIDE", en.RadarPopoverSubtitle(true), "English Radar pinned subtitle");
     Equal("本机日志 · 点击固定", zh.CodexTokenPopoverSubtitle(false), "Chinese token preview subtitle");
     Equal("PINNED · ESC / CLICK OUTSIDE", en.CodexTokenPopoverSubtitle(true), "English token pinned subtitle");
-    Equal("外部管理", zh.CodexEconomyModeName(CodexEconomyMode.Task), "Chinese task-scoped policy");
-    Equal("Externally managed", en.CodexEconomyModeName(CodexEconomyMode.Task), "English task-scoped policy");
-    Equal("旧配置待迁移", zh.CodexEconomyModeName(CodexEconomyMode.On), "legacy modes are migration state only");
-    Equal("刷新状态", zh.CodexEconomyRefresh, "Chinese assistant setup action");
-    Equal("Refresh status", en.CodexEconomyRefresh, "English assistant setup action");
-    Equal(
-        false,
-        zh.CodexEconomyBarHint.Contains("Off", StringComparison.Ordinal),
-        "Chinese economy Bar hint does not leak English mode names");
     Equal("受周额度限制", zh.WeeklyQuotaBlocked, "Chinese weekly quota block");
     Equal("blocked by weekly limit", en.WeeklyQuotaBlocked, "English weekly quota block");
     Equal(
@@ -10805,7 +10711,6 @@ static void TestRadarPersistentResetMini()
         TaskbarMiniLayoutMath.MaximumCards,
         form.GetMiniAreaStates().Count(area =>
             !string.Equals(area.AreaId, MiniAreaIds.RadarReset, StringComparison.Ordinal)
-            && !string.Equals(area.AreaId, MiniAreaIds.CodexEconomy, StringComparison.Ordinal)
             && !string.Equals(area.AreaId, MiniAreaIds.SystemMetrics, StringComparison.Ordinal)),
         "persistent reset area does not consume an ordinary card slot");
 
@@ -13144,7 +13049,6 @@ static void TestSettingsNormalization()
     Equal(true, new AppSettings().AutoRefreshClaudeOAuth, "Claude OAuth refresh defaults on");
     Equal(false, new AppSettings().EnableRadar, "Radar is opt-in by default");
     Equal(false, new AppSettings().EnableRadarAlerts, "Radar alerts are opt-in by default");
-    Equal(true, new AppSettings().EnableCodexEconomyBar, "Codex economy Bar control defaults visible");
     Equal("midnight", new AppSettings().BackgroundPalette, "original background palette defaults on");
     var noProviders = new AppSettings { EnabledProviders = [] };
     noProviders.Normalize();
@@ -13233,16 +13137,6 @@ static void TestSettingsNormalization()
     systemAreaLayout.Normalize();
     Equal(true, systemAreaLayout.MiniAreaLayouts[MiniAreaIds.SystemMetrics].Collapsed, "system collapse survives settings normalization");
     Equal(120, systemAreaLayout.MiniAreaLayouts[MiniAreaIds.SystemMetrics].Width, "system width survives settings normalization");
-
-    var economyAreaLayout = new AppSettings
-    {
-        MiniAreaLayouts = new(StringComparer.Ordinal)
-        {
-            [MiniAreaIds.CodexEconomy] = new(false, 180),
-        },
-    };
-    economyAreaLayout.Normalize();
-    Equal(null, economyAreaLayout.MiniAreaLayouts[MiniAreaIds.CodexEconomy].Width, "economy button ignores legacy resizable width state");
 
     var miniAreaOrder = new AppSettings
     {
@@ -13960,102 +13854,26 @@ static void TestAtomicCredentialWrites()
     }
 }
 
-static void TestCodexEconomyRouter()
+static void TestRetiredDelegationIntegration()
 {
-    var directory = Path.Combine(Path.GetTempPath(), $"wmt-economy-{Guid.NewGuid():N}");
-    Directory.CreateDirectory(directory);
-    try
-    {
-        var profile = CodexEconomyRouter.ResolveProfile(Path.Combine(directory, "profile"));
-        var router = new CodexEconomyRouter();
-        Equal(false, router.Inspect(profile).Ready, "missing skill is not detected");
-        Equal(false, Directory.Exists(profile.HomeDirectory), "inspection creates no Codex home");
-        Directory.CreateDirectory(profile.SkillDirectory);
-        File.WriteAllText(profile.SkillPath, "external skill content\n");
-        const string config = "model = \"manual-root\"\r\n[agents]\r\ndefault_subagent_model = \"manual-child\"\r\n";
-        File.WriteAllText(profile.ConfigPath, config, new UTF8Encoding(true));
-        var original = File.ReadAllBytes(profile.ConfigPath);
-        Equal(true, router.Inspect(profile).Ready, "source-managed skill needs no TokenBar manifest");
-        Equal("externally_managed_read_only", router.Inspect(profile).Diagnostic, "read-only ownership is explicit");
-        Equal(true, original.AsSpan().SequenceEqual(File.ReadAllBytes(profile.ConfigPath)), "BOM, root and manual settings remain byte-identical");
-        Equal(false, File.Exists(Path.Combine(profile.SkillDirectory, ".zgstokenbar-skill.json")), "observation never claims ownership");
-
-        var skillEntry = $"[[skills.config]]\npath = {JsonSerializer.Serialize(profile.SkillPath)}\n";
-        foreach (var enabled in new[] { true, false })
-        {
-            var text = config + skillEntry + $"enabled = {enabled.ToString().ToLowerInvariant()}\n";
-            File.WriteAllText(profile.ConfigPath, text);
-            Equal(enabled, router.Inspect(profile).Ready, "external explicit enabled state is respected");
-            Equal(text, File.ReadAllText(profile.ConfigPath), "explicit external configuration is never changed");
-        }
-        File.WriteAllText(profile.ConfigPath, "[agents]\nenabled = false\n");
-        Equal(false, router.Inspect(profile).Ready, "disabled native agents are not reported ready");
-        File.WriteAllText(profile.ConfigPath, "agents = { enabled = false }\n");
-        Equal(CodexEconomyMode.Inconsistent, router.Inspect(profile).Mode, "unsupported inline config remains uncertain");
-
-        foreach (var legacy in new[] { CodexEconomyMode.Off, CodexEconomyMode.Ask, CodexEconomyMode.On })
-        {
-            var defaults = legacy == CodexEconomyMode.On
-                ? $"{CodexEconomyRouter.AgentBegin}\ndefault_subagent_model = \"gpt-5.6-luna\"\ndefault_subagent_reasoning_effort = \"max\"\n{CodexEconomyRouter.AgentEnd}\n"
-                : "";
-            var text = "[agents]\n" + defaults + $"{CodexEconomyRouter.SkillBegin}\n" + skillEntry
-                + $"enabled = {(legacy == CodexEconomyMode.Off ? "false" : "true")}\n{CodexEconomyRouter.SkillEnd}\n";
-            File.WriteAllText(profile.ConfigPath, text);
-            Equal(legacy, router.Inspect(profile).Mode, "legacy configuration is observable but not migrated");
-            Equal(text, File.ReadAllText(profile.ConfigPath), "legacy observation is read-only");
-        }
-        foreach (var malformed in new[]
-        {
-            $"{CodexEconomyRouter.SkillBegin}\n[[skills.config]]\n",
-            "PROMPT = \"\"\"\n[agents]\n",
-            skillEntry + "enabled = true\n" + skillEntry + "enabled = false\n",
-        })
-        {
-            File.WriteAllText(profile.ConfigPath, malformed);
-            Equal(CodexEconomyMode.Inconsistent, router.Inspect(profile).Mode, "conflicting or incomplete config stays uncertain");
-            Equal(malformed, File.ReadAllText(profile.ConfigPath), "malformed config is preserved");
-        }
-        var multiline = "PROMPT = \"\"\"\n[agents]\nenabled = false\n\"\"\"\n";
-        File.WriteAllText(profile.ConfigPath, multiline);
-        Equal(true, router.Inspect(profile).Ready, "TOML-looking multiline content is not configuration");
-        File.WriteAllText(Path.Combine(profile.HomeDirectory, "team.config.toml"), "model = \"team\"\n");
-        Equal(true, router.Inspect(profile).HasNamedConfigLayers, "named layers remain informational");
-        Equal("external skill content\n", File.ReadAllText(profile.SkillPath), "external content is never overwritten");
-        Equal(false, typeof(CodexEconomyRouter).GetMethods().Any(method => method.Name == "Install"), "router exposes no installation route");
-        Equal(false, typeof(CodexEconomyRouter).Assembly.GetManifestResourceNames().Any(name => name.Contains("sol-luna-delegation", StringComparison.Ordinal)), "TokenBar ships no private skill bundle");
-
-        var discoveryUser = Path.Combine(directory, "discovery-user");
-        var environmentHome = Path.Combine(directory, "environment-home");
-        var cockpitHome = Path.Combine(directory, "cockpit-home");
-        Directory.CreateDirectory(environmentHome);
-        Directory.CreateDirectory(cockpitHome);
-        var manifestPath = Path.Combine(directory, "codex_instances.json");
-        File.WriteAllText(
-            manifestPath,
-            $$"""{"instances":[42,{"userDataDir":123},{"id":7,"name":false,"userDataDir":{{JsonSerializer.Serialize(cockpitHome)}}}]}""");
-        var previousCodexHome = Environment.GetEnvironmentVariable("CODEX_HOME");
-        try
-        {
-            Environment.SetEnvironmentVariable("CODEX_HOME", environmentHome);
-            var profiles = CodexEconomyRouter.DiscoverProfiles(discoveryUser, manifestPath);
-            Equal(3, profiles.Count, "profile discovery uses environment, default, and cockpit manifest only");
-            Equal(environmentHome, profiles[0].HomeDirectory, "environment profile is recommended first");
-            Equal(true, profiles.Any(item => item.HomeDirectory == cockpitHome), "cockpit manifest profile is included");
-            Equal(true, profiles.Single(item => item.HomeDirectory == cockpitHome).DisplayName.StartsWith("Codex Desktop", StringComparison.Ordinal), "malformed optional cockpit labels fall back safely");
-
-            File.WriteAllText(manifestPath, "[]");
-            var profilesWithWrongRoot = CodexEconomyRouter.DiscoverProfiles(discoveryUser, manifestPath);
-            Equal(2, profilesWithWrongRoot.Count, "non-object cockpit manifest root is ignored best-effort");
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("CODEX_HOME", previousCodexHome);
-        }
-    }
-    finally
-    {
-        Directory.Delete(directory, true);
-    }
+    const string legacyArea = "zgstokenbar.codex.economy";
+    var settings = JsonSerializer.Deserialize<AppSettings>("""
+        {"EnableCodexEconomyBar":true,"EnableRadar":false,
+         "MiniAreaOrder":["zgstokenbar.codex.economy","zgstokenbar.provider.codex"],
+         "MiniAreaLayouts":{"zgstokenbar.codex.economy":{"Collapsed":false,"Width":180}}}
+        """)!;
+    settings.Normalize();
+    using var form = new BarForm(
+        settings, FourCodexPoolSnapshot(DateTimeOffset.Parse("2026-09-09T08:00:00Z")),
+        renderOnly: true, renderDpi: 96);
+    form.CreateControl();
+    using var bitmap = new Bitmap(form.ClientSize.Width, form.ClientSize.Height);
+    form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+    Equal(false, form.GetMiniAreaStates().Any(area => area.AreaId == legacyArea), "legacy settings cannot restore the retired assistant area");
+    Equal(false, form.SetMiniAreaFromCommand(legacyArea, false, 180), "retired area cannot be controlled by CLI transport");
+    Equal(false, JsonSerializer.Serialize(settings).Contains("EnableCodexEconomyBar", StringComparison.Ordinal), "retired preference is no longer a maintained setting");
+    Equal(null, typeof(AppSettings).Assembly.GetType("ZGSTokenBar.Core.CodexEconomyRouter"), "no skill discovery or config inspector remains in Core");
+    Equal(false, typeof(AppSettings).Assembly.GetManifestResourceNames().Any(name => name.Contains("sol-luna-delegation", StringComparison.Ordinal)), "TokenBar contains no delegation skill payload");
 }
 
 static void TestSettingsCorruptionRecovery()
@@ -14813,7 +14631,7 @@ static void TestTaskbarStackedCodexAccounts()
     Equal<double?>(null, emptyServiceRow[0].UsedPercent, "the service fallback reports unavailable quota");
 
     using var perAreaForm = new BarForm(
-        new AppSettings { EnableRadar = false, EnableCodexEconomyBar = false },
+        new AppSettings { EnableRadar = false },
         new QuotaSnapshot([claude, firstCodex, secondCodex], [], reset),
         renderOnly: true,
         renderDpi: 96);
@@ -14856,7 +14674,6 @@ static void TestTaskbarStackedCodexAccounts()
         new AppSettings
         {
             EnableRadar = false,
-            EnableCodexEconomyBar = false,
             PluginEnabled = new(StringComparer.Ordinal) { ["zgstokenbar.metrics.system"] = false },
         },
         new QuotaSnapshot([claude, firstCodex, secondCodex], [], reset),
@@ -14873,7 +14690,6 @@ static void TestTaskbarStackedCodexAccounts()
         {
             EnabledProviders = [],
             EnableRadar = false,
-            EnableCodexEconomyBar = false,
             PluginEnabled = new(StringComparer.Ordinal) { ["zgstokenbar.metrics.system"] = false },
         },
         new QuotaSnapshot([], [], reset),
@@ -14887,7 +14703,6 @@ static void TestTaskbarStackedCodexAccounts()
         new AppSettings
         {
             EnableRadar = false,
-            EnableCodexEconomyBar = false,
             MiniAreaLayouts = new(StringComparer.Ordinal)
             {
                 [MiniAreaIds.Claude] = new(true),
@@ -14900,106 +14715,6 @@ static void TestTaskbarStackedCodexAccounts()
         renderDpi: 96);
     Equal(177, collapsedForm.ClientSize.Width, "all collapsed areas keep independent handles and compact icons");
     Equal(true, collapsedForm.AreAllMiniAreasCollapsed, "all-area state includes system metrics");
-
-    using var economyForm = new BarForm(
-        new AppSettings { EnableRadar = false },
-        new QuotaSnapshot([claude, firstCodex, secondCodex], [], reset),
-        renderOnly: true,
-        renderDpi: 96);
-    var economyArea = economyForm.GetMiniAreaStates()
-        .Single(area => area.AreaId == MiniAreaIds.CodexEconomy);
-    Equal(
-        TaskbarMiniLayoutMath.CodexEconomyContentWidth,
-        economyArea.Width,
-        "economy quick control is a first-class Mini area by default");
-    Equal(44, economyArea.MinimumWidth, "economy button keeps a compact fixed minimum width");
-    Equal(44, economyArea.MaximumWidth, "economy button is not stretched into a card-sized module");
-    Equal(
-        false,
-        economyForm.SetMiniAreaFromCommand(MiniAreaIds.CodexEconomy, null, 180),
-        "economy button rejects width changes so its full content remains one click target");
-    var economyProfile = new CodexEconomyProfile(
-        "Default Codex",
-        Path.Combine(Path.GetTempPath(), "wmt-economy-bar"),
-        true,
-        "test");
-    economyForm.SetCodexEconomyStatus(new CodexEconomyStatus(
-        CodexEconomyMode.Task,
-        economyProfile,
-        true,
-        false,
-        null));
-    economyForm.CreateControl();
-    using (var bitmap = new Bitmap(economyForm.ClientSize.Width, economyForm.ClientSize.Height))
-    {
-        economyForm.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
-    }
-    var economyHits = economyForm.GetCodexEconomyHitBoundsForAcceptance();
-    Equal(44f, economyHits.Button.Width, "economy button draw and hit bounds keep the compact logical width");
-    Equal(true, economyHits.Resize.IsEmpty, "economy button has no resize strip stealing clicks");
-    foreach (var point in new[]
-             {
-                 new PointF(economyHits.Button.Left + .5f, economyHits.Button.Top + .5f),
-                 new PointF(economyHits.Button.Right - .5f, economyHits.Button.Top + .5f),
-                 new PointF(economyHits.Button.Left + .5f, economyHits.Button.Bottom - .5f),
-                 new PointF(economyHits.Button.Right - .5f, economyHits.Button.Bottom - .5f),
-             })
-    {
-        Equal(true, economyForm.IsCodexEconomyButtonPointForAcceptance(point), "every inset corner of the economy button opens the menu");
-    }
-    Equal(
-        false,
-        economyForm.IsCodexEconomyButtonPointForAcceptance(new PointF(
-            economyHits.Collapse.Left + economyHits.Collapse.Width / 2,
-            economyHits.Collapse.Top + economyHits.Collapse.Height / 2)),
-        "collapse handle stays outside the economy menu target");
-    Equal(
-        false,
-        economyForm.IsCodexEconomyButtonPointForAcceptance(new PointF(
-            economyHits.Reorder.Left + economyHits.Reorder.Width / 2,
-            economyHits.Reorder.Top + economyHits.Reorder.Height / 2)),
-        "reorder handle stays outside the economy menu target");
-    var requestedRefresh = false;
-    var requestedRefreshCount = 0;
-    economyForm.CodexEconomyStatusRefreshRequested += (_, _) =>
-    {
-        requestedRefresh = true;
-        requestedRefreshCount++;
-    };
-    using (var menu = economyForm.CreateCodexEconomyMenuForAcceptance())
-    {
-        Equal(false, menu.ShowImageMargin, "economy menu has no native image gutter");
-        Equal(false, menu.ShowCheckMargin, "economy menu uses the shared dark row treatment instead of the native check gutter");
-        Equal(typeof(CodexEconomyMenuRenderer), menu.Renderer.GetType(), "economy menu uses the project-styled economy renderer");
-        Equal(Color.FromArgb(7, 12, 24), menu.BackColor, "economy menu follows the active Bar popover palette");
-        Equal(232, menu.Width, "economy menu has room for localized two-line choices at 96 DPI");
-        Equal(
-            "Luna 执行助手",
-            menu.Items.OfType<CodexEconomyMenuHeaderItem>().Single().Text,
-            "economy menu carries a localized project-style header");
-        var menuItems = menu.Items.OfType<System.Windows.Forms.ToolStripMenuItem>().ToArray();
-        Equal(false, menuItems.Any(item => item.Tag is "bar.economy.off" or "bar.economy.ask" or "bar.economy.on"), "assistant menu has no global switches");
-        var refresh = menuItems.Single(item => Equals(item.Tag, "bar.economy.refresh"));
-        Equal("刷新状态", refresh.Text, "read-only refresh action is localized");
-        Equal(false, menuItems.Any(item => Equals(item.Tag, "bar.economy.install")), "menu offers no skill installation");
-        refresh.PerformClick();
-        Equal(
-            false,
-            requestedRefresh,
-            "economy Bar menu returns from the click before read-only inspection is dispatched");
-        System.Windows.Forms.Application.DoEvents();
-        Equal(
-            true,
-            requestedRefresh,
-            "assistant Bar menu emits inspection on the next UI message");
-        System.Windows.Forms.Application.DoEvents();
-        Equal(1, requestedRefreshCount, "assistant Bar menu dispatches inspection exactly once");
-    }
-    economyForm.ApplySettings(new AppSettings { EnableRadar = false, EnableCodexEconomyBar = false });
-    Equal(
-        false,
-        economyForm.GetMiniAreaStates().Any(area => area.AreaId == MiniAreaIds.CodexEconomy),
-        "economy quick control can be hidden independently from its Codex mode");
 }
 
 static void TestTaskbarCodexAreaIsolation()
@@ -15043,7 +14758,7 @@ static void TestTaskbarCodexAreaIsolation()
     Equal(3, codexGroups[0].Cards.Count, "all Codex accounts remain individually addressable");
 
     using var form = new BarForm(
-        new AppSettings { EnableRadar = false, EnableCodexEconomyBar = false },
+        new AppSettings { EnableRadar = false },
         new QuotaSnapshot(codexAccounts, [], reset),
         renderOnly: true,
         renderDpi: 96);
@@ -15539,7 +15254,6 @@ static void TestTaskbarMiniRenderFaultIsolation()
         {
             EnableAnimations = false,
             EnableRadar = false,
-            EnableCodexEconomyBar = true,
         },
         FourCodexPoolSnapshot(DateTimeOffset.Parse("2026-08-24T08:00:00Z")),
         renderOnly: true,
@@ -15561,7 +15275,7 @@ static void TestTaskbarMiniRenderFaultIsolation()
         "a failed module is isolated and recorded without escaping the paint pass");
     Equal(
         false,
-        form.GetCodexEconomyHitBoundsForAcceptance().Button.IsEmpty,
+        form.SystemUsageBoundsForAcceptance.IsEmpty,
         "a later healthy module still renders and remains interactive");
 
     failCodex = false;
@@ -15679,7 +15393,7 @@ static void TestTaskbarCompactAiGatewayBalance()
         "collapsed service-only Mini saves the card width");
 
     using var form = new BarForm(
-        new AppSettings { EnableRadar = false, EnableCodexEconomyBar = false },
+        new AppSettings { EnableRadar = false },
         new QuotaSnapshot(
             [card],
             [new ProviderHealth(ProviderKind.AiGateway, true, "current", ProviderHealthCode.Current)],
@@ -15693,7 +15407,6 @@ static void TestTaskbarCompactAiGatewayBalance()
         new AppSettings
         {
             EnableRadar = false,
-            EnableCodexEconomyBar = false,
             MiniAreaLayouts = new(StringComparer.Ordinal)
             {
                 [MiniAreaIds.AiGateway] = new(true),
@@ -16012,13 +15725,7 @@ static void TestNativeSettingsPanelContract()
         },
         96,
         renderOnly: true,
-        plugins: [AiGatewayTestPluginStatus(enabled: false)],
-        codexEconomyStatus: new CodexEconomyStatus(
-            CodexEconomyMode.Task,
-            new CodexEconomyProfile("Default Codex", Path.Combine(Path.GetTempPath(), "wmt-ui-default"), true, "test"),
-            true,
-            true,
-            null));
+        plugins: [AiGatewayTestPluginStatus(enabled: false)]);
     draft.Show();
     System.Windows.Forms.Application.DoEvents();
     LayoutControlTree(draft);
@@ -16134,27 +15841,9 @@ static void TestNativeSettingsPanelContract()
     controls.OfType<System.Windows.Forms.Button>().Single(button => Equals(button.Tag, "settings.radar.test")).PerformClick();
     Equal(true, testRaised, "Radar test notification follows the current draft without saving");
 
-    draft.SelectPageForRendering("advanced");
-    System.Windows.Forms.Application.DoEvents();
-    Equal(
-        1,
-        controls.Count(control => Equals(control.Tag, "settings.economy.panel")),
-        "Advanced embeds Codex economy management without opening another window");
-    Equal(
-        true,
-        controls.Single(control => Equals(control.Tag, "economy.status"))
-            .Text.Contains("Externally managed", StringComparison.Ordinal),
-        "Advanced exposes the injected Codex economy status without reading production config");
-    draft.SelectPageForRendering("providers");
-    System.Windows.Forms.Application.DoEvents();
-    var economyBar = controls.OfType<System.Windows.Forms.CheckBox>()
-        .Single(toggle => toggle.AccessibleName == "Bar assistant shortcut");
-    PerformClick(economyBar);
-    Equal(true, save.Enabled, "the Bar economy component has an independent visibility switch");
-    PerformClick(economyBar);
-    Equal(false, save.Enabled, "restoring the Bar economy component visibility clears dirty state");
-
-    TestCodexEconomySettingsPanelContract();
+    Equal(false, controls.Any(control => control.Tag is string tag
+        && (tag.StartsWith("economy.", StringComparison.Ordinal) || tag == "settings.economy.panel")),
+        "settings contain no delegation status or management controls");
 
     PerformClick(animations);
     save.PerformClick();
@@ -16196,92 +15885,6 @@ static PluginStatus AiGatewayTestPluginStatus(bool enabled)
             "zgstokenbar.provider.ai-gateway.health.unavailable"),
         [],
         plugin.Describe().Settings);
-}
-
-static void TestCodexEconomySettingsPanelContract()
-{
-    var first = new CodexEconomyProfile(
-        "Default Codex",
-        Path.Combine(Path.GetTempPath(), "wmt-economy-ui-default"),
-        true,
-        "test");
-    var second = new CodexEconomyProfile(
-        "Fixture Codex",
-        Path.Combine(Path.GetTempPath(), "wmt-economy-ui-fixture"),
-        false,
-        "test");
-
-    foreach (var locale in new[] { "zh-CN", "en" })
-    {
-        foreach (var dpi in new[] { 96, 144, 192 })
-        {
-            var selectedMode = CodexEconomyMode.Task;
-            var inspections = 0;
-            CodexEconomyStatus Inspect(CodexEconomyProfile profile)
-            {
-                inspections++;
-                return new(
-                selectedMode,
-                profile,
-                true,
-                profile == first,
-                null);
-            }
-
-            using var panel = new CodexEconomySettingsPanel(
-                NativeText.For(locale),
-                dpi,
-                renderOnly: true,
-                profiles: [second, first],
-                inspect: Inspect);
-            panel.Width = (int)Math.Round(640 * dpi / 96d);
-            LayoutControlTree(panel);
-            var controls = DescendantControls(panel).ToArray();
-            Equal(first, panel.SelectedProfile, "embedded economy panel selects the explicitly recommended profile");
-            Equal(true, panel.CurrentStatus?.Ready, "assistant panel reflects installed task-scoped policy");
-            Equal(1, inspections, "opening the panel only inspects once");
-            Equal(
-                0,
-                controls.OfType<System.Windows.Forms.RadioButton>()
-                    .Count(option => option.Tag is string tag && tag.StartsWith("economy.mode.", StringComparison.Ordinal)),
-                $"{locale} {dpi} DPI exposes no policy mode switches");
-            Equal(
-                true,
-                controls.Where(control => !string.IsNullOrWhiteSpace(control.Text)
-                        && control is System.Windows.Forms.Label
-                            or System.Windows.Forms.ButtonBase
-                            or System.Windows.Forms.ComboBox
-                            or System.Windows.Forms.TextBox)
-                    .All(control => control.Font.Unit == GraphicsUnit.Pixel),
-                $"{locale} {dpi} DPI economy text uses explicitly scaled pixel fonts");
-            Equal(
-                true,
-                controls.Where(control => control.Parent is not null)
-                    .All(control => control.Left >= 0 && control.Right <= control.Parent!.ClientSize.Width),
-                $"{locale} {dpi} DPI economy controls stay within their parent width");
-
-            var selector = controls.OfType<System.Windows.Forms.ComboBox>().Single();
-            selector.SelectedIndex = 0;
-            Equal(second, panel.SelectedProfile, "profile selection stays explicit");
-            Equal(2, inspections, "selecting a profile only inspects");
-            PerformClick(controls.Single(control => Equals(control.Tag, "economy.refresh")));
-            Equal(3, inspections, "refresh only re-inspects the selected profile");
-            Equal(second, panel.CurrentStatus?.Profile, "only the selected profile is observed");
-            Equal(false, controls.Any(control => Equals(control.Tag, "economy.apply")), "panel has no installation control");
-        }
-    }
-
-    using var readOnly = new CodexEconomySettingsPanel(
-        NativeText.For("en"),
-        96,
-        renderOnly: true,
-        profiles: [first],
-        inspect: profile => new CodexEconomyStatus(CodexEconomyMode.Off, profile, false, false, null));
-    LayoutControlTree(readOnly);
-    Equal(
-        true,
-        DescendantControls(readOnly).Single(control => Equals(control.Tag, "economy.refresh")).Enabled,
-        "disabled profiles can still be refreshed read-only");
 }
 
 static void LayoutControlTree(System.Windows.Forms.Control control)
