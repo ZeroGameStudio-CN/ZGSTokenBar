@@ -102,49 +102,41 @@ internal sealed class NativeText
         "On by default; disable to leave refresh to Claude Code.");
     public string CodexEconomyBarTitle => T("Bar 助手入口", "Bar assistant shortcut");
     public string CodexEconomyBarHint => T(
-        "在 Bar 显示 Luna 助手状态与安装/更新入口。",
-        "Show the Luna assistant status and install/update shortcut in the Bar.");
+        "在 Bar 显示外部 Luna Skill 的只读状态。",
+        "Show read-only status of the external Luna skill in the Bar.");
     public string CodexEconomyBarAreaTitle => T("助手", "Luna");
     public string CodexEconomyBarMenuTitle => T("Luna 执行助手", "Luna task assistant");
-    public string CodexEconomyBarMenuHint => T("只确认本次委托", "Confirm this task only");
+    public string CodexEconomyBarMenuHint => T("Skill 仓库管理 · 只读", "Skill source managed · Read only");
     public string CodexEconomyDialogTitle => T("Luna 执行助手", "Luna task assistant");
     public string CodexEconomyDialogDescription => T(
-        "每个新任务先做简短判断；适合时询问是否委托 Luna Max，由主模型审核。",
-        "Assess each new task briefly. Ask before using Luna Max; keep decisions and review in the main agent.");
+        "Skill、策略与价格由你的 Skill 源库维护；TokenBar 不再安装或修改它。",
+        "Your skill source owns the skill, policy and prices. TokenBar does not install or modify them.");
     public string CodexEconomyTaskHint => T(
-        "只确认本次任务，不更改主模型或全局子代理默认值。更新后请重新加载 Codex。",
-        "Consent applies only to this task. Root and global child defaults stay unchanged. Reload Codex after updating.");
+        "这里只检查文件与配置，不代表当前任务已加载。安装或更新请使用 Skill 源库。",
+        "Checks files and config only, not current-task loading. Install or update through your skill source.");
     public string CodexEconomyProfileLabel => "Codex Profile";
-    public string CodexEconomyProfileHint => T("选择要安装助手的本机 Codex Home。", "Choose the local Codex Home for the assistant.");
+    public string CodexEconomyProfileHint => T("选择要查看的本机 Codex Home。", "Choose the local Codex Home to inspect.");
     public string CodexEconomyCurrentStatus => T("当前状态", "Current status");
     public string CodexEconomyConfigPath => T("配置路径", "Config path");
     public string CodexEconomySkillPath => T("Skill 路径", "Skill path");
-    public string CodexEconomyApply => T("安装/更新", "Install / update");
-    public string CodexEconomyApplyHint => T(
-        "安装助手并迁移本工具的旧配置；保留手动设置。",
-        "Install the assistant and migrate this tool's legacy configuration; preserve manual settings.");
+    public string CodexEconomyRefresh => T("刷新状态", "Refresh status");
+    public string CodexEconomyRefreshHint => T("只读检查，不修改 Skill 或 Codex 配置。", "Read-only check; never modifies skills or Codex config.");
     public string CodexEconomyNoProfiles => T("未发现可管理的 Codex Profile。", "No manageable Codex profiles were found.");
     public string CodexEconomyReadFailed(string detail) => T($"无法读取当前 Profile：{detail}", $"Could not inspect the current profile: {detail}");
-    public string CodexEconomyApplyFailedTitle => T("未能更新 Luna 助手", "Luna assistant was not updated");
-    public string CodexEconomyApplyFailed(string detail) => T(
-        $"请检查目标路径或配置冲突后重试。\n\n{detail}",
-        $"Check the target path or configuration conflict, then try again.\n\n{detail}");
-    public string CodexEconomyReadBackMismatch(CodexEconomyMode expected, CodexEconomyMode actual) => T(
-        $"回读状态不匹配：期望 {CodexEconomyModeName(expected)}，实际 {CodexEconomyModeName(actual)}。",
-        $"Read-back state mismatch: expected {CodexEconomyModeName(expected)}, got {CodexEconomyModeName(actual)}.");
     public string CodexEconomyProfileChoice(CodexEconomyProfile profile) => $"{profile.DisplayName} — {profile.HomeDirectory}";
     public string CodexEconomyModeName(CodexEconomyMode mode) => mode switch
     {
-        CodexEconomyMode.Task => T("逐任务询问", "Per-task confirmation"),
-        CodexEconomyMode.Off or CodexEconomyMode.Ask or CodexEconomyMode.On => T("旧配置待迁移", "Legacy setup"),
+        CodexEconomyMode.Task => T("外部管理", "Externally managed"),
+        CodexEconomyMode.Off => T("已禁用", "Disabled"),
+        CodexEconomyMode.Ask or CodexEconomyMode.On => T("旧配置待迁移", "Legacy setup"),
         CodexEconomyMode.Inconsistent => T("配置冲突", "Configuration conflict"),
         _ => T("未配置", "Not configured"),
     };
-    public string CodexEconomyInstalled(bool installed) => installed ? T("已安装", "Installed") : T("需安装/更新", "Install/update required");
+    public string CodexEconomyInstalled(bool installed) => installed ? T("已安装", "Installed") : T("未发现文件", "File not found");
     public string CodexEconomyStatusSummary(CodexEconomyStatus? status)
     {
         if (status is null) return T("状态暂不可用", "Status unavailable");
-        if (status.Ready) return T("已就绪 · 逐任务询问", "Ready · Per-task confirmation");
+        if (status.Ready) return T("已发现 · 外部管理", "Detected · Externally managed");
         return $"{CodexEconomyModeName(status.Mode)} · {CodexEconomyInstalled(status.SkillInstalled)}";
     }
     public string Save => T("保存", "Save");

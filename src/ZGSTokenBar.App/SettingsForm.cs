@@ -76,7 +76,6 @@ internal sealed class SettingsForm : Form
 
     public AppSettings? ResultSettings { get; private set; }
     public event EventHandler? RadarTestNotificationRequested;
-    public event EventHandler? CodexEconomyStatusChanged;
 
     public SettingsForm(
         AppSettings settings,
@@ -86,8 +85,7 @@ internal sealed class SettingsForm : Form
         IReadOnlyList<PluginStatus>? plugins = null,
         CodexEconomyStatus? codexEconomyStatus = null,
         IReadOnlyList<CodexEconomyProfile>? codexEconomyProfiles = null,
-        Func<CodexEconomyProfile, CodexEconomyStatus>? inspectCodexEconomy = null,
-        Func<CodexEconomyProfile, CodexEconomyStatus>? installCodexEconomy = null)
+        Func<CodexEconomyProfile, CodexEconomyStatus>? inspectCodexEconomy = null)
     {
         if (!renderOnly && renderWorkingArea is not null)
         {
@@ -261,9 +259,7 @@ internal sealed class SettingsForm : Form
             targetDpi,
             renderOnly,
             economyProfiles,
-            InspectEconomy,
-            installCodexEconomy);
-        _codexEconomyPanel.StatusChanged += (_, _) => CodexEconomyStatusChanged?.Invoke(this, EventArgs.Empty);
+            InspectEconomy);
 
         var root = new TableLayoutPanel
         {

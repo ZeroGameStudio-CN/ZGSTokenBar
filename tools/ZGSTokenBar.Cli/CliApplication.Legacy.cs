@@ -133,7 +133,7 @@ internal static partial class CliApplication
             "watch [--include-values]",
             "acceptance run --isolated --artifacts <dir>",
             "sub2api provision|configure|status|disconnect",
-            "economy status|install [--codex-home <dir>]",
+            "economy status [--codex-home <dir>]",
             "version",
             "help",
         };

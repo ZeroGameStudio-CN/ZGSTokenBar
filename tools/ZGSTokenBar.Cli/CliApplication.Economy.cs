@@ -8,12 +8,12 @@ internal static partial class CliApplication
     {
         var subcommand = Subcommand(commandLine, "status");
         var offset = commandLine.Length == 0 ? 0 : 1;
-        if (subcommand == "set")
+        if (subcommand is "set" or "install")
         {
-            return CliOutput.Invalid(asJson, "economy set",
-                "Global mode switches have been removed. Use economy install for task-scoped confirmation; disable the Skill through Codex if needed.");
+            return CliOutput.Invalid(asJson, $"economy {subcommand}",
+                "TokenBar is read-only. Install, update or configure this skill through your skill source repository.");
         }
-        if (subcommand is not ("status" or "install"))
+        if (subcommand != "status")
         {
             return CliOutput.Unknown($"economy {subcommand}", asJson);
         }
@@ -28,11 +28,7 @@ internal static partial class CliApplication
         {
             var profile = CodexEconomyRouter.ResolveProfile(codexHome);
             var router = new CodexEconomyRouter();
-            var status = subcommand switch
-            {
-                "install" => router.Install(profile),
-                _ => router.Inspect(profile),
-            };
+            var status = router.Inspect(profile);
             CliOutput.Write(
                 asJson,
                 command,
@@ -90,7 +86,8 @@ internal static partial class CliApplication
     private static System.Text.Json.JsonElement EconomyResult(CodexEconomyStatus status) =>
         CliOutput.ObjectElement(
             ("mode", status.Mode.ToString().ToLowerInvariant()),
-            ("policy", CodexEconomyRouter.PolicyName),
+            ("management", "external"),
+            ("readOnly", true),
             ("ready", status.Ready),
             ("codexHome", status.Profile.HomeDirectory),
             ("configPath", status.Profile.ConfigPath),
@@ -102,9 +99,9 @@ internal static partial class CliApplication
     private static string EconomyText(CodexEconomyStatus status)
     {
         var installed = status.SkillInstalled ? "installed" : "not installed";
-        var readiness = status.Ready ? "ready" : "setup required";
+        var readiness = status.Ready ? "detected" : "not ready";
         return $"{readiness}{Environment.NewLine}Codex home: {status.Profile.HomeDirectory}"
             + $"{Environment.NewLine}Skill: {installed}"
-            + $"{Environment.NewLine}Policy: assess each task; ask before delegating that task.";
+            + $"{Environment.NewLine}Read-only. Managed by your skill source repository; current task loading is not verified.";
     }
 }

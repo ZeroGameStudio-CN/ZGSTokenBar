@@ -31,7 +31,6 @@ const commands = [
   ['node', ['scripts/graduation-static-checks.mjs']],
   ['node', ['scripts/generate-builtin-plugin-registry.mjs', '--check']],
   ['node', ['--test', ...testFiles]],
-  ['python', ['-B', '-m', 'unittest', 'discover', '-s', 'tests/skills', '-p', 'test_*.py']],
   ['dotnet', [
     'run',
     '--project', 'tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj',

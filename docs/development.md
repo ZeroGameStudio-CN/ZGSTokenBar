@@ -52,25 +52,20 @@ dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj -c Release
 
 All acceptance is non-interactive and CLI-only. Do not use desktop automation, injected pointer/keyboard input, or user-performed GUI interaction as required evidence.
 
-The Codex economy Skill is shipped from `src/ZGSTokenBar.Core/Skills/sol-luna-delegation/`
-as explicit embedded resources. Keep these assets in source control with LF endings.
-It has one policy: assess new manual work briefly and request consent for a
-specific Luna Max package only when worthwhile. Consent never enables a global
-mode or carries into another task. The UI exposes status and installation/update,
-not mode switches; the independent Bar visibility preference remains available.
+The Luna delegation skill is external to TokenBar. Its source repository owns
+policy, static prices, installation, migration and runtime-proof helpers.
+TokenBar embeds no skill files and never writes its files or Codex configuration.
 
-`economy install` enables this task-scoped Skill for the explicitly selected
-profile and migrates only the tool-owned legacy Off/Ask/On blocks. Manual model
-choices and unrelated settings are preserved; edited owned assets or unexpected
-fields fail closed. The old global switch helper is removed only after its
-ownership digest matches. `economy set` is retired and rejects requests without
-writing. `economy status` reports readiness and any legacy migration state.
+`economy status` and the optional Bar/settings panel only inspect local file
+presence and configuration. This is not evidence that a running task has loaded
+the skill. Legacy modes remain visible for diagnosis, but TokenBar does not
+migrate them. Both `economy install` and `economy set` are retired and reject
+requests without writing. The independent Bar visibility preference is retained.
 
-The default .NET suite tests installation, migration, and preservation;
-`npm run verify` also runs parent-bound runtime-proof fixtures and exercises the
-published NativeAOT CLI against temporary Codex profiles. Tests never modify
-the user's Codex configuration. Installing into a real profile is a separate,
-explicitly authorized step; reload Codex afterward to load the new policy.
+The default .NET suite and published NativeAOT CLI acceptance use temporary
+profiles to verify read-only inspection, external enable/disable handling,
+preservation and rejection of former write commands. Skill tests belong with
+the external skill source; tests never modify the user's Codex configuration.
 
 - Behavior: deterministic .NET executable tests and Node source contracts.
 - Rendering: CLI-generated captures produced by the production renderers.

@@ -152,7 +152,6 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             RequestRadarPreview(request.Provider, request.SurfaceId);
         _bar.SystemUsageDetailsRequested += (_, _) => _ = RefreshSystemUsageDetailsAsync();
         _bar.CodexEconomyStatusRefreshRequested += (_, _) => RefreshBarCodexEconomyStatus();
-        _bar.CodexEconomyInstallRequested += (_, _) => InstallRecommendedCodexAssistant();
         _bar.MiniAreaLayoutChanged += (_, _) => SaveMiniAreaLayout();
         _bar.MiniAreaOrderChanged += (_, _) => SaveMiniAreaOrder();
         _bar.RadarModelGroupsChanged += (_, _) => SaveRadarModelGroups();
@@ -452,11 +451,9 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             plugins: pluginStatuses,
             codexEconomyStatus: InspectRecommendedCodexEconomyProfile(economyProfiles),
             codexEconomyProfiles: economyProfiles,
-            inspectCodexEconomy: _codexEconomyRouter.Inspect,
-            installCodexEconomy: _codexEconomyRouter.Install);
+            inspectCodexEconomy: _codexEconomyRouter.Inspect);
         _settingsDialog = dialog;
         dialog.RadarTestNotificationRequested += (_, _) => ShowRadarTestNotification();
-        dialog.CodexEconomyStatusChanged += (_, _) => RefreshBarCodexEconomyStatus();
         dialog.FormClosed += SettingsDialogClosed;
         var area = Screen.FromControl(_bar).WorkingArea;
         dialog.Location = new Point(
@@ -536,28 +533,6 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         if (_quitting || _bar.IsDisposed) return;
         try { _bar.SetCodexEconomyStatus(_codexEconomyRouter.Inspect(DefaultCodexEconomyProfile())); }
         catch { _bar.SetCodexEconomyStatus(null); }
-    }
-
-    private void InstallRecommendedCodexAssistant()
-    {
-        if (_quitting || _bar.IsDisposed) return;
-        try
-        {
-            var profile = DefaultCodexEconomyProfile();
-            var applied = _codexEconomyRouter.Install(profile);
-            _bar.SetCodexEconomyStatus(applied);
-            _settingsDialog?.RefreshCodexEconomyStatus();
-        }
-        catch (Exception exception)
-        {
-            MessageBox.Show(
-                _bar,
-                _text.CodexEconomyApplyFailed(exception.Message),
-                _text.CodexEconomyApplyFailedTitle,
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
-            RefreshBarCodexEconomyStatus();
-        }
     }
 
     private static IReadOnlyList<CodexEconomyProfile> DiscoverCodexEconomyProfiles()
