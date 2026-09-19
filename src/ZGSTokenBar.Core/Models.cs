@@ -558,8 +558,7 @@ public static class TaskbarMiniPopoverMath
 
 public static class QuotaDisplayFormatting
 {
-    private static readonly TimeSpan ShanghaiUtcOffset = TimeSpan.FromHours(8);
-    private static readonly TimeSpan DailyGoalMinimumWindow = TimeSpan.FromDays(7);
+    private static readonly TimeSpan LongGoalMinimumWindow = TimeSpan.FromDays(7);
 
     public static DateTimeOffset? WeeklyBlockReset(
         QuotaCard card,
@@ -616,31 +615,22 @@ public static class QuotaDisplayFormatting
         QuotaCyclePace? cycle,
         DateTimeOffset now)
     {
-        if (cycle is null) return null;
-        if (!UsesShanghaiMidnightGoal(window))
+        if (window.ResetsAt is not { } reset || window.Duration <= TimeSpan.Zero)
         {
-            return Math.Clamp(100 - cycle.ExpectedUsedPercent, 0, 100);
+            return cycle is null ? null : Math.Clamp(100 - cycle.ExpectedUsedPercent, 0, 100);
         }
-        if (window.ResetsAt is not { } reset || reset <= now)
-        {
-            return null;
-        }
+        if (reset <= now) return null;
 
-        var shanghaiNow = now.ToOffset(ShanghaiUtcOffset);
-        var nextShanghaiMidnight = new DateTimeOffset(
-            shanghaiNow.Date.AddDays(1),
-            ShanghaiUtcOffset);
-        var targetAt = reset < nextShanghaiMidnight ? reset : nextShanghaiMidnight;
         var cycleStart = reset - window.Duration;
         var expectedUsed = Math.Clamp(
-            (targetAt - cycleStart).TotalMilliseconds / window.Duration.TotalMilliseconds * 100,
+            (now - cycleStart).TotalMilliseconds / window.Duration.TotalMilliseconds * 100,
             0,
             100);
         return 100 - expectedUsed;
     }
 
-    public static bool UsesShanghaiMidnightGoal(QuotaWindow window) =>
-        window.Duration >= DailyGoalMinimumWindow;
+    public static bool UsesLongWindowGoal(QuotaWindow window) =>
+        window.Duration >= LongGoalMinimumWindow;
 }
 
 public static class CodexDisplayFormatting

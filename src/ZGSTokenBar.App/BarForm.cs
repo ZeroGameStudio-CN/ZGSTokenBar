@@ -2363,6 +2363,12 @@ internal sealed class BarForm : Form
 
         var railStart = target.Bounds.X + 4;
         var railWidth = Math.Max(1, target.Bounds.Width - 8);
+        var now = DateTimeOffset.UtcNow;
+        _quotaPaceEstimates.TryGetValue(target.PaceKey, out var pace);
+        var budgetMarkerRemaining = remaining is not null
+            && QuotaDisplayFormatting.WeeklyBlockReset(target.Card, target.Window, now) is null
+                ? QuotaDisplayFormatting.BudgetMarkerRemaining(target.Window, pace?.Cycle, now)
+                : null;
         DrawTaskbarQuotaRail(
             graphics,
             railStart,
@@ -2370,7 +2376,7 @@ internal sealed class BarForm : Form
             target.Bounds.Bottom - 1.5f,
             remaining,
             valueColor,
-            null);
+            budgetMarkerRemaining);
 
         if (target.Bounds.Height < 9) return;
         using var valueBrush = new SolidBrush(valueColor);
@@ -2515,18 +2521,16 @@ internal sealed class BarForm : Form
         var railY = target.Bounds.Bottom - 2;
         var now = DateTimeOffset.UtcNow;
         double? budgetMarkerRemaining = null;
+        _quotaPaceEstimates.TryGetValue(target.PaceKey, out var pace);
         if (QuotaDisplayFormatting.WeeklyBlockReset(
                 target.Card,
                 target.Window,
                 now) is null
-            && remaining is not null
-            && _quotaPaceEstimates.TryGetValue(
-                target.PaceKey,
-                out var pace))
+            && remaining is not null)
         {
             budgetMarkerRemaining = QuotaDisplayFormatting.BudgetMarkerRemaining(
                 target.Window,
-                pace.Cycle,
+                pace?.Cycle,
                 now);
         }
         DrawTaskbarQuotaRail(

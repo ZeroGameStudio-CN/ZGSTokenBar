@@ -830,13 +830,13 @@ internal sealed class NativeText
             : (left, T("可维持", "Pace OK"));
     }
 
-    public (string Left, string Right) QuotaDailyGoal(
+    public (string Left, string Right) QuotaCurrentGoal(
         double targetRemaining,
         double actualRemaining,
         bool recentTooFast = false)
     {
         var target = CompactPercent(targetRemaining);
-        var left = T($"今晚目标 {target}", $"Midnight goal {target}");
+        var left = T($"当前目标 {target}", $"Current goal {target}");
         if (recentTooFast)
         {
             return (left, T("近期过快", "Recent too fast"));

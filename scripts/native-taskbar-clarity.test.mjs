@@ -421,8 +421,8 @@ test('quota pace rows use concise labels, readable type, and distinct icons', ()
   assert.match(nativeText, /"1h"/);
   assert.match(nativeText, /15m初步/);
   assert.match(nativeText, /Cycle OK/);
-  assert.match(nativeText, /今晚目标/);
-  assert.match(nativeText, /Midnight goal/);
+  assert.match(nativeText, /当前目标/);
+  assert.match(nativeText, /Current goal/);
   assert.match(nativeText, /compact\.Replace\(" ", string\.Empty, StringComparison\.Ordinal\)/);
 });
 

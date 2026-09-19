@@ -264,10 +264,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                 else _ = RefreshSystemUsageOverviewAsync();
                 _bar.SyncTaskbarPlacement();
             }
-            else
-            {
-                _bar.Invalidate();
-            }
+            _bar.Invalidate();
         };
         _confirmationTimer = new System.Windows.Forms.Timer { Interval = 3_000 };
         _confirmationTimer.Tick += (_, _) =>

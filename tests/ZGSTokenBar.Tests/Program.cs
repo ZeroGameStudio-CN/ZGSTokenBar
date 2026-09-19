@@ -388,7 +388,7 @@ var tests = new (string Name, Action Run)[]
     ("Native background palette contract", TestNativeBackgroundPaletteContract),
     ("Native settings panel contract", TestNativeSettingsPanelContract),
     ("Compact reset labels", TestCompactResetLabels),
-    ("Daily quota budget marker", TestDailyQuotaBudgetMarker),
+    ("Realtime quota budget marker", TestRealtimeQuotaBudgetMarker),
     ("Quota milestone alerts", TestQuotaMilestoneAlerts),
     ("Cockpit API service card", TestCockpitApiServiceCard),
     ("Build identity payload fixtures", TestBuildIdentityPayloadFixtures),
@@ -8610,6 +8610,13 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
                         form.ClientSize.Height,
                         PixelFormat.Format32bppPArgb);
                     form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+                    if (scenario.CodexCount > 2)
+                    {
+                        Equal(true, Enumerable.Range(0, bitmap.Width).Any(x =>
+                            Enumerable.Range(0, bitmap.Height).Any(y =>
+                                bitmap.GetPixel(x, y).ToArgb() == Color.FromArgb(253, 230, 138).ToArgb())),
+                            $"{scenario.CodexCount}-account layout renders the budget marker");
+                    }
                     var localeSuffix = locale == "en" ? string.Empty : "-zh-CN";
                     var paletteSuffix = paletteId == AppSettings.DefaultBackgroundPalette
                         ? string.Empty
@@ -11028,16 +11035,16 @@ static void TestQuotaPacePopoverPresentation()
         en.QuotaCycle(projected with { Recent = null }),
         "cycle-only fallback keeps its throttle guidance");
     Equal(
-        ("今晚目标 54%", "余量 17%"),
-        zh.QuotaDailyGoal(54, 71),
+        ("当前目标 54%", "余量 17%"),
+        zh.QuotaCurrentGoal(54, 71),
         "Chinese daily goal explains the long-window marker");
     Equal(
-        ("Midnight goal 54%", "8% over"),
-        en.QuotaDailyGoal(54, 46),
+        ("Current goal 54%", "8% over"),
+        en.QuotaCurrentGoal(54, 46),
         "English daily goal reports an exceeded target");
     Equal(
-        ("Midnight goal 54%", "Recent too fast"),
-        en.QuotaDailyGoal(54, 71, recentTooFast: true),
+        ("Current goal 54%", "Recent too fast"),
+        en.QuotaCurrentGoal(54, 71, recentTooFast: true),
         "recent exhaustion warning overrides daily spare");
     Equal(
         ("15m early · 8.0%/h", "until reset"),
@@ -15985,7 +15992,7 @@ static void TestCompactResetLabels()
         "five-hour window with its own reset remains active");
 }
 
-static void TestDailyQuotaBudgetMarker()
+static void TestRealtimeQuotaBudgetMarker()
 {
     var cycle = new QuotaCyclePace(40, -20);
     var weekly = new QuotaWindow(
@@ -15998,30 +16005,37 @@ static void TestDailyQuotaBudgetMarker()
     var shanghaiMidnight = DateTimeOffset.Parse("2026-08-01T16:00:00Z");
 
     Equal(
-        85.714,
+        94.048,
         Math.Round(QuotaDisplayFormatting.BudgetMarkerRemaining(weekly, cycle, shanghaiMorning)!.Value, 3),
-        "weekly marker targets the next Shanghai midnight");
+        "weekly marker follows elapsed cycle time");
+    Equal(
+        85.724,
+        Math.Round(QuotaDisplayFormatting.BudgetMarkerRemaining(weekly, cycle, shanghaiBeforeMidnight)!.Value, 3),
+        "weekly marker advances within the same day");
     Equal(
         85.714,
-        Math.Round(QuotaDisplayFormatting.BudgetMarkerRemaining(weekly, cycle, shanghaiBeforeMidnight)!.Value, 3),
-        "weekly marker stays fixed within one Shanghai day");
-    Equal(
-        71.429,
         Math.Round(QuotaDisplayFormatting.BudgetMarkerRemaining(weekly, cycle, shanghaiMidnight)!.Value, 3),
-        "weekly marker advances at Shanghai midnight");
+        "weekly marker remains continuous across midnight");
 
     var resetsBeforeMidnight = weekly with
     {
         ResetsAt = DateTimeOffset.Parse("2026-08-01T12:00:00Z"),
     };
     Equal(
-        0d,
-        QuotaDisplayFormatting.BudgetMarkerRemaining(resetsBeforeMidnight, cycle, shanghaiMorning),
-        "real reset caps a daily target that would extend past the cycle");
+        5.952,
+        Math.Round(QuotaDisplayFormatting.BudgetMarkerRemaining(resetsBeforeMidnight, cycle, shanghaiMorning)!.Value, 3),
+        "marker uses time remaining until the real reset");
     Equal<double?>(
         null,
         QuotaDisplayFormatting.BudgetMarkerRemaining(resetsBeforeMidnight, cycle, shanghaiMidnight),
         "expired cycle hides its budget marker");
+
+    Equal(100d, QuotaDisplayFormatting.BudgetMarkerRemaining(weekly, null, weekly.ResetsAt!.Value.AddDays(-8)),
+        "time before the cycle clamps to full remaining");
+    Equal<double?>(null, QuotaDisplayFormatting.BudgetMarkerRemaining(weekly, cycle, weekly.ResetsAt!.Value),
+        "marker hides exactly at reset");
+    Equal(94.048, Math.Round(QuotaDisplayFormatting.BudgetMarkerRemaining(weekly, null, shanghaiMorning)!.Value, 3),
+        "known reset does not require learned pace");
 
     var fiveHour = new QuotaWindow(
         "5h",

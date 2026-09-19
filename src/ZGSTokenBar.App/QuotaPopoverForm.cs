@@ -462,17 +462,17 @@ internal sealed class QuotaPopoverForm : Form
                 StringAlignment.Far);
         }
 
-        var showDailyGoal = remaining is not null
+        var showCurrentGoal = remaining is not null
             && budgetMarkerRemaining is not null
-            && QuotaDisplayFormatting.UsesShanghaiMidnightGoal(content.Window);
+            && QuotaDisplayFormatting.UsesLongWindowGoal(content.Window);
         var recentTooFast = content.Pace?.Recent is { ResetsBeforeExhaustion: false };
-        var cyclePace = showDailyGoal
-            ? _text.QuotaDailyGoal(
+        var cyclePace = showCurrentGoal
+            ? _text.QuotaCurrentGoal(
                 budgetMarkerRemaining!.Value,
                 remaining!.Value,
                 recentTooFast)
             : _text.QuotaCycle(content.Pace);
-        var cycleColor = showDailyGoal
+        var cycleColor = showCurrentGoal
             ? Color.FromArgb(253, 230, 138)
             : content.Pace?.Cycle is null || content.Pace.Status == QuotaPaceStatus.WeeklyBlocked
                 ? Color.FromArgb(148, 163, 184)
@@ -485,7 +485,7 @@ internal sealed class QuotaPopoverForm : Form
             graphics,
             cyclePace.Left,
             _detailFont,
-            showDailyGoal ? warningValueBrush
+            showCurrentGoal ? warningValueBrush
                 : content.Pace?.Cycle is null ? mutedBrush : detailValueBrush,
             new RectangleF(x + 30, y + 94, cyclePace.Right.Length == 0 ? body.Width - 42 : 102, 16),
             StringAlignment.Near);
@@ -495,7 +495,7 @@ internal sealed class QuotaPopoverForm : Form
                 graphics,
                 cyclePace.Right,
                 _detailFont,
-                showDailyGoal
+                showCurrentGoal
                     ? recentTooFast || remaining!.Value < budgetMarkerRemaining!.Value
                         ? warningValueBrush
                         : paceValueBrush
