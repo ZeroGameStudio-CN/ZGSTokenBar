@@ -8194,6 +8194,28 @@ static void TestRadarPresentation()
         }));
     Equal(4, codexPresentation.Rows.Count, "Codex Radar keeps only non-DeepSeek model rows");
     Equal(true, codexPresentation.Rows.All(row => !RadarPresentation.IsDeepSeekModel(row.Model)), "Codex filter excludes all DeepSeek rows");
+
+    var futureOrdering = RadarPresentation.CodexOnly(RadarPresentation.Build(new ProviderRadarSnapshot(
+        ProviderKind.Codex,
+        "future-ordering",
+        capturedAt,
+        capturedAt,
+        ScenarioRadarModel("gpt-5.6-luna", "max", 80, 1, 2),
+        [
+            ScenarioRadarModel("gpt-6-luna", "max", 80, 1, 2),
+            ScenarioRadarModel("gpt-6-sol", "max", 80, 1, 2),
+            ScenarioRadarModel("gpt-6-astra", "max", 80, 1, 2),
+            ScenarioRadarModel("gpt-5.6-sol", "max", 80, 1, 2),
+            ScenarioRadarModel("gpt-5.6-terra", "max", 80, 1, 2),
+        ]))).Rows
+        .GroupBy(row => row.Model.Model, StringComparer.OrdinalIgnoreCase)
+        .Select(group => group.Key)
+        .ToArray();
+    Equal(true, futureOrdering.SequenceEqual([
+        "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
+        "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
+    ], StringComparer.OrdinalIgnoreCase), "Codex Radar orders model generations and families dynamically");
+
     var astraFeed = RadarMeasurementsParser.Parse(JsonSerializer.Serialize(new
     {
         points = new[] { "low", "medium", "high", "xhigh", "max", "ultra" }
@@ -8214,9 +8236,11 @@ static void TestRadarPresentation()
     Equal(10, refreshedPresentation.Rows.Count, "refreshed Radar retains every model and upstream Astra effort");
     Equal(6, refreshedPresentation.Rows.Count(row => row.Model.Model == "gpt-6-astra"), "Astra measurements reach the displayed rows");
     Equal(true, refreshedPresentation.Rows.Take(6).All(row => row.Model.Model == "gpt-6-astra"), "all Astra efforts precede older model groups");
-    Equal(true, refreshedPresentation.Rows.Skip(6).Select(row => row.SourceIndex)
-        .SequenceEqual(RadarPresentation.Build(refreshedSnapshot).Rows.Where(row => row.Model.Model != "gpt-6-astra").Select(row => row.SourceIndex)),
-        "pinning Astra preserves other model ordering");
+    Equal(true, refreshedPresentation.Rows
+        .GroupBy(row => row.Model.Model, StringComparer.OrdinalIgnoreCase)
+        .Select(group => group.Key)
+        .SequenceEqual(["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"], StringComparer.OrdinalIgnoreCase),
+        "Codex Radar keeps model generations and families in semantic order");
     Equal("GPT-6 Astra Ultra", refreshedPresentation.Rows.First(row => row.Model.Model == "gpt-6-astra").ModelText, "Astra label and effort order");
     Equal(refreshedSnapshot.Primary, refreshedPresentation.IqLeader, "folding does not change model ranking");
     Equal(9, refreshedSnapshot.Comparisons.Count, "display filtering leaves source measurements intact");

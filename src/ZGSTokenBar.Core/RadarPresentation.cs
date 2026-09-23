@@ -67,8 +67,65 @@ public static class RadarPresentation
         var filtered = Filter(presentation, model => !IsDeepSeekModel(model));
         return filtered with
         {
-            Rows = filtered.Rows.OrderBy(row => string.Equals(
-                row.Model.Model, "gpt-6-astra", StringComparison.OrdinalIgnoreCase) ? 0 : 1).ToArray(),
+            Rows = OrderCodexRows(filtered.Rows),
+        };
+    }
+
+    private static IReadOnlyList<RadarDisplayRow> OrderCodexRows(
+        IEnumerable<RadarDisplayRow> rows)
+    {
+        var source = rows.ToArray();
+        var groupOrder = source
+            .Select(row => row.Model.Model)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(ModelVersionMajor)
+            .ThenByDescending(ModelVersionMinor)
+            .ThenBy(ModelFamilyTier)
+            .ThenBy(model => model, StringComparer.OrdinalIgnoreCase)
+            .Select((model, index) => (model, index))
+            .ToDictionary(entry => entry.model, entry => entry.index, StringComparer.OrdinalIgnoreCase);
+
+        return source
+            .OrderBy(row => groupOrder[row.Model.Model])
+            .ThenByDescending(row => EffortRank(row.Model.ReasoningEffort))
+            .ThenBy(row => row.SourceIndex)
+            .ToArray();
+    }
+
+    private static int ModelVersionMajor(string model) => ParseModelVersion(model).Major;
+
+    private static int ModelVersionMinor(string model) => ParseModelVersion(model).Minor;
+
+    private static (int Major, int Minor) ParseModelVersion(string model)
+    {
+        var parts = model.Split('-', StringSplitOptions.RemoveEmptyEntries);
+        foreach (var part in parts)
+        {
+            var version = part.Split('.', StringSplitOptions.RemoveEmptyEntries);
+            var minor = 0;
+            if (version.Length is 0 or > 2
+                || !int.TryParse(version[0], out var major)
+                || (version.Length == 2 && !int.TryParse(version[1], out minor)))
+            {
+                continue;
+            }
+
+            return (major, minor);
+        }
+
+        return (0, 0);
+    }
+
+    private static int ModelFamilyTier(string model)
+    {
+        var family = model[(model.LastIndexOf('-') + 1)..];
+        return family.ToLowerInvariant() switch
+        {
+            "astra" => 0,
+            "sol" => 1,
+            "terra" => 2,
+            "luna" => 3,
+            _ => 4,
         };
     }
 
