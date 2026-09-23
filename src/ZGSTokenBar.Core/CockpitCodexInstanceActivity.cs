@@ -182,6 +182,13 @@ internal static class CockpitCodexInstanceActivity
             return activeAccountIds;
         }
 
+        // The default API-key service is not a desktop Codex instance. Do not
+        // infer it from an unrelated active ChatGPT root process.
+        if (defaultBinding.AccountId.StartsWith("codex_apikey_", StringComparison.OrdinalIgnoreCase))
+        {
+            return activeAccountIds;
+        }
+
         var processes = processSnapshot();
         var activeProcesses = processes
             .Where(process => ActiveProcessNames.Contains(process.ProcessName))

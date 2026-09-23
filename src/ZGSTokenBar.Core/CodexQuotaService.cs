@@ -38,6 +38,14 @@ public sealed class CodexQuotaService
     {
         var now = DateTimeOffset.UtcNow;
         var nativeCredentials = ReadCredentials();
+        var activeCockpitAccountIds = CockpitCodexInstanceActivity.ReadActiveAccountIds(_cockpitHome);
+        if (activeCockpitAccountIds is { Count: > 0 })
+        {
+            nativeCredentials = nativeCredentials
+                .Where(credential => credential.AccountId is { Length: > 0 } accountId
+                    && activeCockpitAccountIds.Contains(accountId))
+                .ToArray();
+        }
         var cockpitAccounts = CockpitCodexQuotaReader.Read(_cockpitHome, now);
         var apiServices = cockpitAccounts
             .Where(account => account.IsApiService && account.Active)

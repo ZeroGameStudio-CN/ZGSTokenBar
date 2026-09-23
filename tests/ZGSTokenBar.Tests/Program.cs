@@ -2341,6 +2341,20 @@ static void TestCockpitCodexInstanceActivity()
         Equal(true, recoveredDefault?.Contains("managed-plus"), "managed binding remains active");
         Equal(true, recoveredDefault?.Contains("default-plus"), "stale default PID follows the unmatched root");
 
+        var apiDefault = CockpitCodexInstanceActivity.SelectActiveAccountIds(
+            [
+                ("managed-plus", (int?)101, false),
+                ("codex_apikey_service", (int?)202, true),
+            ],
+            processId => processId == 101,
+            () =>
+            [
+                new CockpitCodexInstanceActivity.ProcessEntry(101, 900, "ChatGPT"),
+                new CockpitCodexInstanceActivity.ProcessEntry(404, 800, "ChatGPT"),
+            ]);
+        Equal(1, apiDefault.Count, "API-key default is not inferred from an unmatched desktop root");
+        Equal(true, apiDefault.Contains("managed-plus"), "managed account remains active when API default is present");
+
         var rolloutSources = CockpitCodexInstanceActivity.ReadRolloutSources(directory);
         Equal(1, rolloutSources.Count, "managed Cockpit rollout directory is discovered");
         Equal(
