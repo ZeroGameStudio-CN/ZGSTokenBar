@@ -43,6 +43,19 @@ if (packageConfig.dependencies || packageConfig.devDependencies || packageConfig
 for (const script of ['build', 'test', 'dist', 'verify']) {
   if (!packageConfig.scripts?.[script]) fail(`missing ${script} script`);
 }
+if (!/^pwsh\s+-NoProfile\b/.test(packageConfig.scripts.dist)) {
+  fail('dist script must invoke PowerShell 7 through pwsh');
+}
+for (const scriptPath of [
+  'scripts/build-ai-gateway-observer-plugin.ps1',
+  'scripts/build-native-portable.ps1',
+  'scripts/prepare-token-history.ps1',
+]) {
+  const source = fs.readFileSync(scriptPath, 'utf8');
+  if (!/^#Requires -Version 7\.0\s/m.test(source)) {
+    fail(`${scriptPath} must require PowerShell 7`);
+  }
+}
 
 const requiredPaths = [
   'Directory.Build.props',

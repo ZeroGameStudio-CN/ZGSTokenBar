@@ -12977,6 +12977,20 @@ static void TestPluginHostCatalog()
                 []));
             var radarPage = host.ReadPluginData(radarPluginId, null, 1);
             Equal(true, radarPage.NextCursor is not null, "multi-item plugin data creates a cursor");
+            var cursors = Enumerable.Range(0, 257)
+                .Select(_ => host.ReadPluginData(radarPluginId, null, 1).NextCursor!)
+                .ToArray();
+            try
+            {
+                host.ReadPluginData(radarPluginId, cursors[0], 1);
+                throw new InvalidOperationException("The oldest abandoned cursor should be evicted.");
+            }
+            catch (HostCommandException exception)
+            {
+                Equal("data_changed", exception.Code, "abandoned pagination cursors are bounded");
+            }
+            var retainedCursorPage = host.ReadPluginData(radarPluginId, cursors[^1], 1);
+            Equal(1, retainedCursorPage.Items.Count, "the newest pagination cursor remains usable");
             var beforeRadarDisable = host.Describe().Revisions;
             host.SetEnabledAsync(
                     radarPluginId,

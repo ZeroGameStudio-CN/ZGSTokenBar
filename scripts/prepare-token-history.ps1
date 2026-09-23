@@ -1,3 +1,5 @@
+#Requires -Version 7.0
+
 param(
   [Parameter(Mandatory)][string] $PackageRoot,
   [Parameter(Mandatory)][string] $IndexPath,

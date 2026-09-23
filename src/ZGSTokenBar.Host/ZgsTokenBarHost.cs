@@ -17,6 +17,8 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
     private readonly Dictionary<string, SemaphoreSlim> _refreshGates = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _configGate = new(1, 1);
     private readonly Dictionary<string, CursorState> _cursors = new(StringComparer.Ordinal);
+    private const int MaximumCursors = 256;
+    private static readonly TimeSpan CursorLifetime = TimeSpan.FromMinutes(5);
     private readonly HashSet<Subscription> _subscriptions = [];
     private readonly EffectiveProfile _profile;
     private readonly string _productVersion;
@@ -508,6 +510,8 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
         pageSize = Math.Clamp(pageSize, 1, 32);
         lock (_sync)
         {
+            var now = DateTimeOffset.UtcNow;
+            PruneCursorsLocked(now);
             if (!_pluginsById.ContainsKey(pluginId))
             {
                 throw new HostCommandException("plugin_not_found", "Plugin was not found.");
@@ -519,8 +523,10 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
             {
                 if (!_cursors.TryGetValue(cursor, out var state)
                     || !string.Equals(state.PluginId, pluginId, StringComparison.Ordinal)
-                    || state.DataRevision != dataRevision)
+                    || state.DataRevision != dataRevision
+                    || now - state.CreatedAt > CursorLifetime)
                 {
+                    _cursors.Remove(cursor);
                     throw new HostCommandException("data_changed", "Plugin data changed; restart pagination.");
                 }
                 start = state.NextIndex;
@@ -552,8 +558,9 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
             string? nextCursor = null;
             if (nextIndex < items.Count)
             {
+                TrimCursorsLocked();
                 nextCursor = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
-                _cursors[nextCursor] = new(pluginId, dataRevision, nextIndex);
+                _cursors[nextCursor] = new(pluginId, dataRevision, nextIndex, now);
             }
             return new(pluginId, dataRevision, page, nextCursor);
         }
@@ -1006,6 +1013,26 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
         }
     }
 
+    private void PruneCursorsLocked(DateTimeOffset now)
+    {
+        foreach (var key in _cursors
+                     .Where(pair => now - pair.Value.CreatedAt > CursorLifetime)
+                     .Select(pair => pair.Key)
+                     .ToArray())
+        {
+            _cursors.Remove(key);
+        }
+    }
+
+    private void TrimCursorsLocked()
+    {
+        while (_cursors.Count >= MaximumCursors)
+        {
+            var oldest = _cursors.OrderBy(pair => pair.Value.CreatedAt).First();
+            _cursors.Remove(oldest.Key);
+        }
+    }
+
     private static IReadOnlyList<JsonElement> FlattenData(PluginDataSnapshot snapshot)
     {
         var items = new List<JsonElement>();
@@ -1251,7 +1278,11 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
         return value.TryGetProperty(name, out var child) ? child.Clone() : null;
     }
 
-    private sealed record CursorState(string PluginId, long DataRevision, int NextIndex);
+    private sealed record CursorState(
+        string PluginId,
+        long DataRevision,
+        int NextIndex,
+        DateTimeOffset CreatedAt);
 
     public sealed class Subscription
     {
