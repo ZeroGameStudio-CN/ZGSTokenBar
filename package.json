@@ -15,7 +15,7 @@
     "plugins:check": "node scripts/generate-builtin-plugin-registry.mjs --check",
     "cli": "dotnet run --project tools/ZGSTokenBar.Cli/ZGSTokenBar.Cli.csproj -c Release --",
     "radar": "dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj -c Release --",
-    "dist": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-native-portable.ps1",
+    "dist": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/build-native-portable.ps1",
     "verify": "node scripts/graduation-gate.mjs",
     "audit:security": "npm audit --audit-level=high"
   },
