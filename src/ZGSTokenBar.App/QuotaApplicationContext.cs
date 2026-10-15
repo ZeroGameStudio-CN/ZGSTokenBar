@@ -50,7 +50,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     private readonly QuotaSnapshotStabilizer _snapshotStabilizer = new();
     private readonly QuotaPaceTracker _quotaPaceTracker;
     private readonly CodexQuotaTokenTracker _codexQuotaTokenTracker;
-    private CodexTokenUsageReader? _codexTokenUsageReader;
+    private readonly CodexTokenUsageLedger _codexTokenUsageLedger;
     private bool _radarRestorePending;
     private readonly SystemUsageSampler _systemUsageSampler = new();
     private readonly ReleaseUpdateChecker _updateChecker = new();
@@ -113,9 +113,8 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         _codexAccounts = CockpitCodexAccountDirectory.Read();
         _quotaPaceTracker = new QuotaPaceTracker(_store.LoadQuotaRateHistory(now));
         _codexQuotaTokenTracker = new CodexQuotaTokenTracker(_store.LoadCodexQuotaTokenHistory());
-        _codexTokenUsageReader = _store.TryLoadCodexTokenUsageIndex(out var tokenIndex)
-            ? new CodexTokenUsageReader(tokenIndex) : null;
-        _cachedCodexTokenUsage = _codexTokenUsageReader?.Snapshot(now);
+        _codexTokenUsageLedger = new CodexTokenUsageLedger(_store);
+        _cachedCodexTokenUsage = _codexTokenUsageLedger.Snapshot(now);
         _radarRestorePending = !_store.TryLoadRadarState(out _radarState);
         _radarService.RestoreRecommendationCache(_radarState.LastSnapshot);
         _radarViewState = WithRadarUnreadState(
@@ -125,7 +124,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                 false,
                 null),
             _radarState);
-        if (_allowGlobalStartupRegistration)
+        if (_allowGlobalStartupRegistration && !_store.SettingsReadPending)
         {
             StartupManager.Apply(_settings.OpenAtLogin);
         }
@@ -331,10 +330,16 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     private async Task RefreshAsync(bool userInitiated = false, bool forceProviderRefresh = false)
     {
         if (!await _refreshGate.WaitAsync(0)) return;
-        UpdateProviderActivity(requestRefresh: false);
-        _bar.SetRefreshing(true);
         try
         {
+            if (_store.SettingsReadPending)
+            {
+                if (!_store.TryLoad(out var restored)) return;
+                ApplySettingsSnapshot(restored);
+                await SyncPluginEnablementAsync(suppressErrors: false, _shutdown.Token);
+            }
+            UpdateProviderActivity(requestRefresh: false);
+            _bar.SetRefreshing(true);
             var activeCandidate = await _coordinator.RefreshAsync(
                 _settings,
                 _snapshot,
@@ -816,6 +821,11 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     private void UpdateProviderActivity(bool requestRefresh)
     {
         if (_quitting || _bar.IsDisposed) return;
+        if (_store.SettingsReadPending)
+        {
+            if (requestRefresh) _ = RefreshAsync();
+            return;
+        }
 
         var nextAccounts = CockpitCodexAccountDirectory.Read();
         if (!AccountsEqual(_codexAccounts, nextAccounts))
@@ -1059,33 +1069,10 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         if (!await _codexTokenUsageGate.WaitAsync(0)) return;
         try
         {
-            var result = await Task.Run(
-                () =>
-                {
-                    if (_codexTokenUsageReader is null)
-                    {
-                        if (!_store.TryLoadCodexTokenUsageIndex(out var index)) return null;
-                        _codexTokenUsageReader = new CodexTokenUsageReader(index);
-                    }
-                    return _codexTokenUsageReader.Refresh(observedAt, _shutdown.Token);
-                },
+            var summary = await Task.Run(
+                () => _codexTokenUsageLedger.Refresh(observedAt, _shutdown.Token),
                 _shutdown.Token);
-            if (result is null) return;
-            var summary = result.Summary;
             _cachedCodexTokenUsage = summary;
-            if (result.Changed)
-            {
-                try
-                {
-                    await Task.Run(
-                        () => _store.SaveCodexTokenUsageIndex(result.Index),
-                        _shutdown.Token);
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-                {
-                    // The in-memory summary remains useful when its incremental index cannot be saved.
-                }
-            }
             if (!_shutdown.IsCancellationRequested
                 && !_bar.IsDisposed
                 && _activeProviders.Contains(ProviderKind.Codex))
@@ -1982,7 +1969,12 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     {
         if (reloadSettings)
         {
-            var reloaded = await Task.Run(_store.Load, cancellationToken);
+            var reloaded = await Task.Run(() =>
+            {
+                if (!_store.TryLoad(out var settings))
+                    throw new IOException("Settings are temporarily unavailable.");
+                return settings;
+            }, cancellationToken);
             await InvokeOnUiAsync(
                 () =>
                 {

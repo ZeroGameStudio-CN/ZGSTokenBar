@@ -99,7 +99,7 @@ test('custom data roots are isolated from global startup registration', () => {
   assert.match(
     program,
     /ResolveDataDirectoryOverride[\s\S]*?ResolveDataDirectoryArgument\(args\)[\s\S]*?if \(argument is not null\) return argument;[\s\S]*?DataDirectoryEnvironmentVariable[\s\S]*?Path\.IsPathFullyQualified\(configured\)/);
-  assert.match(program, /if \(allowGlobalStartupRegistration\)[\s\S]*?StartupManager\.ReconcileRegistration/);
+  assert.match(program, /if \(allowGlobalStartupRegistration && settingsAvailable\)[\s\S]*?StartupManager\.ReconcileRegistration/);
   assert.match(program, /new QuotaApplicationContext\([\s\S]*?store,[\s\S]*?allowGlobalStartupRegistration,[\s\S]*?bundledPluginInstallFailed\)/);
   assert.match(application, /if \(_allowGlobalStartupRegistration\)[\s\S]*?StartupManager\.Apply/);
 });

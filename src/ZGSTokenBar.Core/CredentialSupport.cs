@@ -74,6 +74,32 @@ internal static class CredentialSupport
         Directory.CreateDirectory(directory);
         using var writeLock = AcquireWriteLock(Path.Combine(directory, $".{Path.GetFileName(path)}.wmt.lock"));
         if (writeLock is null) return false;
+        return AtomicWriteLocked(path, contents, expectedContents);
+    }
+
+    internal static T AtomicUpdate<T>(
+        string path,
+        Func<string?, (string? Contents, T Result)> update)
+    {
+        var directory = Path.GetDirectoryName(path);
+        if (string.IsNullOrWhiteSpace(directory)) throw new IOException("Atomic update requires a parent directory.");
+        Directory.CreateDirectory(directory);
+        using var writeLock = AcquireWriteLock(Path.Combine(directory, $".{Path.GetFileName(path)}.wmt.lock"));
+        if (writeLock is null) throw new IOException("File is busy. Please retry.");
+        string? contents;
+        try { contents = File.ReadAllText(path, Encoding.UTF8); }
+        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+        {
+            contents = null;
+        }
+        var next = update(contents);
+        if (next.Contents is not null) AtomicWriteLocked(path, next.Contents);
+        return next.Result;
+    }
+
+    private static bool AtomicWriteLocked(string path, string contents, string? expectedContents = null)
+    {
+        var directory = Path.GetDirectoryName(path)!;
         var temporaryPath = Path.Combine(
             directory,
             $".{Path.GetFileName(path)}.{Environment.ProcessId}.{Guid.NewGuid():N}.tmp");

@@ -132,7 +132,7 @@ test('credential-changing CLI commands await running-app settings reload', () =>
   assert.doesNotMatch(cli, /_ = ReconcileRunningAppCredentialsAsync/);
   assert.doesNotMatch(cli, /_ = RequestRunningAppRefreshAsync/);
   assert.match(host, /EnsureFields\(parameters, \["reloadSettings"\]\)/);
-  assert.match(context, /Task\.Run\(_store\.Load, cancellationToken\)/);
+  assert.match(context, /var reloaded = await Task\.Run\(\(\) =>[\s\S]*?!_store\.TryLoad\(out var settings\)/);
   assert.match(context, /ApplySettingsSnapshot\([\s\S]*?UpdateProviderActivity\(requestRefresh: false\)/);
   assert.doesNotMatch(
     context,

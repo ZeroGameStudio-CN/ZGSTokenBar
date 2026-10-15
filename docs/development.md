@@ -44,6 +44,10 @@ For a focused Cockpit API-service check, run:
 dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj -c Release -- --cockpit-api-service
 ```
 
+The persistence and plugin lifecycle regressions can be run independently with
+`dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj -c Release -- --persistence-regressions`.
+They use synthetic settings, ledgers and Providers in temporary directories.
+
 `npm run verify` is the graduation gate: static and Node contracts, .NET contracts, single-file App and NativeAOT CLI publication, isolated process-plugin acceptance, deterministic captures, and whitespace validation.
 
 `scripts/build-ai-gateway-observer-plugin.ps1` builds the independently verifiable DeepSeek Harness package. The portable build embeds that exact package so a normal application start can idempotently install the missing bundled version before local-only Provider discovery runs. No runtime package or pricing download is required.
@@ -84,10 +88,20 @@ homes are combined before deduplication; unchanged files are not reparsed, and
 appends resume from the last complete JSONL line. The total no longer uses an old
 account-wide Profile counter as a floor. Keep this ledger with the app's data
 directory when moving machines; do not add totals from separate copies together.
+Desktop and built-in/CLI refreshes use the same ledger transaction: acquire the
+cross-process file lock, reload the latest index, scan, and atomically commit.
+Failed writes retain pending session records for retry even after sources disappear;
+retry reconciles session watermarks without adding overlapping totals or baselines.
+The built-in adapters receive the explicit host data root through `PluginStartContext.HostDataRoot`;
+process Providers still receive only their own plugin data directory.
 Transient startup read failures defer local recomputation until the ledger can
 be loaded; they must not turn a protected on-disk baseline into a lower in-memory
 total. Radar likewise retries restoring its cached supplemental models before
 refreshing after a transient cache-read failure.
+
+Transient settings read failures also defer auto-discovery, startup registration
+and settings saves until the original file can be restored. Plugin stop/start and
+refresh share a lifecycle gate; disable rejects queued refreshes and late results.
 
 An explicitly accepted historical starting amount can be established once with
 `--token-ledger-baseline <input-index> <tokens> <output-data-directory>` on the

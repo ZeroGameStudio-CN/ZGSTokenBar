@@ -18,6 +18,17 @@ using ZGSTokenBar.Plugin.AiGatewayObserver;
 
 if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJobExitCode;
 
+if (args.Length == 1 && args[0] == "--persistence-regressions")
+{
+    PersistenceRegressionTests.SettingsTransientRead();
+    PersistenceRegressionTests.LedgerTransactions();
+    PersistenceRegressionTests.LedgerSaveRetry();
+    PersistenceRegressionTests.BuiltinDataRootIsolation();
+    PluginLifecycleRegressionTests.Run();
+    Console.WriteLine("PASS persistence and plugin lifecycle regressions");
+    return 0;
+}
+
 if (args.Length == 2
     && string.Equals(args[0], "--host-job-lifetime-probe", StringComparison.OrdinalIgnoreCase))
 {
@@ -283,6 +294,11 @@ if (args.Length > 0)
 
 var tests = new (string Name, Action Run)[]
 {
+    ("Settings transient read recovery", PersistenceRegressionTests.SettingsTransientRead),
+    ("Token ledger serialized writers", PersistenceRegressionTests.LedgerTransactions),
+    ("Token ledger failed-save retry", PersistenceRegressionTests.LedgerSaveRetry),
+    ("Built-in plugin host data-root isolation", PersistenceRegressionTests.BuiltinDataRootIsolation),
+    ("Plugin refresh and disable lifecycle", PluginLifecycleRegressionTests.Run),
     ("Claude usage parser", TestClaudeParser),
     ("Claude Retry-After backoff", TestClaudeRetryAfterBackoff),
     ("Claude explicit OAuth refresh", TestClaudeExplicitOAuthRefresh),

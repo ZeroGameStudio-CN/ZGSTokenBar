@@ -19,6 +19,7 @@ const radarRenderer = fs.readFileSync('src/ZGSTokenBar.App/RadarPopoverRenderer.
 const radarPopover = fs.readFileSync('src/ZGSTokenBar.App/ProviderRadarPopoverForm.cs', 'utf8');
 const radarService = fs.readFileSync('src/ZGSTokenBar.Core/RadarService.cs', 'utf8');
 const tokenUsageReader = fs.readFileSync('src/ZGSTokenBar.Core/CodexTokenUsageReader.cs', 'utf8');
+const tokenUsageLedger = fs.readFileSync('src/ZGSTokenBar.Core/CodexTokenUsageLedger.cs', 'utf8');
 const usageService = fs.readFileSync('src/ZGSTokenBar.Core/AiGatewayUsageService.cs', 'utf8');
 const boundedHttpBodyReader = fs.readFileSync('src/ZGSTokenBar.Core/BoundedHttpBodyReader.cs', 'utf8');
 const popoverMath = fs.readFileSync('src/ZGSTokenBar.App/TaskbarPopoverMath.cs', 'utf8');
@@ -231,8 +232,8 @@ test('Codex logo hover owns local token totals and cache hit rate without coupli
   assert.match(barForm, /if \(requestRefresh && radarEnabled\)[\s\S]*?RadarPreviewRequested\?\.Invoke/);
   assert.match(tokenUsageReader, /public CodexTokenUsageSummary\? Snapshot\(DateTimeOffset now\)/);
   assert.match(tokenUsageReader, /capturedAt: LatestIndexedWriteAt\(now\)/);
-  assert.match(applicationContext, /_cachedCodexTokenUsage = _codexTokenUsageReader\?\.Snapshot\(now\)/);
-  assert.match(applicationContext, /if \(!_store\.TryLoadCodexTokenUsageIndex\(out var index\)\) return null/);
+  assert.match(applicationContext, /_cachedCodexTokenUsage = _codexTokenUsageLedger\.Snapshot\(now\)/);
+  assert.match(tokenUsageLedger, /_store\.TryLoadCodexTokenUsageIndex\(out var index\)/);
   assert.match(applicationContext, /if \(_radarRestorePending\)[\s\S]*?TryLoadRadarState/);
   assert.doesNotMatch(applicationContext, /ApplyCumulativeFloor/);
   assert.match(applicationContext, /ApplyCodexUsageActivityTransition\([\s\S]*?_cachedCodexTokenUsage/);

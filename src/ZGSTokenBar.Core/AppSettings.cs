@@ -589,10 +589,27 @@ public sealed class AppSettingsStore
     public string RadarStatePath => Path.Combine(DataDirectory, "radar-state.json");
     public string RadarRoutingPath => Path.Combine(DataDirectory, "radar-routing.json");
 
+    public bool SettingsReadPending
+    {
+        get { lock (_writeProtectionSync) return _writeProtectedPaths.Contains(SettingsPath); }
+    }
+
+    public bool TryLoad(out AppSettings settings)
+    {
+        settings = Load();
+        return !SettingsReadPending;
+    }
+
     public AppSettings Load()
     {
         var loaded = TryLoadSettingsFile(SettingsPath, out var invalidContents);
         if (loaded is not null) return loaded;
+        if (SettingsReadPending)
+        {
+            var pending = new AppSettings();
+            pending.Normalize();
+            return pending;
+        }
 
         if (invalidContents is not null) PreserveCorruptSettings(invalidContents);
         if (File.Exists(SettingsPath + ".corrupt.bak"))
@@ -610,6 +627,7 @@ public sealed class AppSettingsStore
 
     public void Save(AppSettings settings)
     {
+        EnsureWritable(SettingsPath, "Settings must be reloaded before they can be saved.");
         settings.Normalize();
         Directory.CreateDirectory(DataDirectory);
         if (!CredentialSupport.AtomicWrite(
@@ -866,28 +884,7 @@ public sealed class AppSettingsStore
         try
         {
             var json = ReadTextWithRetry(CodexTokenUsageIndexPath);
-            using var document = JsonDocument.Parse(json);
-            var schemaVersion = document.RootElement.TryGetProperty("schemaVersion", out var schema)
-                && schema.TryGetInt32(out var parsedSchema)
-                    ? parsedSchema
-                    : 1;
-            if (schemaVersion is < 1 or > CodexTokenUsageIndex.CurrentSchemaVersion)
-            {
-                throw new JsonException("Unsupported Codex token usage index schema.");
-            }
-
-            var index = JsonSerializer.Deserialize(
-                json,
-                SettingsJsonContext.CodexTokenUsageIndex);
-            if (index is null)
-            {
-                throw new JsonException("Invalid Codex token usage index.");
-            }
-            if (index.HistoricalBaselineTokens is < 0
-                || (index.HistoricalBaselineTokens is null) != (index.HistoricalBaselineAt is null))
-                throw new JsonException("Invalid historical Token baseline.");
-            index.Files ??= [];
-            index.SchemaVersion = CodexTokenUsageIndex.CurrentSchemaVersion;
+            var index = ParseCodexTokenUsageIndex(json);
             ClearWriteProtection(CodexTokenUsageIndexPath);
             return index;
         }
@@ -924,6 +921,45 @@ public sealed class AppSettingsStore
         {
             throw new IOException("Codex token usage index is busy. Please retry.");
         }
+    }
+
+    internal CodexTokenUsageReadResult UpdateCodexTokenUsageIndex(
+        Func<CodexTokenUsageIndex, CodexTokenUsageReadResult> refresh) =>
+        CredentialSupport.AtomicUpdate(
+            CodexTokenUsageIndexPath,
+            contents =>
+            {
+                CodexTokenUsageIndex current;
+                try
+                {
+                    current = contents is null ? new() : ParseCodexTokenUsageIndex(contents);
+                }
+                catch (Exception exception) when (exception is JsonException or InvalidOperationException)
+                {
+                    throw new IOException("Token ledger must be recovered before it can be updated.", exception);
+                }
+                ClearWriteProtection(CodexTokenUsageIndexPath);
+                var result = refresh(current);
+                return (
+                    result.Changed ? JsonSerializer.Serialize(result.Index, SettingsJsonContext.CodexTokenUsageIndex) : null,
+                    result);
+            });
+
+    private static CodexTokenUsageIndex ParseCodexTokenUsageIndex(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        var schemaVersion = document.RootElement.TryGetProperty("schemaVersion", out var schema)
+            && schema.TryGetInt32(out var parsedSchema) ? parsedSchema : 1;
+        if (schemaVersion is < 1 or > CodexTokenUsageIndex.CurrentSchemaVersion)
+            throw new JsonException("Unsupported Codex token usage index schema.");
+        var index = JsonSerializer.Deserialize(json, SettingsJsonContext.CodexTokenUsageIndex)
+            ?? throw new JsonException("Invalid Codex token usage index.");
+        if (index.HistoricalBaselineTokens is < 0
+            || (index.HistoricalBaselineTokens is null) != (index.HistoricalBaselineAt is null))
+            throw new JsonException("Invalid historical Token baseline.");
+        index.Files ??= [];
+        index.SchemaVersion = CodexTokenUsageIndex.CurrentSchemaVersion;
+        return index;
     }
 
     public CodexQuotaTokenHistory LoadCodexQuotaTokenHistory()
@@ -1114,7 +1150,6 @@ public sealed class AppSettingsStore
             string? json = null;
             try
             {
-                if (!File.Exists(path)) return null;
                 json = File.ReadAllText(path);
                 using var document = JsonDocument.Parse(json);
                 var schemaVersion = document.RootElement.TryGetProperty("schemaVersion", out var schema)
@@ -1147,6 +1182,7 @@ public sealed class AppSettingsStore
                     loaded.CaptureLegacyPluginEnablementDecisions();
                 }
                 loaded.Normalize();
+                ClearWriteProtection(path);
                 if (needsMigration
                     && string.Equals(path, SettingsPath, StringComparison.OrdinalIgnoreCase))
                 {
@@ -1164,12 +1200,23 @@ public sealed class AppSettingsStore
                 }
                 return loaded;
             }
+            catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+            {
+                ClearWriteProtection(path);
+                return null;
+            }
             catch (Exception) when (attempt + 1 < SettingsLoadAttempts)
             {
                 Thread.Sleep(SettingsLoadRetryMilliseconds);
             }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                ProtectWritePath(path);
+                return null;
+            }
             catch (Exception)
             {
+                ClearWriteProtection(path);
                 invalidContents = json;
                 return null;
             }

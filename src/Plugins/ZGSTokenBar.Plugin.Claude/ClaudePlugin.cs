@@ -7,7 +7,7 @@ namespace ZGSTokenBar.Plugin.Claude;
 public sealed class ClaudePlugin : BuiltinPluginBase, IDataSource, ILocalCredentialProbe
 {
     private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(15) };
-    private readonly AppSettingsStore _settingsStore = new();
+    private AppSettingsStore? _settingsStore;
 
     public override PluginManifest Manifest => new(
         1, "zgstokenbar.provider.claude", "1.0.0", 1, 0, PluginRuntime.Builtin,
@@ -17,12 +17,19 @@ public sealed class ClaudePlugin : BuiltinPluginBase, IDataSource, ILocalCredent
         DisplayName = "Claude",
     };
 
+    public override ValueTask StartAsync(PluginStartContext context, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _settingsStore = new AppSettingsStore(context.HostDataRoot ?? context.DataRoot);
+        return ValueTask.CompletedTask;
+    }
+
     public async ValueTask<PluginDataSnapshot> RefreshAsync(
         PluginRefreshContext context,
         CancellationToken cancellationToken)
     {
         var result = await new ClaudeQuotaService(_httpClient).FetchAsync(
-            _settingsStore.Load(),
+            (_settingsStore ?? throw new InvalidOperationException("Plugin has not started.")).Load(),
             cancellationToken,
             allowOAuthRefresh: string.Equals(context.Reason, "manual", StringComparison.Ordinal));
         return CorePluginProjection.Provider(

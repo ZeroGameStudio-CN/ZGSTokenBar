@@ -14,6 +14,7 @@ internal static class PluginAutoDiscovery
         IReadOnlyList<IZgsPlugin> plugins,
         CancellationToken cancellationToken = default)
     {
+        if (store.SettingsReadPending) return false;
         var original = EnablementState.Capture(settings);
         var changed = false;
         try
@@ -40,7 +41,10 @@ internal static class PluginAutoDiscovery
                     var pluginRoot = Path.Combine(store.DataDirectory, "plugin-data", pluginId);
                     Directory.CreateDirectory(pluginRoot);
                     await plugin.StartAsync(
-                        new PluginStartContext("desktop", pluginRoot, DateTimeOffset.UtcNow),
+                        new PluginStartContext("desktop", pluginRoot, DateTimeOffset.UtcNow)
+                        {
+                            HostDataRoot = store.DataDirectory,
+                        },
                         cancellationToken);
                     started = true;
                     if (!await probe.HasLocalCredentialsAsync(cancellationToken)) continue;

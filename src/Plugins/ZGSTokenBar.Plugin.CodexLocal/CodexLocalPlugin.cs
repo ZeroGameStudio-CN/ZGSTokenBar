@@ -6,8 +6,14 @@ namespace ZGSTokenBar.Plugin.CodexLocal;
 
 public sealed class CodexLocalPlugin : BuiltinPluginBase, IDataSource
 {
-    private readonly AppSettingsStore _store = new();
-    private CodexTokenUsageReader? _reader;
+    private readonly Func<AppSettingsStore, CodexTokenUsageLedger> _createLedger;
+    private CodexTokenUsageLedger? _ledger;
+    private string? _dataRoot;
+
+    public CodexLocalPlugin() : this(store => new CodexTokenUsageLedger(store)) { }
+
+    internal CodexLocalPlugin(Func<AppSettingsStore, CodexTokenUsageLedger> createLedger) =>
+        _createLedger = createLedger;
 
     public override PluginManifest Manifest => new(
         1, "zgstokenbar.usage.codex-local", "1.0.0", 1, 0, PluginRuntime.Builtin,
@@ -17,32 +23,27 @@ public sealed class CodexLocalPlugin : BuiltinPluginBase, IDataSource
         DisplayName = "Codex Local Usage",
     };
 
+    public override ValueTask StartAsync(PluginStartContext context, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var dataRoot = Path.GetFullPath(context.HostDataRoot ?? context.DataRoot);
+        if (!string.Equals(_dataRoot, dataRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            _ledger = _createLedger(new AppSettingsStore(dataRoot));
+            _dataRoot = dataRoot;
+        }
+        return ValueTask.CompletedTask;
+    }
+
     public ValueTask<PluginDataSnapshot> RefreshAsync(
         PluginRefreshContext context,
         CancellationToken cancellationToken)
     {
-        if (_reader is null)
-        {
-            if (!_store.TryLoadCodexTokenUsageIndex(out var index))
-                throw new IOException("Token ledger is temporarily unavailable.");
-            _reader = new CodexTokenUsageReader(index);
-        }
-        var result = _reader.Refresh(context.Now, cancellationToken);
-        _reader = new CodexTokenUsageReader(result.Index);
-        if (result.Changed)
-        {
-            try
-            {
-                _store.SaveCodexTokenUsageIndex(result.Index);
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                // A busy cache must not hide a valid local usage snapshot.
-            }
-        }
+        var ledger = _ledger ?? throw new InvalidOperationException("Plugin has not started.");
+        var summary = ledger.Refresh(context.Now, cancellationToken);
         return ValueTask.FromResult(CorePluginProjection.CodexUsage(
             Manifest.Id,
-            result.Summary,
+            summary,
             context.Now));
     }
 }

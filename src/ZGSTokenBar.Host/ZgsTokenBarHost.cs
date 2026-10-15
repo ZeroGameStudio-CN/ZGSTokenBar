@@ -296,6 +296,7 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
         lock (_sync)
         {
             ThrowIfDisposed();
+            if (!_enabled[snapshot.PluginId]) return;
             _data[snapshot.PluginId] = snapshot;
             _dataRevisions[snapshot.PluginId]++;
             _revision++;
@@ -331,17 +332,33 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
         try
         {
             long previousRevision;
-            lock (_sync) previousRevision = _dataRevisions[pluginId];
+            lock (_sync)
+            {
+                ThrowIfDisposed();
+                if (!_enabled[pluginId])
+                    throw new HostCommandException("plugin_disabled", "Plugin is disabled.");
+                previousRevision = _dataRevisions[pluginId];
+            }
             var snapshot = await dataSource.RefreshAsync(
                 new PluginRefreshContext(DateTimeOffset.UtcNow, reason, previousRevision),
                 cancellationToken);
+            lock (_sync)
+            {
+                if (!_enabled[pluginId])
+                    throw new HostCommandException("plugin_disabled", "Plugin is disabled.");
+            }
             Publish(snapshot);
             return snapshot;
         }
         catch (Exception exception) when (exception is not OperationCanceledException and not HostCommandException)
         {
             PluginDataSnapshot previous;
-            lock (_sync) previous = _data[pluginId];
+            lock (_sync)
+            {
+                if (!_enabled[pluginId])
+                    throw new HostCommandException("plugin_disabled", "Plugin is disabled.");
+                previous = _data[pluginId];
+            }
             var failed = previous with
             {
                 CapturedAt = DateTimeOffset.UtcNow,
@@ -358,7 +375,11 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
         catch (HostCommandException exception)
         {
             PluginDataSnapshot previous;
-            lock (_sync) previous = _data[pluginId];
+            lock (_sync)
+            {
+                if (!_enabled[pluginId]) throw;
+                previous = _data[pluginId];
+            }
             Publish(previous with
             {
                 CapturedAt = DateTimeOffset.UtcNow,
@@ -444,65 +465,85 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
                         $"Disable dependent plugin {dependent.Manifest.Id} first.");
                 }
             }
-            _enabled[pluginId] = enabled;
+            // Reject queued refreshes as soon as disable starts. Enabling stays
+            // invisible until its lifecycle owns the same gate as refresh.
+            if (!enabled) _enabled[pluginId] = false;
         }
 
-        try
-        {
-            if (_started)
-            {
-                if (enabled)
-                {
-                    await StartPluginAsync(plugin, cancellationToken);
-                }
-                else
-                {
-                    await plugin.StopAsync(cancellationToken);
-                }
-            }
-        }
+        var gate = _refreshGates[pluginId];
+        try { await gate.WaitAsync(cancellationToken); }
         catch
         {
             lock (_sync) _enabled[pluginId] = !enabled;
             throw;
         }
-
-        if (_desktop is not null)
+        try
         {
+            if (enabled)
+            {
+                lock (_sync) _enabled[pluginId] = true;
+            }
             try
             {
-                await _desktop.PersistPluginEnabledAsync(pluginId, enabled, cancellationToken);
+                if (_started)
+                {
+                    if (enabled)
+                    {
+                        await StartPluginAsync(plugin, cancellationToken);
+                    }
+                    else
+                    {
+                        await plugin.StopAsync(cancellationToken);
+                    }
+                }
             }
             catch
             {
                 lock (_sync) _enabled[pluginId] = !enabled;
-                if (_started)
-                {
-                    try
-                    {
-                        if (enabled) await plugin.StopAsync(CancellationToken.None);
-                        else
-                        {
-                            await StartPluginAsync(plugin, CancellationToken.None);
-                        }
-                    }
-                    catch { }
-                }
-                throw new HostCommandException("internal", "Plugin setting could not be saved.");
+                throw;
             }
-        }
 
-        HostEvent hostEvent;
-        lock (_sync)
-        {
-            _configRevision++;
-            _revision++;
-            _dataRevisions[pluginId]++;
-            _data[pluginId] = EmptySnapshot(plugin.Manifest, enabled);
-            InvalidateCursorsLocked(pluginId);
-            hostEvent = EventLocked("plugin.config.changed", pluginId);
+            if (_desktop is not null)
+            {
+                try
+                {
+                    await _desktop.PersistPluginEnabledAsync(pluginId, enabled, cancellationToken);
+                }
+                catch
+                {
+                    lock (_sync) _enabled[pluginId] = !enabled;
+                    if (_started)
+                    {
+                        try
+                        {
+                            if (enabled) await plugin.StopAsync(CancellationToken.None);
+                            else
+                            {
+                                await StartPluginAsync(plugin, CancellationToken.None);
+                            }
+                        }
+                        catch { }
+                    }
+                    throw new HostCommandException("internal", "Plugin setting could not be saved.");
+                }
+            }
+
+            HostEvent hostEvent;
+            lock (_sync)
+            {
+                _configRevision++;
+                _revision++;
+                _dataRevisions[pluginId]++;
+                _data[pluginId] = EmptySnapshot(plugin.Manifest, enabled);
+                InvalidateCursorsLocked(pluginId);
+                hostEvent = EventLocked("plugin.config.changed", pluginId);
+            }
+            PublishEvent(hostEvent);
         }
-        PublishEvent(hostEvent);
+        finally
+        {
+            gate.Release();
+        }
     }
 
     public PagedPluginData ReadPluginData(string pluginId, string? cursor, int pageSize)
@@ -915,7 +956,10 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
         var pluginRoot = Path.Combine(_dataRoot, "plugin-data", plugin.Manifest.Id);
         Directory.CreateDirectory(pluginRoot);
         await plugin.StartAsync(
-            new PluginStartContext(_profile.Name, pluginRoot, DateTimeOffset.UtcNow),
+            new PluginStartContext(_profile.Name, pluginRoot, DateTimeOffset.UtcNow)
+            {
+                HostDataRoot = _dataRoot,
+            },
             cancellationToken);
         if (plugin.Manifest.Runtime != PluginRuntime.Process) return;
         try

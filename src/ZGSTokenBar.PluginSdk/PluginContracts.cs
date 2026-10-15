@@ -105,7 +105,12 @@ public sealed record PluginPackageFile(string Path, long Bytes, string Sha256);
 public sealed record PluginStartContext(
     string Profile,
     string DataRoot,
-    DateTimeOffset StartedAt);
+    DateTimeOffset StartedAt)
+{
+    // Built-in adapters share the host's existing settings and ledger. Process
+    // plugins continue receiving only their own DataRoot through the process API.
+    public string? HostDataRoot { get; init; }
+}
 
 public sealed record PluginRefreshContext(
     DateTimeOffset Now,

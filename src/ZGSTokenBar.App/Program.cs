@@ -29,8 +29,8 @@ internal static class Program
             string.Equals(value, "--settings", StringComparison.OrdinalIgnoreCase)
             || string.Equals(value, "settings", StringComparison.OrdinalIgnoreCase));
         var store = new AppSettingsStore(dataDirectory);
-        var settings = store.Load();
-        if (allowGlobalStartupRegistration)
+        var settingsAvailable = store.TryLoad(out var settings);
+        if (allowGlobalStartupRegistration && settingsAvailable)
         {
             StartupManager.ReconcileRegistration(
                 Environment.ProcessPath ?? Application.ExecutablePath,
@@ -50,7 +50,7 @@ internal static class Program
         var bundledPluginInstallFailed = BundledPluginInstaller
             .EnsureInstalled(store.DataDirectory)
             .Any(status => !status.Valid);
-        ApplyProviderAutoDiscovery(store, settings);
+        if (settingsAvailable) ApplyProviderAutoDiscovery(store, settings);
 
         ApplicationConfiguration.Initialize();
         var context = new QuotaApplicationContext(
