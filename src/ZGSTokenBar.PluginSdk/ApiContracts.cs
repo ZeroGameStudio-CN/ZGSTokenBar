@@ -93,10 +93,14 @@ public sealed record WindowInspection(
 {
     public string? AppModuleId { get; init; }
     public string? CoreModuleId { get; init; }
+    public string? DataDirectory { get; init; }
     public long? DisplayedTokenTotal { get; init; }
     public bool RadarVisible { get; init; }
     public string[]? RadarModelGroups { get; init; }
     public string[]? CachedRadarModelGroups { get; init; }
+    public DateTimeOffset? RadarTrialObservedAt { get; init; }
+    public int RecentConversationCount { get; init; }
+    public double? LatestTurnOutputTokensPerSecond { get; init; }
 }
 
 public sealed record SnapshotSummary(

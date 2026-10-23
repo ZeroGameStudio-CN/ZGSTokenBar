@@ -60,7 +60,7 @@ test('AI Gateway whale icon opens a separate DeepSeek Radar view', () => {
   assert.match(radarPresentation, /DeepSeekFamilyOrder/);
   assert.match(radarPresentation, /DeepSeekLaneOrder/);
   assert.match(radarPresentation, /CodexOnly/);
-  assert.match(radarPopover, /RadarPresentation\.CodexOnly/);
+  assert.match(radarPopover, /RadarPresentation\.BuildCodex/);
   assert.match(radarPopover, /AiGatewayUsageSummary\? aiGatewayUsage/);
   assert.match(radarRenderer, /DrawGatewayUsageRadarFooter/);
   assert.match(radarRenderer, /AiGatewayTokenRadarMetricTitle/);

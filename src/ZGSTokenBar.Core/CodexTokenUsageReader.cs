@@ -19,6 +19,7 @@ public sealed record CodexTokenUsageSummary(
     CodexSpendPeriod? Last30DaysSpend = null,
     CodexSpendHistory? SpendHistory = null)
 {
+    public IReadOnlyList<CodexConversationTurn> RecentTurns { get; init; } = [];
     public static CodexTokenUsageSummary? ApplyCumulativeFloor(
         CodexTokenUsageSummary? summary,
         long? cumulativeFloor,
@@ -127,7 +128,10 @@ public sealed record CodexTokenUsageFileIndex(
 public sealed record CodexTokenUsageReadResult(
     CodexTokenUsageSummary? Summary,
     CodexTokenUsageIndex Index,
-    bool Changed);
+    bool Changed)
+{
+    internal IReadOnlyList<string> RecentSessionPaths { get; init; } = [];
+}
 
 internal sealed record CodexTokenUsageEvent(
     DateTimeOffset CapturedAt,
@@ -303,7 +307,13 @@ public sealed class CodexTokenUsageReader
                 HistoricalBaselineTokens = _historicalBaselineTokens,
                 HistoricalBaselineAt = _historicalBaselineAt,
             },
-            changed);
+            changed)
+        {
+            RecentSessionPaths = candidates.Values
+                .OrderByDescending(file => file.LastWriteTimeUtc)
+                .Take(CodexConversationUsageReader.MaximumSessions)
+                .Select(file => file.FullName).ToArray(),
+        };
     }
 
     private CodexTokenUsageSummary? BuildSummary(
@@ -1546,14 +1556,15 @@ public sealed class CodexTokenUsageReader
         IEnumerable<CodexDailyModelUsage> dailyUsage) =>
         CodexPricingCatalog.SummarizePeriod(dailyUsage.Select(item =>
             new CodexModelTokenUsage(
-                item.PricingTier == StandardPricingTier ? item.Model : null,
+                item.Model,
                 item.InputTokens,
                 item.CachedInputTokens,
                 item.OutputTokens,
                 0,
                 item.UnattributedTokens,
                 item.IsLongContext,
-                item.CacheWriteInputTokens)));
+                item.CacheWriteInputTokens,
+                item.PricingTier)));
 
     private static CodexSpendHistory BuildSpendHistory(
         IReadOnlyList<CodexDailyModelUsage> last30DaysUsage,

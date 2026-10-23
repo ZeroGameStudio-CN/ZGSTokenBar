@@ -973,6 +973,19 @@ internal sealed class NativeText
     public string RadarNever => T("从未", "never");
     public string RadarModelHeader => T("模型", "MODEL");
     public string RadarIqHeader => "IQ";
+    public string RadarTrialScoreHeader => T("分/100", "/100");
+    public string RadarTrialState => T("试跑", "TRIAL");
+    public string RadarHistoricalState => T("历史数据", "HISTORICAL");
+    public string RadarTrialSubtitle(DateTimeOffset observedAt) => T(
+        $"Codex 试跑 · 百分制 · {observedAt.ToLocalTime():M-d HH:mm}",
+        $"Codex trial · /100 · {observedAt.ToLocalTime():MM-dd HH:mm}");
+    public string RadarTrialNote => T("小样本试跑 · 与旧版150分榜不可比 · 未参与自动推荐",
+        "Small trial · separate from legacy /150 · no recommendations");
+    public string CodexRecentTurnsTitle => T("最近对话 · 整轮输出均速", "Recent chats · turn-average output");
+    public string CodexTurnSpeedNote => T("含思考、工具和等待时间；不是纯生成速度", "Includes reasoning, tools and waiting; not decode speed");
+    public string CodexTurnDetail(CodexConversationTurn turn) => T(
+        $"{turn.SessionId[..Math.Min(8, turn.SessionId.Length)]} · 输出 {turn.OutputTokens:N0} · {turn.ElapsedSeconds:0}s{(turn.Completed ? "" : " · 进行中")}",
+        $"{turn.SessionId[..Math.Min(8, turn.SessionId.Length)]} · out {turn.OutputTokens:N0} · {turn.ElapsedSeconds:0}s{(turn.Completed ? "" : " · active")}");
     public string RadarIqAverageHeader => T("24H均", "24H AVG");
     public string RadarSampleHeader => T("样本", "N");
     public string RadarPassHeader => T("通过/有效", "PASS/VALID");

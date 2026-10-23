@@ -18,6 +18,14 @@ using ZGSTokenBar.Plugin.AiGatewayObserver;
 
 if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJobExitCode;
 
+if (args.Length > 0 && args[0] == "--radar-usage-update")
+{
+    RadarAndUsageUpdateTests.Run();
+    if (args.Length == 2) RadarAndUsageUpdateTests.Capture(args[1]);
+    Console.WriteLine("PASS current Radar and local conversation usage");
+    return 0;
+}
+
 if (args.Length == 1 && args[0] == "--persistence-regressions")
 {
     PersistenceRegressionTests.SettingsTransientRead();
@@ -329,6 +337,7 @@ var tests = new (string Name, Action Run)[]
     ("Codex rollout bounded scanner", TestCodexRolloutBoundedScanner),
     ("Codex quota token tracker", TestCodexQuotaTokenTracker),
     ("Codex local token aggregation", TestCodexTokenUsageAggregation),
+    ("Current Radar and conversation usage", RadarAndUsageUpdateTests.Run),
     ("Codex multi-instance token aggregation", TestCodexMultiInstanceTokenUsage),
     ("Codex API-equivalent pricing", TestCodexApiEquivalentPricing),
     ("Codex spend history projection", TestCodexSpendHistoryProjection),
@@ -7351,7 +7360,7 @@ static void TestRadarResetCountdownSupplement()
     using var jsonService = new RadarService(jsonHandler, () => now);
     var fromJson = jsonService.FetchAsync().GetAwaiter().GetResult();
     Equal<DateTimeOffset?>(jsonTarget, fromJson.ResetWindow?.TargetAt, "current.json reset target has priority over homepage metadata");
-    Equal(0, jsonHandler.PageCalls, "current.json target avoids the supplemental homepage request");
+    Equal(1, jsonHandler.PageCalls, "current.json target shares the single trial homepage request");
 
     using var incompleteHandler = new RadarResetCountdownRequestHandler
     {
@@ -7663,7 +7672,7 @@ static void TestRadarRequestPrivacy()
     using var service = new RadarService(handler);
     var snapshot = service.FetchAsync().GetAwaiter().GetResult();
     Equal("model_iq:2026-07-19", snapshot.EventId, "Radar request response parsed");
-    Equal(3, handler.Calls, "Radar requests primary, full measurement, and recommendation feeds");
+    Equal(4, handler.Calls, "Radar requests primary, full measurement, recommendation and trial feeds");
     Equal(true, handler.RequestUris.Contains(RadarService.SummaryUri), "Radar uses current.json");
     Equal(true, handler.RequestUris.Contains(RadarService.MeasurementsUri), "Radar uses full intelligence measurements");
     Equal(true, handler.RequestUris.Contains(RadarService.RecommendationsUri), "Radar uses public recommendations");
@@ -7701,7 +7710,7 @@ static void TestRadarRequestPrivacy()
     Equal(DateTimeOffset.Parse("2026-08-01T13:39:08+08:00"), snapshot.SourceUpdatedAt, "newer recommendation source time is preserved");
 
     service.FetchAsync().GetAwaiter().GetResult();
-    Equal(4, handler.Calls, "supplemental feeds are cached for ten minutes");
+    Equal(5, handler.Calls, "supplemental feeds and trial page are cached for ten minutes");
 
     using var largeHandler = new RadarRequestHandler
     {
@@ -7740,7 +7749,7 @@ static void TestRadarRecommendationContinuity()
 
     now = now.AddMinutes(1);
     service.FetchAsync().GetAwaiter().GetResult();
-    Equal(8, handler.Calls, "empty recommendation refresh is not cached and is retried");
+    Equal(10, handler.Calls, "empty recommendation refresh is not cached and is retried");
 
     using var restartedHandler = new RadarRequestHandler { ReturnEmptyRecommendations = true };
     using var restartedService = new RadarService(restartedHandler, () => now);
@@ -7748,7 +7757,7 @@ static void TestRadarRecommendationContinuity()
     var afterRestart = restartedService.FetchAsync().GetAwaiter().GetResult();
     Equal(4, afterRestart.RecommendationFeed?.Groups.Count, "restart retains persisted upstream groups");
     Equal(8, afterRestart.Comparisons.Count, "restart retains persisted full measurement rows");
-    Equal(3, restartedHandler.Calls, "restart probes both supplemental sources immediately");
+    Equal(4, restartedHandler.Calls, "restart probes all supplemental sources immediately");
 }
 static void TestRadarScenarioEvaluator()
 {
@@ -16730,7 +16739,7 @@ sealed class RadarRequestHandler : HttpMessageHandler
         {
             Calls++;
             if (request.RequestUri is { } uri) RequestUris.Add(uri);
-            AcceptsJson &= request.Headers.Accept.Any(value =>
+            AcceptsJson &= request.RequestUri == RadarService.SiteUri || request.Headers.Accept.Any(value =>
                 string.Equals(value.MediaType, "application/json", StringComparison.OrdinalIgnoreCase));
             SawNoCache &= request.Headers.CacheControl?.NoCache == true;
             HasProductUserAgent &= request.Headers.UserAgent.Any(value =>

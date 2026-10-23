@@ -7,6 +7,8 @@ public sealed class CodexTokenUsageLedger
     private readonly object _sync = new();
     private CodexTokenUsageIndex? _pending;
     private CodexTokenUsageSummary? _summary;
+    private readonly CodexConversationUsageReader _conversations = new();
+    private IReadOnlyList<string> _recentSessionPaths = [];
 
     public CodexTokenUsageLedger(AppSettingsStore store)
         : this(store, () => [CodexQuotaService.CodexHome(), .. CockpitCodexInstanceActivity.ReadTokenUsageHomes()])
@@ -57,6 +59,43 @@ public sealed class CodexTokenUsageLedger
                 // refresh retries the save even if no source file changes or still exists.
                 if (observed is not null) _summary = observed.Summary;
             }
+            if (_summary is not null && observed is not null)
+            {
+                _recentSessionPaths = observed.RecentSessionPaths;
+                _summary = _summary with
+                {
+                    RecentTurns = _conversations.Refresh(observed.RecentSessionPaths, now, cancellationToken),
+                };
+            }
+            return _summary;
+        }
+    }
+
+    public CodexTokenUsageSummary? RefreshConversations(DateTimeOffset now, CancellationToken cancellationToken = default)
+    {
+        lock (_sync)
+        {
+            if (_summary is null) return null;
+            var paths = new HashSet<string>(_recentSessionPaths, StringComparer.OrdinalIgnoreCase);
+            // Discover only today's append-only session folders for the fast visible-popover refresh.
+            foreach (var codexHome in _homes())
+            foreach (var date in new[] { now.ToLocalTime(), now.ToUniversalTime() })
+            {
+                var directory = Path.Combine(codexHome, "sessions", date.ToString("yyyy/MM/dd", System.Globalization.CultureInfo.InvariantCulture));
+                try
+                {
+                    if (Directory.Exists(directory))
+                        foreach (var path in Directory.EnumerateFiles(directory, "*.jsonl")) paths.Add(path);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+            }
+            var recent = paths.Select(path => new FileInfo(path))
+                .Where(file => file.Exists)
+                .GroupBy(file => file.Name, StringComparer.Ordinal)
+                .Select(group => group.OrderByDescending(file => file.Length).ThenByDescending(file => file.LastWriteTimeUtc).First())
+                .OrderByDescending(file => file.LastWriteTimeUtc)
+                .Take(CodexConversationUsageReader.MaximumSessions).Select(file => file.FullName).ToArray();
+            _summary = _summary with { RecentTurns = _conversations.Refresh(recent, now, cancellationToken) };
             return _summary;
         }
     }

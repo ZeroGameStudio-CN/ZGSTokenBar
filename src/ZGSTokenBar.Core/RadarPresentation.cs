@@ -32,7 +32,10 @@ public readonly record struct RadarIqComparison(
 public sealed record RadarPresentationResult(
     IReadOnlyList<RadarDisplayRow> Rows,
     RadarModel? IqLeader,
-    IReadOnlyList<RadarRecommendationGroup> Recommendations);
+    IReadOnlyList<RadarRecommendationGroup> Recommendations)
+{
+    public DateTimeOffset? TrialObservedAt { get; init; }
+}
 
 public static class RadarStatus
 {
@@ -48,6 +51,19 @@ public static class RadarStatus
 
 public static class RadarPresentation
 {
+    public static RadarPresentationResult BuildCodex(ProviderRadarSnapshot snapshot)
+    {
+        if (snapshot.TrialFeed is not { Models.Count: > 0 } trial)
+            return CodexOnly(Build(snapshot));
+        // Percent-scale five-question trials cannot be ranked against the legacy 150-point benchmark.
+        return new RadarPresentationResult(OrderCodexRows(trial.Models
+            .Where(model => !IsDeepSeekModel(model))
+            .Select((model, index) => new RadarDisplayRow(model, index, null, []))), null, [])
+        {
+            TrialObservedAt = trial.ObservedAt,
+        };
+    }
+
     public static RadarPresentationResult DeepSeekOnly(RadarPresentationResult presentation)
     {
         var filtered = Filter(presentation, IsDeepSeekModel);

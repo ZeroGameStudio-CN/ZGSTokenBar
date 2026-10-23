@@ -72,7 +72,7 @@ internal sealed class RadarPopoverRenderer : IDisposable
             return;
         }
         var title = radarTitle ?? text.RadarTitle;
-        DrawHeader(graphics, layout, body.Location, state, logo, fonts, text, pinned, title);
+        DrawHeader(graphics, layout, body.Location, state, logo, fonts, text, pinned, title, presentation);
 
         if (presentation is null)
         {
@@ -91,7 +91,7 @@ internal sealed class RadarPopoverRenderer : IDisposable
         }
         else
         {
-            DrawTableHeader(graphics, layout, body.Location, fonts, text);
+            DrawTableHeader(graphics, layout, body.Location, fonts, text, presentation.TrialObservedAt is not null);
             var tableState = graphics.Save();
             if (!layout.TableViewport.IsEmpty)
             {
@@ -129,7 +129,10 @@ internal sealed class RadarPopoverRenderer : IDisposable
             tokenUsage,
             aiGatewayUsage,
             title,
-            spendCardHovered);
+            spendCardHovered,
+            presentation);
+        if (tokenUsage is not null)
+            DrawRecentTurns(graphics, layout, body.Location, tokenUsage, fonts, text);
     }
 
     public void DrawSpendHistory(
@@ -529,6 +532,8 @@ internal sealed class RadarPopoverRenderer : IDisposable
             origin.Y + ScaleCoordinate(layout.Dpi, 44));
 
         var labelColor = Color.FromArgb(148, 163, 184);
+        var logicalWidth = (int)Math.Round(layout.BodySize.Width * 96d / layout.Dpi);
+        var metricWidth = (logicalWidth - 32) / 2;
         var valueColor = Color.FromArgb(226, 232, 240);
         var today = text.CodexTodayTokens(tokenUsage.TodayTokens);
         var local = text.CodexLocalTokens(tokenUsage.LocalTokens);
@@ -537,7 +542,7 @@ internal sealed class RadarPopoverRenderer : IDisposable
         DrawTokenMetricGroup(
             graphics,
             layout.Dpi,
-            Rect(12, 50, 104, 72),
+            Rect(12, 50, metricWidth, 72),
             text.CodexTokenMetricTitle,
             text.CodexTodayMetricLabel,
             today.Value,
@@ -550,7 +555,7 @@ internal sealed class RadarPopoverRenderer : IDisposable
         DrawTokenMetricGroup(
             graphics,
             layout.Dpi,
-            Rect(124, 50, 104, 72),
+            Rect(20 + metricWidth, 50, metricWidth, 72),
             text.CodexCacheMetricTitle,
             text.CodexTodayMetricLabel,
             todayCache.Value,
@@ -569,6 +574,34 @@ internal sealed class RadarPopoverRenderer : IDisposable
             text,
             HasSpendHistory(tokenUsage),
             spendCardHovered);
+        DrawRecentTurns(graphics, layout, origin, tokenUsage, fonts, text);
+    }
+
+    private static void DrawRecentTurns(Graphics graphics, RadarPopoverLayout layout, Point origin,
+        CodexTokenUsageSummary usage, RadarPopoverFonts fonts, NativeText text)
+    {
+        if (layout.RecentTurnsBounds.IsEmpty) return;
+        var bounds = Offset(layout.RecentTurnsBounds, origin);
+        var labelColor = Color.FromArgb(148, 163, 184);
+        DrawText(graphics, text.CodexRecentTurnsTitle, fonts.Badge, Color.FromArgb(165, 180, 252),
+            new Rectangle(bounds.Left, bounds.Top, bounds.Width, Scale(layout.Dpi, 16)), CellTextFlags);
+        var y = bounds.Top + Scale(layout.Dpi, 20);
+        foreach (var turn in usage.RecentTurns.Take(4))
+        {
+            var speedWidth = Scale(layout.Dpi, 85);
+            DrawText(graphics, string.Join(' ', new[] { turn.Model ?? "—", turn.Effort }.Where(value => value is not null)),
+                fonts.Model, Color.FromArgb(226, 232, 240),
+                new Rectangle(bounds.Left, y, bounds.Width - speedWidth, Scale(layout.Dpi, 16)), CellTextFlags);
+            DrawText(graphics, turn.OutputTokensPerSecond is { } speed ? $"{speed:0.0} tok/s" : "—",
+                fonts.EmphasizedNumber, Color.FromArgb(52, 211, 153),
+                new Rectangle(bounds.Right - speedWidth, y, speedWidth, Scale(layout.Dpi, 16)),
+                CellTextFlags | TextFormatFlags.Right);
+            DrawText(graphics, text.CodexTurnDetail(turn), fonts.Meta, labelColor,
+                new Rectangle(bounds.Left, y + Scale(layout.Dpi, 16), bounds.Width, Scale(layout.Dpi, 12)), CellTextFlags);
+            y += Scale(layout.Dpi, 32);
+        }
+        DrawText(graphics, text.CodexTurnSpeedNote, fonts.Meta, labelColor,
+            new Rectangle(bounds.Left, y + Scale(layout.Dpi, 2), bounds.Width, Scale(layout.Dpi, 14)), CellTextFlags);
     }
 
     private static void DrawTokenMetricGroup(
@@ -706,7 +739,8 @@ internal sealed class RadarPopoverRenderer : IDisposable
         RadarPopoverFonts fonts,
         NativeText text,
         bool pinned,
-        string title)
+        string title,
+        RadarPresentationResult? presentation)
     {
         if (logo is not null) graphics.DrawImage(logo, Offset(layout.LogoBounds, origin));
         DrawText(
@@ -718,7 +752,7 @@ internal sealed class RadarPopoverRenderer : IDisposable
             CellTextFlags);
         DrawText(
             graphics,
-            text.RadarPopoverSubtitle(pinned),
+            presentation?.TrialObservedAt is { } trialAt ? text.RadarTrialSubtitle(trialAt) : text.RadarPopoverSubtitle(pinned),
             fonts.Badge,
             Color.FromArgb(129, 140, 248),
             Offset(layout.SubtitleBounds, origin),
@@ -743,6 +777,16 @@ internal sealed class RadarPopoverRenderer : IDisposable
 
         var fresh = !state.IsStale(now) && state.Error is null;
         var stateLabel = text.RadarState(state, now);
+        var sourceAt = presentation?.TrialObservedAt ?? state.Snapshot?.SourceUpdatedAt;
+        if (!state.Loading && state.Error is null && sourceAt is { } sourceTime)
+        {
+            if (now - sourceTime > TimeSpan.FromHours(24))
+            {
+                fresh = false;
+                stateLabel = text.RadarHistoricalState;
+            }
+            else if (presentation?.TrialObservedAt is not null) stateLabel = text.RadarTrialState;
+        }
         var checkedLabel = text.RadarChecked(state.LastSuccessfulFetchAt, now);
         DrawText(
             graphics,
@@ -856,12 +900,13 @@ internal sealed class RadarPopoverRenderer : IDisposable
         RadarPopoverLayout layout,
         Point origin,
         RadarPopoverFonts fonts,
-        NativeText text)
+        NativeText text,
+        bool trial = false)
     {
         var color = Color.FromArgb(148, 163, 184);
         DrawColumnText(graphics, text.RadarModelHeader, fonts.Badge, color, layout.Columns.Model, layout.TableHeaderBounds, origin);
-        DrawColumnText(graphics, text.RadarIqHeader, fonts.Badge, color, layout.Columns.IqCurrent, layout.TableHeaderBounds, origin);
-        DrawColumnText(graphics, text.RadarIqAverageHeader, fonts.Badge, color, layout.Columns.IqAverage, layout.TableHeaderBounds, origin);
+        DrawColumnText(graphics, trial ? text.RadarTrialScoreHeader : text.RadarIqHeader, fonts.Badge, color, layout.Columns.IqCurrent, layout.TableHeaderBounds, origin);
+        DrawColumnText(graphics, trial ? "" : text.RadarIqAverageHeader, fonts.Badge, color, layout.Columns.IqAverage, layout.TableHeaderBounds, origin);
         DrawColumnText(graphics, text.RadarSampleHeader, fonts.Badge, color, layout.Columns.Samples, layout.TableHeaderBounds, origin);
         DrawColumnText(graphics, text.RadarAverageHeader, fonts.Badge, color, layout.Columns.AverageTime, layout.TableHeaderBounds, origin);
         DrawColumnText(
@@ -1197,7 +1242,8 @@ internal sealed class RadarPopoverRenderer : IDisposable
         CodexTokenUsageSummary? tokenUsage,
         AiGatewayUsageSummary? aiGatewayUsage,
         string title,
-        bool spendCardHovered)
+        bool spendCardHovered,
+        RadarPresentationResult? presentation)
     {
         var footerColor = Color.FromArgb(148, 163, 184);
         if (tokenUsage is not null && !layout.FooterSpendBounds.IsEmpty)
@@ -1222,7 +1268,7 @@ internal sealed class RadarPopoverRenderer : IDisposable
         {
             DrawText(
                 graphics,
-                $"{title} · {text.RadarSource} {text.RadarSourceTime(state.Snapshot?.SourceUpdatedAt)}",
+                $"{title} · {text.RadarSource} {text.RadarSourceTime(presentation?.TrialObservedAt ?? state.Snapshot?.SourceUpdatedAt)}",
                 fonts.Meta,
                 footerColor,
                 Offset(layout.FooterSourceBounds, origin),
@@ -1251,6 +1297,11 @@ internal sealed class RadarPopoverRenderer : IDisposable
                 footerColor);
         }
 
+        if (presentation?.TrialObservedAt is not null)
+        {
+            DrawText(graphics, text.RadarTrialNote, fonts.Meta, footerColor, legendBounds, CellTextFlags);
+            return;
+        }
         var items = new[]
         {
             (Strongest: false, UnknownStatus: true, GroupIndex: -1, Label: text.RadarUnknownStatusLegend),

@@ -51,6 +51,10 @@ public sealed record RadarMeasurementFeed(
     DateTimeOffset? SourceUpdatedAt,
     IReadOnlyList<RadarModel> Models);
 
+public sealed record RadarTrialFeed(
+    DateTimeOffset ObservedAt,
+    IReadOnlyList<RadarModel> Models);
+
 public sealed record RadarResetWindow(
     bool Open,
     DateTimeOffset? OpenedAt,
@@ -71,6 +75,7 @@ public sealed record ProviderRadarSnapshot(
 {
     public RadarRecommendationFeed? RecommendationFeed { get; init; }
     public RadarResetWindow? ResetWindow { get; init; }
+    public RadarTrialFeed? TrialFeed { get; init; }
 }
 
 internal static class RadarSnapshotLimits
@@ -88,6 +93,9 @@ internal static class RadarSnapshotLimits
         {
             Primary = primary,
             Comparisons = TrimComparisons(primary, snapshot.Comparisons),
+            TrialFeed = snapshot.TrialFeed is { } trial
+                ? trial with { Models = trial.Models.Take(MaxTrackedModels).Select(TrimModel).ToArray() }
+                : null,
             RecommendationFeed = snapshot.RecommendationFeed is { } feed
                 ? Trim(feed)
                 : null,
@@ -195,6 +203,9 @@ public sealed class RadarService : IProviderRadarModule, IDisposable
     private DateTimeOffset? _resetTargetFetchedAt;
     private DateTimeOffset? _resetTargetFailedAt;
     private string? _resetTargetWindowKey;
+    private Task<string?>? _homePageTask;
+    private DateTimeOffset? _homePageFetchedAt;
+    private RadarTrialFeed? _trialCache;
 
     public RadarService(HttpMessageHandler? handler = null)
         : this(handler, () => DateTimeOffset.UtcNow)
@@ -221,6 +232,7 @@ public sealed class RadarService : IProviderRadarModule, IDisposable
     {
         if (snapshot is null) return;
         snapshot = RadarSnapshotLimits.Trim(snapshot);
+        _trialCache = snapshot.TrialFeed;
         if (snapshot.RecommendationFeed is { Groups.Count: > 0 } feed)
         {
             _recommendationCache = feed;
@@ -241,9 +253,10 @@ public sealed class RadarService : IProviderRadarModule, IDisposable
         var resetWindowTask = EnrichResetWindowAsync(snapshot.ResetWindow, now, cancellationToken);
         var measurementsTask = FetchMeasurementsAsync(now, cancellationToken);
         var recommendationsTask = FetchRecommendationsAsync(now, cancellationToken);
-        await Task.WhenAll(resetWindowTask, measurementsTask, recommendationsTask);
+        var trialTask = FetchTrialAsync(now, cancellationToken);
+        await Task.WhenAll(resetWindowTask, measurementsTask, recommendationsTask, trialTask);
 
-        snapshot = snapshot with { ResetWindow = await resetWindowTask };
+        snapshot = snapshot with { ResetWindow = await resetWindowTask, TrialFeed = await trialTask };
         var measurements = await measurementsTask;
         if (measurements is not null)
         {
@@ -291,6 +304,10 @@ public sealed class RadarService : IProviderRadarModule, IDisposable
             _resetTargetWindowKey = windowKey;
         }
 
+        if (window.TargetAt is null && (windowKey is null || _resetTargetFetchedAt is null)
+            && _resetTargetFailedAt is null)
+            _homePageTask = null;
+
         if (window.TargetAt is { } suppliedTarget)
         {
             if (windowKey is not null)
@@ -318,7 +335,7 @@ public sealed class RadarService : IProviderRadarModule, IDisposable
         try
         {
             fetchedTarget = RadarHomePageParser.ParseResetTarget(
-                await FetchTextAsync(SiteUri, "text/html", cancellationToken));
+                await FetchHomePageAsync(now, cancellationToken) ?? string.Empty);
             _resetTargetFailedAt = null;
             if (windowKey is not null)
             {
@@ -339,6 +356,47 @@ public sealed class RadarService : IProviderRadarModule, IDisposable
         }
 
         return window with { TargetAt = fetchedTarget };
+    }
+
+    private Task<string?> FetchHomePageAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (_homePageTask is null || _homePageFetchedAt is not { } fetchedAt
+            || now - fetchedAt >= SupplementalRefreshInterval || _homePageTask.IsCanceled)
+        {
+            _homePageFetchedAt = now;
+            _homePageTask = ReadHomePageAsync(cancellationToken);
+        }
+        return _homePageTask;
+    }
+
+    private async Task<string?> ReadHomePageAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await FetchTextAsync(SiteUri, "text/html", cancellationToken);
+        }
+        catch (Exception exception) when (!cancellationToken.IsCancellationRequested
+            && exception is HttpRequestException or IOException or TaskCanceledException)
+        {
+            return null;
+        }
+    }
+
+    private async Task<RadarTrialFeed?> FetchTrialAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var html = await FetchHomePageAsync(now, cancellationToken);
+            if (html is not null && RadarTrialParser.Parse(html) is { } trial
+                && trial.ObservedAt <= now.AddMinutes(5)
+                && (_trialCache is null || trial.ObservedAt >= _trialCache.ObservedAt))
+                _trialCache = trial;
+        }
+        catch (Exception exception) when (exception is JsonException or RegexMatchTimeoutException)
+        {
+            // A changed page must not replace the last usable, separately scored trial.
+        }
+        return _trialCache;
     }
 
     private async Task<RadarMeasurementFeed?> FetchMeasurementsAsync(

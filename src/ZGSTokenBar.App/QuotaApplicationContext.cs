@@ -274,7 +274,12 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         _refreshTimer = new System.Windows.Forms.Timer();
         _refreshTimer.Tick += (_, _) => _ = RefreshAsync();
         _providerActivityTimer = new System.Windows.Forms.Timer { Interval = 5_000 };
-        _providerActivityTimer.Tick += (_, _) => UpdateProviderActivity(requestRefresh: true);
+        _providerActivityTimer.Tick += (_, _) =>
+        {
+            UpdateProviderActivity(requestRefresh: true);
+            if (_bar.RadarVisible && _activeProviders.Contains(ProviderKind.Codex))
+                _ = RefreshCodexConversationsAsync();
+        };
         _radarTimer = new System.Windows.Forms.Timer { Interval = 60_000 };
         _radarTimer.Tick += (_, _) => _ = RefreshRadarAsync();
         _updateTimer = new System.Windows.Forms.Timer { Interval = 6 * 60 * 60 * 1000 };
@@ -324,7 +329,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         _bar.BeginInvoke(() => _ = RefreshAsync());
         _bar.BeginInvoke(() => _ = CheckForUpdatesAsync());
         if (openSettingsOnStart) _bar.BeginInvoke(OpenSettings);
-        if (_settings.EnableRadarAlerts) _bar.BeginInvoke(() => _ = RefreshRadarAsync());
+        if (_settings.EnableRadar) _bar.BeginInvoke(() => _ = RefreshRadarAsync());
     }
 
     private async Task RefreshAsync(bool userInitiated = false, bool forceProviderRefresh = false)
@@ -1096,6 +1101,26 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         {
             _codexTokenUsageGate.Release();
         }
+    }
+
+    private async Task RefreshCodexConversationsAsync()
+    {
+        if (!await _codexTokenUsageGate.WaitAsync(0)) return;
+        try
+        {
+            var summary = await Task.Run(
+                () => _codexTokenUsageLedger.RefreshConversations(DateTimeOffset.UtcNow, _shutdown.Token),
+                _shutdown.Token);
+            if (_shutdown.IsCancellationRequested || _bar.IsDisposed || summary is null
+                || !_activeProviders.Contains(ProviderKind.Codex)) return;
+            _cachedCodexTokenUsage = summary;
+            _bar.SetCodexTokenUsage(summary);
+            _pluginHost.Publish(CorePluginProjection.CodexUsage(
+                "zgstokenbar.usage.codex-local", summary, DateTimeOffset.UtcNow));
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        finally { _codexTokenUsageGate.Release(); }
     }
 
     private static string? FreshCodexCardSignature(
@@ -1953,11 +1978,15 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             {
                 AppModuleId = typeof(QuotaApplicationContext).Module.ModuleVersionId.ToString(),
                 CoreModuleId = typeof(CodexTokenUsageReader).Module.ModuleVersionId.ToString(),
+                DataDirectory = _store.DataDirectory,
                 DisplayedTokenTotal = _bar.DisplayedTokenTotal,
+                RecentConversationCount = _cachedCodexTokenUsage?.RecentTurns.Count ?? 0,
+                LatestTurnOutputTokensPerSecond = _cachedCodexTokenUsage?.RecentTurns.FirstOrDefault()?.OutputTokensPerSecond,
+                RadarTrialObservedAt = _radarViewState.Snapshot?.TrialFeed?.ObservedAt,
                 RadarVisible = _bar.RadarVisible,
                 RadarModelGroups = _bar.DisplayedRadarModelGroups,
                 CachedRadarModelGroups = _radarViewState.Snapshot is { } radarSnapshot
-                    ? RadarPresentation.CodexOnly(RadarPresentation.Build(radarSnapshot)).Rows
+                    ? RadarPresentation.BuildCodex(radarSnapshot).Rows
                         .Select(row => row.Model.Model).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
                     : null,
             },

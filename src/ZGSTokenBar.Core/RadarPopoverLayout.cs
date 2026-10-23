@@ -106,6 +106,7 @@ public sealed class RadarPopoverLayout
     public int MaximumScrollOffset { get; private init; }
     public Rectangle ScrollTrackBounds { get; private init; }
     public Rectangle ScrollThumbBounds { get; private init; }
+    public Rectangle RecentTurnsBounds { get; private init; }
 
     public static RadarPopoverLayout CreateGrouped(
         int dpi,
@@ -115,9 +116,10 @@ public sealed class RadarPopoverLayout
         bool hasOpenResetWindow = false,
         bool hasSpendSummary = false,
         int maximumBodyHeight = int.MaxValue,
-        int scrollOffset = 0) =>
+        int scrollOffset = 0,
+        int recentTurnCount = 0) =>
         CreateCore(dpi, modelKeys.Count, modelKeys, hasInlineError, hasOpenResetWindow,
-            hasSpendSummary, collapsedModels, maximumBodyHeight, scrollOffset);
+            hasSpendSummary, collapsedModels, maximumBodyHeight, scrollOffset, recentTurnCount);
 
     public static RadarPopoverLayout Create(
         int dpi,
@@ -161,10 +163,12 @@ public sealed class RadarPopoverLayout
         bool hasSpendSummary,
         IReadOnlySet<string>? collapsedModels = null,
         int maximumBodyHeight = int.MaxValue,
-        int scrollOffset = 0)
+        int scrollOffset = 0,
+        int recentTurnCount = 0)
     {
         dpi = Math.Max(96, dpi);
         rowCount = Math.Max(0, rowCount);
+        var recentHeight = RecentTurnsHeight(recentTurnCount);
         var logicalErrorHeight = hasInlineError ? 14 : 0;
         var resetBannerOffset = hasOpenResetWindow ? 36 : 0;
         var modelGroupGaps = CountModelGroupGaps(rowCount, modelKeys);
@@ -176,7 +180,7 @@ public sealed class RadarPopoverLayout
                 + modelGroupGaps * LogicalModelGroupGap
                 + logicalErrorHeight
                 + resetBannerOffset)
-            + (hasSpendSummary ? LogicalSpendSummaryHeight : 0);
+            + (hasSpendSummary ? LogicalSpendSummaryHeight : 0) + recentHeight;
 
         int Scale(int value) => Math.Max(
             1,
@@ -213,7 +217,7 @@ public sealed class RadarPopoverLayout
                 }
             }
             logicalHeight = rowY + 52 + logicalErrorHeight
-                + (hasSpendSummary ? LogicalSpendSummaryHeight : 0);
+                + (hasSpendSummary ? LogicalSpendSummaryHeight : 0) + recentHeight;
         }
         else
         {
@@ -306,6 +310,9 @@ public sealed class RadarPopoverLayout
             MaximumScrollOffset = maximumScrollOffset,
             ScrollTrackBounds = scrollTrack,
             ScrollThumbBounds = scrollThumb,
+            RecentTurnsBounds = recentHeight == 0 ? Rectangle.Empty
+                : Rect(14, logicalHeight - 48 - (hasSpendSummary ? LogicalSpendSummaryHeight : 0) - recentHeight,
+                    448, recentHeight - 6),
         };
     }
 
@@ -345,9 +352,13 @@ public sealed class RadarPopoverLayout
             StringComparison.OrdinalIgnoreCase);
     }
 
-    public static RadarPopoverLayout CreateTokenUsage(int dpi)
+    private static int RecentTurnsHeight(int count) => count <= 0 ? 0 : 44 + Math.Min(4, count) * 32;
+
+    public static RadarPopoverLayout CreateTokenUsage(int dpi, int recentTurnCount = 0)
     {
         dpi = Math.Max(96, dpi);
+        var recentHeight = RecentTurnsHeight(recentTurnCount);
+        var width = recentHeight == 0 ? LogicalTokenWidth : 340;
 
         int Scale(int value) => Math.Max(
             1,
@@ -372,12 +383,12 @@ public sealed class RadarPopoverLayout
             dpi,
             true,
             false,
-            new Size(Scale(LogicalTokenWidth), Scale(LogicalTokenHeight)),
+            new Size(Scale(width), Scale(LogicalTokenHeight + recentHeight)),
             Scale(LogicalTail),
             Scale(LogicalGap),
             Rect(12, 10, 24, 24),
-            Rect(44, 9, 184, 16),
-            Rect(44, 24, 184, 12),
+            Rect(44, 9, width - 56, 16),
+            Rect(44, 24, width - 56, 12),
             Rectangle.Empty,
             Rectangle.Empty,
             Rectangle.Empty,
@@ -385,9 +396,13 @@ public sealed class RadarPopoverLayout
             [],
             Rectangle.Empty,
             Rectangle.Empty,
-            Rect(12, 126, 216, LogicalSpendCardHeight),
+            Rect(12, 126, width - 24, LogicalSpendCardHeight),
             Rectangle.Empty,
             Rectangle.Empty,
-            emptyColumns);
+            emptyColumns)
+        {
+            RecentTurnsBounds = recentHeight == 0 ? Rectangle.Empty
+                : Rect(12, LogicalTokenHeight + 2, width - 24, recentHeight - 6),
+        };
     }
 }

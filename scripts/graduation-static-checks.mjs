@@ -23,10 +23,10 @@ const buildPropsSource = fs.readFileSync('Directory.Build.props', 'utf8');
 const productVersion = buildPropsSource.match(/<ZGSTokenBarVersion>([^<]+)<\/ZGSTokenBarVersion>/)?.[1]?.trim();
 if (!productVersion) fail('Directory.Build.props must define ZGSTokenBarVersion');
 const globalConfig = JSON.parse(fs.readFileSync('global.json', 'utf8'));
-if (globalConfig.sdk?.version !== '10.0.111'
+if (globalConfig.sdk?.version !== '10.0.113'
     || globalConfig.sdk?.rollForward !== 'disable'
     || globalConfig.sdk?.allowPrerelease !== false) {
-  fail('global.json must pin stable .NET SDK 10.0.111 with rollForward disabled');
+  fail('global.json must pin stable .NET SDK 10.0.113 with rollForward disabled');
 }
 
 const packageConfig = JSON.parse(fs.readFileSync('package.json', 'utf8'));

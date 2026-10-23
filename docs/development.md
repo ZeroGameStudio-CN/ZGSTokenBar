@@ -79,6 +79,23 @@ its on-disk hash alone does not prove the running behavior matches the source.
 `window inspect` reports the loaded App/Core module IDs, the actual UI Token
 total, and actual/open versus cached Radar model groups. Compare module IDs
 with the built DLLs instead of relying on a hash computed from a path after launch.
+It also reports `radarTrialObservedAt`, `recentConversationCount` and
+`latestTurnOutputTokensPerSecond`. The latter is output tokens divided by the
+entire turn's wall time, including tools and waiting, not server decode throughput.
+
+Run the synthetic Radar/current-pricing/conversation cases and render their
+production UI with `dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj
+-c Release -- --radar-usage-update <temporary-capture-directory>`.
+Conversation measurement reads at most twelve recent session tails (2 MiB each),
+caches unchanged files, ignores unfinished JSONL lines and requires a real turn
+start and usable token counters. It retains no prompts or response content and
+does not modify the durable lifetime baseline.
+
+The model price table includes exact GPT-6 Astra/Sol/Luna and GPT-6.1 Sol prices
+from the official model pages checked on 2026-10-23. Known 6-series Fast/Flex/Batch
+and Sol 6.1 Ultrafast multipliers are explicit; unverified model/tier combinations
+remain unpriced. These are present-price API equivalents, not subscription bills
+or reconstructed historical invoices.
 
 ## Token Ledger
 

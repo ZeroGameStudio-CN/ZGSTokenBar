@@ -120,7 +120,7 @@ internal sealed class ProviderRadarPopoverForm : Form
         _presentation = radarEnabled && state.Snapshot is { } snapshot
             ? deepSeekOnly
                 ? RadarPresentation.DeepSeekOnly(RadarPresentation.Build(snapshot))
-                : RadarPresentation.CodexOnly(RadarPresentation.Build(snapshot))
+                : RadarPresentation.BuildCodex(snapshot)
             : null;
         _logo = logo;
         var dpi = Math.Max(
@@ -129,7 +129,7 @@ internal sealed class ProviderRadarPopoverForm : Form
         _anchorScreen = anchorScreen;
         _layout = radarEnabled
             ? BuildGroupedLayout(dpi)
-            : RadarPopoverLayout.CreateTokenUsage(dpi);
+            : RadarPopoverLayout.CreateTokenUsage(dpi, tokenUsage?.RecentTurns.Count ?? 0);
         _historyLayout = !deepSeekOnly && HasSpendHistory(tokenUsage)
             ? CodexSpendHistoryLayout.Create(
                 dpi,
@@ -409,7 +409,8 @@ internal sealed class ProviderRadarPopoverForm : Form
             _modelGroups.CollapsedModels,
             _presentation is not null && _state.Error is not null,
             _state.Snapshot?.ResetWindow?.Open == true,
-            _tokenUsage is not null, maximumHeight, _scrollOffset);
+            _tokenUsage is not null, maximumHeight, _scrollOffset,
+            _deepSeekOnly ? 0 : _tokenUsage?.RecentTurns.Count ?? 0);
         _scrollOffset = layout.ScrollOffset;
         return layout;
     }

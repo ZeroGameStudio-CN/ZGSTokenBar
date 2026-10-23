@@ -18,7 +18,8 @@ public sealed record CodexModelTokenUsage(
     long ReasoningOutputTokens = 0,
     long UnattributedTokens = 0,
     bool IsLongContext = false,
-    long CacheWriteInputTokens = 0)
+    long CacheWriteInputTokens = 0,
+    string? ServiceTier = null)
 {
     public long AttributedTokens => checked(InputTokens + OutputTokens);
     public long TotalTokens => checked(AttributedTokens + UnattributedTokens);
@@ -100,6 +101,11 @@ public static class CodexPricingCatalog
     private static readonly IReadOnlyDictionary<string, CodexModelPricing> PricingByExactModel =
         new Dictionary<string, CodexModelPricing>(StringComparer.OrdinalIgnoreCase)
         {
+            // Official model pages, checked 2026-10-23; USD per million tokens.
+            ["gpt-6.1-sol"] = new("gpt-6.1-sol", 2m, 0.1m, 10m, 2.5m, true),
+            ["gpt-6-astra"] = new("gpt-6-astra", 10m, 1m, 50m, 12.5m, true),
+            ["gpt-6-sol"] = new("gpt-6-sol", 2m, 0.2m, 10m, 2.5m, true),
+            ["gpt-6-luna"] = new("gpt-6-luna", 0.1m, 0.01m, 0.5m, 0.125m, true),
             ["gpt-5.6-sol"] = Gpt56Sol,
             ["gpt-5.6"] = Gpt56Sol,
             ["gpt-5.6-terra"] = Gpt56Terra,
@@ -127,7 +133,7 @@ public static class CodexPricingCatalog
             "gpt-5.3-codex-spark",
         };
 
-    public static DateOnly PriceSnapshotDate { get; } = new(2026, 8, 21);
+    public static DateOnly PriceSnapshotDate { get; } = new(2026, 10, 23);
 
     public static IReadOnlyCollection<CodexModelPricing> PricedModels { get; } =
         PricingByExactModel.Values
@@ -210,7 +216,23 @@ public static class CodexPricingCatalog
             usage.ReasoningOutputTokens,
             usage.UnattributedTokens,
             usage.IsLongContext,
-            cost);
+            TierMultiplier(pricing.CanonicalModel, usage.ServiceTier) is { } multiplier
+                ? cost * multiplier : null);
+    }
+
+    private static decimal? TierMultiplier(string model, string? tier)
+    {
+        if (string.IsNullOrWhiteSpace(tier) || tier.Trim().ToLowerInvariant() is "standard" or "default" or "auto")
+            return 1m;
+        // Keep unsupported tiers explicitly unpriced rather than guessing a provider's bill.
+        if (model is not ("gpt-6.1-sol" or "gpt-6-astra" or "gpt-6-sol" or "gpt-6-luna")) return null;
+        return tier.Trim().ToLowerInvariant() switch
+        {
+            "priority" or "fast" => 2m,
+            "flex" or "batch" => 0.5m,
+            "ultrafast" when model is "gpt-6.1-sol" => 6m,
+            _ => null,
+        };
     }
 
     public static CodexSpendPeriod SummarizePeriod(IEnumerable<CodexModelTokenUsage> usages)

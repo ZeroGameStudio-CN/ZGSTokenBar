@@ -7,6 +7,7 @@ ZGSTokenBar 是一个开源、本地优先的 Windows 任务栏用量工具。�
 
 - 内置 Claude、Codex 配额 Provider、系统指标，以及随应用打包的 DeepSeek Harness Provider。现有本机 Provider 凭据会被自动识别，无需复制 Key；显式模块开关始终优先。
 - 本机 Codex Token 汇总，以及今日、昨日和 30 天 API 等值美元估算。估算使用带日期的模型价格快照，不等同于订阅账单。
+- 最近对话的输出 Token、耗时与整轮平均 tok/s；包含思考、工具和等待时间，不等同于纯生成速度。
 - 多个 Codex 账号先按 Pro、Plus 分组，同一套餐内再按剩余额度从高到低排序。
 - Mini 区域可独立排序、折叠和调整宽度，并提供配额详情与重置倒计时。
 - 可选“登录时启动”。
