@@ -2,7 +2,7 @@ namespace ZGSTokenBar.Core;
 
 public readonly record struct CodexConversationPage(int Offset, int Count, int Total)
 {
-    public const int PageSize = 4;
+    public const int PageSize = 6;
     public bool HasPrevious => Offset > 0;
     public bool HasNext => Offset + Count < Total;
     public int PageNumber => Offset / PageSize + 1;

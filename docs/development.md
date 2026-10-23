@@ -87,15 +87,20 @@ Run the synthetic Radar/current-pricing/conversation cases and render their
 production UI with `dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj
 -c Release -- --radar-usage-update <temporary-capture-directory>`.
 Conversation measurement incrementally scans at most twelve recent sessions,
-with an 8 MiB per-file budget per refresh. A cold large file catches up across
-refreshes; only complete catch-up is published. Subsequent refreshes parse new
+with an 8 MiB per-file budget per refresh. A complete turn in the last 2 MiB
+bootstraps immediately; longer turns catch up across refreshes. Only complete
+catch-up is published. Subsequent refreshes parse new
 bytes, retaining partial JSONL lines in a bounded memory buffer and validating
 file checkpoints before reuse. No conversation content is persisted. Real turn
 start/completion times and cumulative counter deltas determine the average;
 explicit first-token latency remains a separate metric. Interrupted turns freeze
 their timing; dormant unfinished turns show unavailable speed. The lifetime
 baseline is unchanged. The popover pages through all twelve recent conversations,
-and plugin snapshot details expose the same values and state.
+and plugin snapshot details expose the same values and state. The compact table
+shows new input (input minus cache hits), output, cached input, API-equivalent
+cost, turn-average output rate and first-token latency. Cost is summed per proven
+request/model/tier; unknown coverage is unavailable or marked with a plus.
+Project, identity, state and metric definitions live in hover details.
 
 The Radar subtitle switches between the Codex trial (/100) and historical (/150)
 views. API contributions keep those datasets separate and include sample counts.

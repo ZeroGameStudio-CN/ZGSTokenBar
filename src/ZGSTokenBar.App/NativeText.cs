@@ -518,10 +518,10 @@ internal sealed class NativeText
     public string ClosePinnedHint => T("Esc / 点击外部", "Esc / click outside");
     public string PinHint => T("点击固定", "Click to pin");
     public string ResetUnavailable => T("暂无重置时间", "Reset unavailable");
-    public string CodexTokenTitle => T("本机 Codex Token", "Local Codex tokens");
+    public string CodexTokenTitle => T("本机用量", "Local usage");
     public string CodexTokenPopoverSubtitle(bool pinned) => pinned
-        ? T("已固定 · Esc / 点击外部", "PINNED · ESC / CLICK OUTSIDE")
-        : T("本机日志 · 点击固定", "LOCAL LOG · CLICK TO PIN");
+        ? T("已固定", "PINNED")
+        : T("点击固定", "CLICK TO PIN");
     public (string Label, string Value) CodexTodayTokens(long tokens) =>
         (T("今日 Token", "Today tokens"), FormatTokenCount(tokens));
     public (string Label, string Value) CodexLocalTokens(long tokens) =>
@@ -979,10 +979,23 @@ internal sealed class NativeText
     public string RadarTrialSubtitle(DateTimeOffset observedAt) => T(
         $"Codex 试跑 · 百分制 · {observedAt.ToLocalTime():M-d HH:mm}",
         $"Codex trial · /100 · {observedAt.ToLocalTime():MM-dd HH:mm}");
-    public string RadarTrialNote => T("小样本试跑 · 与旧版150分榜不可比 · 未参与自动推荐",
-        "Small trial · separate from legacy /150 · no recommendations");
-    public string CodexRecentTurnsTitle => T("最近对话 · 整轮输出均速", "Recent chats · turn-average output");
-    public string CodexConversationsIndexing(int count) => T($"正在读取 {count} 个对话…", $"Reading {count} chats…");
+    public string RadarBenchmarkHint => T("来源 codexradar.com。试跑按百分制，历史基准按150分制，不能混排；小样本试跑不参与自动推荐。",
+        "Source: codexradar.com. Trials use /100; historical benchmarks use /150. They are not comparable. Small trials do not drive recommendations.");
+    public string CodexRecentTurnsTitle => T("最近对话", "Recent chats");
+    public string CodexConversationsIndexing(int count) => T($"读取 {count}", $"Reading {count}");
+    public string[] CodexConversationHeaders =>
+        [T("模型", "Model"), T("新增输入", "Input"), T("输出", "Output"), T("缓存", "Cached"),
+         T("估算", "Estimate"), T("均速 t/s", "Avg t/s"), T("首字 s", "First s")];
+    public string CodexConversationHint => T(
+        "新增输入不含缓存命中；金额是 API 等值美元估算，＋表示仅已定价部分。均速包含思考、工具和等待；首字仅使用日志记录。悬停一行查看对话和状态。",
+        "Input excludes cache hits; cost is API-equivalent USD (+ means partly priced). Average speed includes reasoning, tools and waits. First-token latency requires a recorded measurement. Hover a row for chat and state.");
+    public string CodexTurnCost(CodexConversationTurn turn)
+    {
+        if (turn.ApiEquivalentUsd is not { } cost) return "—";
+        var amount = cost is > 0 and < 0.0001m ? "<$0.0001"
+            : "$" + cost.ToString(cost >= 100 ? "0" : cost >= 1 ? "0.00" : "0.0000", CultureInfo.InvariantCulture);
+        return amount + (turn.CostIsPartial ? "+" : "");
+    }
     public string CodexTurnLabel(CodexConversationTurn turn) =>
         $"{turn.ProjectName ?? T("对话", "Chat")} · {turn.Model ?? T("多模型/未知", "Mixed/unknown")} {turn.Effort}".TrimEnd();
     public string CodexTurnState(CodexConversationTurn turn) => turn.State switch
@@ -998,17 +1011,19 @@ internal sealed class NativeText
         $"{turn.SessionId[^Math.Min(8, turn.SessionId.Length)..]} · {turn.StartedAt.ToLocalTime():HH:mm} · out {turn.OutputTokens:N0} · {CodexTurnState(turn)}");
     public string CodexTurnTooltip(CodexConversationTurn turn) =>
         $"{CodexTurnLabel(turn)}\n{turn.SessionId}\n{CodexTurnDetail(turn)}\n"
+        + T($"新增输入 {turn.NewInputTokens?.ToString("N0") ?? "—"} · 缓存 {turn.CachedInputTokens?.ToString("N0") ?? "—"} · 估算 {CodexTurnCost(turn)}\n",
+            $"New input {turn.NewInputTokens?.ToString("N0") ?? "—"} · Cached {turn.CachedInputTokens?.ToString("N0") ?? "—"} · Estimate {CodexTurnCost(turn)}\n")
         + T($"整轮耗时 {turn.ElapsedSeconds:0.0}s", $"Turn duration {turn.ElapsedSeconds:0.0}s")
         + (turn.FirstTokenSeconds is { } first ? T($" · 首 Token {first:0.0}s", $" · First token {first:0.0}s") : "")
         + $"\n{CodexTurnSpeedNote}";
     public string RadarBenchmarkSwitch(bool trial) => trial
-        ? T("试跑 /100 · 查看历史 ›", "Trial /100 · History ›")
-        : T("历史 /150 · 返回试跑 ›", "History /150 · Trial ›");
+        ? T("试跑 /100 · 历史 ›", "Trial /100 · History ›")
+        : T("历史 /150 · 试跑 ›", "History /150 · Trial ›");
     public string RadarIqAverageHeader => T("24H均", "24H AVG");
     public string RadarSampleHeader => T("样本", "N");
     public string RadarPassHeader => T("通过/有效", "PASS/VALID");
-    public string RadarAverageHeader => T("平均耗时", "AVG/TASK");
-    public string RadarCostHeader => T("单任务成本", "$/TASK");
+    public string RadarAverageHeader => T("均时", "AVG/TASK");
+    public string RadarCostHeader => T("成本", "$/TASK");
     public string RadarSource => T("来源", "source");
     public string RadarStable => T("稳定", "stable");
     public string RadarWatch => T("关注", "watch");

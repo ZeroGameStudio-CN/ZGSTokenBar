@@ -341,7 +341,15 @@ internal sealed class ProviderRadarPopoverForm : Form
             Cursor = Cursors.Default;
             return;
         }
-        if (_hoveredRecentIndex >= 0)
+        if (_layout.RecentTurnsBounds.Contains(bodyPoint)
+            && !_layout.RecentPreviousBounds.Contains(bodyPoint) && !_layout.RecentNextBounds.Contains(bodyPoint))
+        {
+            if (_hoveredRecentIndex != -2) _groupToolTip.SetToolTip(this, _text.CodexConversationHint);
+            _hoveredRecentIndex = -2;
+            Cursor = Cursors.Default;
+            return;
+        }
+        if (_hoveredRecentIndex != -1)
         {
             _hoveredRecentIndex = -1;
             _groupToolTip.SetToolTip(this, null);
@@ -350,7 +358,8 @@ internal sealed class ProviderRadarPopoverForm : Form
             || _tokenUsage?.RecentTurns.Count > CodexConversationPage.PageSize
                 && (_layout.RecentPreviousBounds.Contains(bodyPoint) || _layout.RecentNextBounds.Contains(bodyPoint));
         Cursor = hovered || hoveredGroup is not null || controlHovered ? Cursors.Hand : Cursors.Default;
-        if (controlHovered) _groupToolTip.SetToolTip(this, null);
+        if (controlHovered) _groupToolTip.SetToolTip(this,
+            CanSwitchBenchmark && _layout.SubtitleBounds.Contains(bodyPoint) ? _text.RadarBenchmarkHint : null);
         if (hovered == _spendCardHovered && hoveredGroup == _hoveredModelGroup) return;
         _spendCardHovered = hovered;
         _hoveredModelGroup = hoveredGroup;
@@ -362,7 +371,7 @@ internal sealed class ProviderRadarPopoverForm : Form
     protected override void OnMouseLeave(EventArgs e)
     {
         base.OnMouseLeave(e);
-        if (!_spendCardHovered && !_backHovered && _hoveredModelGroup is null && _hoveredRecentIndex < 0) return;
+        if (!_spendCardHovered && !_backHovered && _hoveredModelGroup is null && _hoveredRecentIndex == -1) return;
         _hoveredRecentIndex = -1;
         _hoveredModelGroup = null;
         _groupToolTip.SetToolTip(this, null);
@@ -459,7 +468,8 @@ internal sealed class ProviderRadarPopoverForm : Form
             _presentation is not null && _state.Error is not null,
             _state.Snapshot?.ResetWindow?.Open == true,
             _tokenUsage is not null, maximumHeight, _scrollOffset,
-            _deepSeekOnly ? 0 : ConversationRowCount);
+            _deepSeekOnly ? 0 : ConversationRowCount,
+            showLegend: _presentation?.TrialObservedAt is null);
         _scrollOffset = layout.ScrollOffset;
         return layout;
     }

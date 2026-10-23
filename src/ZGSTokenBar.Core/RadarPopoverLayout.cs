@@ -35,6 +35,8 @@ public sealed class RadarPopoverLayout
     public const int LogicalSpendCardHeight = 28;
     public const int LogicalTokenWidth = 240;
     public const int LogicalTokenHeight = 162;
+    public const int ConversationHeaderHeight = 36;
+    public const int ConversationRowHeight = 22;
 
     private RadarPopoverLayout(
         int dpi,
@@ -109,14 +111,32 @@ public sealed class RadarPopoverLayout
     public Rectangle RecentTurnsBounds { get; private init; }
     public Rectangle RecentPreviousBounds => RecentPageButton(64);
     public Rectangle RecentNextBounds => RecentPageButton(20);
+    public IReadOnlyList<RadarPopoverColumn> RecentColumns
+    {
+        get
+        {
+            int Scale(int value) => (int)Math.Round(value * Dpi / 96d);
+            var widths = new[] { 46, 46, 46, 62, 66, 48 }.Select(Scale).ToArray();
+            var gap = Scale(5);
+            var modelWidth = RecentTurnsBounds.Width - widths.Sum() - 6 * gap;
+            var columns = new List<RadarPopoverColumn>();
+            var left = RecentTurnsBounds.Left;
+            foreach (var width in new[] { modelWidth }.Concat(widths))
+            {
+                columns.Add(new(left, left + width));
+                left += width + gap;
+            }
+            return columns;
+        }
+    }
     private Rectangle RecentPageButton(int rightOffset) => RecentTurnsBounds.IsEmpty ? Rectangle.Empty
         : new Rectangle(RecentTurnsBounds.Right - (int)Math.Round(rightOffset * Dpi / 96d),
             RecentTurnsBounds.Top, (int)Math.Round(20 * Dpi / 96d), (int)Math.Round(16 * Dpi / 96d));
 
     public int RecentTurnIndexAt(Point point, int offset, int total)
     {
-        var top = RecentTurnsBounds.Top + (int)Math.Round(20 * Dpi / 96d);
-        var rowHeight = (int)Math.Round(32 * Dpi / 96d);
+        var top = RecentTurnsBounds.Top + (int)Math.Round(ConversationHeaderHeight * Dpi / 96d);
+        var rowHeight = (int)Math.Round(ConversationRowHeight * Dpi / 96d);
         if (!RecentTurnsBounds.Contains(point) || point.Y < top) return -1;
         var index = (point.Y - top) / rowHeight;
         var page = CodexConversationPage.Create(offset, total);
@@ -132,9 +152,10 @@ public sealed class RadarPopoverLayout
         bool hasSpendSummary = false,
         int maximumBodyHeight = int.MaxValue,
         int scrollOffset = 0,
-        int recentTurnCount = 0) =>
+        int recentTurnCount = 0,
+        bool showLegend = true) =>
         CreateCore(dpi, modelKeys.Count, modelKeys, hasInlineError, hasOpenResetWindow,
-            hasSpendSummary, collapsedModels, maximumBodyHeight, scrollOffset, recentTurnCount);
+            hasSpendSummary, collapsedModels, maximumBodyHeight, scrollOffset, recentTurnCount, showLegend);
 
     public static RadarPopoverLayout Create(
         int dpi,
@@ -179,11 +200,13 @@ public sealed class RadarPopoverLayout
         IReadOnlySet<string>? collapsedModels = null,
         int maximumBodyHeight = int.MaxValue,
         int scrollOffset = 0,
-        int recentTurnCount = 0)
+        int recentTurnCount = 0,
+        bool showLegend = true)
     {
         dpi = Math.Max(96, dpi);
         rowCount = Math.Max(0, rowCount);
         var recentHeight = RecentTurnsHeight(recentTurnCount);
+        var footerStart = showLegend ? 48 : 30;
         var logicalErrorHeight = hasInlineError ? 14 : 0;
         var resetBannerOffset = hasOpenResetWindow ? 36 : 0;
         var modelGroupGaps = CountModelGroupGaps(rowCount, modelKeys);
@@ -195,7 +218,7 @@ public sealed class RadarPopoverLayout
                 + modelGroupGaps * LogicalModelGroupGap
                 + logicalErrorHeight
                 + resetBannerOffset)
-            + (hasSpendSummary ? LogicalSpendSummaryHeight : 0) + recentHeight;
+            + (hasSpendSummary ? LogicalSpendSummaryHeight : 0) + recentHeight - (showLegend ? 0 : 18);
 
         int Scale(int value) => Math.Max(
             1,
@@ -232,7 +255,7 @@ public sealed class RadarPopoverLayout
                 }
             }
             logicalHeight = rowY + 52 + logicalErrorHeight
-                + (hasSpendSummary ? LogicalSpendSummaryHeight : 0) + recentHeight;
+                + (hasSpendSummary ? LogicalSpendSummaryHeight : 0) + recentHeight - (showLegend ? 0 : 18);
         }
         else
         {
@@ -303,12 +326,12 @@ public sealed class RadarPopoverLayout
             hasSpendSummary
                 ? Rect(
                     14,
-                    logicalHeight - 48 - LogicalSpendSummaryHeight,
+                    logicalHeight - footerStart - LogicalSpendSummaryHeight,
                     448,
                     LogicalSpendCardHeight)
                 : Rectangle.Empty,
             Rect(14, logicalHeight - 30, 448, 24),
-            Rect(14, logicalHeight - 48, 448, 14),
+            showLegend ? Rect(14, logicalHeight - 48, 448, 14) : Rectangle.Empty,
             new RadarPopoverColumns(
                 Column(0, 22),
                 Column(24, 164),
@@ -326,7 +349,7 @@ public sealed class RadarPopoverLayout
             ScrollTrackBounds = scrollTrack,
             ScrollThumbBounds = scrollThumb,
             RecentTurnsBounds = recentHeight == 0 ? Rectangle.Empty
-                : Rect(14, logicalHeight - 48 - (hasSpendSummary ? LogicalSpendSummaryHeight : 0) - recentHeight,
+                : Rect(14, logicalHeight - footerStart - (hasSpendSummary ? LogicalSpendSummaryHeight : 0) - recentHeight,
                     448, recentHeight - 6),
         };
     }
@@ -367,13 +390,13 @@ public sealed class RadarPopoverLayout
             StringComparison.OrdinalIgnoreCase);
     }
 
-    private static int RecentTurnsHeight(int count) => count <= 0 ? 0 : 44 + Math.Min(4, count) * 32;
+    private static int RecentTurnsHeight(int count) => count <= 0 ? 0 : 44 + Math.Min(CodexConversationPage.PageSize, count) * ConversationRowHeight;
 
     public static RadarPopoverLayout CreateTokenUsage(int dpi, int recentTurnCount = 0)
     {
         dpi = Math.Max(96, dpi);
         var recentHeight = RecentTurnsHeight(recentTurnCount);
-        var width = recentHeight == 0 ? LogicalTokenWidth : 340;
+        var width = recentHeight == 0 ? LogicalTokenWidth : LogicalWidth;
 
         int Scale(int value) => Math.Max(
             1,

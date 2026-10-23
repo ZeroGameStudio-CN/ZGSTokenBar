@@ -10567,8 +10567,8 @@ static void TestNativeLocalization()
     Equal("BG", en.RadarBackgroundScenarioTitle, "English background scenario label");
     Equal("非官方 · 点击固定", zh.RadarPopoverSubtitle(false), "Chinese Radar preview subtitle");
     Equal("PINNED · ESC / CLICK OUTSIDE", en.RadarPopoverSubtitle(true), "English Radar pinned subtitle");
-    Equal("本机日志 · 点击固定", zh.CodexTokenPopoverSubtitle(false), "Chinese token preview subtitle");
-    Equal("PINNED · ESC / CLICK OUTSIDE", en.CodexTokenPopoverSubtitle(true), "English token pinned subtitle");
+    Equal("点击固定", zh.CodexTokenPopoverSubtitle(false), "Chinese token preview subtitle");
+    Equal("PINNED", en.CodexTokenPopoverSubtitle(true), "English token pinned subtitle");
     Equal("受周额度限制", zh.WeeklyQuotaBlocked, "Chinese weekly quota block");
     Equal("blocked by weekly limit", en.WeeklyQuotaBlocked, "English weekly quota block");
     Equal(

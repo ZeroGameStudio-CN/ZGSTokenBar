@@ -17,6 +17,7 @@ internal static class RadarAndUsageUpdateTests
         ConversationAccounting();
         LongConversationContinuity();
         ConversationLifecycle();
+        ConversationMetrics();
         ProjectionAndPaging();
         CurrentPricing();
         Layouts();
@@ -187,6 +188,22 @@ internal static class RadarAndUsageUpdateTests
                 + Tokens(Now.AddSeconds(10), 10, 10));
             Check(reader.Refresh([path], Now.AddSeconds(20)).Single().OutputTokens == 10,
                 "file replacement clears the old cumulative cursor");
+            File.WriteAllText(path, new string(' ', CodexConversationUsageReader.ScanBudgetBytes) + "\n"
+                + Tokens(Now.AddSeconds(-1), 0, 0) + start + Tokens(Now.AddSeconds(50), 300, 200)
+                + Event(Now.AddSeconds(60), new { type = "task_complete", turn_id = "long-turn" }));
+            var cold = new CodexConversationUsageReader();
+            Check(cold.Refresh([path], Now.AddSeconds(70)).Single().OutputTokens == 300
+                && cold.PendingSessions == 0 && cold.ScannedBytes < CodexConversationUsageReader.ScanBudgetBytes,
+                "a complete recent turn bootstraps without replaying a large historical file");
+            File.WriteAllText(path, Tokens(Now, 100, 100)
+                + new string(' ', CodexConversationUsageReader.ScanBudgetBytes) + "\n"
+                + Event(Now.AddSeconds(20), new { type = "task_started", turn_id = "repeated-baseline" })
+                + Tokens(Now.AddSeconds(21), 100, 100) + Tokens(Now.AddSeconds(30), 150, 50));
+            var uncertain = new CodexConversationUsageReader();
+            Check(uncertain.Refresh([path], Now.AddSeconds(40)).Count == 0 && uncertain.PendingSessions == 1,
+                "tail bootstrap requires a counter baseline preceding the current turn");
+            Check(uncertain.Refresh([path], Now.AddSeconds(40)).Single().OutputTokens == 50,
+                "historical replay excludes an unchanged prior-turn token snapshot");
         }
         finally { Directory.Delete(root, true); }
     }
@@ -218,6 +235,51 @@ internal static class RadarAndUsageUpdateTests
             turn = reader.Refresh([path], Now.AddMinutes(6)).Single();
             Check(turn.Interrupted && turn.ElapsedSeconds == 20 && turn.State == "interrupted",
                 "interrupted turn freezes its elapsed time with an explicit state");
+            File.WriteAllText(path, Tokens(Now, 100, 100)
+                + Event(Now.AddSeconds(20), new { type = "task_started", turn_id = "late-prior" })
+                + Tokens(Now.AddSeconds(10), 120, 20)
+                + Tokens(Now.AddSeconds(30), 150, 30));
+            turn = reader.Refresh([path], Now.AddSeconds(40)).Single();
+            Check(turn.OutputTokens == 30, "late prior-turn counters are not charged to the new turn");
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    private static void ConversationMetrics()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "zgstokenbar-turn-metrics-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var path = Path.Combine(root, "metrics.jsonl");
+            string UsageEvent(int seconds, long input, long cached, long output, long lastInput, long lastCached, long lastOutput) =>
+                Event(Now.AddSeconds(seconds), new
+                {
+                    type = "token_count",
+                    info = new
+                    {
+                        total_token_usage = new { input_tokens = input, cached_input_tokens = cached, output_tokens = output,
+                            cache_write_input_tokens = 0, total_tokens = input + output },
+                        last_token_usage = new { input_tokens = lastInput, cached_input_tokens = lastCached, output_tokens = lastOutput,
+                            cache_write_input_tokens = 0, total_tokens = lastInput + lastOutput },
+                    },
+                });
+            var last = UsageEvent(20, 2500, 1800, 250, 1500, 1000, 150);
+            File.WriteAllText(path, Event(Now, new { type = "task_started", turn_id = "priced" })
+                + Event(Now, new { turn_id = "priced", model = "gpt-6.1-sol", service_tier = "default" }, "turn_context")
+                + UsageEvent(10, 1000, 800, 100, 1000, 800, 100) + last + last);
+            var reader = new CodexConversationUsageReader();
+            var turn = reader.Refresh([path], Now.AddSeconds(30)).Single();
+            Check(turn.InputTokens == 2500 && turn.NewInputTokens == 700 && turn.CachedInputTokens == 1800
+                && turn.OutputTokens == 250, "table counts use deltas and separate new input from cache hits");
+            Check(turn.ApiEquivalentUsd == 0.00408m && !turn.CostIsPartial,
+                "per-request costs are summed without repricing the combined context or duplicate events");
+            File.AppendAllText(path, Event(Now.AddSeconds(31), new { turn_id = "priced", model = "unknown-model" }, "turn_context")
+                + UsageEvent(40, 4000, 3000, 400, 1500, 1200, 150));
+            turn = reader.Refresh([path], Now.AddSeconds(50)).Single();
+            Check(turn.NewInputTokens == 1000 && turn.CachedInputTokens == 3000
+                && turn.ApiEquivalentUsd == 0.00408m && turn.CostIsPartial && turn.Model is null,
+                "mixed-model turns keep measured counts and an explicit cost lower bound");
         }
         finally { Directory.Delete(root, true); }
     }
@@ -252,12 +314,12 @@ internal static class RadarAndUsageUpdateTests
         {
             TrialFeed = snapshot.TrialFeed! with { ObservedAt = Now.AddHours(1) },
         }, RadarSurfaceIds.Codex), "new trial is unread even when the old benchmark is unchanged");
-        var last = CodexConversationPage.Create(8, 10);
-        Check(last.Offset == 8 && last.Count == 2 && !last.HasNext && last.HasPrevious, "last conversation page is bounded");
+        var last = CodexConversationPage.Create(6, 10);
+        Check(last.Offset == 6 && last.Count == 4 && !last.HasNext && last.HasPrevious, "last conversation page is bounded");
         Check(CodexConversationPage.Create(8, 3).Offset == 0, "shrinking lists clamp the current page");
         var layout = RadarPopoverLayout.CreateTokenUsage(192, 10);
-        var point = new Point(layout.RecentTurnsBounds.Left + 5, layout.RecentTurnsBounds.Top + 45);
-        Check(layout.RecentTurnIndexAt(point, 4, 10) == 4, "DPI-aware row hit testing maps to the selected page");
+        var point = new Point(layout.RecentTurnsBounds.Left + 5, layout.RecentTurnsBounds.Top + 75);
+        Check(layout.RecentTurnIndexAt(point, 6, 10) == 6, "DPI-aware row hit testing maps to the selected page");
     }
 
     private static void CurrentPricing()
@@ -285,6 +347,10 @@ internal static class RadarAndUsageUpdateTests
         {
             ProjectName = index % 2 == 0 ? "ZGSTokenBar" : "POB",
             FirstTokenSeconds = 1.2,
+            InputTokens = 120000 + index * 1321,
+            CachedInputTokens = 110000 + index * 120,
+            CacheWriteInputTokens = 0,
+            ApiEquivalentUsd = 0.0134m * index,
         }).ToArray(),
     };
 
@@ -298,6 +364,8 @@ internal static class RadarAndUsageUpdateTests
             Check(layout.TableViewport.Bottom <= layout.RecentTurnsBounds.Top, "scroll viewport excludes the turn panel");
             var token = RadarPopoverLayout.CreateTokenUsage(dpi, 4);
             Check(token.RecentTurnsBounds.Bottom <= token.BodySize.Height, "local panel fits at all supported DPI");
+            Check(token.RecentColumns.Count == 7 && token.RecentColumns[^1].Right == token.RecentTurnsBounds.Right,
+                "seven compact metric columns fit without overlap at each DPI");
         }
     }
 
@@ -313,15 +381,15 @@ internal static class RadarAndUsageUpdateTests
         {
             var layout = radar
                 ? RadarPopoverLayout.CreateGrouped(dpi, presentation.Rows.Select(row => row.Model.Model).ToArray(),
-                    new HashSet<string>(), false, hasSpendSummary: true, recentTurnCount: 4)
-                : RadarPopoverLayout.CreateTokenUsage(dpi, 4);
+                    new HashSet<string>(), false, hasSpendSummary: true, recentTurnCount: usage.RecentTurns.Count, showLegend: false)
+                : RadarPopoverLayout.CreateTokenUsage(dpi, usage.RecentTurns.Count);
             using var bitmap = new Bitmap(layout.BodySize.Width, layout.BodySize.Height + layout.TailSize);
             bitmap.SetResolution(dpi, dpi);
             using var graphics = Graphics.FromImage(bitmap);
             using var renderer = new RadarPopoverRenderer();
             renderer.Draw(graphics, layout, PopoverTailSide.Bottom, layout.BodySize.Width / 2,
                 new RadarViewState(snapshot, Now, false, null), radar ? presentation : null, null,
-                NativeText.For(locale), usage, recentTurnOffset: 4, canSwitchBenchmark: radar);
+                NativeText.For(locale), usage, recentTurnOffset: 0, canSwitchBenchmark: radar);
             bitmap.Save(Path.Combine(directory, $"{(radar ? "radar-trial" : "local-turns")}-{locale}-{dpi}.png"), ImageFormat.Png);
         }
     }
