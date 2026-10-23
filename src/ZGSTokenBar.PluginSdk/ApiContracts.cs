@@ -100,6 +100,7 @@ public sealed record WindowInspection(
     public string[]? CachedRadarModelGroups { get; init; }
     public DateTimeOffset? RadarTrialObservedAt { get; init; }
     public int RecentConversationCount { get; init; }
+    public int PendingConversationCount { get; init; }
     public double? LatestTurnOutputTokensPerSecond { get; init; }
 }
 

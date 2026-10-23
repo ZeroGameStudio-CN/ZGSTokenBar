@@ -102,6 +102,7 @@ public static class CorePluginProjection
             SpendRow("usage.cost.today", summary.TodaySpend),
             SpendRow("usage.cost.yesterday", summary.YesterdaySpend),
             SpendRow("usage.cost.30d", summary.Last30DaysSpend),
+            new ContributionSummaryItem("usage.conversations.pending", new("integer", Integer: summary.PendingConversationCount)),
         };
         return new(
             pluginId,
@@ -134,9 +135,28 @@ public static class CorePluginProjection
                                 row.Status,
                                 summary.CapturedAt)).ToArray()),
                     ]),
+                .. summary.RecentTurns.Take(12).Select((turn, index) => ConversationDetail(pluginId, turn, index)),
             ],
             []);
     }
+
+    private static DetailContribution ConversationDetail(string pluginId, CodexConversationTurn turn, int index) =>
+        new($"detail.codex.turn.{index}", pluginId,
+        [
+            new($"section.codex.turn.{index}", "codex.usage.turn", index,
+            [
+                new("usage.turn.session", new("text", Text: turn.SessionId), turn.State, turn.ObservedAt),
+                new("usage.turn.id", new("text", Text: turn.TurnId)),
+                new("usage.turn.project", new("text", Text: turn.ProjectName)),
+                new("usage.turn.model", new("text", Text: turn.Model)),
+                new("usage.turn.effort", new("text", Text: turn.Effort)),
+                new("usage.turn.output", new("integer", Integer: turn.OutputTokens)),
+                new("usage.turn.seconds", new("number", Number: turn.ElapsedSeconds)),
+                new("usage.turn.average-output-tps", new("number", Number: turn.OutputTokensPerSecond),
+                    turn.UsageComplete ? turn.State : "partial", turn.ObservedAt),
+                new("usage.turn.first-token-seconds", new("number", Number: turn.FirstTokenSeconds)),
+            ]),
+        ]);
 
     private static ContributionSummaryItem SpendRow(
         string labelKey,
@@ -162,36 +182,45 @@ public static class CorePluginProjection
         string pluginId,
         ProviderRadarSnapshot snapshot)
     {
-        var rows = new[] { snapshot.Primary }
+        var legacy = new[] { snapshot.Primary }
             .Concat(snapshot.Comparisons)
-            .Take(256)
-            .Select(model => new RadarModelRow(
+            .Take(256).ToArray();
+        var trial = snapshot.TrialFeed is { Models.Count: > 0 } feed ? feed : null;
+        var sourceAt = trial?.ObservedAt ?? snapshot.SourceUpdatedAt;
+        var historical = sourceAt is null || snapshot.CapturedAt - sourceAt > TimeSpan.FromHours(24);
+        RadarModelRow Row(RadarModel model) => new(
                 model.Label,
                 model.Score,
                 model.IqHistory.Count == 0 ? null : model.IqHistory.Average(sample => sample.Score),
                 model.AverageTaskSeconds is null ? null : (int?)Math.Round(model.AverageTaskSeconds.Value / 60d),
                 model.CostUsd is null ? null : (decimal?)model.CostUsd.Value,
-                model.Status is null ? [] : [model.Status]))
-            .ToArray();
+                model.Status is null ? [] : [model.Status])
+        {
+            SampleCount = model.ValidTasks,
+            AverageSeconds = model.AverageTaskSeconds,
+        };
+        var contributions = new List<RadarContribution>
+        {
+            new("radar.models", pluginId, sourceAt ?? snapshot.CapturedAt,
+                (trial?.Models ?? legacy).Select(Row).ToArray(),
+                [new("radar.score.maximum", new("integer", Integer: trial is null ? 150 : 100)),
+                 new("radar.benchmark", new("text", Text: trial is null ? "legacy" : "codex-trial"))]),
+        };
+        if (trial is not null)
+            contributions.Add(new("radar.legacy", pluginId, snapshot.SourceUpdatedAt ?? snapshot.CapturedAt,
+                legacy.Select(Row).ToArray(), [new("radar.score.maximum", new("integer", Integer: 150))]));
         return new(
             pluginId,
             snapshot.CapturedAt,
             new(
-                PluginHealthCode.Current,
+                historical ? PluginHealthCode.Cached : PluginHealthCode.Current,
                 true,
                 false,
                 snapshot.CapturedAt,
-                "radar.current"),
+                historical ? "radar.historical" : trial is null ? "radar.current" : "radar.trial"),
             [],
             [],
-            [
-                new(
-                    "radar.models",
-                    pluginId,
-                    snapshot.SourceUpdatedAt ?? snapshot.CapturedAt,
-                    rows,
-                    []),
-            ]);
+            contributions);
     }
 
     public static PluginHealth Health(ProviderHealth health) =>

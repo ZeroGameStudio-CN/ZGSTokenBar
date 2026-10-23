@@ -11747,7 +11747,9 @@ static void TestRadarPopoverLayout()
         tokenUsage,
         tokenUsage.CapturedAt);
     var projectedRows = projectedUsage.MiniCards.Single().Summary;
-    Equal(7, projectedRows.Count, "Codex local usage contribution exposes three cost periods");
+    Equal(8, projectedRows.Count, "Codex local usage contribution exposes cost periods and conversation catch-up state");
+    Equal<long?>(0, projectedRows.Single(row => row.LabelKey == "usage.conversations.pending").Value.Integer,
+        "idle conversation indexing is explicit");
     Equal(1.234m, projectedRows.Single(row => row.LabelKey == "usage.cost.today").Value.Decimal, "plugin snapshot exposes today's API equivalent");
     Equal("partial", projectedRows.Single(row => row.LabelKey == "usage.cost.30d").Status, "plugin snapshot preserves partial price coverage");
     var cockpitAccounts = new[]

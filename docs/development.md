@@ -86,14 +86,28 @@ entire turn's wall time, including tools and waiting, not server decode throughp
 Run the synthetic Radar/current-pricing/conversation cases and render their
 production UI with `dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj
 -c Release -- --radar-usage-update <temporary-capture-directory>`.
-Conversation measurement reads at most twelve recent session tails (2 MiB each),
-caches unchanged files, ignores unfinished JSONL lines and requires a real turn
-start and usable token counters. It retains no prompts or response content and
-does not modify the durable lifetime baseline.
+Conversation measurement incrementally scans at most twelve recent sessions,
+with an 8 MiB per-file budget per refresh. A cold large file catches up across
+refreshes; only complete catch-up is published. Subsequent refreshes parse new
+bytes, retaining partial JSONL lines in a bounded memory buffer and validating
+file checkpoints before reuse. No conversation content is persisted. Real turn
+start/completion times and cumulative counter deltas determine the average;
+explicit first-token latency remains a separate metric. Interrupted turns freeze
+their timing; dormant unfinished turns show unavailable speed. The lifetime
+baseline is unchanged. The popover pages through all twelve recent conversations,
+and plugin snapshot details expose the same values and state.
+
+The Radar subtitle switches between the Codex trial (/100) and historical (/150)
+views. API contributions keep those datasets separate and include sample counts.
+Trial unread state uses the trial timestamp. The routing export retains its
+existing historical ranking policy and identifies its benchmark, original source
+timestamp and historical status explicitly; five-question trials do not drive it.
 
 The model price table includes exact GPT-6 Astra/Sol/Luna and GPT-6.1 Sol prices
 from the official model pages checked on 2026-10-23. Known 6-series Fast/Flex/Batch
-and Sol 6.1 Ultrafast multipliers are explicit; unverified model/tier combinations
+and Astra/Sol 6.1 Ultrafast multipliers are explicit, using the
+[official API price table](https://developers.openai.com/api/docs/pricing?latest-pricing=ultrafast);
+unverified model/tier combinations
 remain unpriced. These are present-price API equivalents, not subscription bills
 or reconstructed historical invoices.
 

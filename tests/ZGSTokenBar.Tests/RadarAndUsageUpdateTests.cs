@@ -5,6 +5,9 @@ using System.Text;
 using System.Text.Json;
 using ZGSTokenBar.App;
 using ZGSTokenBar.Core;
+using ZGSTokenBar.PluginAdapters;
+using ZGSTokenBar.PluginSdk;
+using ZGSTokenBar.Plugin.CodexLocal;
 
 internal static class RadarAndUsageUpdateTests
 {
@@ -12,6 +15,9 @@ internal static class RadarAndUsageUpdateTests
     {
         TrialParsingAndFallback();
         ConversationAccounting();
+        LongConversationContinuity();
+        ConversationLifecycle();
+        ProjectionAndPaging();
         CurrentPricing();
         Layouts();
     }
@@ -139,6 +145,121 @@ internal static class RadarAndUsageUpdateTests
         finally { Directory.Delete(root, true); }
     }
 
+    private static void LongConversationContinuity()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "zgstokenbar-incremental-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var path = Path.Combine(root, "rollout-00000000-0000-0000-0000-000000000002.jsonl");
+            var start = Event(Now, new { type = "task_started", turn_id = "long-turn" })
+                + Event(Now, new { turn_id = "long-turn", model = "gpt-6.1-sol", effort = "max", cwd = "D:/projects/项目" }, "turn_context")
+                + Tokens(Now.AddSeconds(1), 100, 100);
+            File.WriteAllText(path, start, new UTF8Encoding(false));
+            File.AppendAllText(path, new string(' ', CodexConversationUsageReader.ScanBudgetBytes) + "\n"
+                + Tokens(Now.AddSeconds(50), 300, 200)
+                + Event(Now.AddSeconds(60), new { type = "task_complete", turn_id = "long-turn" }));
+            var reader = new CodexConversationUsageReader();
+            Check(reader.Refresh([path], Now.AddSeconds(70)).Count == 0 && reader.PendingSessions == 1,
+                "cold scan is bounded and does not publish an old partial turn");
+            using (var busy = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                Check(reader.Refresh([path], Now.AddSeconds(70)).Count == 0 && reader.PendingSessions == 1,
+                    "busy catch-up retains its pending state without exposing an old turn");
+            var turn = reader.Refresh([path], Now.AddSeconds(70)).Single();
+            Check(reader.PendingSessions == 0 && turn.OutputTokens == 300 && turn.OutputTokensPerSecond == 5,
+                "long conversation keeps the true start across bounded scans");
+            Check(turn.ProjectName == "项目", "only the project basename is retained");
+            var scanned = reader.ScannedBytes;
+            var append = Event(Now.AddSeconds(80), new { type = "task_started", turn_id = "next" })
+                + Tokens(Now.AddSeconds(90), 400, 100);
+            var bytes = Encoding.UTF8.GetBytes(append);
+            using (var stream = new FileStream(path, FileMode.Append)) stream.Write(bytes.AsSpan(0, bytes.Length - 2));
+            reader.Refresh([path], Now.AddSeconds(100));
+            using (var stream = new FileStream(path, FileMode.Append)) stream.Write(bytes.AsSpan(bytes.Length - 2));
+            turn = reader.Refresh([path], Now.AddSeconds(100)).Single();
+            Check(turn.OutputTokens == 100 && turn.OutputTokensPerSecond == 5,
+                "partial appends are resumed exactly once");
+            Check(reader.ScannedBytes - scanned == bytes.Length, "append refresh parses only new bytes");
+            scanned = reader.ScannedBytes;
+            reader.Refresh([path], Now.AddSeconds(101));
+            Check(reader.ScannedBytes == scanned, "an unchanged long file performs no new scan");
+            File.WriteAllText(path, Event(Now, new { type = "task_started", turn_id = "replacement" })
+                + Tokens(Now.AddSeconds(10), 10, 10));
+            Check(reader.Refresh([path], Now.AddSeconds(20)).Single().OutputTokens == 10,
+                "file replacement clears the old cumulative cursor");
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    private static void ConversationLifecycle()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "zgstokenbar-turn-lifecycle-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var path = Path.Combine(root, "lifecycle.jsonl");
+            File.WriteAllText(path, Event(Now.AddSeconds(3), new { type = "task_started", turn_id = "one", started_at = Now })
+                + Tokens(Now.AddSeconds(10), 300, 300));
+            var reader = new CodexConversationUsageReader();
+            var turn = reader.Refresh([path], Now.AddSeconds(20)).Single();
+            Check(turn.OutputTokensPerSecond == 15, "explicit turn start excludes log delivery delay");
+            Check(reader.Refresh([path], Now.AddMinutes(3)).Single().OutputTokensPerSecond is null,
+                "unfinished dormant sessions do not pretend to be live speeds");
+            File.AppendAllText(path, Event(Now.AddSeconds(70), new
+            {
+                type = "task_complete", turn_id = "one", completed_at = Now.AddSeconds(60), time_to_first_token_ms = 1200,
+            }));
+            turn = reader.Refresh([path], Now.AddMinutes(4)).Single();
+            Check(turn.Completed && turn.OutputTokensPerSecond == 5 && turn.FirstTokenSeconds == 1.2,
+                "explicit completion timing and first token latency remain separate");
+            File.AppendAllText(path, Event(Now.AddMinutes(5), new { type = "task_started", turn_id = "two" })
+                + Tokens(Now.AddMinutes(5).AddSeconds(10), 400, 100)
+                + Event(Now.AddMinutes(5).AddSeconds(20), new { type = "turn_aborted", turn_id = "two" }));
+            turn = reader.Refresh([path], Now.AddMinutes(6)).Single();
+            Check(turn.Interrupted && turn.ElapsedSeconds == 20 && turn.State == "interrupted",
+                "interrupted turn freezes its elapsed time with an explicit state");
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    private static void ProjectionAndPaging()
+    {
+        var usage = Usage();
+        var plugin = new CodexLocalPlugin();
+        var projection = CorePluginProjection.CodexUsage(plugin.Manifest.Id, usage, Now);
+        Check(PluginValidation.ValidateSnapshot(plugin.Manifest, projection).Count == 0,
+            "all recent conversations fit the public contribution contract");
+        Check(projection.Details.Count == usage.RecentTurns.Count + 1, "CLI exposes every conversation, not only the first page");
+        var first = projection.Details[1].Sections[0].Rows;
+        Check(first.Single(row => row.LabelKey == "usage.turn.average-output-tps").Value.Number == usage.RecentTurns[0].OutputTokensPerSecond,
+            "CLI and UI use the same rate");
+        var snapshot = Snapshot();
+        var radar = CorePluginProjection.Radar("zgstokenbar.intelligence.radar", snapshot);
+        Check(radar.Radar.Count == 2 && radar.Radar[0].Rows.Single().Model.Contains("6.1-sol"), "API exports current trial and separate history");
+        Check(radar.Radar[0].Rows[0].SampleCount == 4 && radar.Radar[0].Footer[0].Value.Integer == 100,
+            "API includes the same sample count and score scale");
+        Check(RadarPresentation.BuildCodex(snapshot, historical: true).Rows[0].Model.Model == "gpt-5.6-sol",
+            "history remains accessible without mixing score scales");
+        var routing = RadarRoutingSnapshotBuilder.Build(snapshot);
+        Check(routing.IsHistorical && routing.Benchmark == "legacy-150" && routing.SourceUpdatedAt == snapshot.SourceUpdatedAt,
+            "routing export identifies its historical benchmark and source time");
+        var unread = new RadarAlertState();
+        Check(RadarAlertTracker.HasUnread(unread, snapshot, RadarSurfaceIds.Codex)
+            && !RadarAlertTracker.HasUnread(unread, snapshot, RadarSurfaceIds.DeepSeek), "trial update belongs to its own surface");
+        RadarAlertTracker.RecordViewed(unread, snapshot, RadarSurfaceIds.Codex);
+        Check(!RadarAlertTracker.HasUnread(unread, snapshot, RadarSurfaceIds.Codex), "viewing a trial records its own identity");
+        Check(RadarAlertTracker.HasUnread(unread, snapshot with
+        {
+            TrialFeed = snapshot.TrialFeed! with { ObservedAt = Now.AddHours(1) },
+        }, RadarSurfaceIds.Codex), "new trial is unread even when the old benchmark is unchanged");
+        var last = CodexConversationPage.Create(8, 10);
+        Check(last.Offset == 8 && last.Count == 2 && !last.HasNext && last.HasPrevious, "last conversation page is bounded");
+        Check(CodexConversationPage.Create(8, 3).Offset == 0, "shrinking lists clamp the current page");
+        var layout = RadarPopoverLayout.CreateTokenUsage(192, 10);
+        var point = new Point(layout.RecentTurnsBounds.Left + 5, layout.RecentTurnsBounds.Top + 45);
+        Check(layout.RecentTurnIndexAt(point, 4, 10) == 4, "DPI-aware row hit testing maps to the selected page");
+    }
+
     private static void CurrentPricing()
     {
         var usage = new CodexModelTokenUsage("gpt-6.1-sol", 1000000, 500000, 100000, CacheWriteInputTokens: 100000);
@@ -146,8 +267,10 @@ internal static class RadarAndUsageUpdateTests
         Check(CodexPricingCatalog.Estimate(usage with { ServiceTier = "fast" }).ApiEquivalentUsd == 4.2m, "Fast multiplies the applicable prices");
         Check(CodexPricingCatalog.Estimate(usage with { ServiceTier = "ultrafast" }).ApiEquivalentUsd == 12.6m, "6.1 Sol Ultrafast rate is explicit");
         Check(CodexPricingCatalog.Estimate(usage with { IsLongContext = true }).ApiEquivalentUsd == 3.7m, "long context uses separate input/output multipliers");
-        Check(CodexPricingCatalog.Estimate(usage with { Model = "gpt-6-astra", ServiceTier = "ultrafast" }).ApiEquivalentUsd is null,
-            "unverified tier is unpriced");
+        Check(CodexPricingCatalog.Estimate(usage with { Model = "gpt-6-astra", ServiceTier = "ultrafast" }).ApiEquivalentUsd == 64.5m,
+            "Astra Ultrafast uses its verified API prices");
+        Check(CodexPricingCatalog.Estimate(usage with { Model = "gpt-6-luna", ServiceTier = "ultrafast" }).ApiEquivalentUsd is null,
+            "unsupported tier remains unpriced");
         foreach (var model in new[] { "gpt-6-astra", "gpt-6-sol", "gpt-6-luna" })
             Check(CodexPricingCatalog.Estimate(usage with { Model = model }).IsPriced, "6-series standard pricing exists");
         Check(CodexPricingCatalog.Estimate(usage with { Model = "unknown-model" }).ApiEquivalentUsd is null, "unknown models remain unpriced");
@@ -156,9 +279,13 @@ internal static class RadarAndUsageUpdateTests
     private static CodexTokenUsageSummary Usage() => new(123456, 592341074667, 1234, Now,
         1000, 800, 100, 80, CodexSpendPeriod.Empty, CodexSpendPeriod.Empty, CodexSpendPeriod.Empty)
     {
-        RecentTurns = Enumerable.Range(1, 4).Select(index => new CodexConversationTurn(
-            $"{index:00000000}-0000-0000-0000-000000000000", "turn-" + index, "gpt-6.1-sol", "high",
-            Now.AddSeconds(-60 * index), Now, 300 * index, 60 * index, true, true)).ToArray(),
+        RecentTurns = Enumerable.Range(1, 10).Select(index => new CodexConversationTurn(
+            $"00000000-0000-0000-0000-{index:000000000000}", "turn-" + index, "gpt-6.1-sol", "high",
+            Now.AddSeconds(-60 * index), Now, 300 * index, 60 * index, true, true)
+        {
+            ProjectName = index % 2 == 0 ? "ZGSTokenBar" : "POB",
+            FirstTokenSeconds = 1.2,
+        }).ToArray(),
     };
 
     private static void Layouts()
@@ -194,7 +321,7 @@ internal static class RadarAndUsageUpdateTests
             using var renderer = new RadarPopoverRenderer();
             renderer.Draw(graphics, layout, PopoverTailSide.Bottom, layout.BodySize.Width / 2,
                 new RadarViewState(snapshot, Now, false, null), radar ? presentation : null, null,
-                NativeText.For(locale), usage);
+                NativeText.For(locale), usage, recentTurnOffset: 4, canSwitchBenchmark: radar);
             bitmap.Save(Path.Combine(directory, $"{(radar ? "radar-trial" : "local-turns")}-{locale}-{dpi}.png"), ImageFormat.Png);
         }
     }

@@ -20,6 +20,7 @@ public sealed record CodexTokenUsageSummary(
     CodexSpendHistory? SpendHistory = null)
 {
     public IReadOnlyList<CodexConversationTurn> RecentTurns { get; init; } = [];
+    public int PendingConversationCount { get; init; }
     public static CodexTokenUsageSummary? ApplyCumulativeFloor(
         CodexTokenUsageSummary? summary,
         long? cumulativeFloor,

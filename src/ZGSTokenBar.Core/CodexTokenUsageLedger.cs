@@ -65,6 +65,7 @@ public sealed class CodexTokenUsageLedger
                 _summary = _summary with
                 {
                     RecentTurns = _conversations.Refresh(observed.RecentSessionPaths, now, cancellationToken),
+                    PendingConversationCount = _conversations.PendingSessions,
                 };
             }
             return _summary;
@@ -95,7 +96,12 @@ public sealed class CodexTokenUsageLedger
                 .Select(group => group.OrderByDescending(file => file.Length).ThenByDescending(file => file.LastWriteTimeUtc).First())
                 .OrderByDescending(file => file.LastWriteTimeUtc)
                 .Take(CodexConversationUsageReader.MaximumSessions).Select(file => file.FullName).ToArray();
-            _summary = _summary with { RecentTurns = _conversations.Refresh(recent, now, cancellationToken) };
+            _recentSessionPaths = recent;
+            _summary = _summary with
+            {
+                RecentTurns = _conversations.Refresh(recent, now, cancellationToken),
+                PendingConversationCount = _conversations.PendingSessions,
+            };
             return _summary;
         }
     }

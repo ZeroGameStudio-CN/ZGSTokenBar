@@ -176,7 +176,11 @@ public sealed record RadarModelRow(
     double? Average24Hours,
     int? AverageMinutes,
     decimal? EstimatedTaskCost,
-    IReadOnlyList<string> ScenarioMarkers);
+    IReadOnlyList<string> ScenarioMarkers)
+{
+    public long? SampleCount { get; init; }
+    public double? AverageSeconds { get; init; }
+}
 
 public sealed record RadarContribution(
     string Id,

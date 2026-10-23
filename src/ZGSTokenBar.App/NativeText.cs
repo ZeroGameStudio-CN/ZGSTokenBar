@@ -982,10 +982,28 @@ internal sealed class NativeText
     public string RadarTrialNote => T("小样本试跑 · 与旧版150分榜不可比 · 未参与自动推荐",
         "Small trial · separate from legacy /150 · no recommendations");
     public string CodexRecentTurnsTitle => T("最近对话 · 整轮输出均速", "Recent chats · turn-average output");
+    public string CodexConversationsIndexing(int count) => T($"正在读取 {count} 个对话…", $"Reading {count} chats…");
+    public string CodexTurnLabel(CodexConversationTurn turn) =>
+        $"{turn.ProjectName ?? T("对话", "Chat")} · {turn.Model ?? T("多模型/未知", "Mixed/unknown")} {turn.Effort}".TrimEnd();
+    public string CodexTurnState(CodexConversationTurn turn) => turn.State switch
+    {
+        "interrupted" => T("已中断", "Interrupted"),
+        "completed" => T("已结束", "Ended"),
+        "stale" => T("等待更新", "Awaiting update"),
+        _ => T("进行中", "Active"),
+    };
     public string CodexTurnSpeedNote => T("含思考、工具和等待时间；不是纯生成速度", "Includes reasoning, tools and waiting; not decode speed");
     public string CodexTurnDetail(CodexConversationTurn turn) => T(
-        $"{turn.SessionId[..Math.Min(8, turn.SessionId.Length)]} · 输出 {turn.OutputTokens:N0} · {turn.ElapsedSeconds:0}s{(turn.Completed ? "" : " · 进行中")}",
-        $"{turn.SessionId[..Math.Min(8, turn.SessionId.Length)]} · out {turn.OutputTokens:N0} · {turn.ElapsedSeconds:0}s{(turn.Completed ? "" : " · active")}");
+        $"{turn.SessionId[^Math.Min(8, turn.SessionId.Length)..]} · {turn.StartedAt.ToLocalTime():HH:mm} · 输出 {turn.OutputTokens:N0} · {CodexTurnState(turn)}",
+        $"{turn.SessionId[^Math.Min(8, turn.SessionId.Length)..]} · {turn.StartedAt.ToLocalTime():HH:mm} · out {turn.OutputTokens:N0} · {CodexTurnState(turn)}");
+    public string CodexTurnTooltip(CodexConversationTurn turn) =>
+        $"{CodexTurnLabel(turn)}\n{turn.SessionId}\n{CodexTurnDetail(turn)}\n"
+        + T($"整轮耗时 {turn.ElapsedSeconds:0.0}s", $"Turn duration {turn.ElapsedSeconds:0.0}s")
+        + (turn.FirstTokenSeconds is { } first ? T($" · 首 Token {first:0.0}s", $" · First token {first:0.0}s") : "")
+        + $"\n{CodexTurnSpeedNote}";
+    public string RadarBenchmarkSwitch(bool trial) => trial
+        ? T("试跑 /100 · 查看历史 ›", "Trial /100 · History ›")
+        : T("历史 /150 · 返回试跑 ›", "History /150 · Trial ›");
     public string RadarIqAverageHeader => T("24H均", "24H AVG");
     public string RadarSampleHeader => T("样本", "N");
     public string RadarPassHeader => T("通过/有效", "PASS/VALID");

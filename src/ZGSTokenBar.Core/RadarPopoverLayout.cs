@@ -107,6 +107,21 @@ public sealed class RadarPopoverLayout
     public Rectangle ScrollTrackBounds { get; private init; }
     public Rectangle ScrollThumbBounds { get; private init; }
     public Rectangle RecentTurnsBounds { get; private init; }
+    public Rectangle RecentPreviousBounds => RecentPageButton(64);
+    public Rectangle RecentNextBounds => RecentPageButton(20);
+    private Rectangle RecentPageButton(int rightOffset) => RecentTurnsBounds.IsEmpty ? Rectangle.Empty
+        : new Rectangle(RecentTurnsBounds.Right - (int)Math.Round(rightOffset * Dpi / 96d),
+            RecentTurnsBounds.Top, (int)Math.Round(20 * Dpi / 96d), (int)Math.Round(16 * Dpi / 96d));
+
+    public int RecentTurnIndexAt(Point point, int offset, int total)
+    {
+        var top = RecentTurnsBounds.Top + (int)Math.Round(20 * Dpi / 96d);
+        var rowHeight = (int)Math.Round(32 * Dpi / 96d);
+        if (!RecentTurnsBounds.Contains(point) || point.Y < top) return -1;
+        var index = (point.Y - top) / rowHeight;
+        var page = CodexConversationPage.Create(offset, total);
+        return index < page.Count ? page.Offset + index : -1;
+    }
 
     public static RadarPopoverLayout CreateGrouped(
         int dpi,

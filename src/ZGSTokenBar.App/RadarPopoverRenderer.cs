@@ -45,7 +45,9 @@ internal sealed class RadarPopoverRenderer : IDisposable
         bool pinned = false,
         string? radarTitle = null,
         bool spendCardHovered = false,
-        string? hoveredModelGroup = null)
+        string? hoveredModelGroup = null,
+        int recentTurnOffset = 0,
+        bool canSwitchBenchmark = false)
     {
         var fonts = Fonts(layout.Dpi);
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
@@ -67,12 +69,13 @@ internal sealed class RadarPopoverRenderer : IDisposable
                     fonts,
                     text,
                     pinned,
-                    spendCardHovered);
+                    spendCardHovered,
+                    recentTurnOffset);
             }
             return;
         }
         var title = radarTitle ?? text.RadarTitle;
-        DrawHeader(graphics, layout, body.Location, state, logo, fonts, text, pinned, title, presentation);
+        DrawHeader(graphics, layout, body.Location, state, logo, fonts, text, pinned, title, presentation, canSwitchBenchmark);
 
         if (presentation is null)
         {
@@ -132,7 +135,7 @@ internal sealed class RadarPopoverRenderer : IDisposable
             spendCardHovered,
             presentation);
         if (tokenUsage is not null)
-            DrawRecentTurns(graphics, layout, body.Location, tokenUsage, fonts, text);
+            DrawRecentTurns(graphics, layout, body.Location, tokenUsage, fonts, text, recentTurnOffset);
     }
 
     public void DrawSpendHistory(
@@ -499,7 +502,8 @@ internal sealed class RadarPopoverRenderer : IDisposable
         RadarPopoverFonts fonts,
         NativeText text,
         bool pinned,
-        bool spendCardHovered)
+        bool spendCardHovered,
+        int recentTurnOffset)
     {
         Rectangle Rect(int x, int y, int width, int height) => Rectangle.FromLTRB(
             origin.X + ScaleCoordinate(layout.Dpi, x),
@@ -574,22 +578,32 @@ internal sealed class RadarPopoverRenderer : IDisposable
             text,
             HasSpendHistory(tokenUsage),
             spendCardHovered);
-        DrawRecentTurns(graphics, layout, origin, tokenUsage, fonts, text);
+        DrawRecentTurns(graphics, layout, origin, tokenUsage, fonts, text, recentTurnOffset);
     }
 
     private static void DrawRecentTurns(Graphics graphics, RadarPopoverLayout layout, Point origin,
-        CodexTokenUsageSummary usage, RadarPopoverFonts fonts, NativeText text)
+        CodexTokenUsageSummary usage, RadarPopoverFonts fonts, NativeText text, int recentTurnOffset)
     {
         if (layout.RecentTurnsBounds.IsEmpty) return;
         var bounds = Offset(layout.RecentTurnsBounds, origin);
+        var page = CodexConversationPage.Create(recentTurnOffset, usage.RecentTurns.Count);
         var labelColor = Color.FromArgb(148, 163, 184);
         DrawText(graphics, text.CodexRecentTurnsTitle, fonts.Badge, Color.FromArgb(165, 180, 252),
-            new Rectangle(bounds.Left, bounds.Top, bounds.Width, Scale(layout.Dpi, 16)), CellTextFlags);
+            new Rectangle(bounds.Left, bounds.Top, bounds.Width - Scale(layout.Dpi, 68), Scale(layout.Dpi, 16)), CellTextFlags);
+        if (page.PageCount > 1)
+        {
+            var previous = Offset(layout.RecentPreviousBounds, origin);
+            var next = Offset(layout.RecentNextBounds, origin);
+            DrawText(graphics, "‹", fonts.Model, page.HasPrevious ? Color.White : labelColor, previous, CellTextFlags);
+            DrawText(graphics, $"{page.PageNumber}/{page.PageCount}", fonts.Meta, labelColor,
+                new Rectangle(previous.Right, previous.Top, next.Left - previous.Right, previous.Height), CellTextFlags);
+            DrawText(graphics, "›", fonts.Model, page.HasNext ? Color.White : labelColor, next, CellTextFlags | TextFormatFlags.Right);
+        }
         var y = bounds.Top + Scale(layout.Dpi, 20);
-        foreach (var turn in usage.RecentTurns.Take(4))
+        foreach (var turn in usage.RecentTurns.Skip(page.Offset).Take(page.Count))
         {
             var speedWidth = Scale(layout.Dpi, 85);
-            DrawText(graphics, string.Join(' ', new[] { turn.Model ?? "—", turn.Effort }.Where(value => value is not null)),
+            DrawText(graphics, text.CodexTurnLabel(turn),
                 fonts.Model, Color.FromArgb(226, 232, 240),
                 new Rectangle(bounds.Left, y, bounds.Width - speedWidth, Scale(layout.Dpi, 16)), CellTextFlags);
             DrawText(graphics, turn.OutputTokensPerSecond is { } speed ? $"{speed:0.0} tok/s" : "—",
@@ -600,7 +614,9 @@ internal sealed class RadarPopoverRenderer : IDisposable
                 new Rectangle(bounds.Left, y + Scale(layout.Dpi, 16), bounds.Width, Scale(layout.Dpi, 12)), CellTextFlags);
             y += Scale(layout.Dpi, 32);
         }
-        DrawText(graphics, text.CodexTurnSpeedNote, fonts.Meta, labelColor,
+        DrawText(graphics, usage.PendingConversationCount > 0
+                ? text.CodexConversationsIndexing(usage.PendingConversationCount) : text.CodexTurnSpeedNote,
+            fonts.Meta, labelColor,
             new Rectangle(bounds.Left, y + Scale(layout.Dpi, 2), bounds.Width, Scale(layout.Dpi, 14)), CellTextFlags);
     }
 
@@ -740,7 +756,8 @@ internal sealed class RadarPopoverRenderer : IDisposable
         NativeText text,
         bool pinned,
         string title,
-        RadarPresentationResult? presentation)
+        RadarPresentationResult? presentation,
+        bool canSwitchBenchmark)
     {
         if (logo is not null) graphics.DrawImage(logo, Offset(layout.LogoBounds, origin));
         DrawText(
@@ -752,7 +769,8 @@ internal sealed class RadarPopoverRenderer : IDisposable
             CellTextFlags);
         DrawText(
             graphics,
-            presentation?.TrialObservedAt is { } trialAt ? text.RadarTrialSubtitle(trialAt) : text.RadarPopoverSubtitle(pinned),
+            canSwitchBenchmark ? text.RadarBenchmarkSwitch(presentation?.TrialObservedAt is not null)
+                : presentation?.TrialObservedAt is { } trialAt ? text.RadarTrialSubtitle(trialAt) : text.RadarPopoverSubtitle(pinned),
             fonts.Badge,
             Color.FromArgb(129, 140, 248),
             Offset(layout.SubtitleBounds, origin),
@@ -787,7 +805,7 @@ internal sealed class RadarPopoverRenderer : IDisposable
             }
             else if (presentation?.TrialObservedAt is not null) stateLabel = text.RadarTrialState;
         }
-        var checkedLabel = text.RadarChecked(state.LastSuccessfulFetchAt, now);
+        var checkedLabel = text.RadarChecked(sourceAt ?? state.LastSuccessfulFetchAt, now);
         DrawText(
             graphics,
             $"{stateLabel} · {checkedLabel}",

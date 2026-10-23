@@ -14,7 +14,12 @@ public sealed record RadarRoutingSnapshot(
     string EvaluatorPolicyVersion,
     string EventId,
     DateTimeOffset CapturedAt,
-    IReadOnlyDictionary<string, RadarRoutingScenario> Scenarios);
+    IReadOnlyDictionary<string, RadarRoutingScenario> Scenarios)
+{
+    public string Benchmark { get; init; } = "legacy-150";
+    public DateTimeOffset? SourceUpdatedAt { get; init; }
+    public bool IsHistorical { get; init; }
+}
 
 public static class RadarRoutingSnapshotBuilder
 {
@@ -42,7 +47,12 @@ public static class RadarRoutingSnapshotBuilder
                 [RadarScenarioEvaluator.BackgroundAutomationKey] = Scenario(
                     overall.BackgroundAutomation,
                     luna.BackgroundAutomation),
-            });
+            })
+        {
+            SourceUpdatedAt = snapshot.SourceUpdatedAt,
+            IsHistorical = snapshot.SourceUpdatedAt is null
+                || snapshot.CapturedAt - snapshot.SourceUpdatedAt > TimeSpan.FromHours(24),
+        };
     }
 
     private static RadarRoutingScenario Scenario(

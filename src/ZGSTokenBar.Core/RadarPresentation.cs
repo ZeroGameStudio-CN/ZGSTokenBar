@@ -51,9 +51,9 @@ public static class RadarStatus
 
 public static class RadarPresentation
 {
-    public static RadarPresentationResult BuildCodex(ProviderRadarSnapshot snapshot)
+    public static RadarPresentationResult BuildCodex(ProviderRadarSnapshot snapshot, bool historical = false)
     {
-        if (snapshot.TrialFeed is not { Models.Count: > 0 } trial)
+        if (historical || snapshot.TrialFeed is not { Models.Count: > 0 } trial)
             return CodexOnly(Build(snapshot));
         // Percent-scale five-question trials cannot be ranked against the legacy 150-point benchmark.
         return new RadarPresentationResult(OrderCodexRows(trial.Models

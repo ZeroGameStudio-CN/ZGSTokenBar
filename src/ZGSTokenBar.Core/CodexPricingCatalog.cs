@@ -230,7 +230,7 @@ public static class CodexPricingCatalog
         {
             "priority" or "fast" => 2m,
             "flex" or "batch" => 0.5m,
-            "ultrafast" when model is "gpt-6.1-sol" => 6m,
+            "ultrafast" when model is "gpt-6.1-sol" or "gpt-6-astra" => 6m,
             _ => null,
         };
     }

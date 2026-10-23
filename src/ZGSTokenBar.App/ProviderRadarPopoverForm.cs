@@ -17,6 +17,10 @@ internal sealed class ProviderRadarPopoverForm : Form
     private readonly ToolTip _groupToolTip = new();
     private string? _hoveredModelGroup;
     private int _scrollOffset;
+    private int _recentTurnOffset;
+    private int _hoveredRecentIndex = -1;
+    private int _conversationWheelRemainder;
+    private bool _historicalRadar;
     private int _wheelRemainder;
     private int? _scrollDragOffset;
     private bool _scrollGesture;
@@ -65,6 +69,7 @@ internal sealed class ProviderRadarPopoverForm : Form
 
     public event EventHandler? SpendHistoryRequested;
     public event EventHandler? ModelGroupInteraction;
+    public event EventHandler? DetailsInteraction;
     public event EventHandler? ModelGroupsChanged;
     public IReadOnlyDictionary<string, bool> ModelGroups => _modelGroups.Overrides;
     public string[] DisplayedModelGroups => _layout.GroupHeaders.Select(group => group.ModelKey).ToArray();
@@ -108,11 +113,18 @@ internal sealed class ProviderRadarPopoverForm : Form
         _exiting = false;
         _animateMotion = animateMotion;
         _pinned = pinned;
-        if (_deepSeekOnly != deepSeekOnly) _scrollOffset = 0;
+        if (_deepSeekOnly != deepSeekOnly)
+        {
+            _scrollOffset = 0;
+            _historicalRadar = false;
+        }
         _deepSeekOnly = deepSeekOnly;
         _state = state;
         _text = text;
         _tokenUsage = tokenUsage;
+        if (_hoveredRecentIndex >= 0)
+            _groupToolTip.SetToolTip(this, _hoveredRecentIndex < (tokenUsage?.RecentTurns.Count ?? 0)
+                ? _text.CodexTurnTooltip(tokenUsage!.RecentTurns[_hoveredRecentIndex]) : null);
         _aiGatewayUsage = aiGatewayUsage;
         Text = radarEnabled
             ? deepSeekOnly ? _text.DeepSeekRadarTitle : _text.RadarTitle
@@ -120,7 +132,7 @@ internal sealed class ProviderRadarPopoverForm : Form
         _presentation = radarEnabled && state.Snapshot is { } snapshot
             ? deepSeekOnly
                 ? RadarPresentation.DeepSeekOnly(RadarPresentation.Build(snapshot))
-                : RadarPresentation.BuildCodex(snapshot)
+                : RadarPresentation.BuildCodex(snapshot, _historicalRadar)
             : null;
         _logo = logo;
         var dpi = Math.Max(
@@ -129,7 +141,8 @@ internal sealed class ProviderRadarPopoverForm : Form
         _anchorScreen = anchorScreen;
         _layout = radarEnabled
             ? BuildGroupedLayout(dpi)
-            : RadarPopoverLayout.CreateTokenUsage(dpi, tokenUsage?.RecentTurns.Count ?? 0);
+            : RadarPopoverLayout.CreateTokenUsage(dpi, ConversationRowCount);
+        _recentTurnOffset = CodexConversationPage.Create(_recentTurnOffset, _tokenUsage?.RecentTurns.Count ?? 0).Offset;
         _historyLayout = !deepSeekOnly && HasSpendHistory(tokenUsage)
             ? CodexSpendHistoryLayout.Create(
                 dpi,
@@ -285,7 +298,9 @@ internal sealed class ProviderRadarPopoverForm : Form
                 ? _text.DeepSeekRadarTitle
                 : _text.RadarTitle,
             spendCardHovered: _spendCardHovered,
-            hoveredModelGroup: _hoveredModelGroup);
+            hoveredModelGroup: _hoveredModelGroup,
+            recentTurnOffset: _recentTurnOffset,
+            canSwitchBenchmark: CanSwitchBenchmark);
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
@@ -316,7 +331,26 @@ internal sealed class ProviderRadarPopoverForm : Form
 
         var hovered = HasSpendHistory(_tokenUsage) && SpendCardBounds().Contains(e.Location);
         var hoveredGroup = _layout.ModelGroupAt(BodyPoint(e.Location));
-        Cursor = hovered || hoveredGroup is not null ? Cursors.Hand : Cursors.Default;
+        var bodyPoint = BodyPoint(e.Location);
+        if (_layout.RecentTurnIndexAt(bodyPoint, _recentTurnOffset, _tokenUsage?.RecentTurns.Count ?? 0) is var recentIndex
+            && recentIndex >= 0)
+        {
+            if (_hoveredRecentIndex != recentIndex)
+                _groupToolTip.SetToolTip(this, _text.CodexTurnTooltip(_tokenUsage!.RecentTurns[recentIndex]));
+            _hoveredRecentIndex = recentIndex;
+            Cursor = Cursors.Default;
+            return;
+        }
+        if (_hoveredRecentIndex >= 0)
+        {
+            _hoveredRecentIndex = -1;
+            _groupToolTip.SetToolTip(this, null);
+        }
+        var controlHovered = CanSwitchBenchmark && _layout.SubtitleBounds.Contains(bodyPoint)
+            || _tokenUsage?.RecentTurns.Count > CodexConversationPage.PageSize
+                && (_layout.RecentPreviousBounds.Contains(bodyPoint) || _layout.RecentNextBounds.Contains(bodyPoint));
+        Cursor = hovered || hoveredGroup is not null || controlHovered ? Cursors.Hand : Cursors.Default;
+        if (controlHovered) _groupToolTip.SetToolTip(this, null);
         if (hovered == _spendCardHovered && hoveredGroup == _hoveredModelGroup) return;
         _spendCardHovered = hovered;
         _hoveredModelGroup = hoveredGroup;
@@ -328,7 +362,8 @@ internal sealed class ProviderRadarPopoverForm : Form
     protected override void OnMouseLeave(EventArgs e)
     {
         base.OnMouseLeave(e);
-        if (!_spendCardHovered && !_backHovered && _hoveredModelGroup is null) return;
+        if (!_spendCardHovered && !_backHovered && _hoveredModelGroup is null && _hoveredRecentIndex < 0) return;
+        _hoveredRecentIndex = -1;
         _hoveredModelGroup = null;
         _groupToolTip.SetToolTip(this, null);
         _spendCardHovered = false;
@@ -357,6 +392,20 @@ internal sealed class ProviderRadarPopoverForm : Form
             }
             return;
         }
+        var point = BodyPoint(e.Location);
+        if (CanSwitchBenchmark && _layout.SubtitleBounds.Contains(point))
+        {
+            _historicalRadar = !_historicalRadar;
+            _presentation = RadarPresentation.BuildCodex(_state.Snapshot!, _historicalRadar);
+            _scrollOffset = 0;
+            _layout = BuildGroupedLayout(_layout.Dpi);
+            _pinned = true;
+            DetailsInteraction?.Invoke(this, EventArgs.Empty);
+            ApplyCurrentPlacement();
+            return;
+        }
+        if (_layout.RecentPreviousBounds.Contains(point)) { ChangeConversationPage(-1); return; }
+        if (_layout.RecentNextBounds.Contains(point)) { ChangeConversationPage(1); return; }
         if (_layout.ModelGroupAt(BodyPoint(e.Location)) is { } modelKey)
         {
             _modelGroups.Toggle(modelKey);
@@ -410,9 +459,27 @@ internal sealed class ProviderRadarPopoverForm : Form
             _presentation is not null && _state.Error is not null,
             _state.Snapshot?.ResetWindow?.Open == true,
             _tokenUsage is not null, maximumHeight, _scrollOffset,
-            _deepSeekOnly ? 0 : _tokenUsage?.RecentTurns.Count ?? 0);
+            _deepSeekOnly ? 0 : ConversationRowCount);
         _scrollOffset = layout.ScrollOffset;
         return layout;
+    }
+
+    private bool CanSwitchBenchmark => !_deepSeekOnly && !_layout.TokenOnly
+        && _state.Snapshot?.TrialFeed is { Models.Count: > 0 };
+    private int ConversationRowCount => Math.Max(_tokenUsage?.RecentTurns.Count ?? 0,
+        _tokenUsage?.PendingConversationCount > 0 ? 1 : 0);
+
+    private void ChangeConversationPage(int direction)
+    {
+        var next = CodexConversationPage.Create(_recentTurnOffset + direction * CodexConversationPage.PageSize,
+            _tokenUsage?.RecentTurns.Count ?? 0).Offset;
+        if (next == _recentTurnOffset) return;
+        _recentTurnOffset = next;
+        _hoveredRecentIndex = -1;
+        _groupToolTip.SetToolTip(this, null);
+        _pinned = true;
+        DetailsInteraction?.Invoke(this, EventArgs.Empty);
+        Invalidate();
     }
 
     private Point BodyPoint(Point location)
@@ -433,6 +500,15 @@ internal sealed class ProviderRadarPopoverForm : Form
     protected override void OnMouseWheel(MouseEventArgs e)
     {
         base.OnMouseWheel(e);
+        if (!_historyVisible && _layout.RecentTurnsBounds.Contains(BodyPoint(e.Location)))
+        {
+            _conversationWheelRemainder += e.Delta;
+            var pages = _conversationWheelRemainder / SystemInformation.MouseWheelScrollDelta;
+            _conversationWheelRemainder -= pages * SystemInformation.MouseWheelScrollDelta;
+            if (pages != 0) ChangeConversationPage(-pages);
+            if (e is HandledMouseEventArgs conversationWheel) conversationWheel.Handled = true;
+            return;
+        }
         if (_historyVisible || _layout.MaximumScrollOffset == 0) return;
         _wheelRemainder += e.Delta;
         var notches = _wheelRemainder / SystemInformation.MouseWheelScrollDelta;

@@ -277,7 +277,8 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         _providerActivityTimer.Tick += (_, _) =>
         {
             UpdateProviderActivity(requestRefresh: true);
-            if (_bar.RadarVisible && _activeProviders.Contains(ProviderKind.Codex))
+            if ((_bar.RadarVisible || _cachedCodexTokenUsage?.PendingConversationCount > 0)
+                && _activeProviders.Contains(ProviderKind.Codex))
                 _ = RefreshCodexConversationsAsync();
         };
         _radarTimer = new System.Windows.Forms.Timer { Interval = 60_000 };
@@ -1981,6 +1982,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                 DataDirectory = _store.DataDirectory,
                 DisplayedTokenTotal = _bar.DisplayedTokenTotal,
                 RecentConversationCount = _cachedCodexTokenUsage?.RecentTurns.Count ?? 0,
+                PendingConversationCount = _cachedCodexTokenUsage?.PendingConversationCount ?? 0,
                 LatestTurnOutputTokensPerSecond = _cachedCodexTokenUsage?.RecentTurns.FirstOrDefault()?.OutputTokensPerSecond,
                 RadarTrialObservedAt = _radarViewState.Snapshot?.TrialFeed?.ObservedAt,
                 RadarVisible = _bar.RadarVisible,

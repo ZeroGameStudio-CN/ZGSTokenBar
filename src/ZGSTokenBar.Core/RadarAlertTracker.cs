@@ -176,9 +176,10 @@ public static class RadarAlertTracker
         string surfaceId) =>
         snapshot is not null
         && !string.IsNullOrWhiteSpace(surfaceId)
-        && string.Equals(state.UnreadEventId, snapshot.EventId, StringComparison.Ordinal)
+        && (surfaceId == RadarSurfaceIds.Codex && snapshot.TrialFeed is { Models.Count: > 0 }
+            || string.Equals(state.UnreadEventId, snapshot.EventId, StringComparison.Ordinal))
         && (!(state.ViewedEventIdsBySurface ?? []).TryGetValue(surfaceId, out var viewedEventId)
-            || !string.Equals(viewedEventId, snapshot.EventId, StringComparison.Ordinal));
+            || !string.Equals(viewedEventId, SurfaceEventId(snapshot, surfaceId), StringComparison.Ordinal));
 
     public static void RecordViewed(RadarAlertState state, ProviderRadarSnapshot? snapshot)
     {
@@ -195,8 +196,13 @@ public static class RadarAlertTracker
     {
         if (!HasUnread(state, snapshot, surfaceId) || snapshot is null) return;
         state.ViewedEventIdsBySurface = CopyViewedEvents(state);
-        state.ViewedEventIdsBySurface[surfaceId] = snapshot.EventId;
+        state.ViewedEventIdsBySurface[surfaceId] = SurfaceEventId(snapshot, surfaceId);
     }
+
+    private static string SurfaceEventId(ProviderRadarSnapshot snapshot, string surfaceId) =>
+        surfaceId == RadarSurfaceIds.Codex && snapshot.TrialFeed is { Models.Count: > 0 } trial
+            ? $"trial:{trial.ObservedAt.ToUniversalTime():O}"
+            : snapshot.EventId;
 
     private static Dictionary<string, string> CopyViewedEvents(RadarAlertState state) =>
         (state.ViewedEventIdsBySurface ?? [])

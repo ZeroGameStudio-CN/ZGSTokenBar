@@ -4853,6 +4853,7 @@ internal sealed class BarForm : Form
             };
             _radarPopover.SpendHistoryRequested += (_, _) => PinVisibleRadarPopoverForHistory();
             _radarPopover.ModelGroupInteraction += (_, _) => PinVisibleRadarPopoverForHistory();
+            _radarPopover.DetailsInteraction += (_, _) => PinVisibleRadarPopoverForHistory();
         }
         var tokenUsage = target.DeepSeekOnly
             ? null
