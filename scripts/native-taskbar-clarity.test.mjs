@@ -185,7 +185,7 @@ test('native quota surfaces use one opaque four-level background palette', () =>
   assert.match(appSettings, /DefaultBackgroundPalette = "midnight"/);
   assert.match(appSettings, /"midnight" or "graphite" or "navy" or "plum"/);
   assert.match(backgroundPalette, /Color Outer,[\s\S]*?Color ProviderGroup,[\s\S]*?Color QuotaGroup,[\s\S]*?Color Popover/);
-  assert.match(backgroundPalette, /"midnight"[\s\S]*?2, 6, 23[\s\S]*?6, 11, 22[\s\S]*?10, 18, 32[\s\S]*?7, 12, 24/);
+  assert.match(backgroundPalette, /"midnight"[\s\S]*?7, 7, 7[\s\S]*?15, 15, 15[\s\S]*?25, 25, 25[\s\S]*?12, 12, 12/);
   assert.match(backgroundPalette, /"graphite"[\s\S]*?8, 9, 11[\s\S]*?18, 19, 22[\s\S]*?27, 28, 31[\s\S]*?16, 17, 20/);
   assert.match(backgroundPalette, /"navy"/);
   assert.match(backgroundPalette, /"plum"/);

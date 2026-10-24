@@ -15,10 +15,10 @@ internal static class QuotaBackgroundPalette
     [
         new(
             "midnight",
-            Color.FromArgb(2, 6, 23),
-            Color.FromArgb(6, 11, 22),
-            Color.FromArgb(10, 18, 32),
-            Color.FromArgb(7, 12, 24)),
+            Color.FromArgb(7, 7, 7),
+            Color.FromArgb(15, 15, 15),
+            Color.FromArgb(25, 25, 25),
+            Color.FromArgb(12, 12, 12)),
         new(
             "graphite",
             Color.FromArgb(8, 9, 11),

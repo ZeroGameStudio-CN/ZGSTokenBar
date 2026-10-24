@@ -9750,7 +9750,7 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
             using (var tokenGraphics = Graphics.FromImage(tokenBitmap))
             using (var renderer = new RadarPopoverRenderer())
             {
-                tokenGraphics.Clear(Color.FromArgb(2, 6, 23));
+                tokenGraphics.Clear(Color.FromArgb(7, 7, 7));
                 renderer.Draw(
                     tokenGraphics,
                     tokenLayout,
@@ -9776,7 +9776,7 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
             using (var historyActionGraphics = Graphics.FromImage(historyActionBitmap))
             using (var renderer = new RadarPopoverRenderer())
             {
-                historyActionGraphics.Clear(Color.FromArgb(2, 6, 23));
+                historyActionGraphics.Clear(Color.FromArgb(7, 7, 7));
                 renderer.Draw(
                     historyActionGraphics,
                     tokenLayout,
@@ -9805,7 +9805,7 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
             using (var spendHistoryGraphics = Graphics.FromImage(spendHistoryBitmap))
             using (var renderer = new RadarPopoverRenderer())
             {
-                spendHistoryGraphics.Clear(Color.FromArgb(2, 6, 23));
+                spendHistoryGraphics.Clear(Color.FromArgb(7, 7, 7));
                 renderer.DrawSpendHistory(
                     spendHistoryGraphics,
                     spendHistoryLayout,
@@ -10161,7 +10161,7 @@ static void RenderLocalizationCaptures(string outputDirectory)
                 using (var radarGraphics = Graphics.FromImage(radarBitmap))
                 using (var renderer = new RadarPopoverRenderer())
                 {
-                    radarGraphics.Clear(Color.FromArgb(2, 6, 23));
+                    radarGraphics.Clear(Color.FromArgb(7, 7, 7));
                     renderer.Draw(
                         radarGraphics,
                         layout,
@@ -10211,7 +10211,7 @@ static void RenderLocalizationCaptures(string outputDirectory)
                     PixelFormat.Format32bppPArgb);
                 using (var graphics = Graphics.FromImage(composite))
                 {
-                    graphics.Clear(Color.FromArgb(2, 6, 23));
+                    graphics.Clear(Color.FromArgb(7, 7, 7));
                     if (settingsBitmap is not null)
                     {
                         graphics.DrawImageUnscaled(settingsBitmap, 0, 0);
@@ -10235,7 +10235,7 @@ static void RenderLocalizationCaptures(string outputDirectory)
                     using (var historyActionGraphics = Graphics.FromImage(historyActionBitmap))
                     using (var historyActionRenderer = new RadarPopoverRenderer())
                     {
-                        historyActionGraphics.Clear(Color.FromArgb(2, 6, 23));
+                        historyActionGraphics.Clear(Color.FromArgb(7, 7, 7));
                         historyActionRenderer.Draw(
                             historyActionGraphics,
                             layout,
@@ -10269,7 +10269,7 @@ static void RenderLocalizationCaptures(string outputDirectory)
                 using (var deepSeekGraphics = Graphics.FromImage(deepSeekBitmap))
                 using (var renderer = new RadarPopoverRenderer())
                 {
-                    deepSeekGraphics.Clear(Color.FromArgb(2, 6, 23));
+                    deepSeekGraphics.Clear(Color.FromArgb(7, 7, 7));
                     renderer.Draw(
                         deepSeekGraphics,
                         deepSeekLayout,
@@ -10308,7 +10308,7 @@ static void RenderLocalizationCaptures(string outputDirectory)
             using (var spendHistoryGraphics = Graphics.FromImage(spendHistoryBitmap))
             using (var renderer = new RadarPopoverRenderer())
             {
-                spendHistoryGraphics.Clear(Color.FromArgb(2, 6, 23));
+                spendHistoryGraphics.Clear(Color.FromArgb(7, 7, 7));
                 renderer.DrawSpendHistory(
                     spendHistoryGraphics,
                     spendHistoryLayout,
@@ -10380,7 +10380,7 @@ static void RenderSettingsCaptures(string outputDirectory)
                     PixelFormat.Format32bppPArgb);
                 using (var graphics = Graphics.FromImage(composite))
                 {
-                    graphics.Clear(Color.FromArgb(2, 6, 23));
+                    graphics.Clear(Color.FromArgb(7, 7, 7));
                     graphics.DrawImageUnscaled(top, 0, 0);
                     graphics.DrawImageUnscaled(advanced, top.Width + gap, 0);
                     graphics.DrawImageUnscaled(bottom, top.Width + gap + advanced.Width + gap, 0);
@@ -15599,10 +15599,10 @@ static void TestNativeBackgroundPaletteContract()
 
     var midnight = QuotaBackgroundPalette.Resolve(null);
     Equal("midnight", midnight.Id, "missing palette uses the original background");
-    Equal(Color.FromArgb(2, 6, 23), midnight.Outer, "original outer background is exact");
-    Equal(Color.FromArgb(6, 11, 22), midnight.ProviderGroup, "provider group background is exact");
-    Equal(Color.FromArgb(10, 18, 32), midnight.QuotaGroup, "dominant quota group background is exact");
-    Equal(Color.FromArgb(7, 12, 24), midnight.Popover, "original popover background is exact");
+    Equal(Color.FromArgb(7, 7, 7), midnight.Outer, "neutral outer background is exact");
+    Equal(Color.FromArgb(15, 15, 15), midnight.ProviderGroup, "neutral provider group background is exact");
+    Equal(Color.FromArgb(25, 25, 25), midnight.QuotaGroup, "neutral quota group background is exact");
+    Equal(Color.FromArgb(12, 12, 12), midnight.Popover, "neutral popover background is exact");
     Equal("midnight", QuotaBackgroundPalette.Resolve("unknown").Id, "unknown palette fails safely");
     Equal(Color.FromArgb(7, 28, 44), QuotaBackgroundPalette.Resolve("NAVY").ProviderGroup, "palette ids normalize case");
     Equal(Color.FromArgb(11, 38, 56), QuotaBackgroundPalette.Resolve("NAVY").QuotaGroup, "navy quota group is exact");

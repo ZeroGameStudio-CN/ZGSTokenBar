@@ -738,8 +738,8 @@ internal sealed class RadarPopoverRenderer : IDisposable
             Math.Max(1, body.Width - 1),
             Math.Max(1, body.Height - 1));
         using var bodyPath = RoundedRectangle(pathBounds, Scale(layout.Dpi, 10));
-        using var fill = new SolidBrush(Color.FromArgb(7, 12, 24));
-        using var border = new Pen(Color.FromArgb(86, 100, 116, 139));
+        using var fill = new SolidBrush(Color.FromArgb(12, 12, 12));
+        using var border = new Pen(Color.FromArgb(86, 100, 100, 100)) { Alignment = PenAlignment.Inset };
         graphics.FillPath(fill, bodyPath);
         graphics.DrawPath(border, bodyPath);
         DrawTail(graphics, layout, tailSide, tailOffset, fill, border, body);
@@ -752,10 +752,10 @@ internal sealed class RadarPopoverRenderer : IDisposable
     {
         var bounds = Offset(layout.RecentColumnBounds, origin);
         using var path = RoundedRectangle(
-            new Rectangle(bounds.X, bounds.Y, Math.Max(1, bounds.Width - 1), Math.Max(1, bounds.Height - 1)),
+            new Rectangle(bounds.X + 1, bounds.Y + 1, Math.Max(1, bounds.Width - 2), Math.Max(1, bounds.Height - 2)),
             Scale(layout.Dpi, 8));
-        using var fill = new SolidBrush(Color.FromArgb(14, 30, 41, 59));
-        using var border = new Pen(Color.FromArgb(46, 71, 85, 105));
+        using var fill = new SolidBrush(Color.FromArgb(20, 20, 20));
+        using var border = new Pen(Color.FromArgb(58, 100, 100, 100)) { Alignment = PenAlignment.Inset };
         graphics.FillPath(fill, path);
         graphics.DrawPath(border, path);
 
@@ -777,8 +777,8 @@ internal sealed class RadarPopoverRenderer : IDisposable
             Math.Max(1, body.Width - 1),
             Math.Max(1, body.Height - 1));
         using var bodyPath = RoundedRectangle(pathBounds, Scale(layout.Dpi, 10));
-        using var fill = new SolidBrush(Color.FromArgb(7, 12, 24));
-        using var border = new Pen(Color.FromArgb(86, 100, 116, 139));
+        using var fill = new SolidBrush(Color.FromArgb(12, 12, 12));
+        using var border = new Pen(Color.FromArgb(86, 100, 100, 100)) { Alignment = PenAlignment.Inset };
         graphics.FillPath(fill, bodyPath);
         graphics.DrawPath(border, bodyPath);
         var points = TailPoints(layout, tailSide, tailOffset, body);
@@ -1002,8 +1002,8 @@ internal sealed class RadarPopoverRenderer : IDisposable
             if (!group.Bounds.IntersectsWith(layout.TableViewport)) continue;
             var bounds = Offset(group.Bounds, origin);
             using var fill = new SolidBrush(string.Equals(group.ModelKey, hoveredModelGroup, StringComparison.OrdinalIgnoreCase)
-                ? Color.FromArgb(40, 53, 70)
-                : Color.FromArgb(23, 32, 46));
+                ? Color.FromArgb(40, 40, 40)
+                : Color.FromArgb(23, 23, 23));
             graphics.FillRectangle(fill, bounds);
             var model = presentation.Rows.First(row => string.Equals(row.Model.Model, group.ModelKey, StringComparison.OrdinalIgnoreCase)).Model;
             var label = RadarPresentation.FormatModelLabel(model with { ReasoningEffort = null, Label = model.Model });
@@ -1480,7 +1480,6 @@ internal sealed class RadarPopoverRenderer : IDisposable
             text.CodexTokenRadarMetricTitle,
             NativeText.FormatTokenCount(tokenUsage.TodayTokens),
             NativeText.FormatTokenCount(tokenUsage.LocalTokens),
-            Color.FromArgb(129, 140, 248),
             text,
             fonts);
         DrawCompactMetricTile(
@@ -1490,7 +1489,6 @@ internal sealed class RadarPopoverRenderer : IDisposable
             text.CodexCacheRadarMetricTitle,
             NativeText.FormatCacheHitPercent(tokenUsage.TodayCacheHitPercent),
             NativeText.FormatCacheHitPercent(tokenUsage.TotalCacheHitPercent),
-            Color.FromArgb(52, 211, 153),
             text,
             fonts);
     }
@@ -1505,10 +1503,9 @@ internal sealed class RadarPopoverRenderer : IDisposable
     {
         var surfaceBounds = new Rectangle(bounds.X, bounds.Y,
             Math.Max(1, bounds.Width - 1), Math.Max(1, bounds.Height - 1));
-        var accent = Color.FromArgb(129, 140, 248);
         using var surface = RoundedRectangle(surfaceBounds, Scale(dpi, 5));
-        using var fill = new SolidBrush(Color.FromArgb(28, accent.R, accent.G, accent.B));
-        using var border = new Pen(Color.FromArgb(64, accent.R, accent.G, accent.B));
+        using var fill = new SolidBrush(Color.FromArgb(25, 25, 25));
+        using var border = new Pen(Color.FromArgb(70, 100, 100, 100)) { Alignment = PenAlignment.Inset };
         graphics.FillPath(fill, surface);
         graphics.DrawPath(border, surface);
 
@@ -1517,7 +1514,7 @@ internal sealed class RadarPopoverRenderer : IDisposable
             graphics,
             text.CodexCompactSpendMetricTitle,
             fonts.Badge,
-            Color.FromArgb(165, 180, 252),
+            Color.FromArgb(210, 210, 210),
             new Rectangle(bounds.Left + padding, bounds.Top + Scale(dpi, 1),
                 bounds.Width - padding * 2, Scale(dpi, 9)),
             CellTextFlags);
@@ -1546,15 +1543,15 @@ internal sealed class RadarPopoverRenderer : IDisposable
         string title,
         string todayValue,
         string totalValue,
-        Color accent,
         NativeText text,
         RadarPopoverFonts fonts)
     {
         var surfaceBounds = new Rectangle(bounds.X, bounds.Y,
             Math.Max(1, bounds.Width - 1), Math.Max(1, bounds.Height - 1));
+        var neutral = Color.FromArgb(210, 210, 210);
         using var surface = RoundedRectangle(surfaceBounds, Scale(dpi, 5));
-        using var fill = new SolidBrush(Color.FromArgb(22, accent.R, accent.G, accent.B));
-        using var border = new Pen(Color.FromArgb(52, accent.R, accent.G, accent.B));
+        using var fill = new SolidBrush(Color.FromArgb(25, 25, 25));
+        using var border = new Pen(Color.FromArgb(70, 100, 100, 100)) { Alignment = PenAlignment.Inset };
         graphics.FillPath(fill, surface);
         graphics.DrawPath(border, surface);
 
@@ -1563,7 +1560,7 @@ internal sealed class RadarPopoverRenderer : IDisposable
             graphics,
             title,
             fonts.Badge,
-            accent,
+            neutral,
             new Rectangle(bounds.Left + padding, bounds.Top + Scale(dpi, 1),
                 bounds.Width - padding * 2, Scale(dpi, 9)),
             CellTextFlags);
