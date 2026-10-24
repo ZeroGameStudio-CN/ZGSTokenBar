@@ -75,7 +75,7 @@ test('process-heavy details are sampled only for hover or pin and rendered as a 
   assert.doesNotMatch(sampler, /\(ulong\)process->WorkingSetSize/);
   assert.match(sampler, /AggregateProcesses/);
   assert.match(sampler, /new GroupGpuEngineKey\(group, pair\.Key\.Engine\)/);
-  assert.match(popover, /Math\.Min\(5, snapshot\.TopProcesses\.Count\)/);
+  assert.match(popover, /snapshot\.TopProcesses\.Take\(5\)/);
   assert.match(popover, /SystemUsageTopProcesses/);
   assert.match(popover, /SystemUsageDiskDetail/);
   assert.match(popover, /DrawMetricRow/);

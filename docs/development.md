@@ -48,6 +48,11 @@ The persistence and plugin lifecycle regressions can be run independently with
 `dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj -c Release -- --persistence-regressions`.
 They use synthetic settings, ledgers and Providers in temporary directories.
 
+System metrics sampling and presentation can be checked with
+`dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj -c Release -- --system-usage-regressions`.
+Append a temporary capture directory to render Chinese/English populated,
+unavailable and long-name cases at 96, 144 and 192 DPI.
+
 `npm run verify` is the graduation gate: static and Node contracts, .NET contracts, single-file App and NativeAOT CLI publication, isolated process-plugin acceptance, deterministic captures, and whitespace validation.
 
 `scripts/build-ai-gateway-observer-plugin.ps1` builds the independently verifiable DeepSeek Harness package. The portable build embeds that exact package so a normal application start can idempotently install the missing bundled version before local-only Provider discovery runs. No runtime package or pricing download is required.

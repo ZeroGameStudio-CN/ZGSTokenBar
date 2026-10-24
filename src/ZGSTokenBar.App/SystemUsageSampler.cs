@@ -64,6 +64,14 @@ internal enum GpuEngineKind
 
 internal static class SystemUsageMath
 {
+    public static string ProcessName(ReadOnlySpan<char> imageName, string? previousName)
+    {
+        if (imageName.EndsWith(".exe".AsSpan(), StringComparison.OrdinalIgnoreCase)) imageName = imageName[..^4];
+        return previousName is not null && imageName.SequenceEqual(previousName.AsSpan())
+            ? previousName
+            : imageName.ToString();
+    }
+
     public static double? CpuPercent(CpuUsageTimes previous, CpuUsageTimes current)
     {
         if (current.Idle < previous.Idle
@@ -472,7 +480,7 @@ internal sealed class SystemUsageSampler : IDisposable
         }
     }
 
-    private static unsafe bool TryReadNativeProcess(
+    private unsafe bool TryReadNativeProcess(
         SystemProcessInformation* process,
         out ProcessCounterSample sample)
     {
@@ -488,7 +496,11 @@ internal sealed class SystemUsageSampler : IDisposable
             return false;
         }
 
-        var name = ReadProcessName(process->ImageName);
+        var imageName = new ReadOnlySpan<char>(
+            (void*)process->ImageName.Buffer,
+            process->ImageName.Length / sizeof(char));
+        _previousProcesses.TryGetValue((int)processId, out var previous);
+        var name = SystemUsageMath.ProcessName(imageName, previous.Name);
         if (name.Length == 0) return false;
         var cpuTicks = process->KernelTime > long.MaxValue - process->UserTime
             ? long.MaxValue
@@ -501,13 +513,6 @@ internal sealed class SystemUsageSampler : IDisposable
                 ? (ulong)process->WorkingSetPrivateSize
                 : 0);
         return true;
-    }
-
-    private static unsafe string ReadProcessName(UnicodeString name)
-    {
-        var value = new ReadOnlySpan<char>((void*)name.Buffer, name.Length / sizeof(char));
-        if (value.EndsWith(".exe".AsSpan(), StringComparison.OrdinalIgnoreCase)) value = value[..^4];
-        return value.ToString();
     }
 
     private bool TryGetProcessBuffer(out uint bufferLength)

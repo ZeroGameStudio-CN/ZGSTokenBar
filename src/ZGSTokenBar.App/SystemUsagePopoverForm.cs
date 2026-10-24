@@ -7,8 +7,8 @@ internal sealed record SystemUsagePopoverContent(SystemUsageSnapshot Snapshot, b
 
 internal sealed class SystemUsagePopoverForm : Form
 {
-    internal const int LogicalBodyWidth = 276;
-    internal const int LogicalBodyHeight = 324;
+    internal const int LogicalBodyWidth = 300;
+    internal const int LogicalBodyHeight = 352;
     private const int LogicalTailSize = 8;
     private const int LogicalGap = 3;
     private const int ToolWindowStyle = 0x00000080;
@@ -17,15 +17,19 @@ internal sealed class SystemUsagePopoverForm : Form
     private const int MouseActivateNoActivate = 3;
     private const int ExitDurationMs = 90;
 
-    private readonly Font _titleFont = new("Segoe UI", 11f, FontStyle.Bold, GraphicsUnit.Pixel);
+    private readonly Font _titleFont = new("Segoe UI", 12f, FontStyle.Bold, GraphicsUnit.Pixel);
     private readonly Font _subtitleFont = new("Segoe UI", 8.5f, FontStyle.Regular, GraphicsUnit.Pixel);
-    private readonly Font _metricLabelFont = new("Segoe UI Semibold", 8.5f, FontStyle.Regular, GraphicsUnit.Pixel);
-    private readonly Font _detailFont = new("Segoe UI Semibold", 9.5f, FontStyle.Regular, GraphicsUnit.Pixel);
+    private readonly Font _metricLabelFont = new("Segoe UI Semibold", 9.5f, FontStyle.Regular, GraphicsUnit.Pixel);
+    private readonly Font _detailFont = new("Segoe UI", 9.5f, FontStyle.Regular, GraphicsUnit.Pixel);
+    private readonly Font _metricValueFont = new("Cascadia Mono", 10.5f, FontStyle.Regular, GraphicsUnit.Pixel);
     private readonly Font _tableValueFont = new("Cascadia Mono", 9f, FontStyle.Regular, GraphicsUnit.Pixel);
     private readonly AlignedStringFormats _textFormats = new();
     private readonly System.Windows.Forms.Timer _entranceTimer = new() { Interval = 16 };
     private readonly System.Windows.Forms.Timer _exitTimer = new() { Interval = 16 };
     private SystemUsagePopoverContent? _content;
+    private MetricRow[] _metrics = [];
+    private ProcessRow[] _processes = [];
+    private string _capturedAt = string.Empty;
     private NativeText _text = NativeText.For("zh-CN");
     private PopoverTailSide _tailSide = PopoverTailSide.Bottom;
     private float _tailOffset = LogicalBodyWidth / 2f;
@@ -83,11 +87,37 @@ internal sealed class SystemUsagePopoverForm : Form
 
     public void UpdateContent(SystemUsagePopoverContent content, NativeText text)
     {
+        if (_content == content && ReferenceEquals(_text, text)) return;
         _content = content;
         _text = text;
         Text = _text.SystemUsageTitle;
+        var snapshot = content.Snapshot;
+        _metrics =
+        [
+            Metric(_text.SystemUsageCpu, snapshot.CpuPercent,
+                _text.SystemUsageCpuDetail(snapshot.LogicalProcessorCount)),
+            Metric(_text.SystemUsageMemory, snapshot.MemoryPercent,
+                _text.SystemUsageMemoryDetail(snapshot.MemoryUsedBytes, snapshot.MemoryTotalBytes, snapshot.MemoryAvailableBytes)),
+            Metric(_text.SystemUsageDisk, snapshot.DiskActivePercent,
+                _text.SystemUsageDiskDetail(snapshot.DiskActivePercent, snapshot.DiskReadBytesPerSecond, snapshot.DiskWriteBytesPerSecond)),
+            Metric(_text.SystemUsageGpu, snapshot.GpuPercent,
+                _text.SystemUsageGpuDetail(snapshot.GpuPercent, snapshot.GpuEngine, snapshot.GpuProcessCount)),
+        ];
+        _processes = snapshot.TopProcesses.Take(5).Select(process => new ProcessRow(
+            process.Name,
+            process.ProcessCount > 1 ? $"×{process.ProcessCount}" : string.Empty,
+            FormatUsage(process.CpuPercent),
+            FormatProcessMemory(process.PrivateWorkingSetBytes),
+            FormatUsage(process.GpuPercent))).ToArray();
+        _capturedAt = _text.SystemUsageCapturedAt(snapshot.CapturedAt);
         Invalidate();
     }
+
+    private static MetricRow Metric(string label, double? value, string detail) =>
+        new(label, value, FormatUsage(value), detail);
+
+    private sealed record MetricRow(string Label, double? Percent, string Value, string Detail);
+    private sealed record ProcessRow(string Name, string Count, string Cpu, string Memory, string Gpu);
 
     public void ShowFor(
         BarForm owner,
@@ -100,9 +130,7 @@ internal sealed class SystemUsagePopoverForm : Form
         var wasVisible = Visible;
         _exitTimer.Stop();
         _animateMotion = animateEntrance;
-        _content = content;
-        _text = text;
-        Text = _text.SystemUsageTitle;
+        UpdateContent(content, text);
         _scale = Math.Max(1, scale);
 
         var bodySize = new Size(Scale(LogicalBodyWidth), Scale(LogicalBodyHeight));
@@ -146,8 +174,7 @@ internal sealed class SystemUsagePopoverForm : Form
         QuotaBackgroundTheme theme,
         int dpi)
     {
-        _content = content;
-        _text = text;
+        UpdateContent(content, text);
         _backgroundTheme = theme;
         BackColor = theme.Popover;
         _scale = Math.Max(1, dpi / 96f);
@@ -229,256 +256,109 @@ internal sealed class SystemUsagePopoverForm : Form
     private void DrawContent(Graphics graphics, RectangleF body)
     {
         if (_content is not { } content) return;
-        var snapshot = content.Snapshot;
         using var primary = new SolidBrush(Color.FromArgb(241, 245, 249));
         using var muted = new SolidBrush(Color.FromArgb(148, 163, 184));
         using var divider = new Pen(Color.FromArgb(36, 100, 116, 139), 1);
 
-        DrawString(
-            graphics,
-            _text.SystemUsageTitle,
-            _titleFont,
-            primary,
-            new RectangleF(body.X + 12, body.Y + 8, 128, 16),
-            StringAlignment.Near);
-        DrawString(
-            graphics,
-            _text.SystemUsagePopoverSubtitle(content.Pinned),
-            _subtitleFont,
-            muted,
-            new RectangleF(body.Right - 148, body.Y + 10, 136, 12),
-            StringAlignment.Far);
+        DrawString(graphics, _text.SystemUsageTitle, _titleFont, primary,
+            new RectangleF(body.X + 16, body.Y + 12, 120, 18), StringAlignment.Near);
+        DrawString(graphics, _text.SystemUsagePopoverSubtitle(content.Pinned), _subtitleFont, muted,
+            new RectangleF(body.X + 142, body.Y + 15, body.Width - 158, 14), StringAlignment.Far);
 
-        var metrics = new[]
+        for (var index = 0; index < _metrics.Length; index++)
         {
-            (_text.SystemUsageCpu, snapshot.CpuPercent),
-            (_text.SystemUsageMemory, snapshot.MemoryPercent),
-            (_text.SystemUsageDisk, snapshot.DiskActivePercent),
-            (_text.SystemUsageGpu, snapshot.GpuPercent),
-        };
-        const float metricGap = 3;
-        const float metricHeight = 18;
-        for (var index = 0; index < metrics.Length; index++)
-        {
-            var row = new RectangleF(
-                body.X + 12,
-                body.Y + 34 + index * (metricHeight + metricGap),
-                body.Width - 24,
-                metricHeight);
-            DrawMetricRow(graphics, row, metrics[index].Item1, metrics[index].Item2);
+            DrawMetricRow(graphics,
+                new RectangleF(body.X + 16, body.Y + 40 + index * 40, body.Width - 32, 36),
+                _metrics[index], primary, muted);
         }
 
-        graphics.DrawLine(divider, body.X + 12, body.Y + 123, body.Right - 12, body.Y + 123);
-        DrawDetailRow(
-            graphics,
-            body,
-            body.Y + 128,
-            _text.SystemUsageCpu,
-            _text.SystemUsageCpuDetail(snapshot.LogicalProcessorCount),
-            primary,
-            muted);
-        DrawDetailRow(
-            graphics,
-            body,
-            body.Y + 144,
-            _text.SystemUsageMemory,
-            _text.SystemUsageMemoryDetail(
-                snapshot.MemoryUsedBytes,
-                snapshot.MemoryTotalBytes,
-                snapshot.MemoryAvailableBytes),
-            primary,
-            muted);
-        DrawDetailRow(
-            graphics,
-            body,
-            body.Y + 160,
-            _text.SystemUsageDisk,
-            _text.SystemUsageDiskDetail(
-                snapshot.DiskActivePercent,
-                snapshot.DiskReadBytesPerSecond,
-                snapshot.DiskWriteBytesPerSecond),
-            primary,
-            muted);
-        DrawDetailRow(
-            graphics,
-            body,
-            body.Y + 176,
-            _text.SystemUsageGpu,
-            _text.SystemUsageGpuDetail(snapshot.GpuPercent, snapshot.GpuEngine, snapshot.GpuProcessCount),
-            primary,
-            muted);
+        graphics.DrawLine(divider, body.X + 16, body.Y + 204, body.Right - 16, body.Y + 204);
+        DrawString(graphics, _text.SystemUsageTopProcesses, _subtitleFont, muted,
+            new RectangleF(body.X + 16, body.Y + 216, 124, 14), StringAlignment.Near);
+        DrawProcessValues(graphics, body, body.Y + 216, _subtitleFont, muted,
+            _text.SystemUsageCpu, _text.SystemUsageMemory, _text.SystemUsageGpu);
 
-        graphics.DrawLine(divider, body.X + 12, body.Y + 197, body.Right - 12, body.Y + 197);
-        DrawString(
-            graphics,
-            _text.SystemUsageTopProcesses,
-            _subtitleFont,
-            muted,
-            new RectangleF(body.X + 12, body.Y + 203, 112, 12),
-            StringAlignment.Near);
-        DrawString(
-            graphics,
-            _text.SystemUsageCpu,
-            _subtitleFont,
-            muted,
-            new RectangleF(body.X + 126, body.Y + 203, 34, 12),
-            StringAlignment.Far);
-        DrawString(
-            graphics,
-            _text.SystemUsageMemory,
-            _subtitleFont,
-            muted,
-            new RectangleF(body.X + 162, body.Y + 203, 56, 12),
-            StringAlignment.Far);
-        DrawString(
-            graphics,
-            _text.SystemUsageGpu,
-            _subtitleFont,
-            muted,
-            new RectangleF(body.X + 220, body.Y + 203, 44, 12),
-            StringAlignment.Far);
-
-        if (snapshot.TopProcesses.Count == 0)
+        if (_processes.Length == 0)
         {
-            DrawString(
-                graphics,
-                _text.SystemUsageTopProcessesUnavailable,
-                _detailFont,
-                muted,
-                new RectangleF(body.X + 12, body.Y + 222, body.Width - 24, 16),
-                StringAlignment.Near);
+            DrawString(graphics, _text.SystemUsageTopProcessesUnavailable, _detailFont, muted,
+                new RectangleF(body.X + 16, body.Y + 238, body.Width - 32, 16), StringAlignment.Near);
         }
         else
         {
-            for (var index = 0; index < Math.Min(5, snapshot.TopProcesses.Count); index++)
+            for (var index = 0; index < _processes.Length; index++)
             {
-                DrawProcessRow(
-                    graphics,
-                    body,
-                    body.Y + 220 + index * 15,
-                    index + 1,
-                    snapshot.TopProcesses[index],
-                    primary);
+                DrawProcessRow(graphics, body, body.Y + 236 + index * 18, _processes[index], primary, muted);
             }
         }
 
-        DrawString(
-            graphics,
-            _text.SystemUsageCapturedAt(snapshot.CapturedAt),
-            _subtitleFont,
-            muted,
-            new RectangleF(body.X + 12, body.Bottom - 14, 120, 10),
-            StringAlignment.Near);
-        DrawString(
-            graphics,
-            content.Pinned ? _text.ClosePinnedHint : _text.PinHint,
-            _subtitleFont,
-            muted,
-            new RectangleF(body.Right - 120, body.Bottom - 14, 108, 10),
-            StringAlignment.Far);
+        DrawString(graphics, _capturedAt, _subtitleFont, muted,
+            new RectangleF(body.X + 16, body.Bottom - 18, body.Width - 32, 12), StringAlignment.Near);
     }
 
-    private void DrawMetricRow(Graphics graphics, RectangleF bounds, string label, double? value)
-    {
-        using var cardFill = new SolidBrush(_backgroundTheme.QuotaGroup);
-        using var cardBorder = new Pen(Color.FromArgb(46, 100, 116, 139), 1);
-        using var path = RoundedRectangle(bounds, 7);
-        graphics.FillPath(cardFill, path);
-        graphics.DrawPath(cardBorder, path);
-
-        var color = value is { } percent ? UsageColor(percent) : Color.FromArgb(100, 116, 139);
-        using var labelBrush = new SolidBrush(Color.FromArgb(148, 163, 184));
-        using var valueBrush = new SolidBrush(color);
-        DrawString(
-            graphics,
-            label,
-            _metricLabelFont,
-            labelBrush,
-            new RectangleF(bounds.X + 8, bounds.Y + 3, 45, 12),
-            StringAlignment.Near);
-
-        var rail = new RectangleF(bounds.X + 58, bounds.Y + 7, bounds.Width - 116, 4);
-        using var railBrush = new SolidBrush(Color.FromArgb(48, 100, 116, 139));
-        graphics.FillRoundedRectangle(railBrush, rail, 2);
-        if (value is { } usage && usage > 0)
-        {
-            using var usageBrush = new SolidBrush(color);
-            graphics.FillRoundedRectangle(
-                usageBrush,
-                new RectangleF(rail.X, rail.Y, rail.Width * (float)Math.Clamp(usage / 100, 0, 1), rail.Height),
-                2);
-        }
-
-        DrawString(
-            graphics,
-            FormatUsage(value),
-            _tableValueFont,
-            valueBrush,
-            new RectangleF(bounds.Right - 50, bounds.Y + 2, 42, 14),
-            StringAlignment.Far);
-    }
-
-    private void DrawDetailRow(
+    private void DrawMetricRow(
         Graphics graphics,
-        RectangleF body,
-        float y,
-        string label,
-        string value,
+        RectangleF bounds,
+        MetricRow metric,
         Brush primary,
         Brush muted)
     {
-        DrawString(
-            graphics,
-            label,
-            _detailFont,
-            muted,
-            new RectangleF(body.X + 12, y, 42, 14),
-            StringAlignment.Near);
-        DrawString(
-            graphics,
-            value,
-            _detailFont,
-            primary,
-            new RectangleF(body.X + 58, y, body.Width - 70, 14),
-            StringAlignment.Near);
+        var color = metric.Percent is { } percent ? UsageColor(percent) : Color.FromArgb(100, 116, 139);
+        using var valueBrush = new SolidBrush(color);
+        DrawString(graphics, metric.Label, _metricLabelFont, primary,
+            new RectangleF(bounds.X, bounds.Y, 44, 14), StringAlignment.Near);
+        DrawString(graphics, metric.Value, _metricValueFont, valueBrush,
+            new RectangleF(bounds.Right - 44, bounds.Y - 1, 44, 16), StringAlignment.Far);
+
+        var rail = new RectangleF(bounds.X + 44, bounds.Y + 6, bounds.Width - 96, 3);
+        using var railBrush = new SolidBrush(Color.FromArgb(48, 100, 116, 139));
+        graphics.FillRoundedRectangle(railBrush, rail, 1.5f);
+        if (metric.Percent is { } usage && usage > 0)
+        {
+            graphics.FillRoundedRectangle(valueBrush,
+                new RectangleF(rail.X, rail.Y, rail.Width * (float)Math.Clamp(usage / 100, 0, 1), rail.Height),
+                1.5f);
+        }
+        DrawString(graphics, metric.Detail, _subtitleFont, muted,
+            new RectangleF(bounds.X + 44, bounds.Y + 18, bounds.Width - 44, 14), StringAlignment.Near);
     }
 
     private void DrawProcessRow(
         Graphics graphics,
         RectangleF body,
         float y,
-        int rank,
-        SystemProcessUsage process,
-        Brush primary)
+        ProcessRow process,
+        Brush primary,
+        Brush muted)
     {
-        DrawString(
-            graphics,
-            $"{rank}. {_text.SystemUsageProcessName(process.Name, process.ProcessCount)}",
-            _detailFont,
-            primary,
-            new RectangleF(body.X + 12, y, 112, 14),
-            StringAlignment.Near);
-        DrawString(
-            graphics,
-            FormatUsage(process.CpuPercent),
-            _tableValueFont,
-            primary,
-            new RectangleF(body.X + 126, y, 34, 14),
-            StringAlignment.Far);
-        DrawString(
-            graphics,
-            FormatProcessMemory(process.PrivateWorkingSetBytes),
-            _tableValueFont,
-            primary,
-            new RectangleF(body.X + 162, y, 56, 14),
-            StringAlignment.Far);
-        DrawString(
-            graphics,
-            FormatUsage(process.GpuPercent),
-            _tableValueFont,
-            primary,
-            new RectangleF(body.X + 220, y, 44, 14),
-            StringAlignment.Far);
+        var countWidth = process.Count.Length == 0 ? 0 : graphics.MeasureString(process.Count, _subtitleFont).Width;
+        var nameWidth = 124 - (countWidth > 0 ? countWidth + 4 : 0);
+        DrawString(graphics, process.Name, _detailFont, primary,
+            new RectangleF(body.X + 16, y, nameWidth, 15), StringAlignment.Near);
+        if (countWidth > 0)
+        {
+            var nameEnd = Math.Min(nameWidth, graphics.MeasureString(process.Name, _detailFont).Width);
+            DrawString(graphics, process.Count, _subtitleFont, muted,
+                new RectangleF(body.X + 16 + nameEnd + 4, y + 1, countWidth, 14), StringAlignment.Near);
+        }
+        DrawProcessValues(graphics, body, y, _tableValueFont, primary, process.Cpu, process.Memory, process.Gpu);
+    }
+
+    private void DrawProcessValues(
+        Graphics graphics,
+        RectangleF body,
+        float y,
+        Font font,
+        Brush brush,
+        string cpu,
+        string memory,
+        string gpu)
+    {
+        DrawString(graphics, cpu, font, brush,
+            new RectangleF(body.X + 146, y, 34, 15), StringAlignment.Far);
+        DrawString(graphics, memory, font, brush,
+            new RectangleF(body.X + 184, y, 62, 15), StringAlignment.Far);
+        DrawString(graphics, gpu, font, brush,
+            new RectangleF(body.X + 250, y, 34, 15), StringAlignment.Far);
     }
 
     private void AdvanceEntrance()
@@ -546,14 +426,14 @@ internal sealed class SystemUsagePopoverForm : Form
         return $"{Math.Round(value.Value):0}%";
     }
 
-    private static string FormatProcessMemory(ulong bytes)
+    internal static string FormatProcessMemory(ulong bytes)
     {
         const double bytesPerMegabyte = 1024d * 1024;
         const double bytesPerGigabyte = 1024d * 1024 * 1024;
-        if (bytes >= bytesPerGigabyte) return $"{bytes / bytesPerGigabyte:0.#}G";
+        if (bytes >= bytesPerGigabyte) return $"{bytes / bytesPerGigabyte:0.#} GB";
         var megabytes = bytes / bytesPerMegabyte;
-        if (megabytes < 1) return "<1M";
-        return $"{Math.Round(megabytes):0}M";
+        if (megabytes < 1) return "<1 MB";
+        return $"{Math.Round(megabytes):0} MB";
     }
 
     private static Color UsageColor(double usage) => usage switch
@@ -602,6 +482,7 @@ internal sealed class SystemUsagePopoverForm : Form
             _subtitleFont.Dispose();
             _metricLabelFont.Dispose();
             _detailFont.Dispose();
+            _metricValueFont.Dispose();
             _tableValueFont.Dispose();
             _textFormats.Dispose();
         }

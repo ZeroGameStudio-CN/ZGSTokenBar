@@ -18,6 +18,17 @@ using ZGSTokenBar.Plugin.AiGatewayObserver;
 
 if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJobExitCode;
 
+if (args.Length > 0 && args[0] == "--system-usage-regressions")
+{
+    TestSystemUsageSamplingMath();
+    TestSystemUsageBackgroundSerialization();
+    TestSystemUsageSamplingAllocation();
+    TestSystemUsagePopoverPresentation();
+    if (args.Length == 2) RenderSystemUsagePolishCaptures(args[1]);
+    Console.WriteLine("PASS system usage sampling and presentation");
+    return 0;
+}
+
 if (args.Length > 0 && args[0] == "--radar-usage-update")
 {
     RadarAndUsageUpdateTests.Run();
@@ -14023,6 +14034,20 @@ static void TestAdaptiveSizing()
 
 static void TestSystemUsageSamplingMath()
 {
+    var previousName = new string("Unity".ToCharArray());
+    Equal(true, ReferenceEquals(previousName, SystemUsageMath.ProcessName("Unity.EXE", previousName)),
+        "unchanged process names reuse the previous string after removing the extension");
+    Equal("Code", SystemUsageMath.ProcessName("Code.exe", previousName),
+        "a reused process ID with a different image does not keep its old name");
+    Equal("Memory Compression", SystemUsageMath.ProcessName("Memory Compression", null),
+        "system process names without extensions remain intact");
+    Equal("unity", SystemUsageMath.ProcessName("unity.exe", previousName),
+        "a casing change preserves the current image spelling");
+    _ = SystemUsageMath.ProcessName("Unity.exe", previousName);
+    var nameAllocationStart = GC.GetAllocatedBytesForCurrentThread();
+    for (var index = 0; index < 1_000; index++) _ = SystemUsageMath.ProcessName("Unity.exe", previousName);
+    Equal(0L, GC.GetAllocatedBytesForCurrentThread() - nameAllocationStart,
+        "unchanged process names allocate no managed memory");
     var cpu = SystemUsageMath.CpuPercent(
         new CpuUsageTimes(100, 200, 100),
         new CpuUsageTimes(140, 280, 140));
@@ -14340,7 +14365,52 @@ static void TestSystemUsageBackgroundSerialization()
 
 static void TestSystemUsagePopoverPresentation()
 {
-    var snapshot = new SystemUsageSnapshot(
+    var snapshot = SystemUsagePresentationFixture();
+    var chinese = NativeText.For("zh-CN");
+    Equal("32 个逻辑处理器", chinese.SystemUsageCpuDetail(32), "Chinese CPU detail is explicit");
+    Equal(
+        "42.0 / 64.0 GB · 可用 22.0 GB",
+        chinese.SystemUsageMemoryDetail(
+            snapshot.MemoryUsedBytes,
+            snapshot.MemoryTotalBytes,
+            snapshot.MemoryAvailableBytes),
+        "Chinese memory detail includes used, total, and available values");
+    Equal(
+        "最忙 3D · 6 个活动进程",
+        chinese.SystemUsageGpuDetail(snapshot.GpuPercent, snapshot.GpuEngine, snapshot.GpuProcessCount),
+        "Chinese GPU detail includes the busiest engine and process count");
+    Equal(
+        "读 125 MB/s · 写 12.0 MB/s",
+        chinese.SystemUsageDiskDetail(
+            snapshot.DiskActivePercent,
+            snapshot.DiskReadBytesPerSecond,
+            snapshot.DiskWriteBytesPerSecond),
+        "disk detail gives rates beside the separately rendered activity percentage");
+    Equal("同名进程合计", chinese.SystemUsageTopProcesses, "Chinese process table states the grouped-total scope");
+    Equal("Grouped totals", NativeText.For("en").SystemUsageTopProcesses, "English process table states the grouped-total scope");
+    Equal("chrome ×12", chinese.SystemUsageProcessName("chrome", 12), "grouped process count is explicit");
+    Equal("5 GB", SystemUsagePopoverForm.FormatProcessMemory(5UL * 1_073_741_824), "process memory uses GB");
+    Equal("700 MB", SystemUsagePopoverForm.FormatProcessMemory(734_003_200), "process memory uses MB");
+    Equal("<1 MB", SystemUsagePopoverForm.FormatProcessMemory(1), "small process memory remains explicit");
+
+    using var popover = new SystemUsagePopoverForm();
+    using var bitmap = popover.RenderForTest(
+        new SystemUsagePopoverContent(snapshot, false),
+        chinese,
+        QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette),
+        96);
+    Equal(
+        new Size(SystemUsagePopoverForm.LogicalBodyWidth, SystemUsagePopoverForm.LogicalBodyHeight + 8),
+        bitmap.Size,
+        "system usage popover renders at the deterministic logical size");
+    Equal(
+        true,
+        Enumerable.Range(0, bitmap.Width)
+            .Any(x => Enumerable.Range(0, bitmap.Height).Any(y => bitmap.GetPixel(x, y).A > 0)),
+        "system usage popover produces visible pixels");
+}
+
+static SystemUsageSnapshot SystemUsagePresentationFixture() => new(
         78,
         42UL * 1_073_741_824,
         22UL * 1_073_741_824,
@@ -14363,45 +14433,38 @@ static void TestSystemUsagePopoverPresentation()
             new SystemProcessUsage("SearchHost", 2, null, 398_458_880, 0),
         ],
     };
-    var chinese = NativeText.For("zh-CN");
-    Equal("32 个逻辑处理器", chinese.SystemUsageCpuDetail(32), "Chinese CPU detail is explicit");
-    Equal(
-        "42.0 / 64.0 GB · 可用 22.0 GB",
-        chinese.SystemUsageMemoryDetail(
-            snapshot.MemoryUsedBytes,
-            snapshot.MemoryTotalBytes,
-            snapshot.MemoryAvailableBytes),
-        "Chinese memory detail includes used, total, and available values");
-    Equal(
-        "最忙引擎 3D · 6 个活动进程",
-        chinese.SystemUsageGpuDetail(snapshot.GpuPercent, snapshot.GpuEngine, snapshot.GpuProcessCount),
-        "Chinese GPU detail includes the busiest engine and process count");
-    Equal(
-        "活动 68% · 读 125 MB/s · 写 12.0 MB/s",
-        chinese.SystemUsageDiskDetail(
-            snapshot.DiskActivePercent,
-            snapshot.DiskReadBytesPerSecond,
-            snapshot.DiskWriteBytesPerSecond),
-        "Chinese disk detail includes active time and read/write rates");
-    Equal("同名进程合计", chinese.SystemUsageTopProcesses, "Chinese process table states the grouped-total scope");
-    Equal("Grouped totals", NativeText.For("en").SystemUsageTopProcesses, "English process table states the grouped-total scope");
-    Equal("chrome ×12", chinese.SystemUsageProcessName("chrome", 12), "grouped process count is explicit");
 
-    using var popover = new SystemUsagePopoverForm();
-    using var bitmap = popover.RenderForTest(
-        new SystemUsagePopoverContent(snapshot, false),
-        chinese,
-        QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette),
-        96);
-    Equal(
-        new Size(SystemUsagePopoverForm.LogicalBodyWidth, SystemUsagePopoverForm.LogicalBodyHeight + 8),
-        bitmap.Size,
-        "system usage popover renders at the deterministic logical size");
-    Equal(
-        true,
-        Enumerable.Range(0, bitmap.Width)
-            .Any(x => Enumerable.Range(0, bitmap.Height).Any(y => bitmap.GetPixel(x, y).A > 0)),
-        "system usage popover produces visible pixels");
+static void RenderSystemUsagePolishCaptures(string outputDirectory)
+{
+    Directory.CreateDirectory(outputDirectory);
+    var populated = SystemUsagePresentationFixture() with
+    {
+        TopProcesses =
+        [
+            new("Memory Compression", 1, 0, 15_800_000_000, 0),
+            new("Unity", 10, 3, 15_100_000_000, 0),
+            new("dotnet", 13, 0, 4_800_000_000, 0),
+            new("ChatGPT", 27, 0, 3_300_000_000, .5),
+            new("dwm", 1, .5, 64 * 1_048_576, 3),
+        ],
+    };
+    var unavailable = new SystemUsageSnapshot(null, null, null, null, null, null, 0, 32, populated.CapturedAt);
+    var longNames = populated with
+    {
+        GpuEngine = "Video Processing",
+        TopProcesses = [new("VeryLongProcessNameThatMustBeTruncated", 1234, 100, 999_999_999_999, 100)],
+    };
+    foreach (var locale in new[] { "zh-CN", "en" })
+    foreach (var dpi in new[] { 96, 144, 192 })
+    foreach (var (name, snapshot) in new[] { ("populated", populated), ("unavailable", unavailable), ("long-names", longNames) })
+    {
+        using var form = new SystemUsagePopoverForm();
+        using var bitmap = form.RenderForTest(new(snapshot, name == "long-names"), NativeText.For(locale),
+            QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), dpi);
+        var path = Path.GetFullPath(Path.Combine(outputDirectory, $"system-usage-{locale}-{dpi}dpi-{name}.png"));
+        bitmap.Save(path, ImageFormat.Png);
+        Console.WriteLine(path);
+    }
 }
 
 static void TestSystemUsageSamplingAllocation()

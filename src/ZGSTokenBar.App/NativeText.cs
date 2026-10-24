@@ -461,8 +461,8 @@ internal sealed class NativeText
     public string SystemUsageDisk => T("磁盘", "Disk");
     public string SystemUsageGpu => "GPU";
     public string SystemUsagePopoverSubtitle(bool pinned) => pinned
-        ? T("已固定 · Esc / 点击外部", "PINNED · ESC / CLICK OUTSIDE")
-        : T("每秒采样 · 点击固定", "1S SAMPLE · CLICK TO PIN");
+        ? T("已固定 · Esc 关闭", "Pinned · Esc to close")
+        : PinHint;
     public string SystemUsageCpuDetail(int logicalProcessors) => T(
         $"{logicalProcessors} 个逻辑处理器",
         $"{logicalProcessors} logical processors");
@@ -484,8 +484,8 @@ internal sealed class NativeText
             return T("暂无活动引擎", "No active engine");
         }
         return T(
-            $"最忙引擎 {engine} · {processCount} 个活动进程",
-            $"Busiest {engine} engine · {processCount} active processes");
+            $"最忙 {engine} · {processCount} 个活动进程",
+            $"Busiest {engine} · {processCount} active processes");
     }
     public string SystemUsageDiskDetail(
         double? activePercent,
@@ -498,12 +498,12 @@ internal sealed class NativeText
         }
 
         return T(
-            $"活动 {FormatUsagePercent(activePercent)} · 读 {FormatBytesPerSecond(readBytesPerSecond)} · 写 {FormatBytesPerSecond(writeBytesPerSecond)}",
-            $"Active {FormatUsagePercent(activePercent)} · R {FormatBytesPerSecond(readBytesPerSecond)} · W {FormatBytesPerSecond(writeBytesPerSecond)}");
+            $"读 {FormatBytesPerSecond(readBytesPerSecond)} · 写 {FormatBytesPerSecond(writeBytesPerSecond)}",
+            $"Read {FormatBytesPerSecond(readBytesPerSecond)} · Write {FormatBytesPerSecond(writeBytesPerSecond)}");
     }
     public string SystemUsageCapturedAt(DateTimeOffset capturedAt) => T(
-        $"采样 {capturedAt.ToLocalTime():HH:mm:ss}",
-        $"Sampled {capturedAt.ToLocalTime():HH:mm:ss}");
+        $"每秒采样 · {capturedAt.ToLocalTime():HH:mm:ss}",
+        $"1s sampling · {capturedAt.ToLocalTime():HH:mm:ss}");
     public string SystemUsageTopProcesses => T("同名进程合计", "Grouped totals");
     public string SystemUsageTopProcessesUnavailable => T(
         "正在采集进程详情…",
