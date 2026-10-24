@@ -420,7 +420,11 @@ internal static class RadarAndUsageUpdateTests
         Directory.CreateDirectory(directory);
         var snapshot = Snapshot();
         var presentation = RadarPresentation.BuildCodex(snapshot);
-        var usage = Usage();
+        var usage = Usage() with
+        {
+            TodaySpend = new CodexSpendPeriod(1_000, 500, 250, 0, 0, 1_750, 0, 648.1m),
+            Last30DaysSpend = new CodexSpendPeriod(10_000, 5_000, 2_500, 0, 0, 17_500, 0, 80_014.8m),
+        };
         foreach (var dpi in new[] { 96, 192 })
         foreach (var locale in new[] { "zh-CN", "en" })
         foreach (var radar in new[] { true, false })

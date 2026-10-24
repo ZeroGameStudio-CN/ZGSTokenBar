@@ -1473,31 +1473,25 @@ internal sealed class RadarPopoverRenderer : IDisposable
             Math.Max(1, bounds.Right - tokenBounds.Right - gap), bounds.Height);
 
         DrawCompactSpendTile(graphics, layout.Dpi, estimate, tokenUsage, fonts, text);
-        DrawTokenRadarFooterGroup(
+        DrawCompactMetricTile(
             graphics,
             layout.Dpi,
             tokenBounds,
             text.CodexTokenRadarMetricTitle,
-            text.CodexTodayMetricLabel,
             NativeText.FormatTokenCount(tokenUsage.TodayTokens),
-            text.CodexTotalMetricLabel,
             NativeText.FormatTokenCount(tokenUsage.LocalTokens),
             Color.FromArgb(129, 140, 248),
-            Color.FromArgb(148, 163, 184),
-            Color.FromArgb(226, 232, 240),
+            text,
             fonts);
-        DrawTokenRadarFooterGroup(
+        DrawCompactMetricTile(
             graphics,
             layout.Dpi,
             cacheBounds,
             text.CodexCacheRadarMetricTitle,
-            text.CodexTodayMetricLabel,
             NativeText.FormatCacheHitPercent(tokenUsage.TodayCacheHitPercent),
-            text.CodexTotalMetricLabel,
             NativeText.FormatCacheHitPercent(tokenUsage.TotalCacheHitPercent),
             Color.FromArgb(52, 211, 153),
-            Color.FromArgb(148, 163, 184),
-            Color.FromArgb(226, 232, 240),
+            text,
             fonts);
     }
 
@@ -1543,6 +1537,83 @@ internal sealed class RadarPopoverRenderer : IDisposable
             new Rectangle(bounds.Left + padding, bounds.Top + Scale(dpi, 19),
                 bounds.Width - padding * 2, Scale(dpi, 9)),
             CellTextFlags);
+    }
+
+    private static void DrawCompactMetricTile(
+        Graphics graphics,
+        int dpi,
+        Rectangle bounds,
+        string title,
+        string todayValue,
+        string totalValue,
+        Color accent,
+        NativeText text,
+        RadarPopoverFonts fonts)
+    {
+        var surfaceBounds = new Rectangle(bounds.X, bounds.Y,
+            Math.Max(1, bounds.Width - 1), Math.Max(1, bounds.Height - 1));
+        using var surface = RoundedRectangle(surfaceBounds, Scale(dpi, 5));
+        using var fill = new SolidBrush(Color.FromArgb(22, accent.R, accent.G, accent.B));
+        using var border = new Pen(Color.FromArgb(52, accent.R, accent.G, accent.B));
+        graphics.FillPath(fill, surface);
+        graphics.DrawPath(border, surface);
+
+        var padding = Scale(dpi, 7);
+        DrawText(
+            graphics,
+            title,
+            fonts.Badge,
+            accent,
+            new Rectangle(bounds.Left + padding, bounds.Top + Scale(dpi, 1),
+                bounds.Width - padding * 2, Scale(dpi, 9)),
+            CellTextFlags);
+        DrawCompactMetricRow(
+            graphics,
+            dpi,
+            new Rectangle(bounds.Left + padding, bounds.Top + Scale(dpi, 10),
+                bounds.Width - padding * 2, Scale(dpi, 9)),
+            text.CodexTodayMetricLabel,
+            todayValue,
+            fonts);
+        DrawCompactMetricRow(
+            graphics,
+            dpi,
+            new Rectangle(bounds.Left + padding, bounds.Top + Scale(dpi, 19),
+                bounds.Width - padding * 2, Scale(dpi, 9)),
+            text.CodexTotalMetricLabel,
+            totalValue,
+            fonts);
+    }
+
+    private static void DrawCompactMetricRow(
+        Graphics graphics,
+        int dpi,
+        Rectangle bounds,
+        string label,
+        string value,
+        RadarPopoverFonts fonts)
+    {
+        var labelWidth = TextRenderer.MeasureText(
+            graphics,
+            label,
+            fonts.Meta,
+            Size.Empty,
+            BaseTextFlags).Width;
+        DrawText(
+            graphics,
+            label,
+            fonts.Meta,
+            Color.FromArgb(148, 163, 184),
+            new Rectangle(bounds.Left, bounds.Top, labelWidth, bounds.Height),
+            CellTextFlags);
+        DrawText(
+            graphics,
+            value,
+            fonts.EmphasizedNumber,
+            Color.FromArgb(226, 232, 240),
+            new Rectangle(bounds.Left + labelWidth + Scale(dpi, 2), bounds.Top,
+                Math.Max(1, bounds.Right - bounds.Left - labelWidth - Scale(dpi, 2)), bounds.Height),
+            CellTextFlags | TextFormatFlags.Right);
     }
 
     private static void DrawSpendSummaryCard(
