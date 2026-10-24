@@ -17,7 +17,7 @@ internal sealed class QuotaPopoverForm : Form
 {
     internal const int LogicalBodyWidth = 240;
     internal const int LogicalBodyHeight = 144;
-    internal const int LogicalCodexTokenBodyHeight = 207;
+    internal const int LogicalCodexTokenBodyHeight = 187;
     internal const int LogicalSub2ApiQuotaBodyHeight = 164;
     internal const int LogicalSub2ApiAccountAvailabilityBodyHeight = 164;
     private const int AccountAvailabilityFirstRowY = 76;
@@ -505,13 +505,13 @@ internal sealed class QuotaPopoverForm : Form
         }
 
         var quotaTokenOffset = content.Card.Provider == ProviderKind.Codex && !content.Card.IsService
-            ? 63
+            ? 43
             : 0;
         if (quotaTokenOffset > 0)
         {
             DrawQuotaTokenCapacity(
                 graphics,
-                new RectangleF(x + 12, y + 113, body.Width - 24, 59),
+                new RectangleF(x + 12, y + 113, body.Width - 24, 43),
                 content.CodexQuotaTokens,
                 content.Window.UsedPercent,
                 mutedBrush,
@@ -604,7 +604,7 @@ internal sealed class QuotaPopoverForm : Form
                 valueBrush,
                 new RectangleF(
                     bounds.X + columnWidth * column,
-                    bounds.Y + 11 + row * 15,
+                    bounds.Y + 11 + row * 16,
                     columnWidth,
                     15),
                 column == 0 ? StringAlignment.Near : StringAlignment.Far);

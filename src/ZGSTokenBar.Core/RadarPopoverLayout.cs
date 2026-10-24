@@ -105,6 +105,7 @@ public sealed class RadarPopoverLayout
     public Rectangle FooterSpendBounds { get; }
     public Rectangle FooterSourceBounds { get; }
     public Rectangle FooterLegendBounds { get; }
+    public Rectangle FooterCompactBounds { get; private init; }
     public RadarPopoverColumns Columns { get; }
     public IReadOnlyList<RadarModelGroupHeader> GroupHeaders { get; private init; } = [];
     public Rectangle TableViewport { get; private init; }
@@ -360,13 +361,15 @@ public sealed class RadarPopoverLayout
             hasInlineError ? Rect(14, rowsBottom, radarContentWidth, 14) : Rectangle.Empty,
             Rect(14, 62 + resetBannerOffset, radarContentWidth, 32),
             hasSpendSummary
-                ? Rect(
-                    14,
-                    logicalHeight - footerStart - LogicalSpendSummaryHeight,
-                    radarContentWidth,
-                    LogicalSpendCardHeight)
+                ? splitRecent
+                    ? Rect(14, logicalHeight - 34, 154, LogicalSpendCardHeight)
+                    : Rect(
+                        14,
+                        logicalHeight - footerStart - LogicalSpendSummaryHeight,
+                        radarContentWidth,
+                        LogicalSpendCardHeight)
                 : Rectangle.Empty,
-            Rect(14, logicalHeight - 30, radarContentWidth, 24),
+            splitRecent ? Rectangle.Empty : Rect(14, logicalHeight - 30, radarContentWidth, 24),
             showLegend ? Rect(14, logicalHeight - 48, radarContentWidth, 14) : Rectangle.Empty,
             new RadarPopoverColumns(
                 Column(0, 22),
@@ -405,6 +408,9 @@ public sealed class RadarPopoverLayout
                         ConversationHeaderHeight + recentPageSize * ConversationRowHeight + 12))
                 : Rectangle.Empty,
             RecentPageSize = recentPageSize,
+            FooterCompactBounds = splitRecent && hasSpendSummary
+                ? Rect(14, logicalHeight - 34, radarContentWidth, 28)
+                : Rectangle.Empty,
         };
     }
 

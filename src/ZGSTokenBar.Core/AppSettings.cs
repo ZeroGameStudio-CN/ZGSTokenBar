@@ -958,6 +958,7 @@ public sealed class AppSettingsStore
             || (index.HistoricalBaselineTokens is null) != (index.HistoricalBaselineAt is null))
             throw new JsonException("Invalid historical Token baseline.");
         index.Files ??= [];
+        index.ConversationHistory ??= [];
         index.SchemaVersion = CodexTokenUsageIndex.CurrentSchemaVersion;
         return index;
     }

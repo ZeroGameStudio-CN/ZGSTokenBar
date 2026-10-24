@@ -20,7 +20,15 @@ public sealed record CodexTokenUsageSummary(
     CodexSpendHistory? SpendHistory = null)
 {
     public IReadOnlyList<CodexConversationTurn> RecentTurns { get; init; } = [];
+    public IReadOnlyList<CodexConversationTurn> ConversationHistory { get; init; } = [];
     public int PendingConversationCount { get; init; }
+    public IReadOnlyList<CodexConversationTurn> ConversationTurns =>
+        ConversationHistory
+            .Concat(RecentTurns)
+            .GroupBy(turn => $"{turn.SessionId}\u001f{turn.TurnId}", StringComparer.Ordinal)
+            .Select(group => group.OrderByDescending(turn => turn.ObservedAt).First())
+            .OrderByDescending(turn => turn.ObservedAt)
+            .ToArray();
     public static CodexTokenUsageSummary? ApplyCumulativeFloor(
         CodexTokenUsageSummary? summary,
         long? cumulativeFloor,
@@ -62,12 +70,15 @@ public sealed record CodexSpendHistory(
 
 public sealed class CodexTokenUsageIndex
 {
-    public const int CurrentSchemaVersion = 8;
+    public const int CurrentSchemaVersion = 9;
     public const int CurrentAccountingVersion = 2;
     public const int CurrentSpendAccountingVersion = 3;
+    public const int ConversationHistoryLimit = 500;
+    public const int ConversationHistoryRetentionDays = 90;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public List<CodexTokenUsageFileIndex> Files { get; set; } = [];
+    public List<CodexConversationTurn> ConversationHistory { get; set; } = [];
     public long? HistoricalBaselineTokens { get; set; }
     public DateTimeOffset? HistoricalBaselineAt { get; set; }
 
@@ -78,6 +89,7 @@ public sealed class CodexTokenUsageIndex
         {
             HistoricalBaselineTokens = tokens,
             HistoricalBaselineAt = at,
+            ConversationHistory = ConversationHistory,
             Files = Files.Select(file => file with
             {
                 BaselineTokens = file.AccountingVersion == CurrentAccountingVersion ? file.TotalTokens : null,
@@ -170,6 +182,7 @@ public sealed class CodexTokenUsageReader
     private const string UnknownSpendModel = "unknown";
 
     private readonly Dictionary<string, CodexTokenUsageFileIndex> _files;
+    private readonly List<CodexConversationTurn> _conversationHistory;
     private readonly long? _historicalBaselineTokens;
     private readonly DateTimeOffset? _historicalBaselineAt;
 
@@ -180,6 +193,11 @@ public sealed class CodexTokenUsageReader
             throw new InvalidDataException("Invalid historical Token baseline.");
         _historicalBaselineTokens = index?.HistoricalBaselineTokens;
         _historicalBaselineAt = index?.HistoricalBaselineAt;
+        _conversationHistory = (index?.ConversationHistory ?? [])
+            .Where(turn => turn.IsTerminal)
+            .OrderByDescending(turn => turn.ObservedAt)
+            .Take(CodexTokenUsageIndex.ConversationHistoryLimit)
+            .ToList();
         _files = (index?.Files ?? [])
             .Where(file => !string.IsNullOrWhiteSpace(file.Key)
                 && file.Length >= 0
@@ -223,11 +241,14 @@ public sealed class CodexTokenUsageReader
             .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
     }
 
-    public CodexTokenUsageSummary? Snapshot(DateTimeOffset now) =>
-        BuildSummary(
+    public CodexTokenUsageSummary? Snapshot(DateTimeOffset now)
+    {
+        var summary = BuildSummary(
             now,
             activeFiles: null,
             capturedAt: LatestIndexedWriteAt(now));
+        return summary is null ? null : summary with { ConversationHistory = _conversationHistory };
+    }
 
     public CodexTokenUsageReadResult Refresh(
         DateTimeOffset now,
@@ -300,11 +321,14 @@ public sealed class CodexTokenUsageReader
         foreach (var pair in next) _files[pair.Key] = pair.Value;
 
         var summary = BuildSummary(now, candidates, now);
+        if (summary is not null)
+            summary = summary with { ConversationHistory = _conversationHistory };
         return new CodexTokenUsageReadResult(
             summary,
             new CodexTokenUsageIndex
             {
                 Files = _files.Values.OrderBy(file => file.Key, StringComparer.Ordinal).ToList(),
+                ConversationHistory = _conversationHistory.ToList(),
                 HistoricalBaselineTokens = _historicalBaselineTokens,
                 HistoricalBaselineAt = _historicalBaselineAt,
             },

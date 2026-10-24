@@ -538,6 +538,7 @@ internal sealed class NativeText
     public string CodexLast7DaysMetricLabel => T("7 日", "7d");
     public string CodexLast30DaysMetricLabel => T("30 日", "30d");
     public string CodexSpendMetricTitle => T("API 等值估算", "API equivalent estimate");
+    public string CodexCompactSpendMetricTitle => T("估算", "Estimate");
     public string CodexSpendHistoryTitle => T("消费历史", "Spend history");
     public string CodexSpendHistoryBack => T("‹ 返回", "‹ Back");
     public string CodexSpendHistoryAction => T("历史 ›", "History ›");
@@ -597,31 +598,21 @@ internal sealed class NativeText
         return "≈" + amount + (period.HasUnpricedUsage ? "+" : string.Empty);
     }
     public string CodexAccountsHeading => T("Codex 账号", "Codex accounts");
-    public string CodexQuotaCapacityTitle => T("Token · 原始用量", "Tokens · raw usage");
+    public string CodexQuotaCapacityTitle => T("Token", "Tokens");
     public string[] CodexQuotaCapacityMetrics(
         CodexQuotaTokenSummary? summary,
         double? currentUsedPercent = null) =>
     [
         CodexQuotaUsedMetric(summary, currentUsedPercent),
         T(
-            $"样本100% {EstimatedTokenValue(summary?.CurrentCapacityTokens, collecting: true)}",
-            $"Sample 100% {EstimatedTokenValue(summary?.CurrentCapacityTokens, collecting: true)}"),
+            $"容量 {EstimatedTokenValue(summary?.CurrentCapacityTokens, collecting: true)}",
+            $"Capacity {EstimatedTokenValue(summary?.CurrentCapacityTokens, collecting: true)}"),
         T(
-            summary?.RecentWeeklyAverageTokens is { } recentWeeklyAverageTokensZh
-                ? $"近4周/周 ≈{CapacityTokenValue(recentWeeklyAverageTokensZh)}"
-                : "近4周/周 —",
-            summary?.RecentWeeklyAverageTokens is { } recentWeeklyAverageTokensEn
-                ? $"4wk/week ≈{CapacityTokenValue(recentWeeklyAverageTokensEn)}"
-                : "4wk/week —"),
+            $"均值 {EstimatedTokenValue(summary?.AverageCapacityTokens)}",
+            $"Avg {EstimatedTokenValue(summary?.AverageCapacityTokens)}"),
         T(
-            $"周期平均 {EstimatedTokenValue(summary?.AverageCapacityTokens)}",
-            $"Cycle avg {EstimatedTokenValue(summary?.AverageCapacityTokens)}"),
-        T(
-            $"周期最高 {EstimatedTokenValue(summary?.MaxCapacityTokens)}",
-            $"Cycle max {EstimatedTokenValue(summary?.MaxCapacityTokens)}"),
-        T(
-            $"完整周期 {summary?.CompletedCycleCount ?? 0}",
-            $"Full cycles {summary?.CompletedCycleCount ?? 0}"),
+            $"峰值 {EstimatedTokenValue(summary?.MaxCapacityTokens)}",
+            $"Peak {EstimatedTokenValue(summary?.MaxCapacityTokens)}"),
     ];
 
     internal string CodexQuotaObservationEvidence(CodexQuotaTokenSummary? summary)

@@ -590,7 +590,7 @@ internal sealed class RadarPopoverRenderer : IDisposable
         var bounds = Offset(layout.RecentTurnsBounds, origin);
         var page = CodexConversationPage.Create(
             recentTurnOffset,
-            usage.RecentTurns.Count,
+            usage.ConversationTurns.Count,
             layout.RecentPageSize);
         var labelColor = Color.FromArgb(148, 163, 184);
         DrawText(graphics, text.CodexRecentTurnsTitle + (usage.PendingConversationCount > 0
@@ -615,7 +615,7 @@ internal sealed class RadarPopoverRenderer : IDisposable
                 CellTextFlags | (column == 0 ? TextFormatFlags.Left : TextFormatFlags.Right));
         var y = bounds.Top + Scale(layout.Dpi, RadarPopoverLayout.ConversationHeaderHeight);
         using var divider = new Pen(Color.FromArgb(40, 71, 85, 105));
-        foreach (var turn in usage.RecentTurns.Skip(page.Offset).Take(page.Count))
+        foreach (var turn in usage.ConversationTurns.Skip(page.Offset).Take(page.Count))
         {
             graphics.DrawLine(divider, bounds.Left, y, bounds.Right, y);
             var values = new[]
@@ -1305,7 +1305,17 @@ internal sealed class RadarPopoverRenderer : IDisposable
         RadarPresentationResult? presentation)
     {
         var footerColor = Color.FromArgb(148, 163, 184);
-        if (tokenUsage is not null && !layout.FooterSpendBounds.IsEmpty)
+        if (tokenUsage is not null && !layout.FooterCompactBounds.IsEmpty)
+        {
+            DrawCompactUsageFooter(
+                graphics,
+                layout,
+                origin,
+                tokenUsage,
+                fonts,
+                text);
+        }
+        else if (tokenUsage is not null && !layout.FooterSpendBounds.IsEmpty)
         {
             DrawSpendSummaryCard(
                 graphics,
@@ -1336,14 +1346,17 @@ internal sealed class RadarPopoverRenderer : IDisposable
         }
         else if (tokenUsage is not null)
         {
-            DrawTokenRadarFooter(
-                graphics,
-                layout,
-                origin,
-                tokenUsage,
-                fonts,
-                text,
-                footerColor);
+            if (layout.FooterCompactBounds.IsEmpty)
+            {
+                DrawTokenRadarFooter(
+                    graphics,
+                    layout,
+                    origin,
+                    tokenUsage,
+                    fonts,
+                    text,
+                    footerColor);
+            }
         }
         else
         {
@@ -1441,6 +1454,96 @@ internal sealed class RadarPopoverRenderer : IDisposable
 
     private static bool HasSpendHistory(CodexTokenUsageSummary tokenUsage) =>
         tokenUsage.SpendHistory?.Days.Any(day => day.Spend.HasUsage) == true;
+
+    private static void DrawCompactUsageFooter(
+        Graphics graphics,
+        RadarPopoverLayout layout,
+        Point origin,
+        CodexTokenUsageSummary tokenUsage,
+        RadarPopoverFonts fonts,
+        NativeText text)
+    {
+        var bounds = Offset(layout.FooterCompactBounds, origin);
+        var estimate = Offset(layout.FooterSpendBounds, origin);
+        var gap = Scale(layout.Dpi, 6);
+        var remainingWidth = Math.Max(1, bounds.Right - estimate.Right - gap);
+        var tokenWidth = Math.Max(1, (remainingWidth - gap) / 2);
+        var tokenBounds = new Rectangle(estimate.Right + gap, bounds.Top, tokenWidth, bounds.Height);
+        var cacheBounds = new Rectangle(tokenBounds.Right + gap, bounds.Top,
+            Math.Max(1, bounds.Right - tokenBounds.Right - gap), bounds.Height);
+
+        DrawCompactSpendTile(graphics, layout.Dpi, estimate, tokenUsage, fonts, text);
+        DrawTokenRadarFooterGroup(
+            graphics,
+            layout.Dpi,
+            tokenBounds,
+            text.CodexTokenRadarMetricTitle,
+            text.CodexTodayMetricLabel,
+            NativeText.FormatTokenCount(tokenUsage.TodayTokens),
+            text.CodexTotalMetricLabel,
+            NativeText.FormatTokenCount(tokenUsage.LocalTokens),
+            Color.FromArgb(129, 140, 248),
+            Color.FromArgb(148, 163, 184),
+            Color.FromArgb(226, 232, 240),
+            fonts);
+        DrawTokenRadarFooterGroup(
+            graphics,
+            layout.Dpi,
+            cacheBounds,
+            text.CodexCacheRadarMetricTitle,
+            text.CodexTodayMetricLabel,
+            NativeText.FormatCacheHitPercent(tokenUsage.TodayCacheHitPercent),
+            text.CodexTotalMetricLabel,
+            NativeText.FormatCacheHitPercent(tokenUsage.TotalCacheHitPercent),
+            Color.FromArgb(52, 211, 153),
+            Color.FromArgb(148, 163, 184),
+            Color.FromArgb(226, 232, 240),
+            fonts);
+    }
+
+    private static void DrawCompactSpendTile(
+        Graphics graphics,
+        int dpi,
+        Rectangle bounds,
+        CodexTokenUsageSummary tokenUsage,
+        RadarPopoverFonts fonts,
+        NativeText text)
+    {
+        var surfaceBounds = new Rectangle(bounds.X, bounds.Y,
+            Math.Max(1, bounds.Width - 1), Math.Max(1, bounds.Height - 1));
+        var accent = Color.FromArgb(129, 140, 248);
+        using var surface = RoundedRectangle(surfaceBounds, Scale(dpi, 5));
+        using var fill = new SolidBrush(Color.FromArgb(28, accent.R, accent.G, accent.B));
+        using var border = new Pen(Color.FromArgb(64, accent.R, accent.G, accent.B));
+        graphics.FillPath(fill, surface);
+        graphics.DrawPath(border, surface);
+
+        var padding = Scale(dpi, 7);
+        DrawText(
+            graphics,
+            text.CodexCompactSpendMetricTitle,
+            fonts.Badge,
+            Color.FromArgb(165, 180, 252),
+            new Rectangle(bounds.Left + padding, bounds.Top + Scale(dpi, 1),
+                bounds.Width - padding * 2, Scale(dpi, 9)),
+            CellTextFlags);
+        DrawText(
+            graphics,
+            $"今 {text.CodexApiEquivalent(tokenUsage.TodaySpend)}",
+            fonts.Model,
+            Color.FromArgb(226, 232, 240),
+            new Rectangle(bounds.Left + padding, bounds.Top + Scale(dpi, 10),
+                bounds.Width - padding * 2, Scale(dpi, 9)),
+            CellTextFlags);
+        DrawText(
+            graphics,
+            $"30日 {text.CodexApiEquivalent(tokenUsage.Last30DaysSpend)}",
+            fonts.Model,
+            Color.FromArgb(203, 213, 225),
+            new Rectangle(bounds.Left + padding, bounds.Top + Scale(dpi, 19),
+                bounds.Width - padding * 2, Scale(dpi, 9)),
+            CellTextFlags);
+    }
 
     private static void DrawSpendSummaryCard(
         Graphics graphics,

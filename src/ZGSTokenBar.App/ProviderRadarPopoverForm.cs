@@ -123,8 +123,11 @@ internal sealed class ProviderRadarPopoverForm : Form
         _text = text;
         _tokenUsage = tokenUsage;
         if (_hoveredRecentIndex >= 0)
-            _groupToolTip.SetToolTip(this, _hoveredRecentIndex < (tokenUsage?.RecentTurns.Count ?? 0)
-                ? _text.CodexTurnTooltip(tokenUsage!.RecentTurns[_hoveredRecentIndex]) : null);
+        {
+            var turns = tokenUsage?.ConversationTurns ?? [];
+            _groupToolTip.SetToolTip(this, _hoveredRecentIndex < turns.Count
+                ? _text.CodexTurnTooltip(turns[_hoveredRecentIndex]) : null);
+        }
         _aiGatewayUsage = aiGatewayUsage;
         Text = radarEnabled
             ? deepSeekOnly ? _text.DeepSeekRadarTitle : _text.RadarTitle
@@ -144,7 +147,7 @@ internal sealed class ProviderRadarPopoverForm : Form
             : RadarPopoverLayout.CreateTokenUsage(dpi, ConversationRowCount);
         _recentTurnOffset = CodexConversationPage.Create(
             _recentTurnOffset,
-            _tokenUsage?.RecentTurns.Count ?? 0,
+            _tokenUsage?.ConversationTurns.Count ?? 0,
             _layout.RecentPageSize).Offset;
         _historyLayout = !deepSeekOnly && HasSpendHistory(tokenUsage)
             ? CodexSpendHistoryLayout.Create(
@@ -335,11 +338,11 @@ internal sealed class ProviderRadarPopoverForm : Form
         var hovered = HasSpendHistory(_tokenUsage) && SpendCardBounds().Contains(e.Location);
         var hoveredGroup = _layout.ModelGroupAt(BodyPoint(e.Location));
         var bodyPoint = BodyPoint(e.Location);
-        if (_layout.RecentTurnIndexAt(bodyPoint, _recentTurnOffset, _tokenUsage?.RecentTurns.Count ?? 0) is var recentIndex
+        if (_layout.RecentTurnIndexAt(bodyPoint, _recentTurnOffset, _tokenUsage?.ConversationTurns.Count ?? 0) is var recentIndex
             && recentIndex >= 0)
         {
             if (_hoveredRecentIndex != recentIndex)
-                _groupToolTip.SetToolTip(this, _text.CodexTurnTooltip(_tokenUsage!.RecentTurns[recentIndex]));
+                _groupToolTip.SetToolTip(this, _text.CodexTurnTooltip(_tokenUsage!.ConversationTurns[recentIndex]));
             _hoveredRecentIndex = recentIndex;
             Cursor = Cursors.Default;
             return;
@@ -358,7 +361,7 @@ internal sealed class ProviderRadarPopoverForm : Form
             _groupToolTip.SetToolTip(this, null);
         }
         var controlHovered = CanSwitchBenchmark && _layout.SubtitleBounds.Contains(bodyPoint)
-            || _tokenUsage?.RecentTurns.Count > _layout.RecentPageSize
+            || _tokenUsage?.ConversationTurns.Count > _layout.RecentPageSize
                 && (_layout.RecentPreviousBounds.Contains(bodyPoint) || _layout.RecentNextBounds.Contains(bodyPoint));
         Cursor = hovered || hoveredGroup is not null || controlHovered ? Cursors.Hand : Cursors.Default;
         if (controlHovered) _groupToolTip.SetToolTip(this,
@@ -476,21 +479,21 @@ internal sealed class ProviderRadarPopoverForm : Form
         _scrollOffset = layout.ScrollOffset;
         _recentTurnOffset = CodexConversationPage.Create(
             _recentTurnOffset,
-            _tokenUsage?.RecentTurns.Count ?? 0,
+            _tokenUsage?.ConversationTurns.Count ?? 0,
             layout.RecentPageSize).Offset;
         return layout;
     }
 
     private bool CanSwitchBenchmark => !_deepSeekOnly && !_layout.TokenOnly
         && _state.Snapshot?.TrialFeed is { Models.Count: > 0 };
-    private int ConversationRowCount => Math.Max(_tokenUsage?.RecentTurns.Count ?? 0,
+    private int ConversationRowCount => Math.Max(_tokenUsage?.ConversationTurns.Count ?? 0,
         _tokenUsage?.PendingConversationCount > 0 ? 1 : 0);
 
     private void ChangeConversationPage(int direction)
     {
         var next = CodexConversationPage.Create(
             _recentTurnOffset + direction * _layout.RecentPageSize,
-            _tokenUsage?.RecentTurns.Count ?? 0,
+            _tokenUsage?.ConversationTurns.Count ?? 0,
             _layout.RecentPageSize).Offset;
         if (next == _recentTurnOffset) return;
         _recentTurnOffset = next;

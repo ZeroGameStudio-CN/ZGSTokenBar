@@ -31,6 +31,7 @@ if (args.Length == 1 && args[0] == "--persistence-regressions")
     PersistenceRegressionTests.SettingsTransientRead();
     PersistenceRegressionTests.LedgerTransactions();
     PersistenceRegressionTests.LedgerSaveRetry();
+    PersistenceRegressionTests.ConversationHistoryPersistence();
     PersistenceRegressionTests.BuiltinDataRootIsolation();
     PluginLifecycleRegressionTests.Run();
     Console.WriteLine("PASS persistence and plugin lifecycle regressions");
@@ -305,6 +306,7 @@ var tests = new (string Name, Action Run)[]
     ("Settings transient read recovery", PersistenceRegressionTests.SettingsTransientRead),
     ("Token ledger serialized writers", PersistenceRegressionTests.LedgerTransactions),
     ("Token ledger failed-save retry", PersistenceRegressionTests.LedgerSaveRetry),
+    ("Conversation history persistence", PersistenceRegressionTests.ConversationHistoryPersistence),
     ("Built-in plugin host data-root isolation", PersistenceRegressionTests.BuiltinDataRootIsolation),
     ("Plugin refresh and disable lifecycle", PluginLifecycleRegressionTests.Run),
     ("Claude usage parser", TestClaudeParser),
@@ -10856,9 +10858,9 @@ static void TestQuotaPacePopoverPresentation()
         now.AddMinutes(15));
 
     Equal((240, 144), (QuotaPopoverForm.LogicalBodyWidth, QuotaPopoverForm.LogicalBodyHeight), "two pace rows fit the relaxed popover");
-    Equal(207, QuotaPopoverForm.LogicalCodexTokenBodyHeight, "Codex token references fit six metrics in three rows");
-    Equal("Token · 原始用量", zh.CodexQuotaCapacityTitle, "Chinese token title avoids fixed-capacity wording");
-    Equal("Tokens · raw usage", en.CodexQuotaCapacityTitle, "English token title avoids fixed-capacity wording");
+    Equal(187, QuotaPopoverForm.LogicalCodexTokenBodyHeight, "Codex token references fit four compact metrics in two rows");
+    Equal("Token", zh.CodexQuotaCapacityTitle, "Chinese token title stays compact");
+    Equal("Tokens", en.CodexQuotaCapacityTitle, "English token title stays compact");
     var capacity = new CodexQuotaTokenSummary(
         "codex.capacity",
         "7d",
@@ -10873,7 +10875,7 @@ static void TestQuotaPacePopoverPresentation()
         true,
         RecentWeeklyAverageTokens: 5_000_000_000);
     Equal(
-        "已用29% 3.60M|样本100% ≈12.4M|近4周/周 ≈5.00B|周期平均 ≈13.1M|周期最高 ≈15.8M|完整周期 3",
+        "已用29% 3.60M|容量 ≈12.4M|均值 ≈13.1M|峰值 ≈15.8M",
         string.Join('|', zh.CodexQuotaCapacityMetrics(capacity, 29)),
         "Chinese token metrics keep current, recent, and historical references separate");
     Equal("账号实录", zh.CodexQuotaObservationEvidence(capacity), "cycle-start Profile coverage is source-qualified");
@@ -10892,7 +10894,7 @@ static void TestQuotaPacePopoverPresentation()
         screenshotRegression.EstimateUsedTokens(66),
         "mid-cycle current used tokens scale the normalized capacity to live utilization");
     Equal(
-        "已用66% ≈2.85B|样本100% ≈4.31B|近4周/周 ≈5.00B|周期平均 —|周期最高 —|完整周期 0",
+        "已用66% ≈2.85B|容量 ≈4.31B|均值 —|峰值 —",
         string.Join('|', zh.CodexQuotaCapacityMetrics(screenshotRegression, 66)),
         "mid-cycle current estimate aligns with the live used percentage");
     Equal(
@@ -10912,12 +10914,12 @@ static void TestQuotaPacePopoverPresentation()
         IsCurrentLocalFallback = true,
     };
     Equal(
-        "已用62% ≥977M|样本100% ≈1.58B|近4周/周 ≈5.00B|周期平均 —|周期最高 —|完整周期 0",
+        "已用62% ≥977M|容量 ≈1.58B|均值 —|峰值 —",
         string.Join('|', zh.CodexQuotaCapacityMetrics(localFallback, 62)),
         "fallback current value stays a local lower bound instead of a back-estimated account total");
     Equal("本机下限", zh.CodexQuotaObservationEvidence(localFallback), "fallback source quality is explicit");
     Equal(
-        "Used 29% collecting|Sample 100% collecting|4wk/week —|Cycle avg —|Cycle max —|Full cycles 0",
+        "Used 29% collecting|Capacity collecting|Avg —|Peak —",
         string.Join('|', en.CodexQuotaCapacityMetrics(capacity with
         {
             CurrentCapacityTokens = null,
@@ -10931,7 +10933,7 @@ static void TestQuotaPacePopoverPresentation()
         }, 29)),
         "missing capacity data is explicit without fabricating values");
     Equal(
-        "已用29% 记录中|样本100% 记录中|近4周/周 —|周期平均 —|周期最高 —|完整周期 0",
+        "已用29% 记录中|容量 记录中|均值 —|峰值 —",
         string.Join('|', zh.CodexQuotaCapacityMetrics(null, 29)),
         "Codex quota hover advertises collection before the first attributable observation");
     Equal("Click to pin", en.PinHint, "English pin hint stays concise");
@@ -11726,6 +11728,8 @@ static void TestRadarPopoverLayout()
     Equal("Total", en.CodexTotalMetricLabel, "English metric scope label");
     Equal("30 日", zh.CodexLast30DaysMetricLabel, "Chinese spend period label");
     Equal("API equivalent estimate", en.CodexSpendMetricTitle, "English spend card names the estimate");
+    Equal("估算", zh.CodexCompactSpendMetricTitle, "Chinese compact spend footer stays short");
+    Equal("Estimate", en.CodexCompactSpendMetricTitle, "English compact spend footer stays short");
     Equal("42 sessions", en.CodexSessionCount(42), "spend card keeps session scope secondary");
     Equal("Token", zh.CodexTokenRadarMetricTitle, "Chinese Radar token metric title");
     Equal("Cache", en.CodexCacheRadarMetricTitle, "English Radar cache metric title");

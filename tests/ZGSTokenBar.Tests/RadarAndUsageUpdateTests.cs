@@ -369,6 +369,11 @@ internal static class RadarAndUsageUpdateTests
             Check(layout.RecentColumns.Count == 7 && layout.RecentColumns[^1].Right == layout.RecentTurnsBounds.Right,
                 "split recent-conversation columns fit without overlap at each DPI");
             Check(layout.RecentPageSize == 4, "four recent conversations fit on the split page");
+            Check(!layout.FooterCompactBounds.IsEmpty
+                && layout.FooterSpendBounds.Left == layout.FooterCompactBounds.Left
+                && layout.FooterSpendBounds.Right < layout.FooterCompactBounds.Right
+                && layout.FooterCompactBounds.Bottom <= layout.BodySize.Height,
+                "estimate, token and cache metrics share one compact footer row");
             using var headerFont = new Font("Segoe UI", (float)(7 * dpi / 96d), FontStyle.Bold, GraphicsUnit.Pixel);
             foreach (var text in new[] { NativeText.For("zh-CN"), NativeText.For("en") })
             {

@@ -148,6 +148,67 @@ internal static class PersistenceRegressionTests
             "retry keeps the newest session watermark without double counting its old copy");
     }
 
+    internal static void ConversationHistoryPersistence()
+    {
+        using var fixture = new LedgerFixture();
+        var path = Path.Combine(fixture.HomeA, "sessions", "history.jsonl");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var started = fixture.Now.AddMinutes(-5);
+        var lines = new[]
+        {
+            JsonSerializer.Serialize(new
+            {
+                timestamp = started,
+                type = "event_msg",
+                payload = new { type = "task_started", turn_id = "history-turn", started_at = started },
+            }),
+            JsonSerializer.Serialize(new
+            {
+                timestamp = started,
+                type = "turn_context",
+                payload = new { turn_id = "history-turn", model = "gpt-6.1-sol", effort = "high", cwd = "D:/project" },
+            }),
+            JsonSerializer.Serialize(new
+            {
+                timestamp = started.AddSeconds(20),
+                type = "event_msg",
+                payload = new
+                {
+                    type = "token_count",
+                    info = new
+                    {
+                        total_token_usage = new { total_tokens = 1_000L, input_tokens = 800L, cached_input_tokens = 200L, output_tokens = 200L },
+                        last_token_usage = new { total_tokens = 1_000L, input_tokens = 800L, cached_input_tokens = 200L, output_tokens = 200L },
+                    },
+                },
+            }),
+            JsonSerializer.Serialize(new
+            {
+                timestamp = started.AddSeconds(30),
+                type = "event_msg",
+                payload = new
+                {
+                    type = "task_complete",
+                    turn_id = "history-turn",
+                    completed_at = started.AddSeconds(25),
+                    time_to_first_token_ms = 1_200,
+                },
+            }),
+        };
+        File.WriteAllText(path, string.Join('\n', lines) + "\n");
+        File.SetLastWriteTimeUtc(path, fixture.Now.UtcDateTime);
+
+        var ledger = fixture.Ledger(fixture.HomeA);
+        var summary = ledger.Refresh(fixture.Now);
+        Require(summary?.ConversationHistory.Count == 1
+            && summary.ConversationHistory[0].FirstTokenSeconds == 1.2,
+            "completed conversation summary is persisted with first-token timing");
+        var reloaded = fixture.Ledger(fixture.HomeA).Snapshot(fixture.Now);
+        Require(reloaded?.ConversationHistory.Count == 1
+            && reloaded.ConversationTurns.Count == 1,
+            "conversation summary survives restart without raw content");
+    }
+
     internal static void BuiltinDataRootIsolation()
     {
         using var fixture = new LedgerFixture();

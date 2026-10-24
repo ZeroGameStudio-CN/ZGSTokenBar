@@ -266,20 +266,19 @@ test('Codex logo hover owns local token totals and cache hit rate without coupli
 });
 
 test('Codex quota hover separates source-qualified raw-token references', () => {
-  assert.match(popover, /LogicalCodexTokenBodyHeight = 207/);
+  assert.match(popover, /LogicalCodexTokenBodyHeight = 187/);
   assert.match(popover, /DrawQuotaTokenCapacity/);
   assert.match(popover, /const int columnCount = 2/);
-  assert.match(popover, /row \* 15/);
+  assert.match(popover, /row \* 16/);
   assert.match(popover, /content\.Card\.Provider == ProviderKind\.Codex && !content\.Card\.IsService/);
   assert.doesNotMatch(popover, /CodexQuotaTokens\?\.HasData/);
-  assert.match(nativeText, /Token · 原始用量/);
-  assert.match(nativeText, /Tokens · raw usage/);
+  assert.match(nativeText, /CodexQuotaCapacityTitle => T\("Token", "Tokens"\)/);
   assert.match(nativeText, /已用\{percent\}/);
-  assert.match(nativeText, /样本100%/);
-  assert.match(nativeText, /近4周\/周/);
+  assert.match(nativeText, /容量/);
+  assert.match(nativeText, /均值/);
+  assert.match(nativeText, /峰值/);
   assert.match(nativeText, /本机下限/);
   assert.match(nativeText, /IsCurrentLocalFallback/);
-  assert.match(nativeText, /RecentWeeklyAverageTokens/);
   assert.match(nativeText, /"≥"/);
   assert.match(nativeText, /EstimateUsedTokens/);
   assert.match(popover, /CodexQuotaObservationEvidence/);

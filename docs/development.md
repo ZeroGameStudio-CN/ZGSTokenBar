@@ -95,8 +95,12 @@ file checkpoints before reuse. No conversation content is persisted. Real turn
 start/completion times and cumulative counter deltas determine the average;
 explicit first-token latency remains a separate metric. Interrupted turns freeze
 their timing; dormant unfinished turns show unavailable speed. The lifetime
-baseline is unchanged. The popover pages through all twelve recent conversations,
-and plugin snapshot details expose the same values and state. The compact table
+baseline is unchanged. Completed turn summaries are retained in the existing
+local token index for up to 90 days or 500 turns, keyed by session and turn;
+prompts and responses are never written. The popover starts at the newest
+summaries and pages through the retained records, while unfinished turns remain
+in the live window. Plugin snapshot details continue to expose the bounded recent
+view. The compact table
 shows new input (input minus cache hits), output, cached input, API-equivalent
 cost, turn-average output rate and first-token latency. Cost is summed per proven
 request/model/tier; unknown coverage is unavailable or marked with a plus.

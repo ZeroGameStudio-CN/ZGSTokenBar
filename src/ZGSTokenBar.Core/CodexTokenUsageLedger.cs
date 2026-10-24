@@ -51,7 +51,9 @@ public sealed class CodexTokenUsageLedger
                     return observed;
                 });
                 _pending = null;
-                _summary = committed.Summary;
+                _summary = committed.Summary is null
+                    ? null
+                    : committed.Summary with { ConversationHistory = committed.Index.ConversationHistory };
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
@@ -67,6 +69,7 @@ public sealed class CodexTokenUsageLedger
                     RecentTurns = _conversations.Refresh(observed.RecentSessionPaths, now, cancellationToken),
                     PendingConversationCount = _conversations.PendingSessions,
                 };
+                _summary = PersistConversationHistory(_summary, now);
             }
             return _summary;
         }
@@ -102,6 +105,7 @@ public sealed class CodexTokenUsageLedger
                 RecentTurns = _conversations.Refresh(recent, now, cancellationToken),
                 PendingConversationCount = _conversations.PendingSessions,
             };
+            _summary = PersistConversationHistory(_summary, now);
             return _summary;
         }
     }
@@ -126,9 +130,66 @@ public sealed class CodexTokenUsageLedger
         {
             HistoricalBaselineTokens = current.HistoricalBaselineTokens,
             HistoricalBaselineAt = current.HistoricalBaselineAt,
+            ConversationHistory = current.ConversationHistory,
             Files = files.Values.OrderBy(file => file.Key, StringComparer.Ordinal).ToList(),
         };
     }
+
+    private CodexTokenUsageSummary PersistConversationHistory(
+        CodexTokenUsageSummary summary,
+        DateTimeOffset now)
+    {
+        var completed = summary.RecentTurns.Where(turn => turn.IsTerminal).ToArray();
+        if (completed.Length == 0) return summary;
+
+        try
+        {
+            var persisted = _store.UpdateCodexTokenUsageIndex(current =>
+            {
+                var history = MergeConversationHistory(current.ConversationHistory, completed, now);
+                if (HistoryEquals(current.ConversationHistory, history))
+                    return new CodexTokenUsageReadResult(summary, current, false);
+
+                current.ConversationHistory = history;
+                return new CodexTokenUsageReadResult(
+                    summary with { ConversationHistory = history },
+                    current,
+                    true);
+            });
+            return summary with { ConversationHistory = persisted.Index.ConversationHistory };
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return summary;
+        }
+    }
+
+    private static List<CodexConversationTurn> MergeConversationHistory(
+        IReadOnlyList<CodexConversationTurn>? existing,
+        IReadOnlyList<CodexConversationTurn> updates,
+        DateTimeOffset now)
+    {
+        var turns = (existing ?? [])
+            .Where(turn => turn.IsTerminal)
+            .ToDictionary(TurnKey, StringComparer.Ordinal);
+        foreach (var turn in updates)
+            turns[TurnKey(turn)] = turn with { Stale = false };
+
+        var cutoff = now.AddDays(-CodexTokenUsageIndex.ConversationHistoryRetentionDays);
+        return turns.Values
+            .Where(turn => turn.ObservedAt >= cutoff)
+            .OrderByDescending(turn => turn.ObservedAt)
+            .Take(CodexTokenUsageIndex.ConversationHistoryLimit)
+            .ToList();
+    }
+
+    private static bool HistoryEquals(
+        IReadOnlyList<CodexConversationTurn>? left,
+        IReadOnlyList<CodexConversationTurn> right) =>
+        (left ?? []).SequenceEqual(right);
+
+    private static string TurnKey(CodexConversationTurn turn) =>
+        $"{turn.SessionId}\u001f{turn.TurnId}";
 
     private static bool IsNewer(CodexTokenUsageFileIndex pending, CodexTokenUsageFileIndex saved)
     {
