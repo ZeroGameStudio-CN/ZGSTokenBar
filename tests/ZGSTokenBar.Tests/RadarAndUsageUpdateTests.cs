@@ -366,8 +366,16 @@ internal static class RadarAndUsageUpdateTests
             Check(layout.HasRecentColumn, "Radar uses a separate recent-conversation column");
             Check(layout.RecentTurnsBounds.Left > layout.TableViewport.Right, "turn panel clears the compact Radar column");
             Check(layout.RecentTurnsBounds.Bottom <= layout.BodySize.Height, "turn panel fits the split body");
-            Check(layout.RecentColumns.Count == 7 && layout.RecentColumns[^1].Right == layout.RecentTurnsBounds.Right,
-                "split recent-conversation columns fit without overlap at each DPI");
+            var inset = (int)Math.Round(8 * dpi / 96d);
+            Check(layout.RecentColumns.Count == 7
+                && layout.RecentColumns[0].Left == layout.RecentTurnsBounds.Left + inset
+                && layout.RecentColumns[^1].Right == layout.RecentTurnsBounds.Right - inset,
+                "split recent conversations keep equal horizontal breathing room at each DPI");
+            Check(layout.RecentNextBounds.Right == layout.RecentColumns[^1].Right
+                && layout.RecentPreviousBounds.Left > layout.RecentColumns[0].Left,
+                "paging controls align with the table content instead of the card edge");
+            Check(layout.RecentColumns[^1].Right - layout.RecentColumns[0].Left == (int)Math.Round(440 * dpi / 96d),
+                "split panel retains its usable metric width after adding padding");
             Check(layout.RecentPageSize == 4, "four recent conversations fit on the split page");
             Check(!layout.FooterCompactBounds.IsEmpty
                 && layout.FooterSpendBounds.Left == layout.FooterCompactBounds.Left
@@ -391,8 +399,10 @@ internal static class RadarAndUsageUpdateTests
             }
             var token = RadarPopoverLayout.CreateTokenUsage(dpi, 4);
             Check(token.RecentTurnsBounds.Bottom <= token.BodySize.Height, "local panel fits at all supported DPI");
-            Check(token.RecentColumns.Count == 7 && token.RecentColumns[^1].Right == token.RecentTurnsBounds.Right,
-                "seven compact metric columns fit without overlap at each DPI");
+            Check(token.RecentColumns.Count == 7
+                && token.RecentColumns[0].Left == token.RecentTurnsBounds.Left + inset
+                && token.RecentColumns[^1].Right == token.RecentTurnsBounds.Right - inset,
+                "standalone conversation table keeps the same horizontal breathing room at each DPI");
         }
 
         var compactRadar = RadarPopoverLayout.CreateGrouped(

@@ -593,10 +593,13 @@ internal sealed class RadarPopoverRenderer : IDisposable
             usage.ConversationTurns.Count,
             layout.RecentPageSize);
         var labelColor = Color.FromArgb(148, 163, 184);
+        var columns = layout.RecentColumns;
         DrawText(graphics, text.CodexRecentTurnsTitle + (usage.PendingConversationCount > 0
                 ? " · " + text.CodexConversationsIndexing(usage.PendingConversationCount) : ""),
             fonts.Badge, Color.FromArgb(165, 180, 252),
-            new Rectangle(bounds.Left, bounds.Top, bounds.Width - Scale(layout.Dpi, 68), Scale(layout.Dpi, 16)), CellTextFlags);
+            new Rectangle(origin.X + columns[0].Left, bounds.Top,
+                columns[^1].Right - columns[0].Left - Scale(layout.Dpi, 68),
+                Scale(layout.Dpi, 16)), CellTextFlags);
         if (page.PageCount > 1)
         {
             var previous = Offset(layout.RecentPreviousBounds, origin);
@@ -606,7 +609,6 @@ internal sealed class RadarPopoverRenderer : IDisposable
                 new Rectangle(previous.Right, previous.Top, next.Left - previous.Right, previous.Height), CellTextFlags);
             DrawText(graphics, "›", fonts.Model, page.HasNext ? Color.White : labelColor, next, CellTextFlags | TextFormatFlags.Right);
         }
-        var columns = layout.RecentColumns;
         var headers = text.CodexConversationHeaders;
         for (var column = 0; column < columns.Count; column++)
             DrawText(graphics, headers[column], fonts.Badge, labelColor,
@@ -617,7 +619,8 @@ internal sealed class RadarPopoverRenderer : IDisposable
         using var divider = new Pen(Color.FromArgb(40, 71, 85, 105));
         foreach (var turn in usage.ConversationTurns.Skip(page.Offset).Take(page.Count))
         {
-            graphics.DrawLine(divider, bounds.Left, y, bounds.Right, y);
+            graphics.DrawLine(divider, origin.X + columns[0].Left, y,
+                origin.X + columns[^1].Right, y);
             var values = new[]
             {
                 string.Join(' ', new[] { turn.Model ?? "—", turn.Effort }.Where(value => value is not null)),

@@ -39,7 +39,8 @@ public sealed class RadarPopoverLayout
     public const int ConversationRowHeight = 22;
     public const int LogicalRadarColumnWidth = 400;
     public const int LogicalRecentColumnLeft = 428;
-    public const int LogicalRecentColumnWidth = 440;
+    public const int LogicalRecentColumnWidth = 456;
+    public const int LogicalRecentColumnInset = 8;
     public const int LogicalSplitWidth = LogicalRecentColumnLeft + LogicalRecentColumnWidth + 14;
 
     private RadarPopoverLayout(
@@ -126,9 +127,10 @@ public sealed class RadarPopoverLayout
             int Scale(int value) => (int)Math.Round(value * Dpi / 96d);
             var widths = new[] { 46, 46, 46, 62, 66, 48 }.Select(Scale).ToArray();
             var gap = Scale(5);
-            var modelWidth = Math.Max(1, RecentTurnsBounds.Width - widths.Sum() - 6 * gap);
+            var inset = Scale(LogicalRecentColumnInset);
+            var modelWidth = Math.Max(1, RecentTurnsBounds.Width - inset * 2 - widths.Sum() - 6 * gap);
             var columns = new List<RadarPopoverColumn>();
-            var left = RecentTurnsBounds.Left;
+            var left = RecentTurnsBounds.Left + inset;
             foreach (var width in new[] { modelWidth }.Concat(widths))
             {
                 columns.Add(new(left, left + width));
@@ -138,7 +140,7 @@ public sealed class RadarPopoverLayout
         }
     }
     private Rectangle RecentPageButton(int rightOffset) => RecentTurnsBounds.IsEmpty ? Rectangle.Empty
-        : new Rectangle(RecentTurnsBounds.Right - (int)Math.Round(rightOffset * Dpi / 96d),
+        : new Rectangle(RecentTurnsBounds.Right - (int)Math.Round((rightOffset + LogicalRecentColumnInset) * Dpi / 96d),
             RecentTurnsBounds.Top, (int)Math.Round(20 * Dpi / 96d), (int)Math.Round(16 * Dpi / 96d));
 
     public int RecentTurnIndexAt(Point point, int offset, int total)
