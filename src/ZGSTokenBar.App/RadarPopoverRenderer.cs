@@ -56,6 +56,8 @@ internal sealed class RadarPopoverRenderer : IDisposable
 
         var body = BodyBounds(layout, tailSide);
         DrawBody(graphics, layout, tailSide, tailOffset, body);
+        if (layout.HasRecentColumn)
+            DrawRecentColumnSurface(graphics, layout, body.Location);
         if (layout.TokenOnly)
         {
             if (tokenUsage is not null)
@@ -738,6 +740,25 @@ internal sealed class RadarPopoverRenderer : IDisposable
         graphics.FillPath(fill, bodyPath);
         graphics.DrawPath(border, bodyPath);
         DrawTail(graphics, layout, tailSide, tailOffset, fill, border, body);
+    }
+
+    private static void DrawRecentColumnSurface(
+        Graphics graphics,
+        RadarPopoverLayout layout,
+        Point origin)
+    {
+        var bounds = Offset(layout.RecentColumnBounds, origin);
+        using var path = RoundedRectangle(
+            new Rectangle(bounds.X, bounds.Y, Math.Max(1, bounds.Width - 1), Math.Max(1, bounds.Height - 1)),
+            Scale(layout.Dpi, 8));
+        using var fill = new SolidBrush(Color.FromArgb(14, 30, 41, 59));
+        using var border = new Pen(Color.FromArgb(46, 71, 85, 105));
+        graphics.FillPath(fill, path);
+        graphics.DrawPath(border, path);
+
+        using var divider = new Pen(Color.FromArgb(52, 71, 85, 105));
+        var dividerX = bounds.Left - Scale(layout.Dpi, 8);
+        graphics.DrawLine(divider, dividerX, bounds.Top, dividerX, bounds.Bottom);
     }
 
     private static void DrawHistoryBody(

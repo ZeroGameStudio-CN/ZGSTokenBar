@@ -360,8 +360,26 @@ internal static class RadarAndUsageUpdateTests
         {
             var layout = RadarPopoverLayout.CreateGrouped(dpi, ["gpt-6.1-sol"], new HashSet<string>(), false,
                 hasSpendSummary: true, maximumBodyHeight: dpi * 6, recentTurnCount: 4);
-            Check(layout.RecentTurnsBounds.Bottom <= layout.FooterSpendBounds.Top, "turn panel does not overlap spend");
-            Check(layout.TableViewport.Bottom <= layout.RecentTurnsBounds.Top, "scroll viewport excludes the turn panel");
+            Check(layout.HasRecentColumn, "Radar uses a separate recent-conversation column");
+            Check(layout.RecentTurnsBounds.Left > layout.TableViewport.Right, "turn panel clears the compact Radar column");
+            Check(layout.RecentTurnsBounds.Bottom <= layout.BodySize.Height, "turn panel fits the split body");
+            Check(layout.RecentColumns.Count == 7 && layout.RecentColumns[^1].Right == layout.RecentTurnsBounds.Right,
+                "split recent-conversation columns fit without overlap at each DPI");
+            using var headerFont = new Font("Segoe UI", (float)(7 * dpi / 96d), FontStyle.Bold, GraphicsUnit.Pixel);
+            foreach (var text in new[] { NativeText.For("zh-CN"), NativeText.For("en") })
+            {
+                var headers = text.CodexConversationHeaders;
+                for (var index = 0; index < headers.Length; index++)
+                {
+                    var width = System.Windows.Forms.TextRenderer.MeasureText(
+                        headers[index], headerFont, Size.Empty,
+                        System.Windows.Forms.TextFormatFlags.NoPadding
+                        | System.Windows.Forms.TextFormatFlags.NoPrefix
+                        | System.Windows.Forms.TextFormatFlags.SingleLine).Width;
+                    Check(width <= layout.RecentColumns[index].Width,
+                        $"{dpi} DPI {text.Locale} recent header {index} fits");
+                }
+            }
             var token = RadarPopoverLayout.CreateTokenUsage(dpi, 4);
             Check(token.RecentTurnsBounds.Bottom <= token.BodySize.Height, "local panel fits at all supported DPI");
             Check(token.RecentColumns.Count == 7 && token.RecentColumns[^1].Right == token.RecentTurnsBounds.Right,

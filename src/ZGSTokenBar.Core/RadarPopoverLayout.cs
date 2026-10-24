@@ -37,6 +37,10 @@ public sealed class RadarPopoverLayout
     public const int LogicalTokenHeight = 162;
     public const int ConversationHeaderHeight = 36;
     public const int ConversationRowHeight = 22;
+    public const int LogicalRadarColumnWidth = 400;
+    public const int LogicalRecentColumnLeft = 428;
+    public const int LogicalRecentColumnWidth = 500;
+    public const int LogicalSplitWidth = LogicalRecentColumnLeft + LogicalRecentColumnWidth + 14;
 
     private RadarPopoverLayout(
         int dpi,
@@ -109,6 +113,8 @@ public sealed class RadarPopoverLayout
     public Rectangle ScrollTrackBounds { get; private init; }
     public Rectangle ScrollThumbBounds { get; private init; }
     public Rectangle RecentTurnsBounds { get; private init; }
+    public Rectangle RecentColumnBounds { get; private init; }
+    public bool HasRecentColumn => !RecentColumnBounds.IsEmpty;
     public Rectangle RecentPreviousBounds => RecentPageButton(64);
     public Rectangle RecentNextBounds => RecentPageButton(20);
     public IReadOnlyList<RadarPopoverColumn> RecentColumns
@@ -118,7 +124,7 @@ public sealed class RadarPopoverLayout
             int Scale(int value) => (int)Math.Round(value * Dpi / 96d);
             var widths = new[] { 46, 46, 46, 62, 66, 48 }.Select(Scale).ToArray();
             var gap = Scale(5);
-            var modelWidth = RecentTurnsBounds.Width - widths.Sum() - 6 * gap;
+            var modelWidth = Math.Max(1, RecentTurnsBounds.Width - widths.Sum() - 6 * gap);
             var columns = new List<RadarPopoverColumn>();
             var left = RecentTurnsBounds.Left;
             foreach (var width in new[] { modelWidth }.Concat(widths))
@@ -205,6 +211,8 @@ public sealed class RadarPopoverLayout
     {
         dpi = Math.Max(96, dpi);
         rowCount = Math.Max(0, rowCount);
+        var splitRecent = recentTurnCount > 0;
+        var radarContentWidth = splitRecent ? LogicalRadarColumnWidth : LogicalWidth - 28;
         var recentHeight = RecentTurnsHeight(recentTurnCount);
         var footerStart = showLegend ? 48 : 30;
         var logicalErrorHeight = hasInlineError ? 14 : 0;
@@ -218,7 +226,9 @@ public sealed class RadarPopoverLayout
                 + modelGroupGaps * LogicalModelGroupGap
                 + logicalErrorHeight
                 + resetBannerOffset)
-            + (hasSpendSummary ? LogicalSpendSummaryHeight : 0) + recentHeight - (showLegend ? 0 : 18);
+            + (hasSpendSummary ? LogicalSpendSummaryHeight : 0)
+            + (splitRecent ? 0 : recentHeight)
+            - (showLegend ? 0 : 18);
 
         int Scale(int value) => Math.Max(
             1,
@@ -245,26 +255,32 @@ public sealed class RadarPopoverLayout
                 if (headers.Count > 0) rowY += LogicalModelGroupGap;
                 var collapsed = collapsedModels.Contains(group.Key);
                 headers.Add(new RadarModelGroupHeader(group.Key, collapsed,
-                    Rect(14, rowY, 448, LogicalModelGroupHeaderHeight)));
+                    Rect(14, rowY, radarContentWidth, LogicalModelGroupHeaderHeight)));
                 rowY += LogicalModelGroupHeaderHeight;
                 if (collapsed) continue;
                 foreach (var item in group)
                 {
-                    rows[item.index] = Rect(14, rowY, 448, LogicalRowHeight);
+                    rows[item.index] = Rect(14, rowY, radarContentWidth, LogicalRowHeight);
                     rowY += LogicalRowHeight;
                 }
             }
             logicalHeight = rowY + 52 + logicalErrorHeight
-                + (hasSpendSummary ? LogicalSpendSummaryHeight : 0) + recentHeight - (showLegend ? 0 : 18);
+                + (hasSpendSummary ? LogicalSpendSummaryHeight : 0)
+                + (splitRecent ? 0 : recentHeight)
+                - (showLegend ? 0 : 18);
         }
         else
         {
             for (var index = 0; index < rowCount; index++)
             {
-                rows.Add(Rect(14, rowY, 448, LogicalRowHeight));
+                rows.Add(Rect(14, rowY, radarContentWidth, LogicalRowHeight));
                 rowY += LogicalRowHeight;
                 if (IsModelGroupStart(index + 1, rowCount, modelKeys)) rowY += LogicalModelGroupGap;
             }
+        }
+        if (splitRecent)
+        {
+            logicalHeight = Math.Max(logicalHeight, 24 + recentHeight);
         }
         var rowsBottom = rowY;
         var maximumScrollOffset = 0;
@@ -277,8 +293,9 @@ public sealed class RadarPopoverLayout
             var chromeHeight = logicalHeight - rowY + 68 + resetBannerOffset;
             var maximumLogicalHeight = (int)Math.Min(int.MaxValue, maximumBodyHeight * 96d / dpi);
             logicalHeight = Math.Min(logicalHeight, Math.Max(chromeHeight + LogicalModelGroupHeaderHeight, maximumLogicalHeight));
+            if (splitRecent) logicalHeight = Math.Max(logicalHeight, 24 + recentHeight);
             rowsBottom = logicalHeight - (chromeHeight - 68 - resetBannerOffset);
-            viewport = Rect(14, 68 + resetBannerOffset, 448, rowsBottom - 68 - resetBannerOffset);
+            viewport = Rect(14, 68 + resetBannerOffset, radarContentWidth, rowsBottom - 68 - resetBannerOffset);
             maximumScrollOffset = Math.Max(0, contentHeight - viewport.Height);
             scrollOffset = Math.Clamp(scrollOffset, 0, maximumScrollOffset);
             for (var index = 0; index < rows.Count; index++)
@@ -297,7 +314,7 @@ public sealed class RadarPopoverLayout
             }).ToList();
             if (maximumScrollOffset > 0)
             {
-                scrollTrack = new Rectangle(Scale(464), viewport.Top, Scale(8), viewport.Height);
+                scrollTrack = new Rectangle(Scale(16 + radarContentWidth), viewport.Top, Scale(8), viewport.Height);
                 var thumbHeight = Math.Min(viewport.Height, Math.Max(Scale(20),
                     (int)((long)viewport.Height * viewport.Height / contentHeight)));
                 var thumbTop = viewport.Top + (int)((long)scrollOffset * (viewport.Height - thumbHeight) / maximumScrollOffset);
@@ -308,39 +325,43 @@ public sealed class RadarPopoverLayout
             dpi,
             false,
             hasOpenResetWindow,
-            new Size(Scale(LogicalWidth), Scale(logicalHeight)),
+            new Size(Scale(splitRecent ? LogicalSplitWidth : LogicalWidth), Scale(logicalHeight)),
             Scale(LogicalTail),
             Scale(LogicalGap),
             Rect(14, 12, 22, 22),
             Rect(44, 11, 120, 16),
             Rect(44, 26, 160, 12),
             hasOpenResetWindow
-                ? Rect(14, 44, 448, 32)
-                : Rect(208, 26, 254, 12),
-            Rect(160, 12, 302, 16),
-            Rect(14, 48 + resetBannerOffset, 448, 16),
+                ? Rect(14, 44, radarContentWidth, 32)
+                : splitRecent
+                    ? Rect(160, 26, radarContentWidth - 146, 12)
+                    : Rect(208, 26, 254, 12),
+            splitRecent
+                ? Rect(160, 12, radarContentWidth - 146, 16)
+                : Rect(160, 12, 302, 16),
+            Rect(14, 48 + resetBannerOffset, radarContentWidth, 16),
             Scale(65 + resetBannerOffset),
             rows,
-            hasInlineError ? Rect(14, rowsBottom, 448, 14) : Rectangle.Empty,
-            Rect(14, 62 + resetBannerOffset, 448, 32),
+            hasInlineError ? Rect(14, rowsBottom, radarContentWidth, 14) : Rectangle.Empty,
+            Rect(14, 62 + resetBannerOffset, radarContentWidth, 32),
             hasSpendSummary
                 ? Rect(
                     14,
                     logicalHeight - footerStart - LogicalSpendSummaryHeight,
-                    448,
+                    radarContentWidth,
                     LogicalSpendCardHeight)
                 : Rectangle.Empty,
-            Rect(14, logicalHeight - 30, 448, 24),
-            showLegend ? Rect(14, logicalHeight - 48, 448, 14) : Rectangle.Empty,
+            Rect(14, logicalHeight - 30, radarContentWidth, 24),
+            showLegend ? Rect(14, logicalHeight - 48, radarContentWidth, 14) : Rectangle.Empty,
             new RadarPopoverColumns(
                 Column(0, 22),
-                Column(24, 164),
-                Column(168, 176),
-                Column(180, 226),
-                Column(232, 264),
-                Column(270, 310),
-                Column(318, 366),
-                Column(382, 440)))
+                splitRecent ? Column(24, 132) : Column(24, 164),
+                splitRecent ? Column(136, 144) : Column(168, 176),
+                splitRecent ? Column(148, 192) : Column(180, 226),
+                splitRecent ? Column(198, 230) : Column(232, 264),
+                splitRecent ? Column(236, 276) : Column(270, 310),
+                splitRecent ? Column(284, 332) : Column(318, 366),
+                splitRecent ? Column(342, 392) : Column(382, 440)))
         {
             GroupHeaders = headers,
             TableViewport = viewport,
@@ -348,9 +369,14 @@ public sealed class RadarPopoverLayout
             MaximumScrollOffset = maximumScrollOffset,
             ScrollTrackBounds = scrollTrack,
             ScrollThumbBounds = scrollThumb,
-            RecentTurnsBounds = recentHeight == 0 ? Rectangle.Empty
-                : Rect(14, logicalHeight - footerStart - (hasSpendSummary ? LogicalSpendSummaryHeight : 0) - recentHeight,
-                    448, recentHeight - 6),
+            RecentTurnsBounds = splitRecent
+                ? Rect(LogicalRecentColumnLeft, 12, LogicalRecentColumnWidth, Math.Max(1, logicalHeight - 24))
+                : recentHeight == 0 ? Rectangle.Empty
+                    : Rect(14, logicalHeight - footerStart - (hasSpendSummary ? LogicalSpendSummaryHeight : 0) - recentHeight,
+                        radarContentWidth, recentHeight - 6),
+            RecentColumnBounds = splitRecent
+                ? Rect(LogicalRecentColumnLeft, 12, LogicalRecentColumnWidth, Math.Max(1, logicalHeight - 24))
+                : Rectangle.Empty,
         };
     }
 
