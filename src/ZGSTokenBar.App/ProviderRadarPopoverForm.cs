@@ -142,7 +142,10 @@ internal sealed class ProviderRadarPopoverForm : Form
         _layout = radarEnabled
             ? BuildGroupedLayout(dpi)
             : RadarPopoverLayout.CreateTokenUsage(dpi, ConversationRowCount);
-        _recentTurnOffset = CodexConversationPage.Create(_recentTurnOffset, _tokenUsage?.RecentTurns.Count ?? 0).Offset;
+        _recentTurnOffset = CodexConversationPage.Create(
+            _recentTurnOffset,
+            _tokenUsage?.RecentTurns.Count ?? 0,
+            _layout.RecentPageSize).Offset;
         _historyLayout = !deepSeekOnly && HasSpendHistory(tokenUsage)
             ? CodexSpendHistoryLayout.Create(
                 dpi,
@@ -355,7 +358,7 @@ internal sealed class ProviderRadarPopoverForm : Form
             _groupToolTip.SetToolTip(this, null);
         }
         var controlHovered = CanSwitchBenchmark && _layout.SubtitleBounds.Contains(bodyPoint)
-            || _tokenUsage?.RecentTurns.Count > CodexConversationPage.PageSize
+            || _tokenUsage?.RecentTurns.Count > _layout.RecentPageSize
                 && (_layout.RecentPreviousBounds.Contains(bodyPoint) || _layout.RecentNextBounds.Contains(bodyPoint));
         Cursor = hovered || hoveredGroup is not null || controlHovered ? Cursors.Hand : Cursors.Default;
         if (controlHovered) _groupToolTip.SetToolTip(this,
@@ -471,6 +474,10 @@ internal sealed class ProviderRadarPopoverForm : Form
             _deepSeekOnly ? 0 : ConversationRowCount,
             showLegend: _presentation?.TrialObservedAt is null);
         _scrollOffset = layout.ScrollOffset;
+        _recentTurnOffset = CodexConversationPage.Create(
+            _recentTurnOffset,
+            _tokenUsage?.RecentTurns.Count ?? 0,
+            layout.RecentPageSize).Offset;
         return layout;
     }
 
@@ -481,8 +488,10 @@ internal sealed class ProviderRadarPopoverForm : Form
 
     private void ChangeConversationPage(int direction)
     {
-        var next = CodexConversationPage.Create(_recentTurnOffset + direction * CodexConversationPage.PageSize,
-            _tokenUsage?.RecentTurns.Count ?? 0).Offset;
+        var next = CodexConversationPage.Create(
+            _recentTurnOffset + direction * _layout.RecentPageSize,
+            _tokenUsage?.RecentTurns.Count ?? 0,
+            _layout.RecentPageSize).Offset;
         if (next == _recentTurnOffset) return;
         _recentTurnOffset = next;
         _hoveredRecentIndex = -1;

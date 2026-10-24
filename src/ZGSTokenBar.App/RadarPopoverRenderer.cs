@@ -588,7 +588,10 @@ internal sealed class RadarPopoverRenderer : IDisposable
     {
         if (layout.RecentTurnsBounds.IsEmpty) return;
         var bounds = Offset(layout.RecentTurnsBounds, origin);
-        var page = CodexConversationPage.Create(recentTurnOffset, usage.RecentTurns.Count);
+        var page = CodexConversationPage.Create(
+            recentTurnOffset,
+            usage.RecentTurns.Count,
+            layout.RecentPageSize);
         var labelColor = Color.FromArgb(148, 163, 184);
         DrawText(graphics, text.CodexRecentTurnsTitle + (usage.PendingConversationCount > 0
                 ? " · " + text.CodexConversationsIndexing(usage.PendingConversationCount) : ""),

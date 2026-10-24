@@ -317,6 +317,9 @@ internal static class RadarAndUsageUpdateTests
         var last = CodexConversationPage.Create(6, 10);
         Check(last.Offset == 6 && last.Count == 4 && !last.HasNext && last.HasPrevious, "last conversation page is bounded");
         Check(CodexConversationPage.Create(8, 3).Offset == 0, "shrinking lists clamp the current page");
+        var customPage = CodexConversationPage.Create(3, 10, 3);
+        Check(customPage.Offset == 3 && customPage.Count == 3 && customPage.PageCount == 4,
+            "conversation paging honors an adaptive page length");
         var layout = RadarPopoverLayout.CreateTokenUsage(192, 10);
         var point = new Point(layout.RecentTurnsBounds.Left + 5, layout.RecentTurnsBounds.Top + 75);
         Check(layout.RecentTurnIndexAt(point, 6, 10) == 6, "DPI-aware row hit testing maps to the selected page");
@@ -365,6 +368,7 @@ internal static class RadarAndUsageUpdateTests
             Check(layout.RecentTurnsBounds.Bottom <= layout.BodySize.Height, "turn panel fits the split body");
             Check(layout.RecentColumns.Count == 7 && layout.RecentColumns[^1].Right == layout.RecentTurnsBounds.Right,
                 "split recent-conversation columns fit without overlap at each DPI");
+            Check(layout.RecentPageSize == 4, "four recent conversations fit on the split page");
             using var headerFont = new Font("Segoe UI", (float)(7 * dpi / 96d), FontStyle.Bold, GraphicsUnit.Pixel);
             foreach (var text in new[] { NativeText.For("zh-CN"), NativeText.For("en") })
             {
@@ -385,6 +389,25 @@ internal static class RadarAndUsageUpdateTests
             Check(token.RecentColumns.Count == 7 && token.RecentColumns[^1].Right == token.RecentTurnsBounds.Right,
                 "seven compact metric columns fit without overlap at each DPI");
         }
+
+        var compactRadar = RadarPopoverLayout.CreateGrouped(
+            96,
+            ["gpt-6.1-sol"],
+            new HashSet<string>(),
+            false,
+            hasSpendSummary: true,
+            recentTurnCount: 12);
+        var tallRadar = RadarPopoverLayout.CreateGrouped(
+            96,
+            Enumerable.Repeat<string?>("gpt-6.1-sol", 12).ToArray(),
+            new HashSet<string>(),
+            false,
+            hasSpendSummary: true,
+            recentTurnCount: 12);
+        Check(compactRadar.RecentPageSize < tallRadar.RecentPageSize,
+            "recent page length expands with the available Radar height");
+        Check(tallRadar.RecentPageSize == 12,
+            "a tall Radar page shows all twelve recent conversations when they fit");
     }
 
     internal static void Capture(string directory)

@@ -39,7 +39,7 @@ public sealed class RadarPopoverLayout
     public const int ConversationRowHeight = 22;
     public const int LogicalRadarColumnWidth = 400;
     public const int LogicalRecentColumnLeft = 428;
-    public const int LogicalRecentColumnWidth = 500;
+    public const int LogicalRecentColumnWidth = 440;
     public const int LogicalSplitWidth = LogicalRecentColumnLeft + LogicalRecentColumnWidth + 14;
 
     private RadarPopoverLayout(
@@ -115,6 +115,7 @@ public sealed class RadarPopoverLayout
     public Rectangle RecentTurnsBounds { get; private init; }
     public Rectangle RecentColumnBounds { get; private init; }
     public bool HasRecentColumn => !RecentColumnBounds.IsEmpty;
+    public int RecentPageSize { get; private init; } = CodexConversationPage.PageSize;
     public Rectangle RecentPreviousBounds => RecentPageButton(64);
     public Rectangle RecentNextBounds => RecentPageButton(20);
     public IReadOnlyList<RadarPopoverColumn> RecentColumns
@@ -145,7 +146,7 @@ public sealed class RadarPopoverLayout
         var rowHeight = (int)Math.Round(ConversationRowHeight * Dpi / 96d);
         if (!RecentTurnsBounds.Contains(point) || point.Y < top) return -1;
         var index = (point.Y - top) / rowHeight;
-        var page = CodexConversationPage.Create(offset, total);
+        var page = CodexConversationPage.Create(offset, total, RecentPageSize);
         return index < page.Count ? page.Offset + index : -1;
     }
 
@@ -278,9 +279,15 @@ public sealed class RadarPopoverLayout
                 if (IsModelGroupStart(index + 1, rowCount, modelKeys)) rowY += LogicalModelGroupGap;
             }
         }
+        var recentPageSize = CodexConversationPage.PageSize;
         if (splitRecent)
         {
-            logicalHeight = Math.Max(logicalHeight, 24 + recentHeight);
+            logicalHeight = Math.Max(
+                logicalHeight,
+                24 + ConversationHeaderHeight + ConversationRowHeight);
+            recentPageSize = Math.Min(
+                recentTurnCount,
+                Math.Max(1, (logicalHeight - 60) / ConversationRowHeight));
         }
         var rowsBottom = rowY;
         var maximumScrollOffset = 0;
@@ -293,7 +300,15 @@ public sealed class RadarPopoverLayout
             var chromeHeight = logicalHeight - rowY + 68 + resetBannerOffset;
             var maximumLogicalHeight = (int)Math.Min(int.MaxValue, maximumBodyHeight * 96d / dpi);
             logicalHeight = Math.Min(logicalHeight, Math.Max(chromeHeight + LogicalModelGroupHeaderHeight, maximumLogicalHeight));
-            if (splitRecent) logicalHeight = Math.Max(logicalHeight, 24 + recentHeight);
+            if (splitRecent)
+            {
+                logicalHeight = Math.Max(
+                    logicalHeight,
+                    24 + ConversationHeaderHeight + ConversationRowHeight);
+                recentPageSize = Math.Min(
+                    recentTurnCount,
+                    Math.Max(1, (logicalHeight - 60) / ConversationRowHeight));
+            }
             rowsBottom = logicalHeight - (chromeHeight - 68 - resetBannerOffset);
             viewport = Rect(14, 68 + resetBannerOffset, radarContentWidth, rowsBottom - 68 - resetBannerOffset);
             maximumScrollOffset = Math.Max(0, contentHeight - viewport.Height);
@@ -370,13 +385,26 @@ public sealed class RadarPopoverLayout
             ScrollTrackBounds = scrollTrack,
             ScrollThumbBounds = scrollThumb,
             RecentTurnsBounds = splitRecent
-                ? Rect(LogicalRecentColumnLeft, 12, LogicalRecentColumnWidth, Math.Max(1, logicalHeight - 24))
+                ? Rect(
+                    LogicalRecentColumnLeft,
+                    12,
+                    LogicalRecentColumnWidth,
+                    Math.Min(
+                        Math.Max(1, logicalHeight - 24),
+                        ConversationHeaderHeight + recentPageSize * ConversationRowHeight + 12))
                 : recentHeight == 0 ? Rectangle.Empty
                     : Rect(14, logicalHeight - footerStart - (hasSpendSummary ? LogicalSpendSummaryHeight : 0) - recentHeight,
                         radarContentWidth, recentHeight - 6),
             RecentColumnBounds = splitRecent
-                ? Rect(LogicalRecentColumnLeft, 12, LogicalRecentColumnWidth, Math.Max(1, logicalHeight - 24))
+                ? Rect(
+                    LogicalRecentColumnLeft,
+                    12,
+                    LogicalRecentColumnWidth,
+                    Math.Min(
+                        Math.Max(1, logicalHeight - 24),
+                        ConversationHeaderHeight + recentPageSize * ConversationRowHeight + 12))
                 : Rectangle.Empty,
+            RecentPageSize = recentPageSize,
         };
     }
 

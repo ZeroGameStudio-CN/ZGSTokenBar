@@ -3,15 +3,23 @@ namespace ZGSTokenBar.Core;
 public readonly record struct CodexConversationPage(int Offset, int Count, int Total)
 {
     public const int PageSize = 6;
+    public int PageLength { get; init; } = PageSize;
     public bool HasPrevious => Offset > 0;
     public bool HasNext => Offset + Count < Total;
-    public int PageNumber => Offset / PageSize + 1;
-    public int PageCount => Math.Max(1, (Total + PageSize - 1) / PageSize);
+    public int PageNumber => Offset / PageLength + 1;
+    public int PageCount => Math.Max(1, (Total + PageLength - 1) / PageLength);
 
-    public static CodexConversationPage Create(int offset, int total)
+    public static CodexConversationPage Create(
+        int offset,
+        int total,
+        int pageLength = PageSize)
     {
         total = Math.Max(0, total);
-        offset = Math.Clamp(offset / PageSize, 0, Math.Max(0, (total - 1) / PageSize)) * PageSize;
-        return new(offset, Math.Min(PageSize, total - offset), total);
+        pageLength = Math.Max(1, pageLength);
+        offset = Math.Clamp(offset / pageLength, 0, Math.Max(0, (total - 1) / pageLength)) * pageLength;
+        return new(offset, Math.Min(pageLength, total - offset), total)
+        {
+            PageLength = pageLength,
+        };
     }
 }
