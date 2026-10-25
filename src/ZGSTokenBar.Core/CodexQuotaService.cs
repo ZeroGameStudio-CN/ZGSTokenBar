@@ -10,6 +10,8 @@ namespace ZGSTokenBar.Core;
 
 public sealed class CodexQuotaService
 {
+    private const int MaximumAccounts = 64;
+    private const long MaximumRegistryBytes = 1 * 1024 * 1024;
     private const string DefaultBaseUrl = "https://chatgpt.com/backend-api";
     private const string TokenUrl = "https://auth.openai.com/oauth/token";
     private const string DefaultClientId = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -515,11 +517,19 @@ public sealed class CodexQuotaService
         var registryPath = Path.Combine(home, "accounts", "registry.json");
         try
         {
+            if (new FileInfo(registryPath).Length > MaximumRegistryBytes)
+            {
+                throw new InvalidDataException("Codex account registry exceeds the size limit.");
+            }
             using var document = JsonDocument.Parse(File.ReadAllText(registryPath));
             var root = document.RootElement;
             if (!root.TryGetProperty("accounts", out var accounts) || accounts.ValueKind != JsonValueKind.Array)
             {
                 return rootCredential is null ? [] : [rootCredential];
+            }
+            if (accounts.GetArrayLength() > MaximumAccounts)
+            {
+                throw new InvalidDataException("Codex account registry exceeds the account limit.");
             }
 
             var activeKey = root.StringProperty("active_account_key");

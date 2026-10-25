@@ -176,6 +176,7 @@ public sealed class CodexTokenUsageReader
     internal const int MaximumLineBytes = 256 * 1024;
     internal const int InitialTailBytes = 256 * 1024;
     internal const int MaximumTailProbeBytes = 8 * 1024 * 1024;
+    internal const int MaximumCandidateFiles = 4096;
     internal const int SpendRetentionDays = 32;
     private const string StandardPricingTier = "standard";
     private const int MaximumSpendModelDisplayLength = 64;
@@ -846,6 +847,7 @@ public sealed class CodexTokenUsageReader
     private static Dictionary<string, FileInfo> CandidateFiles(IReadOnlyList<string> codexHomes)
     {
         var files = new Dictionary<string, FileInfo>(StringComparer.Ordinal);
+        var enumeratedFiles = 0;
         foreach (var codexHome in codexHomes.Distinct(StringComparer.OrdinalIgnoreCase))
         foreach (var directoryName in new[] { "sessions", "archived_sessions" })
         {
@@ -855,6 +857,8 @@ public sealed class CodexTokenUsageReader
             {
                 foreach (var path in Directory.EnumerateFiles(directory, "*.jsonl", SearchOption.AllDirectories))
                 {
+                    if (++enumeratedFiles > MaximumCandidateFiles) break;
+                    if (files.Count >= MaximumCandidateFiles) break;
                     try
                     {
                         var file = new FileInfo(path);

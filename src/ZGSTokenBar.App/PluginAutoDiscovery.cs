@@ -16,6 +16,7 @@ internal static class PluginAutoDiscovery
     {
         if (store.SettingsReadPending) return false;
         var original = EnablementState.Capture(settings);
+        var byId = plugins.ToDictionary(plugin => plugin.Manifest.Id, StringComparer.Ordinal);
         var changed = false;
         try
         {
@@ -48,6 +49,25 @@ internal static class PluginAutoDiscovery
                         cancellationToken);
                     started = true;
                     if (!await probe.HasLocalCredentialsAsync(cancellationToken)) continue;
+
+                    // A discovered plugin may depend on a disabled optional plugin.
+                    // Persisting only the discovered node would make the next host
+                    // composition invalid, so resolve the required dependency closure
+                    // before changing any settings.
+                    if (!CanEnableDependencies(
+                            plugin.Manifest,
+                            byId,
+                            settings,
+                            new HashSet<string>(StringComparer.Ordinal)))
+                    {
+                        continue;
+                    }
+
+                    EnableDependencies(
+                        plugin.Manifest,
+                        byId,
+                        settings,
+                        new HashSet<string>(StringComparer.Ordinal));
 
                     settings.SetPluginAutoEnabled(pluginId);
                     changed = true;
@@ -92,6 +112,53 @@ internal static class PluginAutoDiscovery
         {
             original.Restore(settings);
             return false;
+        }
+    }
+
+    private static bool CanEnableDependencies(
+        PluginManifest manifest,
+        IReadOnlyDictionary<string, IZgsPlugin> plugins,
+        AppSettings settings,
+        HashSet<string> visiting)
+    {
+        if (!visiting.Add(manifest.Id)) return false;
+        try
+        {
+            foreach (var dependencyId in manifest.Requires)
+            {
+                if (!plugins.TryGetValue(dependencyId, out var dependency)) return false;
+                if (settings.HasExplicitPluginEnablement(dependencyId)
+                    && !settings.IsPluginEnabled(dependencyId))
+                {
+                    return false;
+                }
+                if (!CanEnableDependencies(dependency.Manifest, plugins, settings, visiting))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+        finally
+        {
+            visiting.Remove(manifest.Id);
+        }
+    }
+
+    private static void EnableDependencies(
+        PluginManifest manifest,
+        IReadOnlyDictionary<string, IZgsPlugin> plugins,
+        AppSettings settings,
+        HashSet<string> visited)
+    {
+        if (!visited.Add(manifest.Id)) return;
+        foreach (var dependencyId in manifest.Requires)
+        {
+            if (plugins.TryGetValue(dependencyId, out var dependency))
+            {
+                EnableDependencies(dependency.Manifest, plugins, settings, visited);
+                settings.SetPluginAutoEnabled(dependencyId);
+            }
         }
     }
 

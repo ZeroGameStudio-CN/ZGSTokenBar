@@ -16,6 +16,7 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
     private readonly Dictionary<string, long> _dataRevisions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, SemaphoreSlim> _refreshGates = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _configGate = new(1, 1);
+    private readonly CancellationTokenSource _lifetimeCancellation = new();
     private readonly Dictionary<string, CursorState> _cursors = new(StringComparer.Ordinal);
     private const int MaximumCursors = 256;
     private static readonly TimeSpan CursorLifetime = TimeSpan.FromMinutes(5);
@@ -30,6 +31,8 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
     private long _uiRevision;
     private bool _started;
     private bool _disposed;
+    private int _activeOperations;
+    private TaskCompletionSource<bool>? _drainCompletion;
 
     public ZgsTokenBarHost(
         IReadOnlyList<IZgsPlugin> plugins,
@@ -90,6 +93,20 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
     public string ProfileName => _profile.Name;
 
     public async ValueTask StartAsync(CancellationToken cancellationToken = default)
+    {
+        if (!TryEnterOperation())
+            throw new HostCommandException("app_disposed", "The host is shutting down.", true);
+        try
+        {
+            await StartCoreAsync(cancellationToken);
+        }
+        finally
+        {
+            ExitOperation();
+        }
+    }
+
+    private async ValueTask StartCoreAsync(CancellationToken cancellationToken)
     {
         lock (_sync)
         {
@@ -311,95 +328,107 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
         string reason,
         CancellationToken cancellationToken)
     {
-        if (!_pluginsById.TryGetValue(pluginId, out var plugin))
-        {
-            throw new HostCommandException("plugin_not_found", "Plugin was not found.");
-        }
-        lock (_sync)
-        {
-            if (!_enabled[pluginId])
-            {
-                throw new HostCommandException("plugin_disabled", "Plugin is disabled.");
-            }
-        }
-        if (plugin is not IDataSource dataSource)
-        {
-            lock (_sync) return _data[pluginId];
-        }
-
-        var gate = _refreshGates[pluginId];
-        await gate.WaitAsync(cancellationToken);
+        if (!TryEnterOperation())
+            throw new HostCommandException("app_disposed", "The host is shutting down.", true);
         try
         {
-            long previousRevision;
-            lock (_sync)
+            if (!_pluginsById.TryGetValue(pluginId, out var plugin))
             {
-                ThrowIfDisposed();
-                if (!_enabled[pluginId])
-                    throw new HostCommandException("plugin_disabled", "Plugin is disabled.");
-                previousRevision = _dataRevisions[pluginId];
+                throw new HostCommandException("plugin_not_found", "Plugin was not found.");
             }
-            var snapshot = await dataSource.RefreshAsync(
-                new PluginRefreshContext(DateTimeOffset.UtcNow, reason, previousRevision),
-                cancellationToken);
             lock (_sync)
             {
                 if (!_enabled[pluginId])
+                {
                     throw new HostCommandException("plugin_disabled", "Plugin is disabled.");
+                }
             }
-            Publish(snapshot);
-            return snapshot;
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException and not HostCommandException)
-        {
-            PluginDataSnapshot previous;
-            lock (_sync)
+            if (plugin is not IDataSource dataSource)
             {
-                if (!_enabled[pluginId])
-                    throw new HostCommandException("plugin_disabled", "Plugin is disabled.");
-                previous = _data[pluginId];
+                lock (_sync) return _data[pluginId];
             }
-            var failed = previous with
+
+            var gate = _refreshGates[pluginId];
+            using var operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                _lifetimeCancellation.Token);
+            await gate.WaitAsync(operationCancellation.Token);
+            try
             {
-                CapturedAt = DateTimeOffset.UtcNow,
-                Health = new(
-                    PluginHealthCode.Unavailable,
-                    false,
-                    true,
-                    DateTimeOffset.UtcNow,
-                    "plugin.refresh_failed"),
-            };
-            Publish(failed);
-            return failed;
-        }
-        catch (HostCommandException exception)
-        {
-            PluginDataSnapshot previous;
-            lock (_sync)
-            {
-                if (!_enabled[pluginId]) throw;
-                previous = _data[pluginId];
+                long previousRevision;
+                lock (_sync)
+                {
+                    ThrowIfDisposed();
+                    if (!_enabled[pluginId])
+                        throw new HostCommandException("plugin_disabled", "Plugin is disabled.");
+                    previousRevision = _dataRevisions[pluginId];
+                }
+                var snapshot = await dataSource.RefreshAsync(
+                    new PluginRefreshContext(DateTimeOffset.UtcNow, reason, previousRevision),
+                    operationCancellation.Token);
+                lock (_sync)
+                {
+                    if (!_enabled[pluginId])
+                        throw new HostCommandException("plugin_disabled", "Plugin is disabled.");
+                }
+                Publish(snapshot);
+                return snapshot;
             }
-            Publish(previous with
+            catch (Exception exception) when (exception is not OperationCanceledException and not HostCommandException)
             {
-                CapturedAt = DateTimeOffset.UtcNow,
-                Health = new(
-                    exception.Code switch
-                    {
-                        "timeout" => PluginHealthCode.Timeout,
-                        "trust_failed" => PluginHealthCode.TrustFailed,
-                        _ => PluginHealthCode.Unavailable,
-                    },
-                    false,
-                    exception.Retryable,
-                    DateTimeOffset.UtcNow,
-                    "plugin.refresh_failed"),
-            });
-            throw;
+                PluginDataSnapshot previous;
+                lock (_sync)
+                {
+                    if (!_enabled[pluginId])
+                        throw new HostCommandException("plugin_disabled", "Plugin is disabled.");
+                    previous = _data[pluginId];
+                }
+                var failed = previous with
+                {
+                    CapturedAt = DateTimeOffset.UtcNow,
+                    Health = new(
+                        PluginHealthCode.Unavailable,
+                        false,
+                        true,
+                        DateTimeOffset.UtcNow,
+                        "plugin.refresh_failed"),
+                };
+                Publish(failed);
+                return failed;
+            }
+            catch (HostCommandException exception)
+            {
+                PluginDataSnapshot previous;
+                lock (_sync)
+                {
+                    if (!_enabled[pluginId]) throw;
+                    previous = _data[pluginId];
+                }
+                Publish(previous with
+                {
+                    CapturedAt = DateTimeOffset.UtcNow,
+                    Health = new(
+                        exception.Code switch
+                        {
+                            "timeout" => PluginHealthCode.Timeout,
+                            "trust_failed" => PluginHealthCode.TrustFailed,
+                            _ => PluginHealthCode.Unavailable,
+                        },
+                        false,
+                        exception.Retryable,
+                        DateTimeOffset.UtcNow,
+                        "plugin.refresh_failed"),
+                });
+                throw;
+            }
+            finally
+            {
+                gate.Release();
+            }
         }
         finally
         {
-            gate.Release();
+            ExitOperation();
         }
     }
 
@@ -409,14 +438,30 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
         long expectedConfigRevision,
         CancellationToken cancellationToken)
     {
-        await _configGate.WaitAsync(cancellationToken);
+        if (!TryEnterOperation())
+            throw new HostCommandException("app_disposed", "The host is shutting down.", true);
         try
         {
-            await SetEnabledCoreAsync(pluginId, enabled, expectedConfigRevision, cancellationToken);
+            using var operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                _lifetimeCancellation.Token);
+            await _configGate.WaitAsync(operationCancellation.Token);
+            try
+            {
+                await SetEnabledCoreAsync(
+                    pluginId,
+                    enabled,
+                    expectedConfigRevision,
+                    operationCancellation.Token);
+            }
+            finally
+            {
+                _configGate.Release();
+            }
         }
         finally
         {
-            _configGate.Release();
+            ExitOperation();
         }
     }
 
@@ -611,6 +656,8 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
     {
         lock (_sync)
         {
+            if (_disposed)
+                throw new HostCommandException("app_disposed", "The host is shutting down.", true);
             var subscription = new Subscription(includeValues, Snapshot(includeValues));
             _subscriptions.Add(subscription);
             return subscription;
@@ -638,6 +685,10 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
         if (string.IsNullOrWhiteSpace(request.Method))
         {
             return Failure(request.RequestId, "invalid_request", "method is required.");
+        }
+        if (!TryEnterOperation())
+        {
+            return Failure(request.RequestId, "app_disposed", "The host is shutting down.", true);
         }
 
         try
@@ -681,6 +732,10 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
         catch
         {
             return Failure(request.RequestId, "internal", "Operation failed.");
+        }
+        finally
+        {
+            ExitOperation();
         }
     }
 
@@ -1133,10 +1188,16 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
         {
             if (_disposed) return;
             _disposed = true;
+            _lifetimeCancellation.Cancel();
             subscriptions = _subscriptions.ToArray();
             _subscriptions.Clear();
         }
         foreach (var subscription in subscriptions) subscription.Complete();
+        // Do not dispose refresh/config gates or plugin instances while a
+        // caller is still inside a host operation. Named-pipe shutdown cancels
+        // those callers; this drain keeps their finally blocks safe even when
+        // a plugin takes a little longer to observe cancellation.
+        await DrainOperationsAsync();
         if (_started)
         {
             foreach (var plugin in DependencyOrder().Reverse())
@@ -1148,6 +1209,7 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
         }
         foreach (var gate in _refreshGates.Values) gate.Dispose();
         _configGate.Dispose();
+        _lifetimeCancellation.Dispose();
         foreach (var plugin in _plugins) await plugin.DisposeAsync();
     }
 
@@ -1156,13 +1218,46 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
     }
 
+    private bool TryEnterOperation()
+    {
+        lock (_sync)
+        {
+            if (_disposed) return false;
+            _activeOperations++;
+            return true;
+        }
+    }
+
+    private void ExitOperation()
+    {
+        TaskCompletionSource<bool>? completion = null;
+        lock (_sync)
+        {
+            if (--_activeOperations == 0 && _disposed)
+            {
+                completion = _drainCompletion;
+            }
+        }
+        completion?.TrySetResult(true);
+    }
+
+    private Task DrainOperationsAsync()
+    {
+        lock (_sync)
+        {
+            if (_activeOperations == 0) return Task.CompletedTask;
+            return (_drainCompletion ??= new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously)).Task;
+        }
+    }
+
     private static ApiResponseEnvelope Failure(
         string requestId,
         string code,
         string message,
         bool retryable = false,
         IReadOnlyDictionary<string, string>? details = null) =>
-        new(1, requestId ?? string.Empty, false, null, new(code, message, retryable, details));
+        new(1, ValidRequestId(requestId) ? requestId! : "invalid", false, null, new(code, message, retryable, details));
 
     private static bool ValidRequestId(string? value) =>
         value is { Length: >= 1 and <= 64 }
@@ -1237,9 +1332,13 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
     {
         if (parameters is null || parameters.Value.ValueKind is JsonValueKind.Null) return null;
         var value = Parameters(parameters);
-        return value.TryGetProperty(name, out var property) && property.ValueKind is JsonValueKind.String
-            ? property.GetString()
-            : null;
+        if (!value.TryGetProperty(name, out var property)
+            || property.ValueKind is JsonValueKind.Null) return null;
+        if (property.ValueKind is not JsonValueKind.String)
+        {
+            throw new HostCommandException("invalid_request", $"{name} must be a string.");
+        }
+        return property.GetString();
     }
 
     private static bool RequiredBoolean(JsonElement? parameters, string name)
@@ -1257,10 +1356,13 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
     {
         if (parameters is null || parameters.Value.ValueKind is JsonValueKind.Null) return null;
         var value = Parameters(parameters);
-        return value.TryGetProperty(name, out var property)
-            && property.ValueKind is JsonValueKind.True or JsonValueKind.False
-                ? property.GetBoolean()
-                : null;
+        if (!value.TryGetProperty(name, out var property)
+            || property.ValueKind is JsonValueKind.Null) return null;
+        if (property.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+        {
+            throw new HostCommandException("invalid_request", $"{name} must be a boolean.");
+        }
+        return property.GetBoolean();
     }
 
     private static long RequiredInt64(JsonElement? parameters, string name)
@@ -1277,9 +1379,13 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
     {
         if (parameters is null || parameters.Value.ValueKind is JsonValueKind.Null) return null;
         var value = Parameters(parameters);
-        return value.TryGetProperty(name, out var property) && property.TryGetInt64(out var number)
-            ? number
-            : null;
+        if (!value.TryGetProperty(name, out var property)
+            || property.ValueKind is JsonValueKind.Null) return null;
+        if (!property.TryGetInt64(out var number))
+        {
+            throw new HostCommandException("invalid_request", $"{name} must be an integer.");
+        }
+        return number;
     }
 
     private static int? OptionalInt32(JsonElement? parameters, string name)
@@ -1287,11 +1393,14 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
         var value = parameters is null || parameters.Value.ValueKind is JsonValueKind.Null
             ? default
             : Parameters(parameters);
-        return value.ValueKind is JsonValueKind.Object
-            && value.TryGetProperty(name, out var property)
-            && property.TryGetInt32(out var number)
-                ? number
-                : null;
+        if (value.ValueKind is not JsonValueKind.Object
+            || !value.TryGetProperty(name, out var property)
+            || property.ValueKind is JsonValueKind.Null) return null;
+        if (!property.TryGetInt32(out var number))
+        {
+            throw new HostCommandException("invalid_request", $"{name} must be an integer.");
+        }
+        return number;
     }
 
     private static IReadOnlyList<string> StringArray(JsonElement? parameters, string name)

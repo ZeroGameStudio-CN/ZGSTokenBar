@@ -9,6 +9,7 @@ public sealed class QuotaCoordinator : IDisposable
     private readonly ClaudeQuotaService _claude;
     private readonly CodexQuotaService _codex;
     private readonly Dictionary<ProviderKind, DateTimeOffset> _lastProviderAttemptAt = [];
+    private readonly object _providerAttemptSync = new();
 
     public QuotaCoordinator()
     {
@@ -29,21 +30,25 @@ public sealed class QuotaCoordinator : IDisposable
 
         void AddProviderTask(ProviderKind provider, Func<Task<ProviderResult>> fetch)
         {
-            var deferred = !forceProviderRefresh
-                && ShouldDeferProviderRefresh(
-                    previous,
-                    provider,
-                    now,
-                    _lastProviderAttemptAt.GetValueOrDefault(provider))
-                ? DeferredProviderResult(previous, provider)
-                : null;
+            ProviderResult? deferred;
+            lock (_providerAttemptSync)
+            {
+                deferred = !forceProviderRefresh
+                    && ShouldDeferProviderRefresh(
+                        previous,
+                        provider,
+                        now,
+                        _lastProviderAttemptAt.GetValueOrDefault(provider))
+                    ? DeferredProviderResult(previous, provider)
+                    : null;
+                if (deferred is null) _lastProviderAttemptAt[provider] = now;
+            }
             if (deferred is not null)
             {
                 tasks.Add(Task.FromResult(deferred));
             }
             else
             {
-                _lastProviderAttemptAt[provider] = now;
                 tasks.Add(fetch());
             }
         }

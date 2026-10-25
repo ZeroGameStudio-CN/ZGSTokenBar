@@ -647,7 +647,16 @@ internal static partial class CliApplication
         var processes = Process.GetProcessesByName("ZGSTokenBar");
         try
         {
-            var running = processes.OrderBy(process => process.Id).FirstOrDefault();
+            var expectedPath = Path.GetFullPath(ApplicationPath());
+            var hasExpectedPath = File.Exists(expectedPath);
+            var running = hasExpectedPath
+                ? processes
+                    .OrderBy(process => process.Id)
+                    .FirstOrDefault(process => string.Equals(
+                        ProcessExecutable(process.Id),
+                        expectedPath,
+                        StringComparison.OrdinalIgnoreCase))
+                : null;
             var executable = running is null ? null : ProcessExecutable(running.Id);
             return new(
                 "ZGSTokenBar",

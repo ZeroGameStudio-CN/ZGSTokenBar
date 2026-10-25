@@ -10,7 +10,12 @@ $root = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $project = Join-Path $root 'src\ProcessPlugins\ZGSTokenBar.Plugin.AiGatewayObserver\ZGSTokenBar.Plugin.AiGatewayObserver.csproj'
 $pluginSource = Split-Path -Parent $project
 $iconSource = Join-Path $root 'src\ZGSTokenBar.App\Assets\deepseek-whale-icon.png'
-$version = '1.2.3'
+$identitySource = Get-Content -Raw -LiteralPath (Join-Path $pluginSource 'Program.cs')
+$version = [regex]::Match($identitySource, 'public\s+const\s+string\s+Version\s*=\s*"([^"]+)"').Groups[1].Value
+$parsedVersion = $null
+if ([string]::IsNullOrWhiteSpace($version) -or -not [Version]::TryParse($version, [ref]$parsedVersion)) {
+  throw 'Process plugin source does not define a valid PluginIdentity.Version.'
+}
 $release = Join-Path $root 'release'
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
   $OutputPath = Join-Path $release "ZGSTokenBar.Plugin.AiGatewayObserver-v$version.zgsplugin"

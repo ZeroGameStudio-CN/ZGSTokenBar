@@ -12233,6 +12233,10 @@ static void TestSettingsV2PluginMigration()
         Equal(true, downgradedV3.WasPluginAutoEnabled("test.provider"), "transitional v3 keeps valid auto-discovery provenance");
         Equal(false, downgradedV3.HasExplicitPluginEnablement("test.provider"), "transitional v3 does not turn auto enablement into an explicit choice");
         Equal(transitionalV3, File.ReadAllText(transitionalV3Path + ".v3.bak"), "transitional v3 downgrade keeps an exact backup");
+         Equal(
+             true,
+             new SettingsMigrationManager(transitionalV3Directory).Status().V3BackupExists,
+             "migration status exposes the transitional v3 backup");
         using (var downgradedV3Document = JsonDocument.Parse(File.ReadAllBytes(transitionalV3Path)))
         {
             Equal(2, downgradedV3Document.RootElement.GetProperty("schemaVersion").GetInt32(), "transitional settings are persisted with rollback-compatible schema v2");
@@ -12318,6 +12322,45 @@ static void TestProviderLocalCredentialAutoDiscovery()
                 .GetResult(),
             "already-discovered Providers are not reprobed on every start");
         Equal(1, provider.ProbeCalls, "restart reuses the automatic decision without touching credentials again");
+
+        var requiredBase = new LocalProbeTestPlugin(
+            "test.required-base",
+            hasCredentials: false,
+            canProbe: false);
+        var requiringProvider = new LocalProbeTestPlugin(
+            "test.requires-base",
+            hasCredentials: true,
+            canProbe: true,
+            requires: [requiredBase.Manifest.Id]);
+        var dependencySettings = new AppSettings();
+        dependencySettings.Normalize();
+        Equal(
+            true,
+            PluginAutoDiscovery.ApplyAsync(
+                    store,
+                    dependencySettings,
+                    [requiringProvider, requiredBase],
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult(),
+            "discovery enables a plugin's required dependency closure");
+        Equal(true, dependencySettings.IsPluginEnabled(requiringProvider.Manifest.Id), "requiring plugin is enabled");
+        Equal(true, dependencySettings.IsPluginEnabled(requiredBase.Manifest.Id), "required dependency is enabled");
+
+        var explicitlyBlockedSettings = new AppSettings();
+        explicitlyBlockedSettings.Normalize();
+        explicitlyBlockedSettings.SetPluginEnabled(requiredBase.Manifest.Id, false);
+        Equal(
+            false,
+            PluginAutoDiscovery.ApplyAsync(
+                    store,
+                    explicitlyBlockedSettings,
+                    [requiringProvider, requiredBase],
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult(),
+            "explicitly disabled required dependencies fail closed");
+        Equal(false, explicitlyBlockedSettings.IsPluginEnabled(requiringProvider.Manifest.Id), "blocked dependency prevents auto-enable");
 
         var explicitlyDisabledProvider = new LocalProbeTestPlugin(
             "test.provider",

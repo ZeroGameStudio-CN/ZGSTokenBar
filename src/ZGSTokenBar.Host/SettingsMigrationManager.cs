@@ -7,7 +7,8 @@ public sealed record MigrationStatus(
     bool SettingsExists,
     int? DetectedSchemaVersion,
     bool V1BackupExists,
-    bool V2RollbackExists);
+    bool V2RollbackExists,
+    bool V3BackupExists);
 
 public sealed class SettingsMigrationManager
 {
@@ -26,7 +27,8 @@ public sealed class SettingsMigrationManager
             File.Exists(_settingsPath),
             DetectSchema(_settingsPath),
             File.Exists(_settingsPath + ".v1.bak"),
-            File.Exists(_settingsPath + ".v2.rollback"));
+            File.Exists(_settingsPath + ".v2.rollback"),
+            File.Exists(_settingsPath + ".v3.bak"));
 
     public MigrationStatus RestoreV1()
     {

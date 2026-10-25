@@ -7,10 +7,14 @@ namespace ZGSTokenBar.Transport.NamedPipe;
 
 public sealed class ZgsNamedPipeServer : IAsyncDisposable
 {
+    private static readonly TimeSpan InitialFrameTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan UnaryOperationTimeout = TimeSpan.FromSeconds(30);
+    private const int MaximumConnections = 64;
     private readonly ZgsTokenBarHost _host;
     private readonly string _pipeName;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly HashSet<Task> _connections = [];
+    private readonly HashSet<NamedPipeServerStream> _pipes = [];
     private readonly object _sync = new();
     private Task? _acceptLoop;
 
@@ -45,6 +49,16 @@ public sealed class ZgsNamedPipeServer : IAsyncDisposable
                     PipeTransmissionMode.Byte,
                     PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
                 await pipe.WaitForConnectionAsync(cancellationToken);
+                lock (_sync)
+                {
+                    if (_connections.Count >= MaximumConnections)
+                    {
+                        pipe.Dispose();
+                        pipe = null;
+                        continue;
+                    }
+                    _pipes.Add(pipe);
+                }
                 var connection = HandleConnectionAsync(pipe, cancellationToken);
                 pipe = null;
                 lock (_sync) _connections.Add(connection);
@@ -75,47 +89,54 @@ public sealed class ZgsNamedPipeServer : IAsyncDisposable
         NamedPipeServerStream pipe,
         CancellationToken serverCancellation)
     {
-        await using (pipe)
+        try
         {
-            ApiRequestEnvelope request;
-            try
+            await using (pipe)
             {
-                request = await PipeProtocol.ReadAsync(
-                        pipe,
-                        ApiJsonContext.Default.ApiRequestEnvelope,
-                        serverCancellation)
-                    ?? throw new InvalidDataException("Request is missing.");
-            }
-            catch (Exception exception) when (exception is InvalidDataException or JsonException or EndOfStreamException)
-            {
-                var failure = new ApiResponseEnvelope(
-                    1,
-                    "invalid",
-                    false,
-                    null,
-                    new("invalid_request", "Request frame is invalid."));
+                ApiRequestEnvelope request;
                 try
                 {
-                    await PipeProtocol.WriteAsync(
-                        pipe,
-                        failure,
-                        ApiJsonContext.Default.ApiResponseEnvelope,
-                        serverCancellation);
+                    using var initialFrameTimeout = CancellationTokenSource.CreateLinkedTokenSource(serverCancellation);
+                    initialFrameTimeout.CancelAfter(InitialFrameTimeout);
+                    request = await PipeProtocol.ReadAsync(
+                            pipe,
+                            ApiJsonContext.Default.ApiRequestEnvelope,
+                            initialFrameTimeout.Token)
+                        ?? throw new InvalidDataException("Request is missing.");
                 }
-                catch { }
-                return;
-            }
+                catch (OperationCanceledException) when (!serverCancellation.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception exception) when (exception is InvalidDataException or JsonException or EndOfStreamException)
+                {
+                    var failure = new ApiResponseEnvelope(
+                        1,
+                        "invalid",
+                        false,
+                        null,
+                        new("invalid_request", "Request frame is invalid."));
+                    try
+                    {
+                        await PipeProtocol.WriteAsync(
+                            pipe,
+                            failure,
+                            ApiJsonContext.Default.ApiResponseEnvelope,
+                            serverCancellation);
+                    }
+                    catch { }
+                    return;
+                }
 
-            if (string.Equals(request.Method, "events.watch", StringComparison.Ordinal))
-            {
-                if (request.SchemaVersion != ZgsHostApi.SchemaVersion
-                    || !PluginValidation.IsRequestId(request.RequestId))
+                if (string.Equals(request.Method, "events.watch", StringComparison.Ordinal)
+                    && (request.SchemaVersion != ZgsHostApi.SchemaVersion
+                        || !PluginValidation.IsRequestId(request.RequestId)))
                 {
                     await PipeProtocol.WriteAsync(
                         pipe,
                         new ApiResponseEnvelope(
                             1,
-                            request.RequestId ?? "invalid",
+                            PluginValidation.IsRequestId(request.RequestId) ? request.RequestId! : "invalid",
                             false,
                             null,
                             new(
@@ -127,16 +148,71 @@ public sealed class ZgsNamedPipeServer : IAsyncDisposable
                         serverCancellation);
                     return;
                 }
-                await WatchAsync(pipe, request, serverCancellation);
-                return;
-            }
 
-            var response = await _host.DispatchAsync(request, serverCancellation);
-            await PipeProtocol.WriteAsync(
-                pipe,
-                response,
-                ApiJsonContext.Default.ApiResponseEnvelope,
-                serverCancellation);
+                using var connectionCancellation = CancellationTokenSource.CreateLinkedTokenSource(serverCancellation);
+                var connectionToken = connectionCancellation.Token;
+                var disconnectTask = MonitorDisconnectAsync(pipe, connectionToken);
+                try
+                {
+                    if (string.Equals(request.Method, "events.watch", StringComparison.Ordinal))
+                    {
+                        var watchTask = WatchAsync(pipe, request, connectionToken);
+                        if (await Task.WhenAny(watchTask, disconnectTask) == disconnectTask)
+                        {
+                            connectionCancellation.Cancel();
+                        }
+                        await watchTask;
+                        return;
+                    }
+
+                    using var operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(connectionToken);
+                    operationCancellation.CancelAfter(UnaryOperationTimeout);
+                    var dispatchTask = _host.DispatchAsync(request, operationCancellation.Token).AsTask();
+                    if (await Task.WhenAny(dispatchTask, disconnectTask) == disconnectTask)
+                    {
+                        operationCancellation.Cancel();
+                        try { await dispatchTask; }
+                        catch { }
+                        return;
+                    }
+                    var response = await dispatchTask;
+                    await WriteResponseOrFailureAsync(
+                        pipe,
+                        request.RequestId,
+                        response,
+                        connectionToken);
+                }
+                finally
+                {
+                    connectionCancellation.Cancel();
+                    try { await disconnectTask; }
+                    catch { }
+                }
+            }
+        }
+        finally
+        {
+            lock (_sync) _pipes.Remove(pipe);
+        }
+    }
+
+    private static async Task MonitorDisconnectAsync(
+        Stream pipe,
+        CancellationToken cancellationToken)
+    {
+        var buffer = new byte[1];
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                if (await pipe.ReadAsync(buffer, cancellationToken) == 0) return;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (IOException)
+        {
         }
     }
 
@@ -172,18 +248,19 @@ public sealed class ZgsNamedPipeServer : IAsyncDisposable
         var subscription = _host.Subscribe(includeValues);
         try
         {
-            await PipeProtocol.WriteAsync(
-                pipe,
-                new ApiResponseEnvelope(
-                    1,
+            var initialResponse = new ApiResponseEnvelope(
+                1,
+                request.RequestId,
+                true,
+                JsonSerializer.SerializeToElement(
+                    subscription.Initial,
+                    ApiJsonContext.Default.SnapshotSummary),
+                null);
+            if (!await WriteResponseOrFailureAsync(
+                    pipe,
                     request.RequestId,
-                    true,
-                    JsonSerializer.SerializeToElement(
-                        subscription.Initial,
-                        ApiJsonContext.Default.SnapshotSummary),
-                    null),
-                ApiJsonContext.Default.ApiResponseEnvelope,
-                cancellationToken);
+                    initialResponse,
+                    cancellationToken)) return;
             await foreach (var hostEvent in subscription.Events.ReadAllAsync(cancellationToken))
             {
                 await PipeProtocol.WriteAsync(
@@ -196,9 +273,45 @@ public sealed class ZgsNamedPipeServer : IAsyncDisposable
         catch (OperationCanceledException)
         {
         }
+        catch (InvalidDataException)
+        {
+            // A single oversized event terminates this subscription without
+            // taking down the host or other API connections.
+        }
         finally
         {
             _host.Unsubscribe(subscription);
+        }
+    }
+
+    private static async Task<bool> WriteResponseOrFailureAsync(
+        Stream pipe,
+        string? requestId,
+        ApiResponseEnvelope response,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await PipeProtocol.WriteAsync(
+                pipe,
+                response,
+                ApiJsonContext.Default.ApiResponseEnvelope,
+                cancellationToken);
+            return true;
+        }
+        catch (InvalidDataException)
+        {
+            await PipeProtocol.WriteAsync(
+                pipe,
+                new ApiResponseEnvelope(
+                    1,
+                    PluginValidation.IsRequestId(requestId) ? requestId! : "invalid",
+                    false,
+                    null,
+                    new("response_too_large", "The API response exceeds the frame limit.")),
+                ApiJsonContext.Default.ApiResponseEnvelope,
+                cancellationToken);
+            return false;
         }
     }
 
@@ -211,13 +324,18 @@ public sealed class ZgsNamedPipeServer : IAsyncDisposable
         {
             acceptLoop = _acceptLoop;
             connections = _connections.ToArray();
+            foreach (var pipe in _pipes.ToArray())
+            {
+                try { pipe.Dispose(); }
+                catch { }
+            }
         }
         if (acceptLoop is not null)
         {
             try { await acceptLoop; }
             catch (OperationCanceledException) { }
         }
-        try { await Task.WhenAll(connections).WaitAsync(TimeSpan.FromSeconds(2)); }
+        try { await Task.WhenAll(connections).WaitAsync(TimeSpan.FromSeconds(20)); }
         catch { }
         _shutdown.Dispose();
     }

@@ -1,4 +1,5 @@
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,6 +16,9 @@ const cliOutput = join(artifactsPath, 'cli-publish');
 const acceptanceOutput = join(artifactsPath, 'plugin-acceptance');
 const retiredCommandsOutput = join(artifactsPath, 'retired-commands');
 const captureOutput = join(artifactsPath, 'mini-captures');
+const pluginPackage = join(artifactsPath, 'ZGSTokenBar.Plugin.AiGatewayObserver.zgsplugin');
+const portableOutput = join(artifactsPath, 'portable-release');
+const pluginShaPlaceholder = '__ZGSTOKENBAR_PLUGIN_SHA256__';
 let artifactsRemoved = false;
 
 function removeArtifacts() {
@@ -31,6 +35,17 @@ const commands = [
   ['node', ['scripts/graduation-static-checks.mjs']],
   ['node', ['scripts/generate-builtin-plugin-registry.mjs', '--check']],
   ['node', ['--test', ...testFiles]],
+  ['pwsh', [
+    '-NoProfile',
+    '-File', 'scripts/build-ai-gateway-observer-plugin.ps1',
+    '-OutputPath', pluginPackage,
+  ]],
+  ['pwsh', [
+    '-NoProfile',
+    '-File', 'scripts/build-native-portable.ps1',
+    '-BundledPluginPackagePath', pluginPackage,
+    '-ReleaseDirectory', portableOutput,
+  ]],
   ['dotnet', [
     'run',
     '--project', 'tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj',
@@ -47,6 +62,14 @@ const commands = [
     '--', '--native-window-lifecycle',
   ]],
   ['dotnet', [
+    'run',
+    '--project', 'tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj',
+    '-c', 'Release',
+    '--artifacts-path', artifactsPath,
+    '--disable-build-servers',
+    '--', '--ai-gateway-plugin-package', pluginPackage, pluginShaPlaceholder,
+  ]],
+  ['dotnet', [
     'publish',
     'src/ZGSTokenBar.App/ZGSTokenBar.App.csproj',
     '-c', 'Release',
@@ -55,6 +78,7 @@ const commands = [
     '-o', appOutput,
     '--artifacts-path', artifactsPath,
     '--disable-build-servers',
+    `-p:BundledPluginPackage=${pluginPackage}`,
   ]],
   ['dotnet', [
     'publish',
@@ -87,8 +111,11 @@ const commands = [
 let failureCode = 0;
 try {
   for (const [command, args] of commands) {
-    console.log(`\n> ${command} ${args.join(' ')}`);
-    const result = spawnSync(command, args, { stdio: 'inherit' });
+    const resolvedArgs = args.map((argument) => argument === pluginShaPlaceholder
+      ? createHash('sha256').update(readFileSync(pluginPackage)).digest('hex')
+      : argument);
+    console.log(`\n> ${command} ${resolvedArgs.join(' ')}`);
+    const result = spawnSync(command, resolvedArgs, { stdio: 'inherit' });
     if (result.error) {
       console.error(result.error.message);
       failureCode = 1;

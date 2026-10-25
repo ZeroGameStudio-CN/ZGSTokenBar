@@ -11,6 +11,7 @@ internal static class Program
     internal const string MutexName = @"Local\ZGSTokenBar.App.SingleInstance";
     internal const string DataDirectoryArgument = "--data-directory";
     private const string ActivationEventName = @"Local\ZGSTokenBar.App.Activate";
+    private static readonly TimeSpan ProviderDiscoveryBudget = TimeSpan.FromSeconds(20);
 
     [STAThread]
     private static void Main(string[] args)
@@ -71,9 +72,17 @@ internal static class Program
         plugins.AddRange(selection.Accepted);
         try
         {
-            PluginAutoDiscovery.ApplyAsync(store, settings, plugins)
-                .GetAwaiter()
-                .GetResult();
+            using var budget = new CancellationTokenSource(ProviderDiscoveryBudget);
+            try
+            {
+                PluginAutoDiscovery.ApplyAsync(store, settings, plugins, budget.Token)
+                    .GetAwaiter()
+                    .GetResult();
+            }
+            catch (OperationCanceledException) when (budget.IsCancellationRequested)
+            {
+                // A slow optional Provider must not prevent the desktop shell from appearing.
+            }
         }
         finally
         {

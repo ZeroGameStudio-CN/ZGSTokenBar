@@ -33,6 +33,7 @@ public sealed record CodexRolloutImportResult(
 public static class CodexRolloutQuotaImporter
 {
     internal const int MaximumFiles = 64;
+    internal const int MaximumDiscoveryFiles = MaximumFiles * 4;
     internal const int MaximumLineBytes = 256 * 1024;
     internal const long MaximumBytesPerFile = 8L * 1024 * 1024;
     internal const long MaximumTotalBytes = 64L * 1024 * 1024;
@@ -419,6 +420,7 @@ public static class CodexRolloutQuotaImporter
     private static IReadOnlyList<FileInfo> CandidateFiles(string codexHome, DateTimeOffset now)
     {
         var files = new Dictionary<string, FileInfo>(StringComparer.Ordinal);
+        var enumeratedFiles = 0;
         foreach (var directoryName in new[] { "sessions", "archived_sessions" })
         {
             var directory = Path.Combine(codexHome, directoryName);
@@ -427,6 +429,8 @@ public static class CodexRolloutQuotaImporter
             {
                 foreach (var path in Directory.EnumerateFiles(directory, "*.jsonl", SearchOption.AllDirectories))
                 {
+                    if (++enumeratedFiles > MaximumDiscoveryFiles) break;
+                    if (files.Count >= MaximumDiscoveryFiles) break;
                     try
                     {
                         var file = new FileInfo(path);

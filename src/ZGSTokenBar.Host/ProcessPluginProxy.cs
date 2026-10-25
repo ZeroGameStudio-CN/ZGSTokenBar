@@ -17,6 +17,7 @@ public sealed class ProcessPluginProxy : IZgsPlugin, IDataSource, ICommandContri
     private Task? _stderrTask;
     private string _diagnostic = string.Empty;
     private bool _started;
+    private readonly List<FileStream> _verifiedFileLocks = [];
 
     public ProcessPluginProxy(
         PluginManifest manifest,
@@ -67,16 +68,25 @@ public sealed class ProcessPluginProxy : IZgsPlugin, IDataSource, ICommandContri
         CancellationToken cancellationToken)
     {
         if (_started) return;
-        VerifyInstalledFiles();
-        var startInfo = new ProcessStartInfo(ResolveEntrypoint())
+        AcquireVerifiedFileLocks();
+        ProcessStartInfo startInfo;
+        try
         {
-            WorkingDirectory = _installDirectory,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
+            startInfo = new ProcessStartInfo(ResolveEntrypoint())
+            {
+                WorkingDirectory = _installDirectory,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+        }
+        catch
+        {
+            ReleaseVerifiedFileLocks();
+            throw;
+        }
         var inherited = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         foreach (var name in new[] { "SystemRoot", "WINDIR", "TEMP", "TMP", "PATH", "DSH_HOME" })
         {
@@ -91,10 +101,18 @@ public sealed class ProcessPluginProxy : IZgsPlugin, IDataSource, ICommandContri
         startInfo.Environment["ZGSTOKENBAR_PLUGIN_DATA"] = context.DataRoot;
 
         var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-        if (!process.Start())
+        try
+        {
+            if (!process.Start())
+            {
+                throw new HostCommandException("trust_failed", "Plugin process could not start.");
+            }
+        }
+        catch
         {
             process.Dispose();
-            throw new HostCommandException("trust_failed", "Plugin process could not start.");
+            ReleaseVerifiedFileLocks();
+            throw;
         }
         WindowsJobObject job;
         try
@@ -106,6 +124,7 @@ public sealed class ProcessPluginProxy : IZgsPlugin, IDataSource, ICommandContri
             try { process.Kill(entireProcessTree: true); }
             catch { }
             process.Dispose();
+            ReleaseVerifiedFileLocks();
             throw new HostCommandException(
                 "trust_failed",
                 "Plugin process isolation could not be established.");
@@ -116,6 +135,10 @@ public sealed class ProcessPluginProxy : IZgsPlugin, IDataSource, ICommandContri
 
         try
         {
+            // Re-check the package after the child is created. The initial check
+            // happens before Process.Start and cannot by itself cover a same-user
+            // replacement between verification and launch.
+            VerifyInstalledFiles();
             var filesDigest = FilesDigest();
             var handshake = await CallAsync(
                 "plugin.handshake",
@@ -272,11 +295,15 @@ public sealed class ProcessPluginProxy : IZgsPlugin, IDataSource, ICommandContri
                     ?? throw new JsonException();
             }
             if (response is null) throw new InvalidDataException();
-            if (!string.Equals(response.RequestId, request.RequestId, StringComparison.Ordinal))
+            if (response.SchemaVersion != ZgsHostApi.SchemaVersion
+                || !PluginValidation.IsRequestId(response.RequestId)
+                || !string.Equals(response.RequestId, request.RequestId, StringComparison.Ordinal)
+                || response.Ok && response.Error is not null
+                || !response.Ok && (response.Error is null || response.Result is not null))
             {
                 _started = false;
                 await StopProcessAsync();
-                throw new HostCommandException("internal", "Plugin response ID did not match.");
+                throw new HostCommandException("trust_failed", "Plugin response envelope is invalid.");
             }
             if (!response.Ok)
             {
@@ -412,6 +439,7 @@ public sealed class ProcessPluginProxy : IZgsPlugin, IDataSource, ICommandContri
             catch { }
             _stderrTask = null;
         }
+        ReleaseVerifiedFileLocks();
     }
 
     public async ValueTask<bool> HasLocalCredentialsAsync(
@@ -511,8 +539,13 @@ public sealed class ProcessPluginProxy : IZgsPlugin, IDataSource, ICommandContri
             throw new HostCommandException("trust_failed", "Plugin asset is unavailable.");
         }
 
+        var fileInfo = new FileInfo(path);
+        if (fileInfo.Length != declaration.Bytes || fileInfo.Length > maximumBytes)
+        {
+            throw new HostCommandException("trust_failed", "Plugin asset integrity check failed.");
+        }
         var bytes = File.ReadAllBytes(path);
-        if (bytes.Length != declaration.Bytes || bytes.Length > maximumBytes
+        if (bytes.Length != declaration.Bytes
             || !string.Equals(
                 Convert.ToHexString(SHA256.HashData(bytes)),
                 declaration.Sha256,
@@ -531,7 +564,21 @@ public sealed class ProcessPluginProxy : IZgsPlugin, IDataSource, ICommandContri
             Environment.NewLine,
             Manifest.Files
                 .OrderBy(file => file.Path, StringComparer.Ordinal)
-                .Select(file => $"{file.Path}:{file.Bytes}:{file.Sha256.ToLowerInvariant()}"));
+                .Select(file =>
+                {
+                    var normalized = NormalizePath(file.Path);
+                    var path = Path.GetFullPath(Path.Combine(
+                        _installDirectory,
+                        normalized.Replace('/', Path.DirectorySeparatorChar)));
+                    using var stream = File.OpenRead(path);
+                    var digest = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+                    if (new FileInfo(path).Length != file.Bytes
+                        || !string.Equals(digest, file.Sha256, StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new HostCommandException("trust_failed", "Plugin file integrity check failed.");
+                    }
+                    return $"{file.Path}:{file.Bytes}:{digest}";
+                }));
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(joined)))
             .ToLowerInvariant();
     }
@@ -560,6 +607,55 @@ public sealed class ProcessPluginProxy : IZgsPlugin, IDataSource, ICommandContri
                 throw new HostCommandException("trust_failed", "Plugin file integrity check failed.");
             }
         }
+    }
+
+    private void AcquireVerifiedFileLocks()
+    {
+        if (_verifiedFileLocks.Count > 0) return;
+        var opened = new List<FileStream>(Manifest.Files.Count);
+        try
+        {
+            foreach (var file in Manifest.Files)
+            {
+                var normalized = NormalizePath(file.Path);
+                var path = Path.GetFullPath(Path.Combine(
+                    _installDirectory,
+                    normalized.Replace('/', Path.DirectorySeparatorChar)));
+                var prefix = _installDirectory.TrimEnd(Path.DirectorySeparatorChar)
+                    + Path.DirectorySeparatorChar;
+                if (!path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new HostCommandException("trust_failed", "Plugin file path is invalid.");
+                }
+                var stream = new FileStream(
+                    path,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.Read,
+                    4096,
+                    FileOptions.SequentialScan);
+                opened.Add(stream);
+                if (stream.Length != file.Bytes
+                    || !CryptographicOperations.FixedTimeEquals(
+                        SHA256.HashData(stream),
+                        Convert.FromHexString(file.Sha256)))
+                {
+                    throw new HostCommandException("trust_failed", "Plugin file integrity check failed.");
+                }
+            }
+            _verifiedFileLocks.AddRange(opened);
+        }
+        catch
+        {
+            foreach (var stream in opened) stream.Dispose();
+            throw;
+        }
+    }
+
+    private void ReleaseVerifiedFileLocks()
+    {
+        foreach (var stream in _verifiedFileLocks) stream.Dispose();
+        _verifiedFileLocks.Clear();
     }
 
     private TimeSpan HandshakeTimeout() =>
