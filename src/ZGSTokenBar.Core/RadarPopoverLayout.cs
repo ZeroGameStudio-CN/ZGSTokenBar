@@ -36,10 +36,10 @@ public sealed class RadarPopoverLayout
     public const int LogicalTokenWidth = 240;
     public const int LogicalTokenHeight = 162;
     public const int ConversationHeaderHeight = 36;
-    public const int ConversationRowHeight = 22;
+    public const int ConversationRowHeight = 32;
     public const int LogicalRadarColumnWidth = 400;
     public const int LogicalRecentColumnLeft = 428;
-    public const int LogicalRecentColumnWidth = 456;
+    public const int LogicalRecentColumnWidth = 476;
     public const int LogicalRecentColumnInset = 8;
     public const int LogicalSplitWidth = LogicalRecentColumnLeft + LogicalRecentColumnWidth + 14;
 
@@ -125,13 +125,14 @@ public sealed class RadarPopoverLayout
         get
         {
             int Scale(int value) => (int)Math.Round(value * Dpi / 96d);
-            var widths = new[] { 46, 46, 46, 62, 66, 48 }.Select(Scale).ToArray();
+            var widths = new[] { 42, 42, 42, 54, 56, 38 }.Select(Scale).ToArray();
+            var timeWidth = Scale(60);
             var gap = Scale(5);
             var inset = Scale(LogicalRecentColumnInset);
-            var modelWidth = Math.Max(1, RecentTurnsBounds.Width - inset * 2 - widths.Sum() - 6 * gap);
+            var modelWidth = Math.Max(1, RecentTurnsBounds.Width - inset * 2 - timeWidth - widths.Sum() - 7 * gap);
             var columns = new List<RadarPopoverColumn>();
             var left = RecentTurnsBounds.Left + inset;
-            foreach (var width in new[] { modelWidth }.Concat(widths))
+            foreach (var width in new[] { timeWidth, modelWidth }.Concat(widths))
             {
                 columns.Add(new(left, left + width));
                 left += width + gap;
@@ -458,7 +459,7 @@ public sealed class RadarPopoverLayout
     {
         dpi = Math.Max(96, dpi);
         var recentHeight = RecentTurnsHeight(recentTurnCount);
-        var width = recentHeight == 0 ? LogicalTokenWidth : LogicalWidth;
+        var width = recentHeight == 0 ? LogicalTokenWidth : LogicalRecentColumnWidth + 24;
 
         int Scale(int value) => Math.Max(
             1,

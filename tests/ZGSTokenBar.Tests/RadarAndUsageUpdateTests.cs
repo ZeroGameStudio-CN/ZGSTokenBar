@@ -20,6 +20,7 @@ internal static class RadarAndUsageUpdateTests
         ConversationMetrics();
         ProjectionAndPaging();
         CurrentPricing();
+        ConversationDates();
         Layouts();
     }
 
@@ -346,7 +347,7 @@ internal static class RadarAndUsageUpdateTests
     {
         RecentTurns = Enumerable.Range(1, 10).Select(index => new CodexConversationTurn(
             $"00000000-0000-0000-0000-{index:000000000000}", "turn-" + index, "gpt-6.1-sol", "high",
-            Now.AddSeconds(-60 * index), Now, 300 * index, 60 * index, true, true)
+            Now.AddDays(-(index / 4)).AddSeconds(-60 * index), Now, 300 * index, 60 * index, true, true)
         {
             ProjectName = index % 2 == 0 ? "ZGSTokenBar" : "POB",
             FirstTokenSeconds = 1.2,
@@ -356,6 +357,24 @@ internal static class RadarAndUsageUpdateTests
             ApiEquivalentUsd = 0.0134m * index,
         }).ToArray(),
     };
+
+    private static void ConversationDates()
+    {
+        var turn = Usage().RecentTurns[0] with
+        {
+            StartedAt = new DateTimeOffset(2025, 12, 31, 23, 59, 58, TimeSpan.Zero),
+        };
+        var local = turn.StartedAt.ToLocalTime();
+        foreach (var text in new[] { NativeText.For("zh-CN"), NativeText.For("en") })
+        {
+            Check(text.CodexTurnTime(turn) == $"{local.Hour:00}:{local.Minute:00}:{local.Second:00}",
+                "turn start time uses local time and retains seconds");
+            Check(text.CodexTurnDate(turn) == $"{local.Year:0000}-{local.Month:00}-{local.Day:00}",
+                "turn date follows local time across year boundaries");
+            Check(text.CodexTurnTooltip(turn).Contains(text.CodexTurnDate(turn) + " " + text.CodexTurnTime(turn)),
+                "row tooltip identifies the full start date and time");
+        }
+    }
 
     private static void Layouts()
     {
@@ -367,22 +386,22 @@ internal static class RadarAndUsageUpdateTests
             Check(layout.RecentTurnsBounds.Left > layout.TableViewport.Right, "turn panel clears the compact Radar column");
             Check(layout.RecentTurnsBounds.Bottom <= layout.BodySize.Height, "turn panel fits the split body");
             var inset = (int)Math.Round(8 * dpi / 96d);
-            Check(layout.RecentColumns.Count == 7
+            Check(layout.RecentColumns.Count == 8
                 && layout.RecentColumns[0].Left == layout.RecentTurnsBounds.Left + inset
                 && layout.RecentColumns[^1].Right == layout.RecentTurnsBounds.Right - inset,
                 "split recent conversations keep equal horizontal breathing room at each DPI");
             Check(layout.RecentNextBounds.Right == layout.RecentColumns[^1].Right
                 && layout.RecentPreviousBounds.Left > layout.RecentColumns[0].Left,
                 "paging controls align with the table content instead of the card edge");
-            Check(layout.RecentColumns[^1].Right - layout.RecentColumns[0].Left == (int)Math.Round(440 * dpi / 96d),
+            Check(layout.RecentColumns[^1].Right - layout.RecentColumns[0].Left == (int)Math.Round(460 * dpi / 96d),
                 "split panel retains its usable metric width after adding padding");
-            Check(layout.RecentPageSize == 4, "four recent conversations fit on the split page");
+            Check(layout.RecentPageSize == 4, "four two-line conversations fit on the split page");
             Check(!layout.FooterCompactBounds.IsEmpty
                 && layout.FooterSpendBounds.Left == layout.FooterCompactBounds.Left
                 && layout.FooterSpendBounds.Right < layout.FooterCompactBounds.Right
                 && layout.FooterCompactBounds.Bottom <= layout.BodySize.Height,
                 "estimate, token and cache metrics share one compact footer row");
-            using var headerFont = new Font("Segoe UI", (float)(7 * dpi / 96d), FontStyle.Bold, GraphicsUnit.Pixel);
+            using var headerFont = new Font("Segoe UI", (float)Math.Round(7 * dpi / 96d, MidpointRounding.AwayFromZero), FontStyle.Bold, GraphicsUnit.Pixel);
             foreach (var text in new[] { NativeText.For("zh-CN"), NativeText.For("en") })
             {
                 var headers = text.CodexConversationHeaders;
@@ -399,10 +418,25 @@ internal static class RadarAndUsageUpdateTests
             }
             var token = RadarPopoverLayout.CreateTokenUsage(dpi, 4);
             Check(token.RecentTurnsBounds.Bottom <= token.BodySize.Height, "local panel fits at all supported DPI");
-            Check(token.RecentColumns.Count == 7
+            Check(token.RecentColumns.Count == 8
                 && token.RecentColumns[0].Left == token.RecentTurnsBounds.Left + inset
                 && token.RecentColumns[^1].Right == token.RecentTurnsBounds.Right - inset,
                 "standalone conversation table keeps the same horizontal breathing room at each DPI");
+            var firstTop = token.RecentTurnsBounds.Top + (int)Math.Round(RadarPopoverLayout.ConversationHeaderHeight * dpi / 96d);
+            var rowHeight = (int)Math.Round(RadarPopoverLayout.ConversationRowHeight * dpi / 96d);
+            var x = token.RecentColumns[0].Left;
+            Check(token.RecentTurnIndexAt(new Point(x, firstTop - 1), 0, 4) == -1
+                && token.RecentTurnIndexAt(new Point(x, firstTop), 0, 4) == 0
+                && token.RecentTurnIndexAt(new Point(x, firstTop + rowHeight - 1), 0, 4) == 0
+                && token.RecentTurnIndexAt(new Point(x, firstTop + rowHeight), 0, 4) == 1
+                && token.RecentTurnIndexAt(new Point(x, firstTop + 4 * rowHeight), 0, 4) == -1,
+                "two-line rows, header and trailing space map to the correct tooltip");
+            using var timeFont = new Font("Cascadia Mono", (float)Math.Round(8.5 * dpi / 96d, MidpointRounding.AwayFromZero), FontStyle.Regular, GraphicsUnit.Pixel);
+            using var dateFont = new Font("Segoe UI", (float)Math.Round(8 * dpi / 96d, MidpointRounding.AwayFromZero), FontStyle.Regular, GraphicsUnit.Pixel);
+            foreach (var (value, font) in new[] { ("23:59:59", timeFont), ("2026-12-31", dateFont) })
+                Check(System.Windows.Forms.TextRenderer.MeasureText(value, font, Size.Empty,
+                    System.Windows.Forms.TextFormatFlags.NoPadding | System.Windows.Forms.TextFormatFlags.SingleLine).Width
+                    <= token.RecentColumns[0].Width, $"{dpi} DPI full date/time fits without ellipsis");
         }
 
         var compactRadar = RadarPopoverLayout.CreateGrouped(
@@ -421,8 +455,8 @@ internal static class RadarAndUsageUpdateTests
             recentTurnCount: 12);
         Check(compactRadar.RecentPageSize < tallRadar.RecentPageSize,
             "recent page length expands with the available Radar height");
-        Check(tallRadar.RecentPageSize == 12,
-            "a tall Radar page shows all twelve recent conversations when they fit");
+        Check(tallRadar.RecentPageSize == Math.Min(12, (tallRadar.BodySize.Height - 60) / RadarPopoverLayout.ConversationRowHeight),
+            "a tall Radar page uses the available height for two-line conversations");
     }
 
     internal static void Capture(string directory)
@@ -435,9 +469,22 @@ internal static class RadarAndUsageUpdateTests
             TodaySpend = new CodexSpendPeriod(1_000, 500, 250, 0, 0, 1_750, 0, 648.1m),
             Last30DaysSpend = new CodexSpendPeriod(10_000, 5_000, 2_500, 0, 0, 17_500, 0, 80_014.8m),
         };
-        foreach (var dpi in new[] { 96, 192 })
+        usage = usage with
+        {
+            RecentTurns = usage.RecentTurns.Select((turn, index) => index switch
+            {
+                1 => turn with { Model = "gpt-6.1-sol-long-model-name", Interrupted = true },
+                2 => turn with { Model = null, Effort = null, InputTokens = null,
+                    CachedInputTokens = null, ApiEquivalentUsd = null, FirstTokenSeconds = null,
+                    UsageComplete = false, OutputTokens = 0 },
+                3 => turn with { Stale = true, CostIsPartial = true },
+                _ => turn,
+            }).ToArray(),
+        };
+        foreach (var dpi in new[] { 96, 144, 192 })
         foreach (var locale in new[] { "zh-CN", "en" })
         foreach (var radar in new[] { true, false })
+        foreach (var offset in new[] { 0, 6 })
         {
             var layout = radar
                 ? RadarPopoverLayout.CreateGrouped(dpi, presentation.Rows.Select(row => row.Model.Model).ToArray(),
@@ -449,8 +496,8 @@ internal static class RadarAndUsageUpdateTests
             using var renderer = new RadarPopoverRenderer();
             renderer.Draw(graphics, layout, PopoverTailSide.Bottom, layout.BodySize.Width / 2,
                 new RadarViewState(snapshot, Now, false, null), radar ? presentation : null, null,
-                NativeText.For(locale), usage, recentTurnOffset: 0, canSwitchBenchmark: radar);
-            bitmap.Save(Path.Combine(directory, $"{(radar ? "radar-trial" : "local-turns")}-{locale}-{dpi}.png"), ImageFormat.Png);
+                NativeText.For(locale), usage, recentTurnOffset: offset, canSwitchBenchmark: radar);
+            bitmap.Save(Path.Combine(directory, $"{(radar ? "radar-trial" : "local-turns")}-{locale}-{dpi}-page-{offset}.png"), ImageFormat.Png);
         }
     }
 

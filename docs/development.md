@@ -106,7 +106,9 @@ prompts and responses are never written. The popover starts at the newest
 summaries and pages through the retained records, while unfinished turns remain
 in the live window. Plugin snapshot details continue to expose the bounded recent
 view. The compact table
-shows new input (input minus cache hits), output, cached input, API-equivalent
+shows each turn's local start time (including seconds) and full date, with model
+and effort on separate lines. Alternating row shading and aligned numeric columns
+show new input (input minus cache hits), output, cached input, API-equivalent
 cost, turn-average output rate and first-token latency. Cost is summed per proven
 request/model/tier; unknown coverage is unavailable or marked with a plus.
 Project, identity, state and metric definitions live in hover details.

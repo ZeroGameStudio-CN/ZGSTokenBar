@@ -975,11 +975,15 @@ internal sealed class NativeText
     public string CodexRecentTurnsTitle => T("最近对话", "Recent chats");
     public string CodexConversationsIndexing(int count) => T($"读取 {count}", $"Reading {count}");
     public string[] CodexConversationHeaders =>
-        [T("模型", "Model"), T("新增输入", "Input"), T("输出", "Output"), T("缓存", "Cached"),
-         T("估算", "Estimate"), T("均速 t/s", "Avg t/s"), T("首字 s", "First s")];
+        [T("开始时间", "Started"), T("模型", "Model"), T("新增输入", "Input"), T("输出", "Output"), T("缓存", "Cached"),
+         T("估算 $", "Est. $"), T("均速 tok/s", "Avg tok/s"), T("首字 s", "First s")];
     public string CodexConversationHint => T(
-        "新增输入不含缓存命中；金额是 API 等值美元估算，＋表示仅已定价部分。均速包含思考、工具和等待；首字仅使用日志记录。悬停一行查看对话和状态。",
-        "Input excludes cache hits; cost is API-equivalent USD (+ means partly priced). Average speed includes reasoning, tools and waits. First-token latency requires a recorded measurement. Hover a row for chat and state.");
+        "时间为本机时区的整轮开始时间。新增输入不含缓存命中；金额是 API 等值美元估算，＋表示仅已定价部分。均速包含思考、工具和等待；首字仅使用日志记录。悬停一行查看对话和状态。",
+        "Times are turn starts in your local time zone. Input excludes cache hits; cost is API-equivalent USD (+ means partly priced). Average speed includes reasoning, tools and waits. First-token latency requires a recorded measurement. Hover a row for chat and state.");
+    public string CodexTurnTime(CodexConversationTurn turn) =>
+        turn.StartedAt.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+    public string CodexTurnDate(CodexConversationTurn turn) =>
+        turn.StartedAt.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
     public string CodexTurnCost(CodexConversationTurn turn)
     {
         if (turn.ApiEquivalentUsd is not { } cost) return "—";
@@ -998,8 +1002,8 @@ internal sealed class NativeText
     };
     public string CodexTurnSpeedNote => T("含思考、工具和等待时间；不是纯生成速度", "Includes reasoning, tools and waiting; not decode speed");
     public string CodexTurnDetail(CodexConversationTurn turn) => T(
-        $"{turn.SessionId[^Math.Min(8, turn.SessionId.Length)..]} · {turn.StartedAt.ToLocalTime():HH:mm} · 输出 {turn.OutputTokens:N0} · {CodexTurnState(turn)}",
-        $"{turn.SessionId[^Math.Min(8, turn.SessionId.Length)..]} · {turn.StartedAt.ToLocalTime():HH:mm} · out {turn.OutputTokens:N0} · {CodexTurnState(turn)}");
+        $"{turn.SessionId[^Math.Min(8, turn.SessionId.Length)..]} · {CodexTurnDate(turn)} {CodexTurnTime(turn)} · 输出 {turn.OutputTokens:N0} · {CodexTurnState(turn)}",
+        $"{turn.SessionId[^Math.Min(8, turn.SessionId.Length)..]} · {CodexTurnDate(turn)} {CodexTurnTime(turn)} · out {turn.OutputTokens:N0} · {CodexTurnState(turn)}");
     public string CodexTurnTooltip(CodexConversationTurn turn) =>
         $"{CodexTurnLabel(turn)}\n{turn.SessionId}\n{CodexTurnDetail(turn)}\n"
         + T($"新增输入 {turn.NewInputTokens?.ToString("N0") ?? "—"} · 缓存 {turn.CachedInputTokens?.ToString("N0") ?? "—"} · 估算 {CodexTurnCost(turn)}\n",

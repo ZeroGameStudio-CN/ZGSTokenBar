@@ -614,33 +614,50 @@ internal sealed class RadarPopoverRenderer : IDisposable
             DrawText(graphics, headers[column], fonts.Badge, labelColor,
                 new Rectangle(origin.X + columns[column].Left, bounds.Top + Scale(layout.Dpi, 18),
                     columns[column].Width, Scale(layout.Dpi, 14)),
-                CellTextFlags | (column == 0 ? TextFormatFlags.Left : TextFormatFlags.Right));
+                CellTextFlags | (column < 2 ? TextFormatFlags.Left : TextFormatFlags.Right));
         var y = bounds.Top + Scale(layout.Dpi, RadarPopoverLayout.ConversationHeaderHeight);
         using var divider = new Pen(Color.FromArgb(40, 71, 85, 105));
+        using var alternateRow = new SolidBrush(Color.FromArgb(18, 148, 163, 184));
+        var rowHeight = Scale(layout.Dpi, RadarPopoverLayout.ConversationRowHeight);
+        var rowIndex = 0;
         foreach (var turn in usage.ConversationTurns.Skip(page.Offset).Take(page.Count))
         {
+            if (rowIndex++ % 2 == 0)
+                graphics.FillRectangle(alternateRow, origin.X + columns[0].Left, y,
+                    columns[^1].Right - columns[0].Left, rowHeight);
             graphics.DrawLine(divider, origin.X + columns[0].Left, y,
                 origin.X + columns[^1].Right, y);
+            var modelColor = turn.Stale || turn.Interrupted
+                ? Color.FromArgb(251, 191, 36) : Color.FromArgb(226, 232, 240);
+            DrawText(graphics, text.CodexTurnTime(turn), fonts.Number, Color.FromArgb(226, 232, 240),
+                new Rectangle(origin.X + columns[0].Left, y + Scale(layout.Dpi, 2),
+                    columns[0].Width, Scale(layout.Dpi, 14)), CellTextFlags);
+            DrawText(graphics, text.CodexTurnDate(turn), fonts.Meta, labelColor,
+                new Rectangle(origin.X + columns[0].Left, y + Scale(layout.Dpi, 16),
+                    columns[0].Width, Scale(layout.Dpi, 13)), CellTextFlags);
+            DrawText(graphics, turn.Model ?? "—", fonts.Model, modelColor,
+                new Rectangle(origin.X + columns[1].Left, y + Scale(layout.Dpi, 2),
+                    columns[1].Width, Scale(layout.Dpi, 14)), CellTextFlags);
+            DrawText(graphics, turn.Effort ?? "—", fonts.Meta, labelColor,
+                new Rectangle(origin.X + columns[1].Left, y + Scale(layout.Dpi, 16),
+                    columns[1].Width, Scale(layout.Dpi, 13)), CellTextFlags);
             var values = new[]
             {
-                string.Join(' ', new[] { turn.Model ?? "—", turn.Effort }.Where(value => value is not null)),
                 turn.NewInputTokens is { } input ? NativeText.FormatTokenCount(input) : "—",
                 !turn.UsageComplete && turn.OutputTokens == 0 ? "—"
                     : NativeText.FormatTokenCount(turn.OutputTokens) + (turn.UsageComplete ? "" : "+"),
                 turn.CachedInputTokens is { } cached ? NativeText.FormatTokenCount(cached) : "—",
                 text.CodexTurnCost(turn),
-                turn.OutputTokensPerSecond is { } speed ? $"{speed:0.#}" : "—",
+                turn.OutputTokensPerSecond is { } speed ? $"≈{speed:0.#}" : "—",
                 turn.FirstTokenSeconds is { } first ? $"{first:0.#}" : "—",
             };
-            for (var column = 0; column < columns.Count; column++)
-                DrawText(graphics, values[column], column == 4 ? fonts.EmphasizedNumber : fonts.Model,
-                    column == 5 ? Color.FromArgb(52, 211, 153)
-                        : column == 0 && (turn.Stale || turn.Interrupted) ? Color.FromArgb(251, 191, 36)
-                        : Color.FromArgb(226, 232, 240),
+            for (var column = 2; column < columns.Count; column++)
+                DrawText(graphics, values[column - 2], column == 5 ? fonts.EmphasizedNumber : fonts.Number,
+                    values[column - 2] == "—" ? labelColor
+                        : column == 6 ? Color.FromArgb(52, 211, 153) : Color.FromArgb(226, 232, 240),
                     new Rectangle(origin.X + columns[column].Left, y, columns[column].Width,
-                        Scale(layout.Dpi, RadarPopoverLayout.ConversationRowHeight)),
-                    CellTextFlags | (column == 0 ? TextFormatFlags.Left : TextFormatFlags.Right));
-            y += Scale(layout.Dpi, RadarPopoverLayout.ConversationRowHeight);
+                        rowHeight), CellTextFlags | TextFormatFlags.Right);
+            y += rowHeight;
         }
     }
 
