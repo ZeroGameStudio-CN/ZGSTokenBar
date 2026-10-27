@@ -18,6 +18,14 @@ using ZGSTokenBar.Plugin.AiGatewayObserver;
 
 if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJobExitCode;
 
+if (args.Length > 0 && args[0] == "--router-module")
+{
+    RouterModuleTests.Run();
+    if (args.Length == 2) RouterModuleTests.Capture(args[1]);
+    Console.WriteLine("PASS native Router transport, controls, freshness and presentation");
+    return 0;
+}
+
 if (args.Length == 1 && args[0] == "--quota-pace-review")
 {
     TestQuotaPaceEstimate();
@@ -399,6 +407,7 @@ var tests = new (string Name, Action Run)[]
     ("Host job exit survival and diagnostics", HostJobLifetimeFixture.Test),
     ("Release update discovery", TestReleaseUpdateDiscovery),
     ("Settings v2 plugin migration", TestSettingsV2PluginMigration),
+    ("Native Router module", RouterModuleTests.Run),
     ("Provider local credential auto-discovery", TestProviderLocalCredentialAutoDiscovery),
     ("Bundled plugin extraction closes package file", TestBundledPluginExtraction),
     ("Plugin profile state redaction", TestPluginProfileStateRedaction),
@@ -13016,7 +13025,7 @@ static void TestPluginHostCatalog()
     var plugins = GeneratedBuiltinPluginRegistry.Create();
     try
     {
-        Equal(4, plugins.Count, "four public built-in plugins registered");
+        Equal(5, plugins.Count, "typed built-in plugins registered");
         Equal(0, PluginValidation.ValidateCatalog(
             plugins.Select(plugin => plugin.Manifest).ToArray()).Count,
             "built-in catalog validates");

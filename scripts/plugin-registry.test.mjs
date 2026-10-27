@@ -20,7 +20,7 @@ test('built-in plugin registry is generated from strict manifests', () => {
     .filter(entry => entry.isDirectory())
     .map(entry => `src/Plugins/${entry.name}/plugin-manifest.v1.json`)
     .filter(path => fs.existsSync(path));
-  assert.equal(manifests.length, 4);
+  assert.equal(manifests.length, 5);
   for (const path of manifests) {
     const manifest = JSON.parse(fs.readFileSync(path, 'utf8'));
     assert.equal(manifest.schemaVersion, 1);
