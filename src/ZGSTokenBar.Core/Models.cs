@@ -427,7 +427,7 @@ public static class TaskbarMiniLayoutMath
     public static int NormalizeAreaContentWidth(int width, string? areaId) =>
         Math.Clamp(width, MinimumAreaContentWidthFor(areaId), MaximumAreaContentWidth);
 
-    public static int MinimumAreaContentWidthFor(string? areaId) => MinimumAreaContentWidth;
+    public static int MinimumAreaContentWidthFor(string? areaId) => areaId == MiniAreaIds.Router ? 32 : MinimumAreaContentWidth;
 
     public static int AreaWidth(int contentWidth, bool collapsed) =>
         ProviderCollapseHandleWidth
@@ -663,6 +663,7 @@ public static class CodexDisplayFormatting
 
 public static class MiniAreaIds
 {
+    public const string Router = "zgstokenbar.monitor.router";
     public const string Claude = "zgstokenbar.provider.claude";
     public const string Codex = "zgstokenbar.provider.codex";
     public const string AiGateway = "zgstokenbar.provider.ai-gateway";

@@ -24,3 +24,11 @@ Acceptance includes app-off/job-on independence, stale and incompatible-server
 states, original-instance/request/project binding, stale queue refusal, safe stop
 qualification, pagination beyond the first page, filter/statistic parity, bounded
 payloads, and DPI rendering. Production controls are not exercised on others' jobs.
+
+The user's refined presentation contract is an icon-only bar module with a small
+queue count, matching the existing Codex hover/pin interaction. Hover opens an
+anchored, borderless preview without activation; clicking the module pins it.
+Leaving both anchor and popup dismisses the preview after the shared grace period;
+outside click/Escape dismisses a pinned view. Execution controls require pinning.
+Reuse the bar's hover timer, pointer supervision, screen-edge placement and palette.
+Keep task names and state explanations in the popup rather than the compact bar.

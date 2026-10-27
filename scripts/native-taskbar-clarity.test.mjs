@@ -356,7 +356,7 @@ test('Codex pool grouping replaces only the Codex area and keeps the Mini height
 
   const drawStart = barForm.indexOf('    private void DrawTaskbarCards(');
   const drawEnd = barForm.indexOf('    private void DrawTaskbarCard(', drawStart);
-  const layoutStart = barForm.indexOf('    private void ApplySnapshotLayout()');
+  const layoutStart = barForm.indexOf('    private void ApplySnapshotLayout(');
   const layoutEnd = barForm.indexOf('    private void UpdateWindowRegion()', layoutStart);
   assert.notEqual(drawStart, -1);
   assert.notEqual(drawEnd, -1);
