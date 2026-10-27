@@ -196,6 +196,7 @@ internal sealed class BarForm : Form
 
     public event EventHandler? RefreshRequested;
     public event EventHandler? SettingsRequested;
+    public event EventHandler<string>? PluginActivated;
     public event EventHandler<WindowPlacementCommit>? PlacementCommitted;
     public event EventHandler<RadarPreviewRequest>? RadarPreviewRequested;
     public event EventHandler? SystemUsageDetailsRequested;
@@ -3969,6 +3970,12 @@ internal sealed class BarForm : Form
         if (SystemUsageTargetAt(logical))
         {
             TogglePinnedSystemUsagePopover();
+            return;
+        }
+        if (TaskbarPluginTargetAt(logical) is { } pluginTarget)
+        {
+            HidePopovers();
+            PluginActivated?.Invoke(this, pluginTarget.Card.PluginId);
             return;
         }
         var radarTarget = TaskbarRadarTargetAt(logical);

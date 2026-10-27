@@ -27,5 +27,7 @@ public interface IDesktopControl
     ValueTask<WindowInspection> InspectWindowAsync(CancellationToken cancellationToken);
     ValueTask RequestRefreshAsync(bool reloadSettings, CancellationToken cancellationToken);
     ValueTask OpenSettingsAsync(CancellationToken cancellationToken);
+    ValueTask SetRouterVisibleAsync(bool visible, CancellationToken cancellationToken) =>
+        ValueTask.FromException(new HostCommandException("command_requires_desktop", "Router view requires the native desktop."));
     ValueTask RequestExitAsync(CancellationToken cancellationToken);
 }

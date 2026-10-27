@@ -71,6 +71,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     private readonly System.Windows.Forms.Timer _updateTimer;
     private readonly RegisteredWaitHandle _activationWait;
     private readonly ZgsTokenBarHost _pluginHost;
+    private readonly RouterModule _routerModule;
     private readonly ZgsNamedPipeServer _apiServer;
     private readonly ZgsTokenBarHost.Subscription _pluginSubscription;
     private readonly Task _pluginEventTask;
@@ -301,6 +302,8 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                 ToolTipIcon.Warning);
         }
         _bar.SyncTaskbarPlacement();
+        _routerModule = new(_bar, _pluginHost,
+            () => _settings.IsPluginEnabled(ZGSTokenBar.Plugin.Router.RouterPlugin.Id, false), _shutdown.Token);
         _apiServer.Start();
         _pluginEventTask = WatchPluginEventsAsync();
 
@@ -1700,6 +1703,17 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     {
         var key = (pluginId, _settings.Locale);
         if (_pluginAssets.TryGetValue(key, out var assets)) return assets;
+        if (pluginId == ZGSTokenBar.Plugin.Router.RouterPlugin.Id)
+        {
+            assets = new PluginAssets(null, new Dictionary<string, string>
+            {
+                ["Router"] = "Router",
+                ["router.state"] = _settings.Locale == "zh-CN" ? "状态" : "State",
+                ["router.task"] = _settings.Locale == "zh-CN" ? "任务" : "Task",
+            });
+            _pluginAssets[key] = assets;
+            return assets;
+        }
         try
         {
             assets = new PluginAssets(
@@ -1981,6 +1995,10 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                 CoreModuleId = typeof(CodexTokenUsageReader).Module.ModuleVersionId.ToString(),
                 DataDirectory = _store.DataDirectory,
                 DisplayedTokenTotal = _bar.DisplayedTokenTotal,
+                RouterVisible = _routerModule.Visible,
+                RouterProjectKey = _routerModule.Snapshot?.ProjectKey,
+                RouterRequestId = _routerModule.Snapshot is { } router ? ZGSTokenBar.Plugin.Router.RouterJson.Text(router.View, "requestId") : null,
+                RouterObservedAt = _routerModule.Snapshot?.ReceivedAt,
                 RecentConversationCount = _cachedCodexTokenUsage?.RecentTurns.Count ?? 0,
                 PendingConversationCount = _cachedCodexTokenUsage?.PendingConversationCount ?? 0,
                 LatestTurnOutputTokensPerSecond = _cachedCodexTokenUsage?.RecentTurns.FirstOrDefault()?.OutputTokensPerSecond,
@@ -2035,6 +2053,9 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                 return true;
             },
             cancellationToken));
+
+    public ValueTask SetRouterVisibleAsync(bool visible, CancellationToken cancellationToken) =>
+        new(InvokeOnUiAsync(() => { _routerModule.SetVisible(visible); return true; }, cancellationToken));
 
     public ValueTask RequestExitAsync(CancellationToken cancellationToken) =>
         new(InvokeOnUiAsync(
@@ -2133,6 +2154,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     {
         if (disposing)
         {
+            _routerModule.Dispose();
             _shutdown.Cancel();
             _refreshTimer.Dispose();
             _providerActivityTimer.Dispose();

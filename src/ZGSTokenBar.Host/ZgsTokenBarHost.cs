@@ -715,6 +715,7 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
                 "window.inspect" => await WindowInspectAsync(cancellationToken),
                 "app.requestRefresh" => await RequestRefreshAsync(request.Params, cancellationToken),
                 "app.openSettings" => await OpenSettingsAsync(cancellationToken),
+                "ui.router.setVisible" => await RouterVisibleAsync(request.Params, cancellationToken),
                 "app.requestExit" => await RequestExitAsync(cancellationToken),
                 "events.watch" => throw new HostCommandException("invalid_request", "events.watch requires a streaming transport."),
                 _ => throw new HostCommandException("unknown_method", "API method is unknown."),
@@ -828,6 +829,15 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
             .ThenBy(command => command.Name, StringComparer.Ordinal)
             .ToArray();
         return ToElement(commands, PluginSdkJsonContext.Default.CommandDescriptorArray);
+    }
+
+    private async ValueTask<JsonElement> RouterVisibleAsync(JsonElement? parameters, CancellationToken cancellationToken)
+    {
+        EnsureFields(parameters, ["visible"]);
+        var visible = RequiredBoolean(parameters, "visible");
+        await RequireDesktop().SetRouterVisibleAsync(visible, cancellationToken);
+        using var result = JsonDocument.Parse(visible ? "{\"visible\":true}" : "{\"visible\":false}");
+        return result.RootElement.Clone();
     }
 
     private async ValueTask<JsonElement> InvokeCommandRequestAsync(

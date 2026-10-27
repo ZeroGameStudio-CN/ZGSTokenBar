@@ -17,15 +17,16 @@ const processHost = [
 const builtinsProject = read('src/ZGSTokenBar.Builtins/ZGSTokenBar.Builtins.csproj');
 const graduationGate = read('scripts/graduation-gate.mjs');
 
-test('plugin host has four generated built-ins and no reflection loading', () => {
+test('plugin host has generated built-ins and no reflection loading', () => {
   const manifests = fs.readdirSync('src/Plugins', { withFileTypes: true })
     .filter(entry => entry.isDirectory())
     .map(entry => 'src/Plugins/' + entry.name + '/plugin-manifest.v1.json')
     .filter(path => fs.existsSync(path));
-  assert.equal(manifests.length, 4);
+  assert.equal(manifests.length, 5);
   const ids = manifests.map(path => JSON.parse(read(path)).id).sort();
   assert.deepEqual(ids, [
     'zgstokenbar.metrics.system',
+    'zgstokenbar.monitor.router',
     'zgstokenbar.provider.claude',
     'zgstokenbar.provider.codex',
     'zgstokenbar.usage.codex-local',

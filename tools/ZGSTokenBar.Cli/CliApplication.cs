@@ -61,10 +61,19 @@ internal static partial class CliApplication
             "snapshot" => await SnapshotCommandAsync(commandArgs, commandLine),
             "mini" => await MiniCommandAsync(commandArgs, commandLine),
             "window" => await WindowCommandAsync(commandArgs, commandLine),
+            "router" => await RouterCommandAsync(commandArgs, commandLine),
             "watch" => await WatchCommandAsync(commandArgs, commandLine),
             "acceptance" => await AcceptanceCommandAsync(commandArgs, commandLine),
             _ => await PluginNamespaceCommandAsync(commandLine),
         };
+    }
+
+    private static async Task<int> RouterCommandAsync(string[] commandArgs, CliArguments options)
+    {
+        var action = Subcommand(commandArgs, "show");
+        if (action is not ("show" or "hide")) return CliOutput.Unknown("router " + action, options.Json);
+        using var parameters = JsonDocument.Parse(action == "show" ? "{\"visible\":true}" : "{\"visible\":false}");
+        return await UnaryAsync("router " + action, "ui.router.setVisible", parameters.RootElement.Clone(), options);
     }
 
     private static async Task<int> AppCommandAsync(string[] commandArgs, CliArguments options)

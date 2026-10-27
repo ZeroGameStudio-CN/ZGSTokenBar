@@ -130,6 +130,7 @@ internal static partial class CliApplication
             "mini width <area-id> <logical-px>",
             "mini move <area-id> [before-area-id]",
             "window inspect",
+            "router show|hide",
             "watch [--include-values]",
             "acceptance run --isolated --artifacts <dir>",
             "sub2api provision|configure|status|disconnect",

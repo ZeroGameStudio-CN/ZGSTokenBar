@@ -18,7 +18,7 @@ src/ZGSTokenBar.PluginSdk/     stable plugin and local API contracts
 src/ZGSTokenBar.Host/          plugin lifecycle and typed dispatcher
 src/ProcessPlugins/            isolated packaged Provider processes
 src/ZGSTokenBar.Transport.NamedPipe/ current-user local transport
-src/Plugins/                   four public built-in plugins
+src/Plugins/                   typed built-in plugins, including optional Router observation
 tests/ZGSTokenBar.Tests/       executable contract suite and visual captures
 tools/ZGSTokenBar.Cli/         shipped command-line controller
 scripts/                       static UI contracts and portable packaging
@@ -58,6 +58,24 @@ unavailable and long-name cases at 96, 144 and 192 DPI.
 `scripts/build-ai-gateway-observer-plugin.ps1` builds the independently verifiable DeepSeek Harness package. The portable build embeds that exact package so a normal application start can idempotently install the missing bundled version before local-only Provider discovery runs. No runtime package or pricing download is required.
 
 ## Acceptance
+
+The optional `zgstokenbar.monitor.router` module is a client of the separately
+installed Router monitor at `127.0.0.1:18761`. It is disabled by default and has
+no project/journal/Unity dependency. An enabled module refreshes its compact card
+every two seconds; the native window reads queue pages while visible and fetches
+history only on demand. The monitor caches observations across clients. Closing
+Token Bar or disabling this module does not stop the monitor or any Editor job.
+Enable it in Settings or with `ZGSTokenBar.Cli plugin enable zgstokenbar.monitor.router --json`.
+
+The native window covers project selection, source chat, progress/freshness,
+queued-only cancellation and version-bound order changes, qualified stop and
+cleanup inspection, filtered/paged history, phase timings/P95 and original CSV
+export. Unavailable observations are never rendered as idle. Controls are
+instance/request/project bound and are never retried after a lost reply.
+`ZGSTokenBar.Cli router show --json`, `router hide --json` and `window inspect
+--json` expose presentation-only acceptance. Synthetic HTTP, control and capture
+checks run with `dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj
+-c Release -- --router-module <temporary-capture-directory>`.
 
 All acceptance is non-interactive and CLI-only. Do not use desktop automation, injected pointer/keyboard input, or user-performed GUI interaction as required evidence.
 
