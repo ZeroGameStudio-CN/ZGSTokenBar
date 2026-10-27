@@ -105,13 +105,18 @@ local token index for up to 90 days or 500 turns, keyed by session and turn;
 prompts and responses are never written. The popover starts at the newest
 summaries and pages through the retained records, while unfinished turns remain
 in the live window. Plugin snapshot details continue to expose the bounded recent
-view. The compact table
-shows each turn's local start time (including seconds) and full date, with model
-and effort on separate lines. Alternating row shading and aligned numeric columns
+view. The compact table shows each turn's local start time (including seconds),
+full date and service tier. Chat names, models and effort/status occupy three
+lines; long names use ellipsis and row hover shows the full name. Names are read
+from a bounded, change-cached 2 MiB tail of each registered home's session index
+and are never persisted to the token ledger. Explicit context or
+`thread_settings_applied` events identify Fast/Standard; missing records remain
+unknown and turns with multiple observed tiers show mixed.
+Alternating row shading and aligned numeric columns
 show new input (input minus cache hits), output, cached input, API-equivalent
 cost, turn-average output rate and first-token latency. Cost is summed per proven
 request/model/tier; unknown coverage is unavailable or marked with a plus.
-Each model's second line pairs effort with a status badge: running, ended,
+Each model's final line pairs effort with a status badge: running, ended,
 interrupted or unknown after two minutes without usage updates or on a log read failure. Unknown does not
 assert that a turn has stopped. First-token headings and values are centered.
 Project, identity and metric definitions live in hover details.

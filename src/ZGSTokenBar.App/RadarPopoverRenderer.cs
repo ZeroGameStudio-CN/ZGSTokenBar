@@ -635,10 +635,17 @@ internal sealed class RadarPopoverRenderer : IDisposable
             DrawText(graphics, text.CodexTurnDate(turn), fonts.Meta, labelColor,
                 new Rectangle(origin.X + columns[0].Left, y + Scale(layout.Dpi, 16),
                     columns[0].Width, Scale(layout.Dpi, 13)), CellTextFlags);
-            DrawText(graphics, turn.Model ?? "—", fonts.Model, modelColor,
+            DrawText(graphics, text.CodexTurnTier(turn), fonts.Meta,
+                turn.ServiceTier is "fast" or "ultrafast" ? Color.FromArgb(167, 139, 250) : labelColor,
+                new Rectangle(origin.X + columns[0].Left, y + Scale(layout.Dpi, 30),
+                    columns[0].Width, Scale(layout.Dpi, 13)), CellTextFlags);
+            DrawText(graphics, text.CodexTurnName(turn), fonts.EmphasizedModel, Color.FromArgb(226, 232, 240),
                 new Rectangle(origin.X + columns[1].Left, y + Scale(layout.Dpi, 2),
                     columns[1].Width, Scale(layout.Dpi, 14)), CellTextFlags);
-            var detailBounds = new Rectangle(origin.X + columns[1].Left, y + Scale(layout.Dpi, 16),
+            DrawText(graphics, turn.Model ?? "—", fonts.Meta, modelColor,
+                new Rectangle(origin.X + columns[1].Left, y + Scale(layout.Dpi, 16),
+                    columns[1].Width, Scale(layout.Dpi, 13)), CellTextFlags);
+            var detailBounds = new Rectangle(origin.X + columns[1].Left, y + Scale(layout.Dpi, 30),
                 columns[1].Width, Scale(layout.Dpi, 13));
             var statusWidth = DrawRecentTurnStatus(graphics, layout.Dpi, detailBounds, turn, fonts, text);
             DrawText(graphics, turn.Effort ?? "—", fonts.Meta, labelColor,

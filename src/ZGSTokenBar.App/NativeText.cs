@@ -975,7 +975,7 @@ internal sealed class NativeText
     public string CodexRecentTurnsTitle => T("最近对话", "Recent chats");
     public string CodexConversationsIndexing(int count) => T($"读取 {count}", $"Reading {count}");
     public string[] CodexConversationHeaders =>
-        [T("开始时间", "Started"), T("模型", "Model"), T("新增输入", "Input"), T("输出", "Output"), T("缓存", "Cached"),
+        [T("开始时间", "Started"), T("对话 / 模型", "Chat / Model"), T("新增输入", "Input"), T("输出", "Output"), T("缓存", "Cached"),
          T("估算 $", "Est. $"), T("均速 tok/s", "Avg tok/s"), T("首字 s", "First s")];
     public string CodexConversationHint => T(
         "时间为本机时区的整轮开始时间。新增输入不含缓存命中；金额是 API 等值美元估算，＋表示仅已定价部分。均速包含思考、工具和等待；首字仅使用日志记录。悬停一行查看对话和状态。",
@@ -993,6 +993,17 @@ internal sealed class NativeText
     }
     public string CodexTurnLabel(CodexConversationTurn turn) =>
         $"{turn.ProjectName ?? T("对话", "Chat")} · {turn.Model ?? T("多模型/未知", "Mixed/unknown")} {turn.Effort}".TrimEnd();
+    public string CodexTurnName(CodexConversationTurn turn) => turn.Title ?? T("未命名对话", "Untitled chat");
+    public string CodexTurnTier(CodexConversationTurn turn) => turn.ServiceTier switch
+    {
+        "fast" => "Fast",
+        "standard" => "Standard",
+        "ultrafast" => "Ultrafast",
+        "flex" => "Flex",
+        "batch" => "Batch",
+        "mixed" => T("混合档位", "Mixed"),
+        _ => T("档位未知", "Unknown"),
+    };
     public string CodexTurnState(CodexConversationTurn turn) => turn.State switch
     {
         "interrupted" => T("已中断", "Interrupted"),
@@ -1005,7 +1016,7 @@ internal sealed class NativeText
         $"{turn.SessionId[^Math.Min(8, turn.SessionId.Length)..]} · {CodexTurnDate(turn)} {CodexTurnTime(turn)} · 输出 {turn.OutputTokens:N0} · {CodexTurnState(turn)}",
         $"{turn.SessionId[^Math.Min(8, turn.SessionId.Length)..]} · {CodexTurnDate(turn)} {CodexTurnTime(turn)} · out {turn.OutputTokens:N0} · {CodexTurnState(turn)}");
     public string CodexTurnTooltip(CodexConversationTurn turn) =>
-        $"{CodexTurnLabel(turn)}\n{turn.SessionId}\n{CodexTurnDetail(turn)}\n"
+        $"{CodexTurnName(turn)}\n{CodexTurnLabel(turn)} · {CodexTurnTier(turn)}\n{turn.SessionId}\n{CodexTurnDetail(turn)}\n"
         + T($"新增输入 {turn.NewInputTokens?.ToString("N0") ?? "—"} · 缓存 {turn.CachedInputTokens?.ToString("N0") ?? "—"} · 估算 {CodexTurnCost(turn)}\n",
             $"New input {turn.NewInputTokens?.ToString("N0") ?? "—"} · Cached {turn.CachedInputTokens?.ToString("N0") ?? "—"} · Estimate {CodexTurnCost(turn)}\n")
         + T($"整轮耗时 {turn.ElapsedSeconds:0.0}s", $"Turn duration {turn.ElapsedSeconds:0.0}s")

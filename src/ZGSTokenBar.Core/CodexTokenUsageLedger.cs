@@ -8,6 +8,7 @@ public sealed class CodexTokenUsageLedger
     private CodexTokenUsageIndex? _pending;
     private CodexTokenUsageSummary? _summary;
     private readonly CodexConversationUsageReader _conversations = new();
+    private readonly CodexConversationTitleReader _titles = new();
     private IReadOnlyList<string> _recentSessionPaths = [];
 
     public CodexTokenUsageLedger(AppSettingsStore store)
@@ -27,7 +28,7 @@ public sealed class CodexTokenUsageLedger
         {
             if (_pending is null && _store.TryLoadCodexTokenUsageIndex(out var index))
                 _summary = new CodexTokenUsageReader(index).Snapshot(now);
-            return _summary;
+            return _summary is null ? null : _titles.Apply(_summary, _homes());
         }
     }
 
@@ -71,7 +72,7 @@ public sealed class CodexTokenUsageLedger
                 };
                 _summary = PersistConversationHistory(_summary, now);
             }
-            return _summary;
+            return _summary is null ? null : _titles.Apply(_summary, _homes(), cancellationToken);
         }
     }
 
@@ -106,7 +107,7 @@ public sealed class CodexTokenUsageLedger
                 PendingConversationCount = _conversations.PendingSessions,
             };
             _summary = PersistConversationHistory(_summary, now);
-            return _summary;
+            return _titles.Apply(_summary, _homes(), cancellationToken);
         }
     }
 

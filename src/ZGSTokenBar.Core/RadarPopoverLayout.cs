@@ -36,7 +36,7 @@ public sealed class RadarPopoverLayout
     public const int LogicalTokenWidth = 240;
     public const int LogicalTokenHeight = 162;
     public const int ConversationHeaderHeight = 36;
-    public const int ConversationRowHeight = 32;
+    public const int ConversationRowHeight = 46;
     public const int LogicalRadarColumnWidth = 400;
     public const int LogicalRecentColumnLeft = 428;
     public const int LogicalRecentColumnWidth = 476;

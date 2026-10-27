@@ -148,6 +148,8 @@ public static class CorePluginProjection
                 new("usage.turn.session", new("text", Text: turn.SessionId), turn.State, turn.ObservedAt),
                 new("usage.turn.id", new("text", Text: turn.TurnId)),
                 new("usage.turn.project", new("text", Text: turn.ProjectName)),
+                new("usage.turn.title", new("text", Text: turn.Title)),
+                new("usage.turn.service-tier", new("text", Text: turn.ServiceTier)),
                 new("usage.turn.model", new("text", Text: turn.Model)),
                 new("usage.turn.effort", new("text", Text: turn.Effort)),
                 new("usage.turn.output", new("integer", Integer: turn.OutputTokens)),

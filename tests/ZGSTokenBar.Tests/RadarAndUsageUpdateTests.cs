@@ -18,6 +18,8 @@ internal static class RadarAndUsageUpdateTests
         LongConversationContinuity();
         ConversationLifecycle();
         ConversationMetrics();
+        ConversationServiceTiers();
+        ConversationTitles();
         ProjectionAndPaging();
         CurrentPricing();
         ConversationDates();
@@ -287,6 +289,84 @@ internal static class RadarAndUsageUpdateTests
         finally { Directory.Delete(root, true); }
     }
 
+    private static void ConversationServiceTiers()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "zgstokenbar-turn-tiers-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var path = Path.Combine(root, "tiers.jsonl");
+            string Settings(int seconds, string tier) => Event(Now.AddSeconds(seconds), new
+            {
+                type = "thread_settings_applied", thread_id = "session",
+                thread_settings = new { service_tier = tier },
+            });
+            File.WriteAllText(path, Settings(0, "priority")
+                + Event(Now.AddSeconds(1), new { type = "task_started", turn_id = "fast" })
+                + Tokens(Now.AddSeconds(10), 100, 100));
+            var reader = new CodexConversationUsageReader();
+            Check(reader.Refresh([path], Now.AddSeconds(15)).Single().ServiceTier == "fast",
+                "applied priority settings identify Fast without a tier in turn_context");
+            File.AppendAllText(path, Event(Now.AddSeconds(18), new { type = "task_complete", turn_id = "fast" })
+                + Settings(20, "default"));
+            Check(reader.Refresh([path], Now.AddSeconds(21)).Single().ServiceTier == "fast",
+                "changing next-turn settings does not relabel a completed turn");
+            File.AppendAllText(path, Event(Now.AddSeconds(22), new { type = "task_started", turn_id = "standard" })
+                + Tokens(Now.AddSeconds(30), 200, 100));
+            Check(reader.Refresh([path], Now.AddSeconds(35)).Single().ServiceTier == "standard",
+                "explicit default settings identify Standard on the next turn");
+            File.AppendAllText(path, Settings(40, "fast") + Tokens(Now.AddSeconds(50), 300, 100));
+            Check(reader.Refresh([path], Now.AddSeconds(55)).Single().ServiceTier == "mixed",
+                "a turn using both tiers is not mislabeled as only its latest tier");
+            File.WriteAllText(path, Event(Now, new { type = "task_started", turn_id = "unknown" })
+                + Tokens(Now.AddSeconds(10), 100, 100));
+            Check(reader.Refresh([path], Now.AddSeconds(15)).Single().ServiceTier is null,
+                "missing settings are not inferred as Standard");
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    private static void ConversationTitles()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "zgstokenbar-chat-titles-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var usage = Usage();
+            var id = usage.RecentTurns[0].SessionId;
+            var path = Path.Combine(root, "session_index.jsonl");
+            string Entry(string title, int seconds) => JsonSerializer.Serialize(new
+            {
+                id, thread_name = title, updated_at = Now.AddSeconds(seconds),
+            });
+            var title = "完整名称 / " + new string('长', 120);
+            File.WriteAllText(path, Entry(title, 10) + "\n" + Entry("older title", 0) + "\n{malformed}\n");
+            var before = File.ReadAllBytes(path);
+            var reader = new CodexConversationTitleReader();
+            var result = reader.Apply(usage, [root]);
+            var turn = result.RecentTurns[0];
+            Check(turn.Title == title && result.RecentTurns[1].Title is null,
+                "metadata joins by session identity and newest rename wins over append order");
+            foreach (var text in new[] { NativeText.For("zh-CN"), NativeText.For("en") })
+                Check(text.CodexTurnTooltip(turn).Contains(title) && text.CodexTurnTooltip(turn).Contains("Fast"),
+                    "row hover retains the full unabridged chat title and service tier");
+            Check(!JsonSerializer.Serialize(turn).Contains("title", StringComparison.OrdinalIgnoreCase),
+                "display-only chat titles are excluded from persisted turn records");
+            Check(File.ReadAllBytes(path).SequenceEqual(before), "title lookup never changes the source index");
+            var rename = Entry("renamed chat", 20);
+            File.AppendAllText(path, rename[..^1]);
+            Check(reader.Apply(usage, [root]).RecentTurns[0].Title == title,
+                "partial title appends retain the last complete metadata");
+            File.AppendAllText(path, "}\n");
+            Check(reader.Apply(usage with { ConversationHistory = [usage.RecentTurns[0]] }, [root])
+                .ConversationHistory.Single().Title == "renamed chat",
+                "completed history also picks up later renames without a ledger migration");
+            Check(reader.Apply(usage, []).RecentTurns[0].Title is null,
+                "title cache does not leak across removed homes");
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     private static void ProjectionAndPaging()
     {
         var usage = Usage();
@@ -298,6 +378,9 @@ internal static class RadarAndUsageUpdateTests
         var first = projection.Details[1].Sections[0].Rows;
         Check(first.Single(row => row.LabelKey == "usage.turn.average-output-tps").Value.Number == usage.RecentTurns[0].OutputTokensPerSecond,
             "CLI and UI use the same rate");
+        Check(first.Single(row => row.LabelKey == "usage.turn.title").Value.Text == usage.RecentTurns[0].Title
+            && first.Single(row => row.LabelKey == "usage.turn.service-tier").Value.Text == usage.RecentTurns[0].ServiceTier,
+            "CLI and UI share chat titles and observed service tiers");
         var snapshot = Snapshot();
         var radar = CorePluginProjection.Radar("zgstokenbar.intelligence.radar", snapshot);
         Check(radar.Radar.Count == 2 && radar.Radar[0].Rows.Single().Model.Contains("6.1-sol"), "API exports current trial and separate history");
@@ -352,6 +435,8 @@ internal static class RadarAndUsageUpdateTests
             Now.AddDays(-(index / 4)).AddSeconds(-60 * index), Now, 300 * index, 60 * index, true, true)
         {
             ProjectName = index % 2 == 0 ? "ZGSTokenBar" : "POB",
+            Title = index == 1 ? "最近对话的名称与运行状态布局优化 / Conversation layout refinement" : "Chat " + index,
+            ServiceTier = index % 2 == 0 ? "standard" : "fast",
             FirstTokenSeconds = 1.2,
             InputTokens = 120000 + index * 1321,
             CachedInputTokens = 110000 + index * 120,
@@ -397,7 +482,10 @@ internal static class RadarAndUsageUpdateTests
                 "paging controls align with the table content instead of the card edge");
             Check(layout.RecentColumns[^1].Right - layout.RecentColumns[0].Left == (int)Math.Round(460 * dpi / 96d),
                 "split panel retains its usable metric width after adding padding");
-            Check(layout.RecentPageSize == 4, "four two-line conversations fit on the split page");
+            Check(layout.RecentPageSize is > 0 and <= 4
+                && layout.RecentTurnsBounds.Height >= (int)Math.Round(
+                    (RadarPopoverLayout.ConversationHeaderHeight + layout.RecentPageSize * RadarPopoverLayout.ConversationRowHeight) * dpi / 96d),
+                "three-line conversations fit on the split page");
             Check(!layout.FooterCompactBounds.IsEmpty
                 && layout.FooterSpendBounds.Left == layout.FooterCompactBounds.Left
                 && layout.FooterSpendBounds.Right < layout.FooterCompactBounds.Right
@@ -432,7 +520,7 @@ internal static class RadarAndUsageUpdateTests
                 && token.RecentTurnIndexAt(new Point(x, firstTop + rowHeight - 1), 0, 4) == 0
                 && token.RecentTurnIndexAt(new Point(x, firstTop + rowHeight), 0, 4) == 1
                 && token.RecentTurnIndexAt(new Point(x, firstTop + 4 * rowHeight), 0, 4) == -1,
-                "two-line rows, header and trailing space map to the correct tooltip");
+                "three-line rows, header and trailing space map to the correct tooltip");
             using var timeFont = new Font("Cascadia Mono", (float)Math.Round(8.5 * dpi / 96d, MidpointRounding.AwayFromZero), FontStyle.Regular, GraphicsUnit.Pixel);
             using var dateFont = new Font("Segoe UI", (float)Math.Round(8 * dpi / 96d, MidpointRounding.AwayFromZero), FontStyle.Regular, GraphicsUnit.Pixel);
             foreach (var (value, font) in new[] { ("23:59:59", timeFont), ("2026-12-31", dateFont) })
@@ -477,10 +565,10 @@ internal static class RadarAndUsageUpdateTests
             {
                 0 => turn with { Completed = false },
                 1 => turn with { Model = "gpt-6.1-sol-long-model-name", Effort = "xhigh", Completed = false, Interrupted = true },
-                2 => turn with { Model = null, Effort = null, InputTokens = null,
+                2 => turn with { Model = null, Effort = null, InputTokens = null, Title = null, ServiceTier = null,
                     CachedInputTokens = null, ApiEquivalentUsd = null, FirstTokenSeconds = null,
                     UsageComplete = false, OutputTokens = 0 },
-                3 => turn with { Completed = false, Stale = true, CostIsPartial = true },
+                3 => turn with { Completed = false, Stale = true, CostIsPartial = true, ServiceTier = "mixed" },
                 _ => turn,
             }).ToArray(),
         };

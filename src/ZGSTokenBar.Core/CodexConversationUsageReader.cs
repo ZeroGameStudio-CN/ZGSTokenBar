@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace ZGSTokenBar.Core;
 
@@ -11,6 +12,9 @@ public sealed record CodexConversationTurn(
     double ElapsedSeconds, bool Completed, bool UsageComplete)
 {
     public string? ProjectName { get; init; }
+    [JsonIgnore]
+    public string? Title { get; init; }
+    public string? ServiceTier { get; init; }
     public bool Interrupted { get; init; }
     public bool Stale { get; init; }
     public double? FirstTokenSeconds { get; init; }
@@ -218,12 +222,17 @@ public sealed class CodexConversationUsageReader
                         active.Model = model;
                         active.Effort = payload.StringProperty("effort");
                     }
-                    if (payload.TryGetProperty("service_tier", out _)) _serviceTier = payload.StringProperty("service_tier");
+                    if (payload.TryGetProperty("service_tier", out _)) _serviceTier = NormalizeTier(payload.StringProperty("service_tier"));
                     return;
                 }
                 if (type != "event_msg") return;
                 switch (payload.StringProperty("type"))
                 {
+                    case "thread_settings_applied":
+                        if (payload.ObjectProperty("thread_settings") is { } settings
+                            && settings.TryGetProperty("service_tier", out _))
+                            _serviceTier = NormalizeTier(settings.StringProperty("service_tier"));
+                        break;
                     case "task_started":
                         if (payload.StringProperty("turn_id") is { Length: > 0 } id)
                         {
@@ -277,6 +286,16 @@ public sealed class CodexConversationUsageReader
             !reset && before is { } previous && after is { } current && current >= previous
                 ? current - previous : last;
 
+        private static string? NormalizeTier(string? tier) => tier?.Trim().ToLowerInvariant() switch
+        {
+            null or "" or "default" or "auto" or "standard" => "standard",
+            "priority" or "fast" => "fast",
+            "ultrafast" => "ultrafast",
+            "flex" => "flex",
+            "batch" => "batch",
+            _ => null,
+        };
+
         private void RecordInputAndCost(TurnState turn, CodexTokenUsageEvent usage, long? output, bool reset)
         {
             var input = Delta(_previousUsage?.InputTokens, usage.InputTokens, usage.LastInputTokens, reset);
@@ -296,6 +315,9 @@ public sealed class CodexConversationUsageReader
             else turn.CacheWriteComplete = false;
 
             if (inputs == 0 && output == 0) return;
+            if (_serviceTier is null) turn.MissingServiceTier = true;
+            else if (turn.ServiceTier is { } priorTier && priorTier != _serviceTier) turn.MixedServiceTier = true;
+            else turn.ServiceTier = _serviceTier;
             var total = Delta(_previousUsage?.TotalTokens, usage.TotalTokens, usage.LastTotalTokens, reset);
             if (output is not { } outputs || write is not { } cacheWrites || cacheWrites > inputs - hits
                 || total is not { } totalTokens || inputs > totalTokens || outputs > totalTokens - inputs
@@ -324,6 +346,7 @@ public sealed class CodexConversationUsageReader
                 turn.EndedAt is not null && !turn.Interrupted, turn.UsageComplete)
             {
                 ProjectName = _projectName,
+                ServiceTier = turn.MixedServiceTier ? "mixed" : turn.MissingServiceTier ? null : turn.ServiceTier,
                 Interrupted = turn.Interrupted,
                 Stale = turn.EndedAt is null && now - turn.ObservedAt > TimeSpan.FromMinutes(2),
                 FirstTokenSeconds = turn.FirstTokenSeconds,
@@ -344,6 +367,9 @@ public sealed class CodexConversationUsageReader
         public DateTimeOffset ObservedAt = startedAt;
         public string? Model;
         public string? Effort;
+        public string? ServiceTier;
+        public bool MixedServiceTier;
+        public bool MissingServiceTier;
         public bool MixedModel;
         public long Output;
         public DateTimeOffset? EndedAt;
