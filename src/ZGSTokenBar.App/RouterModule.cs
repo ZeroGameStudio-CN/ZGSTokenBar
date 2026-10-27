@@ -18,11 +18,11 @@ internal sealed class RouterModule : IDisposable
     public RouterModule(BarForm bar, ZgsTokenBarHost host, Func<bool> enabled, CancellationToken shutdown)
     {
         (_bar, _host, _enabled, _shutdown) = (bar, host, enabled, shutdown);
-        _bar.PluginActivated += Activated;
+        _bar.PluginPopoverRequested += Requested;
         _timer.Tick += async (_, _) =>
         {
             if (_shutdown.IsCancellationRequested) return;
-            if (!_enabled()) { _window?.Close(); return; }
+            if (!_enabled()) { _bar.HidePluginPopover(); _window?.Close(); return; }
             if (_refreshing) return;
             _refreshing = true;
             try { await _host.RefreshPluginAsync(RouterPlugin.Id, "monitor", _shutdown); }
@@ -31,18 +31,27 @@ internal sealed class RouterModule : IDisposable
         };
         _timer.Start();
     }
-    private void Activated(object? sender, string pluginId) { if (pluginId == RouterPlugin.Id) SetVisible(true); }
+    private void Requested(object? sender, PluginPopoverRequest request)
+    {
+        if (request.PluginId != RouterPlugin.Id || !_enabled()) return;
+        if (_window is null || _window.IsDisposed)
+        {
+            _window = new RouterMonitorForm();
+            _window.PinChanged += (_, pinned) => _bar.PinPluginPopover(pinned);
+            _window.CloseRequested += (_, _) => _bar.HidePluginPopover();
+        }
+        _window.ShowFor(_bar, request.Anchor, request.Pinned, request.Scale, request.Theme);
+        request.Popup = _window;
+    }
     public void SetVisible(bool visible)
     {
-        if (!visible) { _window?.Close(); return; }
+        if (!visible) { _bar.HidePluginPopover(); return; }
         if (!_enabled()) throw new HostCommandException("plugin_disabled", "Router module is disabled.");
-        if (_window is null || _window.IsDisposed) _window = new RouterMonitorForm();
-        if (!_window.Visible) _window.Show(_bar);
-        _window.Activate();
+        _bar.OpenPluginPopover(RouterPlugin.Id, pinned: true);
     }
     public void Dispose()
     {
-        _bar.PluginActivated -= Activated;
+        _bar.PluginPopoverRequested -= Requested;
         _timer.Stop(); _timer.Dispose(); _window?.Dispose();
         // The monitor and all Editor jobs have their own lifetime and ownership.
     }

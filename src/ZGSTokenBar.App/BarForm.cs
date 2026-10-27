@@ -11,7 +11,7 @@ internal sealed class RadarPreviewRequest(ProviderKind provider, string surfaceI
     public string SurfaceId { get; } = surfaceId;
 }
 
-internal sealed class BarForm : Form
+internal sealed partial class BarForm : Form
 {
     private const string SettingsIconGlyph = "\uE713";
     private const string LockIconGlyph = "\uE72E";
@@ -402,6 +402,8 @@ internal sealed class BarForm : Form
             .ThenBy(card => card.Card.Id, StringComparer.Ordinal)
             .ToArray();
         if (_pluginMiniCards.SequenceEqual(ordered)) return;
+        var layoutChanged = !_pluginMiniCards.Select(card => (card.PluginId, card.Card.Id, card.Card.Order, card.Card.Kind))
+            .SequenceEqual(ordered.Select(card => (card.PluginId, card.Card.Id, card.Card.Order, card.Card.Kind)));
 
         var nextIcons = ordered
             .Where(card => card.IconPng is not null)
@@ -434,7 +436,7 @@ internal sealed class BarForm : Form
             }
         }
         _pluginMiniCards = ordered;
-        ApplySnapshotLayout();
+        ApplySnapshotLayout(updatePlacement: layoutChanged);
         Invalidate();
     }
 
@@ -1469,6 +1471,11 @@ internal sealed class BarForm : Form
         bool collapsed)
     {
         DrawTaskbarCardShell(graphics, bounds);
+        if (view.PluginId == MiniAreaIds.Router)
+        {
+            RouterCardRenderer.Draw(graphics, bounds, view.Card, _badgeFont);
+            return;
+        }
         var iconBounds = collapsed
             ? new RectangleF(bounds.X + 3, bounds.Y + 3, 15, 15)
             : new RectangleF(bounds.X + 5, bounds.Y + 6, 24, 24);
@@ -3974,6 +3981,7 @@ internal sealed class BarForm : Form
         }
         if (TaskbarPluginTargetAt(logical) is { } pluginTarget)
         {
+            if (RequestPluginPopover(pluginTarget.Card.PluginId, QuotaTargetScreenBounds(pluginTarget.Bounds), pinned: true, toggle: true)) return;
             HidePopovers();
             PluginActivated?.Invoke(this, pluginTarget.Card.PluginId);
             return;
@@ -4331,6 +4339,8 @@ internal sealed class BarForm : Form
     private void UpdateHintHover(HoverTarget target)
     {
         if (_popoverPinned) return;
+        if (target == HoverTarget.Plugin && _pluginPopover?.Visible == true
+            && _hoverPluginTarget?.Card.PluginId == _pluginPopoverId) return;
         var next = target is HoverTarget.Refresh or HoverTarget.MiniCollapse or HoverTarget.MiniReorder or HoverTarget.Settings or HoverTarget.Plugin
             ? target
             : HoverTarget.None;
@@ -4565,6 +4575,7 @@ internal sealed class BarForm : Form
 
     private void ShowSystemUsagePopover(bool pinned)
     {
+        HidePluginPopover();
         var needsDetails = _systemUsage.TopProcesses.Count == 0;
         _popoverHoverTimer.Stop();
         if (_hintPopover?.Visible == true || _hoverHintTarget != HoverTarget.None) HideHintPopover();
@@ -4673,6 +4684,7 @@ internal sealed class BarForm : Form
 
     private void ShowCodexAccountsPopover((RectangleF Bounds, QuotaCard Card) target)
     {
+        HidePluginPopover();
         _popoverHoverTimer.Stop();
         if (_popoverPinned) return;
         if (_hintPopover?.Visible == true || _hoverHintTarget != HoverTarget.None) HideHintPopover();
@@ -4697,6 +4709,8 @@ internal sealed class BarForm : Form
     {
         _popoverHoverTimer.Stop();
         if (_popoverPinned) return;
+        if (target == HoverTarget.Plugin && _hoverPluginTarget is { } requestedPlugin
+            && RequestPluginPopover(requestedPlugin.Card.PluginId, QuotaTargetScreenBounds(requestedPlugin.Bounds), pinned: false)) return;
         var content = HintFor(target);
         if (content is null) return;
         HideSystemUsagePopover();
@@ -4743,6 +4757,7 @@ internal sealed class BarForm : Form
 
     private void ShowQuotaPopover(MiniQuotaTarget target, bool pinned)
     {
+        HidePluginPopover();
         _popoverHoverTimer.Stop();
         if (_codexAccountsPopover?.Visible == true) HideCodexAccountsPopover();
         if (_hintPopover?.Visible == true || _hoverHintTarget != HoverTarget.None) HideHintPopover();
@@ -4837,6 +4852,7 @@ internal sealed class BarForm : Form
         bool pinned,
         bool requestRefresh = true)
     {
+        HidePluginPopover();
         _popoverHoverTimer.Stop();
         if (_codexAccountsPopover?.Visible == true) HideCodexAccountsPopover();
         if (_hintPopover?.Visible == true || _hoverHintTarget != HoverTarget.None) HideHintPopover();
@@ -4907,6 +4923,12 @@ internal sealed class BarForm : Form
 
     private void MonitorPopover()
     {
+        if (_pluginPopover is { Visible: false } && _pluginPopoverId is not null) HidePluginPopover();
+        if (_pluginPopover?.Visible == true)
+        {
+            MonitorPluginPopover();
+            return;
+        }
         if (_systemUsagePopover?.Visible == true && _hoverSystemUsage)
         {
             MonitorSystemUsagePopover();
@@ -4989,6 +5011,7 @@ internal sealed class BarForm : Form
 
     private void RepositionPopovers()
     {
+        if (_pluginPopover?.Visible == true && _pluginPopoverId is { } pluginId) OpenPluginPopover(pluginId, _popoverPinned);
         if (_systemUsagePopover?.Visible == true) ShowSystemUsagePopover(_popoverPinned);
         if (_quotaPopover?.Visible == true) RefreshQuotaPopover();
         if (_codexAccountsPopover?.Visible == true) RefreshCodexAccountsPopover();
@@ -5131,6 +5154,7 @@ internal sealed class BarForm : Form
 
     private void HidePopovers()
     {
+        HidePluginPopover();
         HideSystemUsagePopover();
         HideQuotaPopover();
         HideCodexAccountsPopover();
@@ -5149,7 +5173,7 @@ internal sealed class BarForm : Form
 
     private static bool IsEscapeDown() => (GetAsyncKeyState(VkEscape) & 0x8000) != 0;
 
-    private void ApplySnapshotLayout()
+    private void ApplySnapshotLayout(bool updatePlacement = true)
     {
         _scale = Math.Max(1, EffectiveDpi() / 96f);
         var allCards = _snapshot.Cards
@@ -5194,7 +5218,7 @@ internal sealed class BarForm : Form
             _hiddenCardCount > 0);
         ClientSize = new Size(Scale(miniLogicalWidth), Scale(TaskbarMiniLayoutMath.Height));
         UpdateWindowRegion();
-        if (!_renderOnly)
+        if (!_renderOnly && updatePlacement)
         {
             if (_taskbarDocked)
             {
@@ -5520,10 +5544,10 @@ internal sealed class BarForm : Form
     private int PluginMiniCardWidth(PluginMiniCardView view)
     {
         var layout = AreaLayout(view.PluginId);
-        var defaultWidth = view.Card.Kind is ContributionKind.Balance or ContributionKind.Metric
+        var defaultWidth = view.PluginId == MiniAreaIds.Router ? RouterCardRenderer.Width : view.Card.Kind is ContributionKind.Balance or ContributionKind.Metric
             ? TaskbarMiniLayoutMath.ServiceCardWidth
             : TaskbarMiniLayoutMath.CardWidth;
-        return TaskbarMiniLayoutMath.AreaWidth(layout.Width ?? defaultWidth, layout.Collapsed);
+        return TaskbarMiniLayoutMath.AreaWidth(layout.Width ?? defaultWidth, layout.Collapsed, view.PluginId);
     }
 
     private int TaskbarAreaWidth(TaskbarMiniAreaContent area)
@@ -5860,7 +5884,7 @@ internal sealed class BarForm : Form
         public static TaskbarMiniAreaContent ForPlugin(PluginMiniCardView plugin) => new(
             plugin.PluginId,
             plugin.Title,
-            plugin.Card.Kind is ContributionKind.Balance or ContributionKind.Metric
+            plugin.PluginId == MiniAreaIds.Router ? RouterCardRenderer.Width : plugin.Card.Kind is ContributionKind.Balance or ContributionKind.Metric
                 ? TaskbarMiniLayoutMath.ServiceCardWidth
                 : TaskbarMiniLayoutMath.CardWidth,
             null,

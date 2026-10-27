@@ -72,6 +72,13 @@ queued-only cancellation and version-bound order changes, qualified stop and
 cleanup inspection, filtered/paged history, phase timings/P95 and original CSV
 export. Unavailable observations are never rendered as idle. Controls are
 instance/request/project bound and are never retried after a lost reply.
+The bar area contains a state glyph and optional queue-count badge, with no task
+name or status sentence. Hover uses the existing bar's delayed, anchored popup;
+clicking pins it. The popup has no taskbar entry or window chrome. The shared
+pointer timer provides the same leave grace, outside-click and Escape dismissal
+as Codex; dialogs/dropdowns retain interaction. Only a pinned view enables
+execution controls. Data-only card refreshes do not reset window placement or
+dismiss a pinned popup. Screen placement, palette and DPI geometry reuse the bar.
 `ZGSTokenBar.Cli router show --json`, `router hide --json` and `window inspect
 --json` expose presentation-only acceptance. Synthetic HTTP, control and capture
 checks run with `dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj

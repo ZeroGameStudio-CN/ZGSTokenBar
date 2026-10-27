@@ -1,11 +1,13 @@
 using System.Text;
 using System.Text.Json;
+using System.Drawing.Drawing2D;
+using ZGSTokenBar.Core;
 using ZGSTokenBar.Plugin.Router;
 
 namespace ZGSTokenBar.App;
 
 /// <summary>Native presentation only. All execution, fairness and release decisions belong to Router.</summary>
-internal sealed class RouterMonitorForm : Form
+internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
 {
     private readonly RouterMonitorClient _client;
     private readonly CancellationTokenSource _stop = new();
@@ -27,45 +29,64 @@ internal sealed class RouterMonitorForm : Form
     private readonly List<Button> _pageTabs = [];
     private readonly Button _cancel, _release, _nativeStop, _queueCancel, _top, _up, _down;
     private readonly List<Control> _controls = [];
+    private readonly Button _pin;
+    private bool _pinned, _modal;
+    private PopoverTailSide _tailSide = PopoverTailSide.Bottom;
+    private float _tailOffset, _popoverScale = 1;
+    private Size _bodySize = new(720, 520);
+    private readonly Dictionary<Control, (string Family, float Pixels, FontStyle Style)> _logicalFonts = [];
+    private readonly Dictionary<(string Family, float Pixels, FontStyle Style), Font> _scaledFonts = [];
     private RouterSnapshot? _snapshot;
     private bool _refreshing, _controlling, _binding, _available, _disposed;
     private int _queueOffset, _historyOffset, _generation, _selectedPage;
     private string? _project;
     internal RouterSnapshot? Snapshot => _snapshot;
     internal string FreshnessText => _freshness.Text;
+    internal bool Pinned => _pinned;
+    public bool InteractionOpen => _modal || _controlling || _projects.DroppedDown || _kind.DroppedDown || _outcome.DroppedDown || _day.DroppedDown;
+    public event EventHandler<bool>? PinChanged;
+    public event EventHandler? CloseRequested;
 
     internal RouterMonitorForm(RouterMonitorClient? client = null, bool observe = true)
     {
         _client = client ?? new();
         SuspendLayout();
         Text = "Router";
-        AutoScaleDimensions = new SizeF(96, 96);
-        AutoScaleMode = AutoScaleMode.Dpi;
-        Font = new Font("Microsoft YaHei UI", 9.5f);
+        AutoScaleMode = AutoScaleMode.None;
+        Font = new Font("Microsoft YaHei UI", 12.5f, FontStyle.Regular, GraphicsUnit.Pixel);
         BackColor = Color.FromArgb(17, 21, 29);
         ForeColor = Color.FromArgb(229, 234, 243);
-        MinimumSize = new Size(820, 540);
-        ClientSize = new Size(970, 680);
-        StartPosition = FormStartPosition.CenterScreen;
-        ShowInTaskbar = true;
+        FormBorderStyle = FormBorderStyle.None;
+        ClientSize = new Size(720, 520);
+        StartPosition = FormStartPosition.Manual;
+        ShowInTaskbar = false;
+        ShowIcon = false;
+        TopMost = true;
+        DoubleBuffered = true;
 
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(18), ColumnCount = 1, RowCount = 7 };
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), ColumnCount = 1, RowCount = 7 };
+        root.RowStyles.Add(new(SizeType.Absolute, 36));
+        root.RowStyles.Add(new(SizeType.Absolute, 30));
+        root.RowStyles.Add(new(SizeType.Absolute, 26));
         root.RowStyles.Add(new(SizeType.Absolute, 42));
-        root.RowStyles.Add(new(SizeType.Absolute, 40));
-        root.RowStyles.Add(new(SizeType.Absolute, 34));
-        root.RowStyles.Add(new(SizeType.Absolute, 64));
-        root.RowStyles.Add(new(SizeType.Absolute, 40));
+        root.RowStyles.Add(new(SizeType.Absolute, 36));
         root.RowStyles.Add(new(SizeType.Percent, 100));
-        root.RowStyles.Add(new(SizeType.Absolute, 40));
+        root.RowStyles.Add(new(SizeType.Absolute, 28));
         Controls.Add(root);
-        var header = Flow(_projects, _freshness, Button("刷新", async () => await RefreshViewAsync()));
+        _projects.Width = 160;
+        _freshness.Width = 190;
+        _kind.Width = _outcome.Width = 92; _day.Width = 112; _query.Width = 160;
+        _pin = Button("固定", () => { PinChanged?.Invoke(this, !_pinned); return Task.CompletedTask; });
+        var header = Flow(_projects, _freshness, Button("刷新", async () => await RefreshViewAsync()), _pin,
+            Button("×", () => { CloseRequested?.Invoke(this, EventArgs.Empty); return Task.CompletedTask; }));
         root.Controls.Add(header, 0, 0);
-        _headline.Font = new Font(Font.FontFamily, 16, FontStyle.Bold);
-        _headline.Height = 38;
-        _task.Height = 30;
-        _detail.Height = 62;
-        _notice.Height = 38;
+        _headline.Font = new Font(Font.FontFamily, 16, FontStyle.Bold, GraphicsUnit.Pixel);
+        _headline.Height = 28;
+        _task.Height = 25;
+        _detail.Height = 40;
+        _notice.Height = 26;
         _statistics.Dock = DockStyle.Fill;
+        _headline.Dock = _task.Dock = _detail.Dock = _notice.Dock = DockStyle.Fill;
         root.Controls.Add(_headline, 0, 1);
         root.Controls.Add(_task, 0, 2);
         root.Controls.Add(_detail, 0, 3);
@@ -121,12 +142,89 @@ internal sealed class RouterMonitorForm : Form
             _snapshot = null; UpdateControls(); await RefreshViewAsync();
             if (_selectedPage == 1) await HistoryAsync();
         };
-        _timer.Tick += async (_, _) => await RefreshViewAsync();
-        if (observe) Shown += async (_, _) => { _timer.Start(); await RefreshViewAsync(); };
+        _timer.Tick += async (_, _) => { if (Visible) await RefreshViewAsync(); };
+        if (observe) VisibleChanged += async (_, _) => { if (Visible) { _timer.Start(); await RefreshViewAsync(); } else _timer.Stop(); };
         SelectPage(0);
         UpdateControls();
         ResumeLayout(true);
+        foreach (var control in new[] { this }.Concat(Children(this)))
+        {
+            var font = control.Font;
+            _logicalFonts[control] = (font.FontFamily.Name, font.Unit == GraphicsUnit.Pixel ? font.Size : font.SizeInPoints * 96 / 72, font.Style);
+        }
     }
+
+    protected override bool ShowWithoutActivation => !_pinned;
+    protected override CreateParams CreateParams
+    {
+        get { var value = base.CreateParams; value.ExStyle |= 0x80; if (!_pinned) value.ExStyle |= 0x08000000; return value; }
+    }
+    public void SetPinned(bool pinned)
+    {
+        var changed = _pinned != pinned; _pinned = pinned;
+        _pin.Text = pinned ? "已固定" : "固定";
+        if (changed && IsHandleCreated) RecreateHandle();
+        UpdateControls();
+        if (pinned && Visible) Activate();
+    }
+    internal void ShowFor(BarForm owner, Rectangle anchor, bool pinned, float scale, QuotaBackgroundTheme theme)
+    {
+        if (!Visible) SelectPage(0);
+        ConfigureFor(anchor, pinned, scale, theme, Screen.FromRectangle(anchor).WorkingArea);
+        if (!Visible) Show(owner);
+        if (pinned) Activate();
+    }
+    internal void ConfigureFor(Rectangle anchor, bool pinned, float scale, QuotaBackgroundTheme theme, Rectangle area)
+    {
+        SetPinned(pinned);
+        var nextScale = Math.Max(1, scale);
+        if (Math.Abs(nextScale - _popoverScale) > .001)
+        {
+            SuspendLayout();
+            Scale(new SizeF(nextScale / _popoverScale, nextScale / _popoverScale));
+            foreach (var (control, logical) in _logicalFonts)
+            {
+                var key = (logical.Family, logical.Pixels * nextScale, logical.Style);
+                if (!_scaledFonts.TryGetValue(key, out var font))
+                { font = new Font(key.Family, key.Item2, key.Style, GraphicsUnit.Pixel); _scaledFonts[key] = font; }
+                control.Font = font;
+            }
+            ResumeLayout(true);
+        }
+        _popoverScale = Math.Max(1, scale);
+        BackColor = theme.Popover;
+        foreach (var control in Children(this))
+        {
+            if (control is System.Windows.Forms.Label or Panel) control.BackColor = theme.Popover;
+        }
+        _bodySize = new(Math.Min((int)(720 * _popoverScale), area.Width - 16), Math.Min((int)(520 * _popoverScale), area.Height - 24));
+        var tail = (int)(8 * _popoverScale);
+        var placement = TaskbarMiniPopoverMath.Place(anchor, _bodySize, tail, (int)(3 * _popoverScale), area);
+        _tailSide = placement.TailSide; _tailOffset = placement.TailOffset;
+        Padding = new Padding(2 + (_tailSide == PopoverTailSide.Left ? tail : 0), 2 + (_tailSide == PopoverTailSide.Top ? tail : 0),
+            2 + (_tailSide == PopoverTailSide.Right ? tail : 0), 2 + (_tailSide == PopoverTailSide.Bottom ? tail : 0));
+        ClientSize = placement.WindowSize;
+        Location = placement.Location;
+        using (var path = SurfacePath()) { var old = Region; Region = new Region(path); old?.Dispose(); }
+    }
+    private GraphicsPath SurfacePath()
+    {
+        var tail = 8 * _popoverScale;
+        var body = TaskbarPopoverMath.BodyBounds(_tailSide, _bodySize.Width, _bodySize.Height, tail);
+        var path = new GraphicsPath { FillMode = FillMode.Winding };
+        var d = 14 * _popoverScale;
+        path.AddArc(body.Left, body.Top, d, d, 180, 90); path.AddArc(body.Right - d, body.Top, d, d, 270, 90);
+        path.AddArc(body.Right - d, body.Bottom - d, d, d, 0, 90); path.AddArc(body.Left, body.Bottom - d, d, d, 90, 90); path.CloseFigure();
+        path.AddPolygon(TaskbarPopoverMath.TailPoints(_tailSide, body, _tailOffset, tail));
+        return path;
+    }
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using var path = SurfacePath(); using var border = new Pen(Color.FromArgb(86, 100, 116, 139));
+        e.Graphics.DrawPath(border, path);
+    }
+    private static IEnumerable<Control> Children(Control parent) => parent.Controls.Cast<Control>().SelectMany(child => new[] { child }.Concat(Children(child)));
 
     internal void SelectPage(int page)
     {
@@ -246,9 +344,16 @@ internal sealed class RouterMonitorForm : Form
     private async Task ControlAsync(string requestId, string action, string? version = null, int? position = null, string? nativeStop = null, bool queuedOnly = false)
     {
         if (_snapshot is null || _controlling || !_snapshot.IsFresh(DateTimeOffset.UtcNow)) return;
-        if (action != "move" && action != "release" && MessageBox.Show(this,
-            "只处理所选原请求；停止或取消回执不等于资源已释放。\n" + requestId,
-            "确认操作", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+        if (action != "move" && action != "release")
+        {
+            _modal = true;
+            try
+            {
+                if (MessageBox.Show(this, "只处理所选原请求；停止或取消回执不等于资源已释放。\n" + requestId,
+                    "确认操作", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+            }
+            finally { _modal = false; }
+        }
         _controlling = true; UpdateControls();
         try
         {
@@ -263,13 +368,15 @@ internal sealed class RouterMonitorForm : Form
     {
         if (_snapshot is null) return;
         using var save = new SaveFileDialog { Filter = "CSV|*.csv", FileName = "router-history-" + DateTime.Now.ToString("yyyyMMdd") + ".csv" };
-        if (save.ShowDialog(this) != DialogResult.OK) return;
+        _modal = true;
+        try { if (save.ShowDialog(this) != DialogResult.OK) return; }
+        finally { _modal = false; }
         try { await File.WriteAllTextAsync(save.FileName, await _client.ExportAsync(_snapshot.ProjectKey, _stop.Token), new UTF8Encoding(true), _stop.Token); _notice.Text = save.FileName; }
         catch (Exception e) when (Expected(e)) { if (!IsDisposed) _notice.Text = e.Message; }
     }
     private void UpdateControls()
     {
-        var fresh = _available && !_controlling && _snapshot?.IsFresh(DateTimeOffset.UtcNow) == true;
+        var fresh = _pinned && _available && !_controlling && _snapshot?.IsFresh(DateTimeOffset.UtcNow) == true;
         var current = fresh && RouterJson.IsHex(RouterJson.Text(_snapshot!.View, "requestId"), 32);
         _cancel.Enabled = _release.Enabled = current;
         var primary = _snapshot is null ? default : RouterJson.Field(RouterJson.Field(_snapshot.View, "resourceRecovery"), "primary");
@@ -279,12 +386,15 @@ internal sealed class RouterMonitorForm : Form
         _queueCancel.Enabled = fresh && row.ValueKind == JsonValueKind.Object;
         _top.Enabled = _up.Enabled = _queueCancel.Enabled && RouterJson.Integer(row, "rank") > 1;
         _down.Enabled = _queueCancel.Enabled && !RouterJson.Boolean(row, "last");
-        _projects.Enabled = !_controlling;
+        _projects.Enabled = _pinned && !_controlling;
+        _query.Enabled = _kind.Enabled = _outcome.Enabled = _day.Enabled = _pinned;
     }
-    private static void ShowRecord(DataGridViewRow row)
+    private void ShowRecord(DataGridViewRow row)
     {
         if (row.Tag is not JsonElement value) return;
-        MessageBox.Show(JsonSerializer.Serialize(value, new JsonSerializerOptions { WriteIndented = true }), "原请求记录", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        _modal = true;
+        try { MessageBox.Show(JsonSerializer.Serialize(value, new JsonSerializerOptions { WriteIndented = true }), "原请求记录", MessageBoxButtons.OK, MessageBoxIcon.Information); }
+        finally { _modal = false; }
     }
     private static string ResultName(JsonElement row) => RouterJson.Text(row, "failureClass") switch
     {
@@ -307,6 +417,7 @@ internal sealed class RouterMonitorForm : Form
         Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AllowUserToDeleteRows = false,
         AllowUserToResizeRows = false, RowHeadersVisible = false, MultiSelect = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect,
         AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, BackgroundColor = Color.FromArgb(17, 21, 29), BorderStyle = BorderStyle.None,
+        ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize,
         EnableHeadersVisualStyles = false, ColumnHeadersDefaultCellStyle = new() { BackColor = Color.FromArgb(30, 41, 59), ForeColor = Color.FromArgb(203, 213, 225), Padding = new Padding(4) },
         DefaultCellStyle = new() { BackColor = Color.FromArgb(22, 30, 42), ForeColor = Color.FromArgb(229, 234, 243), SelectionBackColor = Color.FromArgb(42, 62, 89), SelectionForeColor = Color.White, Padding = new Padding(4) },
         AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells,
@@ -314,7 +425,10 @@ internal sealed class RouterMonitorForm : Form
     protected override void Dispose(bool disposing)
     {
         if (disposing && !_disposed)
-        { _disposed = true; _timer.Stop(); _timer.Dispose(); _stop.Cancel(); _stop.Dispose(); _client.Dispose(); }
+        {
+            _disposed = true; _timer.Stop(); _timer.Dispose(); _stop.Cancel(); _stop.Dispose(); _client.Dispose();
+            foreach (var font in _scaledFonts.Values) font.Dispose();
+        }
         base.Dispose(disposing);
     }
     private sealed record Choice(string Key, string Text) { public override string ToString() => Text; }
