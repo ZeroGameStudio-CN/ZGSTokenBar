@@ -27,6 +27,7 @@ internal static class RadarAndUsageUpdateTests
         PrimaryConversationMetrics();
         PrimaryLayouts();
         PrimaryWindowLifecycle();
+        ServerModelEvidence();
     }
 
     private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-10-23T08:00:00Z");
@@ -595,6 +596,10 @@ internal static class RadarAndUsageUpdateTests
             && standard.MaximumTurnTokensPerSecond == 30, "model averages are time weighted, deduplicated and separate tier/effort groups");
         Check(CodexConversationSpeeds.Build(usage, Now.AddHours(25)).Count == 0,
             "the recent comparison expires old samples even when no new token log arrives");
+        var grouped = CodexConversationSpeeds.GroupModels(speeds);
+        Check(grouped.Count == 1 && grouped[0].Rows.Count == 3
+            && grouped[0].Rows.Select(row => row.Effort).Distinct().Count() == 2,
+            "one model block retains separate effort and tier measurements without mixing their averages");
         var projection = CorePluginProjection.CodexUsage("zgstokenbar.usage.codex-local", Usage() with { RecentTurns = [turn] }, Now);
         Check(projection.Details.SelectMany(detail => detail.Sections).SelectMany(section => section.Rows)
             .Single(row => row.LabelKey == "usage.turn.cache-hit-percent").Value.Number == 80,
@@ -613,7 +618,7 @@ internal static class RadarAndUsageUpdateTests
                 && layout.ModelSpeedBounds.Bottom <= layout.FooterCompactBounds.Top
                 && layout.FooterCompactBounds.Bottom <= layout.BodySize.Height
                 && layout.BodySize.Height <= dpi * 5, "conversation, model speeds and settlement regions fit without overlap");
-            using var font = new Font("Segoe UI", (float)Math.Round(8 * dpi / 96d, MidpointRounding.AwayFromZero), FontStyle.Regular, GraphicsUnit.Pixel);
+            using var font = new Font("Segoe UI", (float)Math.Round(10 * dpi / 96d, MidpointRounding.AwayFromZero), FontStyle.Regular, GraphicsUnit.Pixel);
             foreach (var text in new[] { NativeText.For("zh-CN"), NativeText.For("en") })
             foreach (var state in new[] { Usage().RecentTurns[0] with { Completed = false },
                 Usage().RecentTurns[0] with { Interrupted = true }, Usage().RecentTurns[0] })
@@ -689,6 +694,45 @@ internal static class RadarAndUsageUpdateTests
         if (failure is not null) throw new InvalidOperationException("Conversation extension lifecycle failed.", failure);
     }
 
+    private static void ServerModelEvidence()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "zgstokenbar-response-model-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            const string session = "00000000-0000-0000-0000-000000000001";
+            var path = Path.Combine(root, "rollout-" + session + ".jsonl");
+            File.WriteAllText(path, Event(Now, new { type = "task_started", turn_id = "proof" })
+                + Event(Now, new { turn_id = "proof", model = "requested-model" }, "turn_context")
+                + Tokens(Now.AddSeconds(10), 100, 100)
+                + Event(Now.AddSeconds(11), new { type = "item_completed", item = new { type = "SubAgentActivity", model = "child-model" } })
+                + Event(Now.AddSeconds(12), new { type = "response.completed", turn_id = "another-turn", response = new
+                    { @object = "response", status = "completed", id = "resp_wrong", model = "wrong-turn-model" } }));
+            var reader = new CodexConversationUsageReader();
+            var first = reader.Refresh([path], Now.AddSeconds(15)).Single();
+            Check(first.Model == "requested-model" && first.ResponseModels is null && first.RoutedToModel is null,
+                "selected models, sub-agent metadata and another turn cannot masquerade as server model evidence");
+            File.AppendAllText(path, Event(Now.AddSeconds(16), new { type = "response.completed", turn_id = "proof", thread_id = session,
+                response = new { @object = "response", status = "completed", id = "resp_one", model = "returned-model" } })
+                + Event(Now.AddSeconds(17), new { type = "model_rerouted", turn_id = "proof", thread_id = session,
+                    from_model = "requested-model", to_model = "routed-model", reason = "highRiskCyberActivity" }));
+            var observed = reader.Refresh([path], Now.AddSeconds(20)).Single();
+            Check(observed.Model == "requested-model" && observed.ResponseModels == "returned-model"
+                && observed.RoutedFromModel == "requested-model" && observed.RoutedToModel == "routed-model",
+                "explicit completed-response and routing records remain distinct from the configured model");
+            Check(observed == reader.Refresh([path], Now.AddSeconds(20)).Single(),
+                "unchanged evidence remains value-stable rather than forcing ledger rewrites");
+            File.AppendAllText(path, Event(Now.AddSeconds(21), new { type = "response.completed", turn_id = "proof", thread_id = "wrong-session",
+                response = new { @object = "response", status = "completed", id = "resp_other", model = "foreign-model" } }));
+            Check(reader.Refresh([path], Now.AddSeconds(25)).Single().ResponseModels == "returned-model",
+                "response evidence from a different session is rejected");
+            Check(NativeText.For("zh-CN").CodexTurnTooltip(observed).Contains("returned-model")
+                && NativeText.For("en").CodexTurnTooltip(observed).Contains("routed-model"),
+                "hover exposes the actual recorded evidence without relabeling the request");
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     internal static void Capture(string directory)
     {
         Directory.CreateDirectory(directory);
@@ -736,8 +780,10 @@ internal static class RadarAndUsageUpdateTests
         {
             var data = mode == "empty" ? usage with { RecentTurns = [], ConversationHistory = [] } : usage;
             var speeds = CodexConversationSpeeds.Build(data, data.CapturedAt);
+            var speedGroups = CodexConversationSpeeds.GroupModels(speeds);
             var main = RadarPopoverLayout.CreateConversationUsage(dpi, data.ConversationTurns.Count, true,
-                speedGroupCount: speeds.Count);
+                speedGroupCount: speedGroups.Count,
+                speedDetailRows: speedGroups.Count == 0 ? 1 : speedGroups.Take(6).Max(group => group.Rows.Count));
             var radar = RadarPopoverLayout.CreateGrouped(dpi, presentation.Rows.Select(row => row.Model.Model).ToArray(),
                 new HashSet<string>(), false, showLegend: false);
             var expanded = mode == "expanded";
@@ -756,7 +802,7 @@ internal static class RadarAndUsageUpdateTests
                 radarBitmap.SetResolution(dpi, dpi);
                 using var radarGraphics = Graphics.FromImage(radarBitmap);
                 renderer.Draw(radarGraphics, radar, PopoverTailSide.Left, gap * 5, state, presentation, null,
-                    NativeText.For(locale), canSwitchBenchmark: true);
+                    NativeText.For(locale), canSwitchBenchmark: true, radarExtension: true);
                 graphics.DrawImageUnscaled(radarBitmap, main.BodySize.Width + gap, 0);
             }
             bitmap.Save(Path.Combine(directory, $"conversations-{mode}-{locale}-{dpi}.png"), ImageFormat.Png);

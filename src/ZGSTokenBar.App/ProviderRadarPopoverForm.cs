@@ -332,7 +332,8 @@ internal sealed class ProviderRadarPopoverForm : Form
             recentTurnOffset: _recentTurnOffset,
             canSwitchBenchmark: CanSwitchBenchmark,
             radarExpanded: RadarExtensionVisible,
-            modelSpeeds: _modelSpeeds);
+            modelSpeeds: _modelSpeeds,
+            radarExtension: _extensionOwner is not null);
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
@@ -393,7 +394,8 @@ internal sealed class ProviderRadarPopoverForm : Form
             _hoveredRecentIndex = -1;
             _groupToolTip.SetToolTip(this, null);
         }
-        var controlHovered = _layout.RadarToggleBounds.Contains(bodyPoint)
+        var controlHovered = _extensionOwner is not null && _layout.RadarCollapseBounds.Contains(bodyPoint)
+            || _layout.RadarToggleBounds.Contains(bodyPoint)
             || CanSwitchBenchmark && _layout.SubtitleBounds.Contains(bodyPoint)
             || _tokenUsage?.ConversationTurns.Count > _layout.RecentPageSize
                 && (_layout.RecentPreviousBounds.Contains(bodyPoint) || _layout.RecentNextBounds.Contains(bodyPoint));
@@ -442,6 +444,11 @@ internal sealed class ProviderRadarPopoverForm : Form
             return;
         }
         var point = BodyPoint(e.Location);
+        if (_extensionOwner is not null && _layout.RadarCollapseBounds.Contains(point))
+        {
+            _extensionOwner.SetRadarExpanded(false);
+            return;
+        }
         if (_layout.RadarToggleBounds.Contains(point))
         {
             SetRadarExpanded(!RadarExtensionVisible);
@@ -525,9 +532,14 @@ internal sealed class ProviderRadarPopoverForm : Form
         return layout;
     }
 
-    private RadarPopoverLayout BuildUsageLayout(int dpi) => RadarPopoverLayout.CreateConversationUsage(dpi,
-        ConversationRowCount, _radarEnabled, Screen.FromRectangle(_anchorScreen).WorkingArea.Height
-            - (int)Math.Ceiling((RadarPopoverLayout.LogicalTail + RadarPopoverLayout.LogicalGap * 2) * dpi / 96d), _modelSpeeds.Count);
+    private RadarPopoverLayout BuildUsageLayout(int dpi)
+    {
+        var groups = CodexConversationSpeeds.GroupModels(_modelSpeeds);
+        return RadarPopoverLayout.CreateConversationUsage(dpi, ConversationRowCount, _radarEnabled,
+            Screen.FromRectangle(_anchorScreen).WorkingArea.Height
+                - (int)Math.Ceiling((RadarPopoverLayout.LogicalTail + RadarPopoverLayout.LogicalGap * 2) * dpi / 96d),
+            groups.Count, groups.Count == 0 ? 1 : groups.Take(6).Max(group => group.Rows.Count));
+    }
 
     internal void SetRadarExpanded(bool expanded)
     {

@@ -118,11 +118,18 @@ Missing/zero input remains unavailable. Long names use ellipsis and row hover
 shows the full name and cache percentage. Names are read
 from a bounded, change-cached 2 MiB tail of each registered home's session index
 and are never persisted to the token ledger. A missing title displays the project
-and short session ID rather than an indistinguishable unnamed label. The model
-shown is the session setting: the sampled local rollouts do not retain the
-Responses API response envelope/model, so the tooltip explicitly says that the
-response model is unavailable. Settings and sub-agent activity model fields are
-not treated as server response evidence. Explicit context or
+and short session ID rather than an indistinguishable unnamed label. The main
+view uses larger title/body/number fonts and 44-unit two-line rows; the Radar
+extension keeps its separate sizing and has its own collapse control.
+The primary model label is the session setting. Timestamped `response.completed`
+records are accepted as response evidence only with an explicit matching turn,
+matching thread when present, a completed response envelope and a response ID.
+Explicit `model_rerouted` / `model/rerouted` records remain a separate routing
+notice, preserving from/to/reason. Settings, catalog headers and sub-agent
+activity are never promoted into response evidence. Hover and CLI report the
+recorded evidence or explicit unavailability. The sampled local sources did
+not retain actual response-model or routing records; this reader does not change
+client logging/proxies or recover missing past responses. Explicit context or
 `thread_settings_applied` events identify Fast/Standard; missing records remain
 unknown and turns with multiple observed tiers show mixed.
 Alternating row shading and aligned numeric columns
@@ -139,8 +146,19 @@ the last 24 hours, grouped by model, effort and service tier. Average speed is
 summed output divided by summed whole-turn duration; the maximum is the highest
 individual turn average, not instantaneous decoding speed. Running, interrupted,
 stale, partial and invalid-duration turns are excluded. Up to six most recently
-active groups are visible, with sample counts; hover lists every group and the
-measurement definition. This comparison alone does not establish model routing.
+active models are visible, with each model's effort/tier rows collected under
+one heading and fixed effort colors. Up to four setting combinations are shown
+per model, with sample counts; hover lists every combination and the measurement
+definition. This comparison alone does not establish model routing.
+
+Quota depletion uses provider-reported percentage changes, independent of the
+conversation token-speed table. Cycle fallback and rolling trend projections
+remain estimates conditional on continued consumption. `--quota-pace-review`
+runs the focused calculation, weighting, reset, freshness, history and UI cases.
+Future samples and exhausted prior windows cannot establish current exhaustion.
+Already-rendered forecasts expire at their window reset or maximum data age;
+known exhausted/weekly-blocked quota can remain blocked until its known reset
+while refresh is deferred. This prevents stale "until reset" claims after reset.
 
 The Radar subtitle switches between the Codex trial (/100) and historical (/150)
 views. API contributions keep those datasets separate and include sample counts.

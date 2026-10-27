@@ -423,12 +423,13 @@ internal sealed class QuotaPopoverForm : Form
                 new RectangleF(track.X, track.Y, track.Width * (float)(remaining.Value / 100), track.Height),
                 2);
         }
+        var currentPace = content.Pace?.ForDisplay(now);
         double? budgetMarkerRemaining = null;
         if (content.WeeklyBlockResetAt is null
             && used is not null
             && QuotaDisplayFormatting.BudgetMarkerRemaining(
                 content.Window,
-                content.Pace?.Cycle,
+                currentPace?.Cycle,
                 now) is { } markerRemaining)
         {
             budgetMarkerRemaining = markerRemaining;
@@ -436,7 +437,7 @@ internal sealed class QuotaPopoverForm : Form
             DrawBudgetMarker(graphics, track, markerX);
         }
 
-        var pace = _text.QuotaPace(content.Pace, now);
+        var pace = _text.QuotaPace(currentPace, now);
         var paceColor = pace.Right.Length == 0
             ? Color.FromArgb(148, 163, 184)
             : Color.FromArgb(94, 234, 212);
@@ -465,16 +466,16 @@ internal sealed class QuotaPopoverForm : Form
         var showCurrentGoal = remaining is not null
             && budgetMarkerRemaining is not null
             && QuotaDisplayFormatting.UsesLongWindowGoal(content.Window);
-        var recentTooFast = content.Pace?.Recent is { ResetsBeforeExhaustion: false };
+        var recentTooFast = currentPace?.Recent is { ResetsBeforeExhaustion: false };
         var cyclePace = showCurrentGoal
             ? _text.QuotaCurrentGoal(
                 budgetMarkerRemaining!.Value,
                 remaining!.Value,
                 recentTooFast)
-            : _text.QuotaCycle(content.Pace);
+            : _text.QuotaCycle(currentPace);
         var cycleColor = showCurrentGoal
             ? Color.FromArgb(253, 230, 138)
-            : content.Pace?.Cycle is null || content.Pace.Status == QuotaPaceStatus.WeeklyBlocked
+            : currentPace?.Cycle is null || currentPace.Status == QuotaPaceStatus.WeeklyBlocked
                 ? Color.FromArgb(148, 163, 184)
                 : Color.FromArgb(203, 213, 225);
         DrawCyclePaceIcon(
@@ -486,7 +487,7 @@ internal sealed class QuotaPopoverForm : Form
             cyclePace.Left,
             _detailFont,
             showCurrentGoal ? warningValueBrush
-                : content.Pace?.Cycle is null ? mutedBrush : detailValueBrush,
+                : currentPace?.Cycle is null ? mutedBrush : detailValueBrush,
             new RectangleF(x + 30, y + 94, cyclePace.Right.Length == 0 ? body.Width - 42 : 102, 16),
             StringAlignment.Near);
         if (cyclePace.Right.Length > 0)

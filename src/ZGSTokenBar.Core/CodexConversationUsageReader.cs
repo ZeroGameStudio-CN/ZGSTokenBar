@@ -15,6 +15,10 @@ public sealed record CodexConversationTurn(
     [JsonIgnore]
     public string? Title { get; init; }
     public string? ServiceTier { get; init; }
+    public string? ResponseModels { get; init; }
+    public string? RoutedFromModel { get; init; }
+    public string? RoutedToModel { get; init; }
+    public string? RoutingReason { get; init; }
     public bool Interrupted { get; init; }
     public bool Stale { get; init; }
     public double? FirstTokenSeconds { get; init; }
@@ -202,14 +206,22 @@ public sealed class CodexConversationUsageReader
         {
             if (!line.Contains("\"event_msg\"", StringComparison.Ordinal)
                 && !line.Contains("\"turn_context\"", StringComparison.Ordinal)
-                && !line.Contains("\"session_meta\"", StringComparison.Ordinal)) return;
+                && !line.Contains("\"session_meta\"", StringComparison.Ordinal)
+                && !line.Contains("\"response.completed\"", StringComparison.Ordinal)
+                && !line.Contains("\"model/rerouted\"", StringComparison.Ordinal)) return;
             try
             {
                 using var document = JsonDocument.Parse(line);
                 var root = document.RootElement;
-                if (Date(root, "timestamp") is not { } at || at > now.AddMinutes(5)
-                    || root.ObjectProperty("payload") is not { } payload) return;
+                if (Date(root, "timestamp") is not { } at || at > now.AddMinutes(5)) return;
+                var payload = root.ObjectProperty("payload") ?? root.ObjectProperty("params") ?? root;
                 var type = root.StringProperty("type");
+                var evidenceType = root.StringProperty("method") ?? (type == "event_msg" ? payload.StringProperty("type") : type);
+                if (evidenceType is "response.completed" or "model_rerouted" or "model/rerouted")
+                {
+                    RecordModelEvidence(payload, evidenceType, at);
+                    return;
+                }
                 if (type is "session_meta" or "turn_context")
                 {
                     if (payload.StringProperty("cwd") is { } cwd)
@@ -289,6 +301,35 @@ public sealed class CodexConversationUsageReader
             !reset && before is { } previous && after is { } current && current >= previous
                 ? current - previous : last;
 
+        private void RecordModelEvidence(JsonElement payload, string type, DateTimeOffset at)
+        {
+            // Unscoped model fields, settings, catalog headers and sub-agent metadata are not response evidence.
+            if (Active is not { } turn || at < turn.StartedAt
+                || payload.StringProperty("turn_id", "turnId") != turn.Id
+                || payload.StringProperty("thread_id", "threadId") is { } thread && thread != sessionId) return;
+            if (type == "response.completed")
+            {
+                if (payload.ObjectProperty("response") is not { } response
+                    || response.StringProperty("object") != "response" || response.StringProperty("status") != "completed"
+                    || response.StringProperty("id") is not { } responseId || !responseId.StartsWith("resp_", StringComparison.Ordinal)
+                    || ValidModel(response.StringProperty("model")) is not { } model) return;
+                if (turn.ResponseModels.Count < 8) turn.ResponseModels.Add(model);
+            }
+            else if (ValidModel(payload.StringProperty("from_model", "fromModel")) is { } from
+                && ValidModel(payload.StringProperty("to_model", "toModel")) is { } to)
+            {
+                if (turn.RoutingObservedAt is { } previous && at < previous) return;
+                turn.RoutingObservedAt = at;
+                turn.RoutedFromModel = from;
+                turn.RoutedToModel = to;
+                var reason = payload.StringProperty("reason");
+                turn.RoutingReason = reason is { Length: <= 128 } && !reason.Any(char.IsControl) ? reason : null;
+            }
+        }
+
+        private static string? ValidModel(string? value) => value is { Length: > 0 and <= 128 }
+            && value.All(character => char.IsAsciiLetterOrDigit(character) || character is '.' or '-' or '_' or '/' or ':') ? value : null;
+
         private static string? NormalizeTier(string? tier) => tier?.Trim().ToLowerInvariant() switch
         {
             null or "" or "default" or "auto" or "standard" => "standard",
@@ -349,6 +390,10 @@ public sealed class CodexConversationUsageReader
                 turn.EndedAt is not null && !turn.Interrupted, turn.UsageComplete)
             {
                 ProjectName = _projectName,
+                ResponseModels = turn.ResponseModels.Count == 0 ? null : string.Join(" | ", turn.ResponseModels.Order(StringComparer.Ordinal)),
+                RoutedFromModel = turn.RoutedFromModel,
+                RoutedToModel = turn.RoutedToModel,
+                RoutingReason = turn.RoutingReason,
                 ServiceTier = turn.MixedServiceTier ? "mixed" : turn.MissingServiceTier ? null : turn.ServiceTier,
                 Interrupted = turn.Interrupted,
                 Stale = turn.EndedAt is null && now - turn.ObservedAt > TimeSpan.FromMinutes(2),
@@ -374,6 +419,11 @@ public sealed class CodexConversationUsageReader
         public bool MixedServiceTier;
         public bool MissingServiceTier;
         public bool MixedModel;
+        public HashSet<string> ResponseModels = new(StringComparer.Ordinal);
+        public string? RoutedFromModel;
+        public string? RoutedToModel;
+        public string? RoutingReason;
+        public DateTimeOffset? RoutingObservedAt;
         public long Output;
         public DateTimeOffset? EndedAt;
         public bool Interrupted;

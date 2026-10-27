@@ -410,7 +410,8 @@ test('quota pace rows use concise labels, readable type, and distinct icons', ()
   assert.match(popoverForm, /DrawCyclePaceIcon/);
   assert.match(popoverForm, /DrawBudgetMarker/);
   assert.match(popoverForm, /QuotaDisplayFormatting\.BudgetMarkerRemaining\(/);
-  assert.match(popoverForm, /var recentTooFast = content\.Pace\?\.Recent/);
+  assert.match(popoverForm, /var currentPace = content\.Pace\?\.ForDisplay\(now\)/);
+  assert.match(popoverForm, /var recentTooFast = currentPace\?\.Recent/);
   assert.match(popoverForm, /remaining!\.Value,[\s\S]*recentTooFast\)/);
   assert.match(popoverForm, /troughBrush = new SolidBrush\(Color\.FromArgb\(30, 41, 59\)\)/);
   assert.match(popoverForm, /trackBrush = new SolidBrush\(Color\.FromArgb\(71, 85, 105\)\)/);

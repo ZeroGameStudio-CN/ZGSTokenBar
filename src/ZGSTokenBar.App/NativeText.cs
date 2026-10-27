@@ -727,6 +727,7 @@ internal sealed class NativeText
         QuotaPaceEstimate? estimate,
         DateTimeOffset now)
     {
+        estimate = estimate?.ForDisplay(now);
         if (estimate is null)
         {
             return (T("等待额度", "Waiting for quota"), string.Empty);
@@ -1015,6 +1016,10 @@ internal sealed class NativeText
     public string CodexModelSpeedsTitle(int count) => T("近24h模型速度 · 整轮均速", "Model speeds · last 24h · whole turns")
         + (count > 6 ? T($" · 最近6/{count}组", $" · latest 6/{count} groups") : "");
     public string CodexModelSpeedLabel(CodexModelSpeed row) => $"{row.Model} · {row.Effort ?? "—"} · {CodexServiceTier(row.ServiceTier)}";
+    public string CodexModelSpeedSetting(CodexModelSpeed row) => $"{row.Effort ?? "—"} · {CodexServiceTier(row.ServiceTier)}";
+    public string CodexModelSpeedCompactValue(CodexModelSpeed row) => T(
+        $"均 {row.AverageTokensPerSecond:0.#} · 单轮最高 {row.MaximumTurnTokensPerSecond:0.#} · {row.SampleCount}轮",
+        $"Avg {row.AverageTokensPerSecond:0.#} · max turn {row.MaximumTurnTokensPerSecond:0.#} · n={row.SampleCount}");
     public string CodexModelSpeedValue(CodexModelSpeed row) => T(
         $"均≈{row.AverageTokensPerSecond:0.#} · 单轮最高≈{row.MaximumTurnTokensPerSecond:0.#} tok/s · {row.SampleCount}轮",
         $"Avg ≈{row.AverageTokensPerSecond:0.#} · best turn ≈{row.MaximumTurnTokensPerSecond:0.#} tok/s · n={row.SampleCount}");
@@ -1039,7 +1044,12 @@ internal sealed class NativeText
             $"New input {turn.NewInputTokens?.ToString("N0") ?? "—"} · Cached {turn.CachedInputTokens?.ToString("N0") ?? "—"} · Estimate {CodexTurnCost(turn)}\n")
         + T($"缓存率 {FormatCacheHitPercent(turn.CacheHitPercent)}\n", $"Cache hit {FormatCacheHitPercent(turn.CacheHitPercent)}\n")
         + (turn.Title is null ? T("尚无对话标题，按项目和对话 ID 显示。\n", "No chat title is recorded; showing project and chat ID.\n") : "")
-        + T("模型名来自会话设置；响应模型名未记录。\n", "Model name comes from session settings; response model is not recorded.\n")
+        + T($"设置模型 {turn.Model ?? "—"} · 响应模型 {turn.ResponseModels ?? "未取得记录"}\n",
+            $"Configured model {turn.Model ?? "—"} · Response model {turn.ResponseModels ?? "not recorded"}\n")
+        + (turn.RoutedToModel is { } target ? T(
+            $"最近路由通知 {turn.RoutedFromModel} → {target} · {turn.RoutingReason ?? "—"}\n",
+            $"Latest routing notice {turn.RoutedFromModel} → {target} · {turn.RoutingReason ?? "—"}\n")
+            : T("未取得可核对的路由通知；不能据此确认是否发生路由。\n", "No routing notice is recorded; routing cannot be determined from this alone.\n"))
         + T($"整轮耗时 {turn.ElapsedSeconds:0.0}s", $"Turn duration {turn.ElapsedSeconds:0.0}s")
         + (turn.FirstTokenSeconds is { } first ? T($" · 首 Token {first:0.0}s", $" · First token {first:0.0}s") : "")
         + $"\n{CodexTurnSpeedNote}"

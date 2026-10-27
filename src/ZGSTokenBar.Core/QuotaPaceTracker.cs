@@ -184,40 +184,51 @@ public sealed class QuotaPaceTracker
         DateTimeOffset now,
         int refreshMinutes)
     {
-        if (window.UsedPercent is not { } used || !double.IsFinite(used))
+        var estimate = EstimateCore(card, window, now, refreshMinutes);
+        var expiresAt = window.ResetsAt;
+        if (card.CapturedAt is { } capturedAt && window.Duration > TimeSpan.Zero)
+        {
+            var lifetime = FallbackLifetime(window, refreshMinutes);
+            var dataExpiresAt = capturedAt > DateTimeOffset.MaxValue - lifetime
+                ? DateTimeOffset.MaxValue : capturedAt + lifetime;
+            if (estimate.Status is not (QuotaPaceStatus.Exhausted or QuotaPaceStatus.WeeklyBlocked)
+                || expiresAt is null)
+                expiresAt = expiresAt is { } reset && reset < dataExpiresAt ? reset : dataExpiresAt;
+        }
+        if (estimate.Status == QuotaPaceStatus.WeeklyBlocked)
+            expiresAt = QuotaDisplayFormatting.WeeklyBlockReset(card, window, now) ?? expiresAt;
+        return estimate with { ForecastExpiresAt = expiresAt };
+    }
+
+    private QuotaPaceEstimate EstimateCore(QuotaCard card, QuotaWindow window, DateTimeOffset now, int refreshMinutes)
+    {
+        if (window.UsedPercent is not { } used || !double.IsFinite(used) || used is < 0 or > 100
+            || window.Duration <= TimeSpan.Zero)
         {
             return new QuotaPaceEstimate(QuotaPaceStatus.Unavailable);
-        }
-        if (QuotaDisplayFormatting.WeeklyBlockReset(card, window, now) is not null)
-        {
-            return new QuotaPaceEstimate(QuotaPaceStatus.WeeklyBlocked);
         }
         if (card.CapturedAt is not { } capturedAt)
         {
             return new QuotaPaceEstimate(QuotaPaceStatus.WaitingForFreshData);
         }
 
-        var cycle = CalculateCycle(window, used, capturedAt);
-        if (used >= 100)
-        {
-            return new QuotaPaceEstimate(QuotaPaceStatus.Exhausted, cycle);
-        }
-
         var maximumAge = TimeSpan.FromMinutes(Math.Max(15, Math.Clamp(refreshMinutes, 1, 60) * 2));
         var age = now - capturedAt;
         var validUntil = capturedAt + maximumAge;
-        var fallbackAge = TimeSpan.FromTicks(Math.Min(
-            window.Duration.Ticks,
-            Math.Max(maximumAge.Ticks, RecentFallbackAge.Ticks)));
+        var fallbackAge = FallbackLifetime(window, refreshMinutes);
         var stale = age > maximumAge;
         if (age < TimeSpan.Zero
-            || age > fallbackAge
             || window.ResetsAt is { } elapsedReset && elapsedReset <= now)
         {
             return new QuotaPaceEstimate(
                 QuotaPaceStatus.WaitingForFreshData,
                 ValidUntil: validUntil);
         }
+        if (QuotaDisplayFormatting.WeeklyBlockReset(card, window, now) is not null)
+            return new QuotaPaceEstimate(QuotaPaceStatus.WeeklyBlocked);
+        var cycle = CalculateCycle(window, used, capturedAt);
+        if (used >= 100) return new QuotaPaceEstimate(QuotaPaceStatus.Exhausted, cycle);
+        if (age > fallbackAge) return new(QuotaPaceStatus.WaitingForFreshData, ValidUntil: validUntil);
 
         var seriesKey = SeriesIdentity(card, window);
         var series = Deduplicate(_samples
@@ -324,6 +335,10 @@ public sealed class QuotaPaceTracker
 
         return CycleFallback(cycle, validUntil, stale);
     }
+
+    private static TimeSpan FallbackLifetime(QuotaWindow window, int refreshMinutes) => TimeSpan.FromTicks(Math.Min(
+        window.Duration.Ticks,
+        Math.Max(TimeSpan.FromMinutes(Math.Max(15, Math.Clamp(refreshMinutes, 1, 60) * 2)).Ticks, RecentFallbackAge.Ticks)));
 
     public QuotaRateHistory Export(DateTimeOffset now)
     {

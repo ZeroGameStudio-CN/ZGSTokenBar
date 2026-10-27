@@ -289,7 +289,12 @@ public sealed record QuotaPaceEstimate(
     QuotaCyclePace? Cycle = null,
     QuotaRecentTrend? Recent = null,
     TimeSpan? ObservedSpan = null,
-    DateTimeOffset? ValidUntil = null);
+    DateTimeOffset? ValidUntil = null)
+{
+    public DateTimeOffset? ForecastExpiresAt { get; init; }
+    public QuotaPaceEstimate ForDisplay(DateTimeOffset now) => ForecastExpiresAt is { } expiresAt && now >= expiresAt
+        ? new(QuotaPaceStatus.WaitingForFreshData, ValidUntil: ValidUntil) : this;
+}
 
 public sealed record ProviderResult(
     ProviderKind Provider,

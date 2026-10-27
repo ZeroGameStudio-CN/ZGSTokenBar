@@ -18,6 +18,20 @@ using ZGSTokenBar.Plugin.AiGatewayObserver;
 
 if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJobExitCode;
 
+if (args.Length == 1 && args[0] == "--quota-pace-review")
+{
+    TestQuotaPaceEstimate();
+    TestQuotaPaceWeightedDailyTrend();
+    TestQuotaCyclePace();
+    TestQuotaPaceGuards();
+    TestQuotaPaceForecastExpiry();
+    TestQuotaPacePersistence();
+    TestQuotaImportedCompaction();
+    TestQuotaPacePopoverPresentation();
+    Console.WriteLine("PASS quota pace calculation, reset, expiry and presentation");
+    return 0;
+}
+
 if (args.Length > 0 && args[0] == "--system-usage-regressions")
 {
     TestSystemUsageSamplingMath();
@@ -342,6 +356,7 @@ var tests = new (string Name, Action Run)[]
     ("Quota pace weighted daily trend", TestQuotaPaceWeightedDailyTrend),
     ("Quota pace immediate cycle budget", TestQuotaCyclePace),
     ("Quota pace reset and freshness guards", TestQuotaPaceGuards),
+    ("Quota pace live forecast expiry", TestQuotaPaceForecastExpiry),
     ("Quota pace history persistence", TestQuotaPacePersistence),
     ("Persistent history transient I/O protection", TestPersistentHistoryIoProtection),
     ("Bounded HTTP body reader", TestBoundedHttpBodyReader),
@@ -4279,6 +4294,32 @@ static void TestQuotaPaceGuards()
         QuotaPaceStatus.Exhausted,
         cachedTracker.Estimate(claudeBlocked, claudeBlocked.Windows[1], latestAt, 5).Status,
         "fully consumed quota is exhausted instead of projected");
+}
+
+static void TestQuotaPaceForecastExpiry()
+{
+    var now = DateTimeOffset.Parse("2026-10-27T08:00:00Z");
+    var tracker = new QuotaPaceTracker();
+    var futureFull = PaceCard("future.full", "Codex", 100, now.AddHours(4), now.AddMinutes(2));
+    Equal(QuotaPaceStatus.WaitingForFreshData, tracker.Estimate(futureFull, futureFull.Windows.Single(), now, 5).Status,
+        "a future timestamp cannot establish exhaustion even at 100 percent");
+    var oldFull = PaceCard("old.full", "Codex", 100, now.AddMinutes(-1), now.AddHours(-1));
+    Equal(QuotaPaceStatus.WaitingForFreshData, tracker.Estimate(oldFull, oldFull.Windows.Single(), now, 5).Status,
+        "an exhausted prior window waits for a fresh sample after reset");
+    var almostReset = PaceCard("reset.display", "Codex", 1, now.AddMinutes(1), now);
+    var estimate = tracker.Estimate(almostReset, almostReset.Windows.Single(), now, 5);
+    Equal(QuotaPaceStatus.ResetsBeforeExhaustion, estimate.Status, "the pre-reset prediction still uses the measured cycle");
+    Equal(QuotaPaceStatus.WaitingForFreshData, estimate.ForDisplay(now.AddMinutes(1)).Status,
+        "an already-rendered forecast expires at reset without another API response");
+    Equal(string.Empty, NativeText.For("zh-CN").QuotaPace(estimate, now.AddMinutes(2)).Right,
+        "an expired forecast cannot keep claiming that quota lasts until reset");
+    var normal = PaceCard("data.expiry", "Codex", 40, now.AddHours(4), now);
+    var normalEstimate = tracker.Estimate(normal, normal.Windows.Single(), now, 5);
+    Equal(QuotaPaceStatus.WaitingForFreshData, normalEstimate.ForDisplay(now.AddHours(2).AddSeconds(1)).Status,
+        "an old estimate expires when the maximum fallback observation age is exceeded");
+    var full = PaceCard("full.waiting", "Codex", 100, now.AddHours(4), now);
+    Equal(QuotaPaceStatus.Exhausted, tracker.Estimate(full, full.Windows.Single(), now, 5).ForDisplay(now.AddHours(3)).Status,
+        "known full quota remains exhausted until its known reset while refresh is deferred");
 }
 
 static void TestQuotaPacePersistence()

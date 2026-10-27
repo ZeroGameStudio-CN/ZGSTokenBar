@@ -49,9 +49,10 @@ internal sealed class RadarPopoverRenderer : IDisposable
         int recentTurnOffset = 0,
         bool canSwitchBenchmark = false,
         bool radarExpanded = false,
-        IReadOnlyList<CodexModelSpeed>? modelSpeeds = null)
+        IReadOnlyList<CodexModelSpeed>? modelSpeeds = null,
+        bool radarExtension = false)
     {
-        var fonts = Fonts(layout.Dpi);
+        var fonts = Fonts(layout.Dpi, layout.ConversationPrimary);
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
         graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
         graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
@@ -85,7 +86,16 @@ internal sealed class RadarPopoverRenderer : IDisposable
             return;
         }
         var title = radarTitle ?? text.RadarTitle;
-        DrawHeader(graphics, layout, body.Location, state, logo, fonts, text, pinned, title, presentation, canSwitchBenchmark);
+        DrawHeader(graphics, layout, body.Location, state, logo, fonts, text, pinned, title, presentation, canSwitchBenchmark, radarExtension);
+        if (radarExtension)
+        {
+            var collapse = Offset(layout.RadarCollapseBounds, body.Location);
+            using var shape = RoundedRectangle(collapse, Scale(layout.Dpi, 5));
+            using var fill = new SolidBrush(Color.FromArgb(20, 148, 163, 184));
+            graphics.FillPath(fill, shape);
+            DrawText(graphics, text.CodexRadarExpansion(true), fonts.Meta, Color.FromArgb(203, 213, 225), collapse,
+                CellTextFlags | TextFormatFlags.HorizontalCenter);
+        }
 
         if (presentation is null)
         {
@@ -620,17 +630,38 @@ internal sealed class RadarPopoverRenderer : IDisposable
         {
             var speedBounds = Offset(layout.ModelSpeedBounds, origin);
             var rows = modelSpeeds ?? CodexConversationSpeeds.Build(usage, usage.CapturedAt);
-            DrawText(graphics, text.CodexModelSpeedsTitle(rows.Count), fonts.Badge, Color.FromArgb(148, 163, 184),
+            var groups = CodexConversationSpeeds.GroupModels(rows);
+            DrawText(graphics, text.CodexModelSpeedsTitle(groups.Count) + " · tok/s", fonts.Badge, Color.FromArgb(148, 163, 184),
                 speedBounds with { Height = Scale(layout.Dpi, 14) }, CellTextFlags);
-            var tileWidth = speedBounds.Width / 3;
-            for (var index = 0; index < Math.Min(6, rows.Count); index++)
+            var columns = Math.Min(3, Math.Max(1, groups.Count));
+            var tileWidth = speedBounds.Width / columns;
+            var detailRows = groups.Count == 0 ? 1 : Math.Clamp(groups.Take(6).Max(group => group.Rows.Count), 1, 4);
+            var tileHeight = 24 + detailRows * 20;
+            for (var index = 0; index < Math.Min(6, groups.Count); index++)
             {
-                var tile = new Rectangle(speedBounds.Left + index % 3 * tileWidth,
-                    speedBounds.Top + Scale(layout.Dpi, 18 + index / 3 * 36), tileWidth - Scale(layout.Dpi, 8), Scale(layout.Dpi, 32));
-                DrawText(graphics, text.CodexModelSpeedLabel(rows[index]), fonts.Meta, Color.FromArgb(203, 213, 225),
-                    tile with { Height = Scale(layout.Dpi, 13) }, CellTextFlags);
-                DrawText(graphics, text.CodexModelSpeedValue(rows[index]), fonts.Meta, Color.FromArgb(148, 163, 184),
-                    new Rectangle(tile.Left, tile.Top + Scale(layout.Dpi, 15), tile.Width, Scale(layout.Dpi, 13)), CellTextFlags);
+                var group = groups[index];
+                var tile = new Rectangle(speedBounds.Left + index % columns * tileWidth,
+                    speedBounds.Top + Scale(layout.Dpi, 22 + index / columns * tileHeight), tileWidth - Scale(layout.Dpi, 12), Scale(layout.Dpi, tileHeight));
+                DrawText(graphics, group.Model + (group.Rows.Count > 4 ? $" · 4/{group.Rows.Count}" : ""), fonts.EmphasizedModel,
+                    Color.FromArgb(226, 232, 240), tile with { Height = Scale(layout.Dpi, 18) }, CellTextFlags);
+                for (var rowIndex = 0; rowIndex < Math.Min(4, group.Rows.Count); rowIndex++)
+                {
+                    var row = group.Rows[rowIndex];
+                    var settingWidth = Math.Min(Scale(layout.Dpi, 112), tile.Width / 3);
+                    var setting = new Rectangle(tile.Left, tile.Top + Scale(layout.Dpi, 24 + rowIndex * 20), settingWidth, Scale(layout.Dpi, 17));
+                    var color = row.Effort?.ToLowerInvariant() switch
+                    {
+                        "max" => Color.FromArgb(246, 196, 83),
+                        "xhigh" => Color.FromArgb(190, 160, 245),
+                        "high" => Color.FromArgb(96, 190, 245),
+                        "medium" => Color.FromArgb(94, 207, 188),
+                        _ => Color.FromArgb(168, 180, 198),
+                    };
+                    DrawText(graphics, text.CodexModelSpeedSetting(row), fonts.Meta, color, setting, CellTextFlags);
+                    DrawText(graphics, text.CodexModelSpeedCompactValue(row), fonts.Meta, Color.FromArgb(203, 213, 225),
+                        new Rectangle(setting.Right + Scale(layout.Dpi, 8), setting.Top,
+                            Math.Max(1, tile.Right - setting.Right - Scale(layout.Dpi, 8)), setting.Height), CellTextFlags);
+                }
             }
         }
         var footer = Offset(layout.FooterCompactBounds, origin);
@@ -761,8 +792,8 @@ internal sealed class RadarPopoverRenderer : IDisposable
         var muted = Color.FromArgb(148, 163, 184);
         var valueColor = Color.FromArgb(203, 213, 225);
         DrawText(graphics, text.CodexTurnName(turn), fonts.EmphasizedModel, Color.FromArgb(226, 232, 240),
-            new Rectangle(x + columns[0].Left, y + Scale(layout.Dpi, 2), columns[0].Width, Scale(layout.Dpi, 14)), CellTextFlags);
-        var meta = new Rectangle(x + columns[0].Left, y + Scale(layout.Dpi, 18), columns[0].Width, Scale(layout.Dpi, 12));
+            new Rectangle(x + columns[0].Left, y + Scale(layout.Dpi, 3), columns[0].Width, Scale(layout.Dpi, 18)), CellTextFlags);
+        var meta = new Rectangle(x + columns[0].Left, y + Scale(layout.Dpi, 24), columns[0].Width, Scale(layout.Dpi, 16));
         var prefix = $"{turn.Model ?? "—"} · {turn.Effort ?? "—"} · ";
         var tier = text.CodexTurnTier(turn);
         var tierWidth = TextRenderer.MeasureText(graphics, tier, fonts.Meta, Size.Empty, BaseTextFlags).Width;
@@ -781,9 +812,9 @@ internal sealed class RadarPopoverRenderer : IDisposable
             new Rectangle(x + columns[1].Left, y, columns[1].Width, rowHeight),
             CellTextFlags | TextFormatFlags.HorizontalCenter);
         DrawText(graphics, text.CodexTurnTime(turn), fonts.Number, valueColor,
-            new Rectangle(x + columns[2].Left, y + Scale(layout.Dpi, 2), columns[2].Width, Scale(layout.Dpi, 14)), CellTextFlags);
+            new Rectangle(x + columns[2].Left, y + Scale(layout.Dpi, 3), columns[2].Width, Scale(layout.Dpi, 18)), CellTextFlags);
         DrawText(graphics, text.CodexTurnDate(turn), fonts.Meta, muted,
-            new Rectangle(x + columns[2].Left, y + Scale(layout.Dpi, 17), columns[2].Width, Scale(layout.Dpi, 12)), CellTextFlags);
+            new Rectangle(x + columns[2].Left, y + Scale(layout.Dpi, 24), columns[2].Width, Scale(layout.Dpi, 16)), CellTextFlags);
         var values = new[]
         {
             turn.NewInputTokens is { } input ? NativeText.FormatTokenCount(input) : "—",
@@ -795,7 +826,7 @@ internal sealed class RadarPopoverRenderer : IDisposable
         };
         for (var column = 3; column < columns.Count; column++)
             DrawText(graphics, values[column - 3], column == 7 ? fonts.EmphasizedNumber : fonts.Number,
-                column == 8 ? Color.FromArgb(52, 211, 153) : valueColor,
+                values[column - 3] == "—" ? muted : column == 8 ? Color.FromArgb(52, 211, 153) : valueColor,
                 new Rectangle(x + columns[column].Left, y, columns[column].Width, rowHeight),
                 CellTextFlags | RecentColumnAlignment(column, true));
     }
@@ -1006,7 +1037,8 @@ internal sealed class RadarPopoverRenderer : IDisposable
         bool pinned,
         string title,
         RadarPresentationResult? presentation,
-        bool canSwitchBenchmark)
+        bool canSwitchBenchmark,
+        bool radarExtension)
     {
         if (logo is not null) graphics.DrawImage(logo, Offset(layout.LogoBounds, origin));
         DrawText(
@@ -1055,6 +1087,7 @@ internal sealed class RadarPopoverRenderer : IDisposable
             else if (presentation?.TrialObservedAt is not null) stateLabel = text.RadarTrialState;
         }
         var checkedLabel = text.RadarChecked(sourceAt ?? state.LastSuccessfulFetchAt, now);
+        if (radarExtension) return;
         DrawText(
             graphics,
             canSwitchBenchmark && !state.Loading && state.Error is null ? checkedLabel : $"{stateLabel} · {checkedLabel}",
@@ -2408,11 +2441,11 @@ internal sealed class RadarPopoverRenderer : IDisposable
         TextRenderer.DrawText(graphics, text ?? string.Empty, font, bounds, color, flags);
     }
 
-    private RadarPopoverFonts Fonts(int dpi)
+    private RadarPopoverFonts Fonts(int dpi, bool primary = false)
     {
-        if (_fonts?.Dpi == dpi) return _fonts;
+        if (_fonts?.Dpi == dpi && _fonts.Primary == primary) return _fonts;
         _fonts?.Dispose();
-        _fonts = new RadarPopoverFonts(dpi);
+        _fonts = new RadarPopoverFonts(dpi, primary);
         return _fonts;
     }
 
@@ -2437,22 +2470,24 @@ internal sealed class RadarPopoverRenderer : IDisposable
 
     private sealed class RadarPopoverFonts : IDisposable
     {
-        public RadarPopoverFonts(int dpi)
+        public RadarPopoverFonts(int dpi, bool primary)
         {
             Dpi = dpi;
-            Title = Create("Segoe UI", 11, FontStyle.Bold, dpi);
-            Meta = Create("Segoe UI", 8, FontStyle.Regular, dpi);
-            Badge = Create("Segoe UI", 7, FontStyle.Bold, dpi);
+            Primary = primary;
+            Title = Create("Segoe UI", primary ? 13 : 11, FontStyle.Bold, dpi);
+            Meta = Create("Segoe UI", primary ? 10 : 8, FontStyle.Regular, dpi);
+            Badge = Create("Segoe UI", primary ? 9 : 7, FontStyle.Bold, dpi);
             ResetOpen = Create("Segoe UI", 8.5, FontStyle.Bold, dpi);
-            Model = Create("Segoe UI", 8.5, FontStyle.Regular, dpi);
-            EmphasizedModel = Create("Segoe UI", 8.5, FontStyle.Bold, dpi);
-            Number = Create("Cascadia Mono", 8.5, FontStyle.Regular, dpi);
-            EmphasizedNumber = Create("Cascadia Mono", 8.5, FontStyle.Bold, dpi);
+            Model = Create("Segoe UI", primary ? 10.5 : 8.5, FontStyle.Regular, dpi);
+            EmphasizedModel = Create("Segoe UI", primary ? 10.5 : 8.5, FontStyle.Bold, dpi);
+            Number = Create("Cascadia Mono", primary ? 11 : 8.5, FontStyle.Regular, dpi);
+            EmphasizedNumber = Create("Cascadia Mono", primary ? 11 : 8.5, FontStyle.Bold, dpi);
             SpendNumber = Create("Cascadia Mono", 10.5, FontStyle.Bold, dpi);
             Icon = Create("Segoe Fluent Icons", 9, FontStyle.Regular, dpi);
         }
 
         public int Dpi { get; }
+        public bool Primary { get; }
         public Font Title { get; }
         public Font Meta { get; }
         public Font Badge { get; }
