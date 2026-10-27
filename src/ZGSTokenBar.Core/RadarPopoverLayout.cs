@@ -125,9 +125,9 @@ public sealed class RadarPopoverLayout
         get
         {
             int Scale(int value) => (int)Math.Round(value * Dpi / 96d);
-            var widths = new[] { 42, 42, 42, 54, 56, 38 }.Select(Scale).ToArray();
-            var timeWidth = Scale(60);
-            var gap = Scale(5);
+            var widths = new[] { 40, 40, 36, 50, 50, 32 }.Select(Scale).ToArray();
+            var timeWidth = Scale(52);
+            var gap = Scale(4);
             var inset = Scale(LogicalRecentColumnInset);
             var modelWidth = Math.Max(1, RecentTurnsBounds.Width - inset * 2 - timeWidth - widths.Sum() - 7 * gap);
             var columns = new List<RadarPopoverColumn>();

@@ -482,6 +482,8 @@ internal static class RadarAndUsageUpdateTests
                 "paging controls align with the table content instead of the card edge");
             Check(layout.RecentColumns[^1].Right - layout.RecentColumns[0].Left == (int)Math.Round(460 * dpi / 96d),
                 "split panel retains its usable metric width after adding padding");
+            Check(layout.RecentColumns[1].Width >= (int)Math.Round(128 * dpi / 96d),
+                "conversation names retain room for readable titles alongside the numeric columns");
             Check(layout.RecentPageSize is > 0 and <= 4
                 && layout.RecentTurnsBounds.Height >= (int)Math.Round(
                     (RadarPopoverLayout.ConversationHeaderHeight + layout.RecentPageSize * RadarPopoverLayout.ConversationRowHeight) * dpi / 96d),
@@ -523,10 +525,18 @@ internal static class RadarAndUsageUpdateTests
                 "three-line rows, header and trailing space map to the correct tooltip");
             using var timeFont = new Font("Cascadia Mono", (float)Math.Round(8.5 * dpi / 96d, MidpointRounding.AwayFromZero), FontStyle.Regular, GraphicsUnit.Pixel);
             using var dateFont = new Font("Segoe UI", (float)Math.Round(8 * dpi / 96d, MidpointRounding.AwayFromZero), FontStyle.Regular, GraphicsUnit.Pixel);
+            using var costFont = new Font("Cascadia Mono", timeFont.Size, FontStyle.Bold, GraphicsUnit.Pixel);
             foreach (var (value, font) in new[] { ("23:59:59", timeFont), ("2026-12-31", dateFont) })
                 Check(System.Windows.Forms.TextRenderer.MeasureText(value, font, Size.Empty,
                     System.Windows.Forms.TextFormatFlags.NoPadding | System.Windows.Forms.TextFormatFlags.SingleLine).Width
                     <= token.RecentColumns[0].Width, $"{dpi} DPI full date/time fits without ellipsis");
+            var values = new[] { NativeText.FormatTokenCount(99_999), NativeText.FormatTokenCount(99_999) + "+",
+                NativeText.FormatTokenCount(99_999_999), "<$0.0001+", "≈999.9", "999.9" };
+            for (var index = 0; index < values.Length; index++)
+                Check(System.Windows.Forms.TextRenderer.MeasureText(values[index], index == 3 ? costFont : timeFont, Size.Empty,
+                    System.Windows.Forms.TextFormatFlags.NoPadding | System.Windows.Forms.TextFormatFlags.SingleLine).Width
+                    <= token.RecentColumns[index + 2].Width,
+                    $"{dpi} DPI representative long metric {index} fits without ellipsis");
         }
 
         var compactRadar = RadarPopoverLayout.CreateGrouped(

@@ -604,10 +604,16 @@ internal sealed class RadarPopoverRenderer : IDisposable
         {
             var previous = Offset(layout.RecentPreviousBounds, origin);
             var next = Offset(layout.RecentNextBounds, origin);
-            DrawText(graphics, "‹", fonts.Model, page.HasPrevious ? Color.White : labelColor, previous, CellTextFlags);
+            using var pager = RoundedRectangle(Rectangle.FromLTRB(previous.Left, previous.Top, next.Right, next.Bottom), Scale(layout.Dpi, 5));
+            using var pagerFill = new SolidBrush(Color.FromArgb(12, 148, 163, 184));
+            graphics.FillPath(pagerFill, pager);
+            DrawText(graphics, "‹", fonts.Model, page.HasPrevious ? Color.White : labelColor, previous,
+                CellTextFlags | TextFormatFlags.HorizontalCenter);
             DrawText(graphics, $"{page.PageNumber}/{page.PageCount}", fonts.Meta, labelColor,
-                new Rectangle(previous.Right, previous.Top, next.Left - previous.Right, previous.Height), CellTextFlags);
-            DrawText(graphics, "›", fonts.Model, page.HasNext ? Color.White : labelColor, next, CellTextFlags | TextFormatFlags.Right);
+                new Rectangle(previous.Right, previous.Top, next.Left - previous.Right, previous.Height),
+                CellTextFlags | TextFormatFlags.HorizontalCenter);
+            DrawText(graphics, "›", fonts.Model, page.HasNext ? Color.White : labelColor, next,
+                CellTextFlags | TextFormatFlags.HorizontalCenter);
         }
         var headers = text.CodexConversationHeaders;
         for (var column = 0; column < columns.Count; column++)
@@ -616,41 +622,40 @@ internal sealed class RadarPopoverRenderer : IDisposable
                     columns[column].Width, Scale(layout.Dpi, 14)),
                 CellTextFlags | RecentColumnAlignment(column));
         var y = bounds.Top + Scale(layout.Dpi, RadarPopoverLayout.ConversationHeaderHeight);
-        using var divider = new Pen(Color.FromArgb(40, 71, 85, 105));
-        using var alternateRow = new SolidBrush(Color.FromArgb(18, 148, 163, 184));
+        using var divider = new Pen(Color.FromArgb(24, 71, 85, 105));
+        using var alternateRow = new SolidBrush(Color.FromArgb(10, 148, 163, 184));
         var rowHeight = Scale(layout.Dpi, RadarPopoverLayout.ConversationRowHeight);
         var rowIndex = 0;
         foreach (var turn in usage.ConversationTurns.Skip(page.Offset).Take(page.Count))
         {
             if (rowIndex++ % 2 == 0)
-                graphics.FillRectangle(alternateRow, origin.X + columns[0].Left, y,
-                    columns[^1].Right - columns[0].Left, rowHeight);
+            {
+                using var rowSurface = RoundedRectangle(new Rectangle(origin.X + columns[0].Left - Scale(layout.Dpi, 2),
+                    y + Scale(layout.Dpi, 1), columns[^1].Right - columns[0].Left + Scale(layout.Dpi, 4),
+                    rowHeight - Scale(layout.Dpi, 2)), Scale(layout.Dpi, 4));
+                graphics.FillPath(alternateRow, rowSurface);
+            }
             graphics.DrawLine(divider, origin.X + columns[0].Left, y,
                 origin.X + columns[^1].Right, y);
-            var modelColor = turn.State is "stale" or "interrupted"
-                ? Color.FromArgb(251, 191, 36) : Color.FromArgb(226, 232, 240);
-            DrawText(graphics, text.CodexTurnTime(turn), fonts.Number, Color.FromArgb(226, 232, 240),
-                new Rectangle(origin.X + columns[0].Left, y + Scale(layout.Dpi, 2),
+            DrawText(graphics, text.CodexTurnTime(turn), fonts.Number, Color.FromArgb(203, 213, 225),
+                new Rectangle(origin.X + columns[0].Left, y + Scale(layout.Dpi, 9),
                     columns[0].Width, Scale(layout.Dpi, 14)), CellTextFlags);
             DrawText(graphics, text.CodexTurnDate(turn), fonts.Meta, labelColor,
-                new Rectangle(origin.X + columns[0].Left, y + Scale(layout.Dpi, 16),
-                    columns[0].Width, Scale(layout.Dpi, 13)), CellTextFlags);
-            DrawText(graphics, text.CodexTurnTier(turn), fonts.Meta,
-                turn.ServiceTier is "fast" or "ultrafast" ? Color.FromArgb(167, 139, 250) : labelColor,
-                new Rectangle(origin.X + columns[0].Left, y + Scale(layout.Dpi, 30),
+                new Rectangle(origin.X + columns[0].Left, y + Scale(layout.Dpi, 24),
                     columns[0].Width, Scale(layout.Dpi, 13)), CellTextFlags);
             DrawText(graphics, text.CodexTurnName(turn), fonts.EmphasizedModel, Color.FromArgb(226, 232, 240),
                 new Rectangle(origin.X + columns[1].Left, y + Scale(layout.Dpi, 2),
                     columns[1].Width, Scale(layout.Dpi, 14)), CellTextFlags);
-            DrawText(graphics, turn.Model ?? "—", fonts.Meta, modelColor,
+            DrawText(graphics, $"{turn.Model ?? "—"} · {turn.Effort ?? "—"}", fonts.Meta, labelColor,
                 new Rectangle(origin.X + columns[1].Left, y + Scale(layout.Dpi, 16),
                     columns[1].Width, Scale(layout.Dpi, 13)), CellTextFlags);
             var detailBounds = new Rectangle(origin.X + columns[1].Left, y + Scale(layout.Dpi, 30),
                 columns[1].Width, Scale(layout.Dpi, 13));
             var statusWidth = DrawRecentTurnStatus(graphics, layout.Dpi, detailBounds, turn, fonts, text);
-            DrawText(graphics, turn.Effort ?? "—", fonts.Meta, labelColor,
+            DrawRecentBadge(graphics, layout.Dpi,
                 detailBounds with { Width = Math.Max(1, detailBounds.Width - statusWidth - Scale(layout.Dpi, 4)) },
-                CellTextFlags);
+                text.CodexTurnTier(turn), fonts.Meta,
+                turn.ServiceTier is "fast" or "ultrafast" ? Color.FromArgb(167, 139, 250) : labelColor);
             var values = new[]
             {
                 turn.NewInputTokens is { } input ? NativeText.FormatTokenCount(input) : "—",
@@ -664,7 +669,8 @@ internal sealed class RadarPopoverRenderer : IDisposable
             for (var column = 2; column < columns.Count; column++)
                 DrawText(graphics, values[column - 2], column == 5 ? fonts.EmphasizedNumber : fonts.Number,
                     values[column - 2] == "—" ? labelColor
-                        : column == 6 ? Color.FromArgb(52, 211, 153) : Color.FromArgb(226, 232, 240),
+                        : column == 6 ? Color.FromArgb(52, 211, 153)
+                        : column == 5 ? Color.FromArgb(226, 232, 240) : Color.FromArgb(203, 213, 225),
                     new Rectangle(origin.X + columns[column].Left, y, columns[column].Width,
                         rowHeight), CellTextFlags | RecentColumnAlignment(column));
             y += rowHeight;
@@ -681,7 +687,6 @@ internal sealed class RadarPopoverRenderer : IDisposable
     private static int DrawRecentTurnStatus(Graphics graphics, int dpi, Rectangle bounds,
         CodexConversationTurn turn, RadarPopoverFonts fonts, NativeText text)
     {
-        var label = text.CodexTurnState(turn);
         var color = turn.State switch
         {
             "running" => Color.FromArgb(52, 211, 153),
@@ -689,22 +694,33 @@ internal sealed class RadarPopoverRenderer : IDisposable
             "stale" => Color.FromArgb(148, 163, 184),
             _ => Color.FromArgb(120, 139, 158),
         };
-        var dotSize = Scale(dpi, 3);
+        return DrawRecentBadge(graphics, dpi, bounds, text.CodexTurnState(turn), fonts.Meta, color,
+            rightAligned: true, statusDot: true, highlighted: turn.State == "running");
+    }
+
+    private static int DrawRecentBadge(Graphics graphics, int dpi, Rectangle bounds, string label,
+        Font font, Color color, bool rightAligned = false, bool statusDot = false, bool highlighted = false)
+    {
+        var dotSize = statusDot ? Scale(dpi, 3) : 0;
         var padding = Scale(dpi, 4);
-        var labelWidth = TextRenderer.MeasureText(graphics, label, fonts.Meta, Size.Empty,
+        var labelWidth = TextRenderer.MeasureText(graphics, label, font, Size.Empty,
             BaseTextFlags).Width;
-        var width = labelWidth + dotSize + padding * 3;
-        var badge = new Rectangle(bounds.Right - width, bounds.Top, width, bounds.Height);
+        var leadingWidth = padding + (statusDot ? dotSize + padding : 0);
+        var width = Math.Min(bounds.Width, labelWidth + leadingWidth + padding);
+        var badge = new Rectangle(rightAligned ? bounds.Right - width : bounds.Left, bounds.Top, width, bounds.Height);
         using var shape = RoundedRectangle(badge, Scale(dpi, 4));
-        using var fill = new SolidBrush(Color.FromArgb(turn.State == "running" ? 24 : 12, color));
-        using var border = new Pen(Color.FromArgb(turn.State == "running" ? 65 : 30, color));
-        using var dot = new SolidBrush(color);
+        using var fill = new SolidBrush(Color.FromArgb(highlighted ? 20 : 10, color));
+        using var border = new Pen(Color.FromArgb(highlighted ? 55 : 25, color));
         graphics.FillPath(fill, shape);
         graphics.DrawPath(border, shape);
-        graphics.FillEllipse(dot, badge.Left + padding, badge.Top + (badge.Height - dotSize) / 2,
-            dotSize, dotSize);
-        DrawText(graphics, label, fonts.Meta, color,
-            new Rectangle(badge.Left + padding * 2 + dotSize, badge.Top, labelWidth, badge.Height),
+        if (statusDot)
+        {
+            using var dot = new SolidBrush(color);
+            graphics.FillEllipse(dot, badge.Left + padding, badge.Top + (badge.Height - dotSize) / 2,
+                dotSize, dotSize);
+        }
+        DrawText(graphics, label, font, color,
+            new Rectangle(badge.Left + leadingWidth, badge.Top, Math.Max(1, badge.Width - leadingWidth - padding), badge.Height),
             CellTextFlags);
         return width;
     }
