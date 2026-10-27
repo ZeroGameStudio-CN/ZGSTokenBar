@@ -43,6 +43,7 @@ internal sealed class ProviderRadarPopoverForm : Form
     private ProviderRadarPopoverForm? _extensionOwner;
     private ProviderRadarPopoverForm? _radarExtension;
     private IReadOnlyList<CodexModelSpeed> _modelSpeeds = [];
+    private IReadOnlyList<CodexConversationTurn> _displayTurns = [];
     private bool _historyVisible;
     private bool _spendCardHovered;
     private bool _backHovered;
@@ -142,11 +143,12 @@ internal sealed class ProviderRadarPopoverForm : Form
         _state = state;
         _text = text;
         _tokenUsage = tokenUsage;
+        _displayTurns = _usagePrimary ? CodexConversationDisplay.Select(tokenUsage) : tokenUsage?.ConversationTurns ?? [];
         _modelSpeeds = _usagePrimary && tokenUsage is not null ? CodexConversationSpeeds.Build(tokenUsage, DateTimeOffset.UtcNow) : [];
         if (_hoveredRecentIndex == -3) _groupToolTip.SetToolTip(this, _text.CodexModelSpeedTooltip(_modelSpeeds));
         if (_hoveredRecentIndex >= 0)
         {
-            var turns = tokenUsage?.ConversationTurns ?? [];
+            var turns = _displayTurns;
             _groupToolTip.SetToolTip(this, _hoveredRecentIndex < turns.Count
                 ? _text.CodexTurnTooltip(turns[_hoveredRecentIndex]) : null);
         }
@@ -169,7 +171,7 @@ internal sealed class ProviderRadarPopoverForm : Form
             : RadarPopoverLayout.CreateTokenUsage(dpi, ConversationRowCount);
         _recentTurnOffset = CodexConversationPage.Create(
             _recentTurnOffset,
-            _tokenUsage?.ConversationTurns.Count ?? 0,
+            _displayTurns.Count,
             _layout.RecentPageSize).Offset;
         _historyLayout = !deepSeekOnly && HasSpendHistory(tokenUsage)
             ? CodexSpendHistoryLayout.Create(
@@ -372,11 +374,11 @@ internal sealed class ProviderRadarPopoverForm : Form
             Cursor = Cursors.Default;
             return;
         }
-        if (_layout.RecentTurnIndexAt(bodyPoint, _recentTurnOffset, _tokenUsage?.ConversationTurns.Count ?? 0) is var recentIndex
+        if (_layout.RecentTurnIndexAt(bodyPoint, _recentTurnOffset, _displayTurns.Count) is var recentIndex
             && recentIndex >= 0)
         {
             if (_hoveredRecentIndex != recentIndex)
-                _groupToolTip.SetToolTip(this, _text.CodexTurnTooltip(_tokenUsage!.ConversationTurns[recentIndex]));
+                _groupToolTip.SetToolTip(this, _text.CodexTurnTooltip(_displayTurns[recentIndex]));
             _hoveredRecentIndex = recentIndex;
             Cursor = Cursors.Default;
             return;
@@ -397,7 +399,7 @@ internal sealed class ProviderRadarPopoverForm : Form
         var controlHovered = _extensionOwner is not null && _layout.RadarCollapseBounds.Contains(bodyPoint)
             || _layout.RadarToggleBounds.Contains(bodyPoint)
             || CanSwitchBenchmark && _layout.SubtitleBounds.Contains(bodyPoint)
-            || _tokenUsage?.ConversationTurns.Count > _layout.RecentPageSize
+            || _displayTurns.Count > _layout.RecentPageSize
                 && (_layout.RecentPreviousBounds.Contains(bodyPoint) || _layout.RecentNextBounds.Contains(bodyPoint));
         Cursor = hovered || hoveredGroup is not null || controlHovered ? Cursors.Hand : Cursors.Default;
         if (controlHovered) _groupToolTip.SetToolTip(this,
@@ -527,7 +529,7 @@ internal sealed class ProviderRadarPopoverForm : Form
         _scrollOffset = layout.ScrollOffset;
         _recentTurnOffset = CodexConversationPage.Create(
             _recentTurnOffset,
-            _tokenUsage?.ConversationTurns.Count ?? 0,
+            _displayTurns.Count,
             layout.RecentPageSize).Offset;
         return layout;
     }
@@ -538,7 +540,8 @@ internal sealed class ProviderRadarPopoverForm : Form
         return RadarPopoverLayout.CreateConversationUsage(dpi, ConversationRowCount, _radarEnabled,
             Screen.FromRectangle(_anchorScreen).WorkingArea.Height
                 - (int)Math.Ceiling((RadarPopoverLayout.LogicalTail + RadarPopoverLayout.LogicalGap * 2) * dpi / 96d),
-            groups.Count, groups.Count == 0 ? 1 : groups.Take(6).Max(group => group.Rows.Count));
+            groups.Count, groups.Count == 0 ? 1 : groups.Take(6).Max(group => group.Rows.Count),
+            CodexConversationDisplay.ColumnMask(_displayTurns));
     }
 
     internal void SetRadarExpanded(bool expanded)
@@ -582,14 +585,14 @@ internal sealed class ProviderRadarPopoverForm : Form
 
     private bool CanSwitchBenchmark => !_deepSeekOnly && !_layout.TokenOnly
         && _state.Snapshot?.TrialFeed is { Models.Count: > 0 };
-    private int ConversationRowCount => Math.Max(_tokenUsage?.ConversationTurns.Count ?? 0,
+    private int ConversationRowCount => Math.Max(_displayTurns.Count,
         _tokenUsage?.PendingConversationCount > 0 ? 1 : 0);
 
     internal void ChangeConversationPage(int direction)
     {
         var next = CodexConversationPage.Create(
             _recentTurnOffset + direction * _layout.RecentPageSize,
-            _tokenUsage?.ConversationTurns.Count ?? 0,
+            _displayTurns.Count,
             _layout.RecentPageSize).Offset;
         if (next == _recentTurnOffset) return;
         _recentTurnOffset = next;

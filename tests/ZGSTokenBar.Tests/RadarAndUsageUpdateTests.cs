@@ -28,6 +28,7 @@ internal static class RadarAndUsageUpdateTests
         PrimaryLayouts();
         PrimaryWindowLifecycle();
         ServerModelEvidence();
+        UsefulConversationPresentation();
     }
 
     private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-10-23T08:00:00Z");
@@ -613,7 +614,7 @@ internal static class RadarAndUsageUpdateTests
             var layout = RadarPopoverLayout.CreateConversationUsage(dpi, 500, true, dpi * 5, 6);
             Check(layout.ConversationPrimary && layout.RecentColumns.Count == 10 && !layout.RadarToggleBounds.IsEmpty,
                 "the primary view has independent state, cache percentage and expansion controls");
-            Check(layout.RecentColumns[0].Width >= 200 * dpi / 96
+            Check(layout.RecentColumns[0].Width >= 180 * dpi / 96 && layout.RecentColumns[0].Width <= 220 * dpi / 96
                 && layout.RecentTurnsBounds.Bottom < layout.ModelSpeedBounds.Top
                 && layout.ModelSpeedBounds.Bottom <= layout.FooterCompactBounds.Top
                 && layout.FooterCompactBounds.Bottom <= layout.BodySize.Height
@@ -733,6 +734,47 @@ internal static class RadarAndUsageUpdateTests
         finally { Directory.Delete(root, true); }
     }
 
+    private static void UsefulConversationPresentation()
+    {
+        var known = Usage().RecentTurns[0];
+        var partial = known with { Model = null, Effort = null, ServiceTier = null, ResponseModels = null,
+            InputTokens = null, CachedInputTokens = null, ApiEquivalentUsd = null, FirstTokenSeconds = null,
+            OutputTokens = 50, UsageComplete = false, Stale = true };
+        foreach (var text in new[] { NativeText.For("zh-CN"), NativeText.For("en") })
+        {
+            Check(text.CodexTurnModelDetails(partial).Length == 0, "missing metadata does not produce unknown labels or separators");
+            var tooltip = text.CodexTurnTooltip(partial);
+            Check(!tooltip.Contains("—") && !tooltip.Contains("未知") && !tooltip.Contains("not recorded")
+                && tooltip.Contains("50+"), "hover keeps proven partial data and omits unavailable fields");
+        }
+        var data = Usage() with { RecentTurns = [partial, partial with { TurnId = "empty", OutputTokens = 0 }] };
+        var rows = CodexConversationDisplay.Select(data);
+        Check(rows.Count == 1 && rows[0].OutputTokens == 50, "only records with useful measured data enter the table");
+        var mask = CodexConversationDisplay.ColumnMask(rows);
+        var layout = RadarPopoverLayout.CreateConversationUsage(192, rows.Count, true, columnMask: mask);
+        Check(layout.RecentColumns[3].Width == 0 && layout.RecentColumns[4].Width > 0
+            && layout.RecentColumns[9].Width == 0 && layout.RecentColumns[0].Width >= 180 * 2
+            && layout.RecentColumns[^1].Right == layout.RecentTurnsBounds.Right,
+            "empty metric columns disappear without leaving trailing gaps or growing the title column");
+        Check(layout.BodySize.Width < 820 * 2, "missing columns reclaim overall popup width");
+        var rate = new CodexModelSpeed("model", "max", "standard", 2, 20, 30, Now);
+        var groups = CodexConversationSpeeds.GroupModels([rate, rate with { ServiceTier = null },
+            rate with { ServiceTier = "mixed" }, rate with { Effort = null }]);
+        Check(groups.Count == 1 && groups[0].Rows.Count == 1, "uncertain effort and tier groups do not clutter model comparison");
+        Check(ModelIdentityColors.Model("Future-Model") == ModelIdentityColors.Model(" future-model ")
+            && ModelIdentityColors.Model("gpt-6.1-sol") != ModelIdentityColors.Model("gpt-6-sol"),
+            "model accents are automatic, canonical and stable");
+        Check(ModelIdentityColors.Effort("High") == ModelIdentityColors.Effort("high")
+            && ModelIdentityColors.Effort("high") != ModelIdentityColors.Effort("max"), "effort accents are stable and distinguish levels");
+        foreach (var identity in Enumerable.Range(0, 100).Select(index => "future-model-" + index))
+        {
+            var color = ModelIdentityColors.Model(identity);
+            double Linear(byte value) => value / 255d <= .04045 ? value / 255d / 12.92 : Math.Pow((value / 255d + .055) / 1.055, 2.4);
+            var luminance = .2126 * Linear(color.R) + .7152 * Linear(color.G) + .0722 * Linear(color.B);
+            Check((luminance + .05) / .055 >= 4.5, "automatically assigned text accents retain contrast on the dark surface");
+        }
+    }
+
     internal static void Capture(string directory)
     {
         Directory.CreateDirectory(directory);
@@ -781,9 +823,11 @@ internal static class RadarAndUsageUpdateTests
             var data = mode == "empty" ? usage with { RecentTurns = [], ConversationHistory = [] } : usage;
             var speeds = CodexConversationSpeeds.Build(data, data.CapturedAt);
             var speedGroups = CodexConversationSpeeds.GroupModels(speeds);
-            var main = RadarPopoverLayout.CreateConversationUsage(dpi, data.ConversationTurns.Count, true,
+            var displayRows = CodexConversationDisplay.Select(data);
+            var main = RadarPopoverLayout.CreateConversationUsage(dpi, displayRows.Count, true,
                 speedGroupCount: speedGroups.Count,
-                speedDetailRows: speedGroups.Count == 0 ? 1 : speedGroups.Take(6).Max(group => group.Rows.Count));
+                speedDetailRows: speedGroups.Count == 0 ? 1 : speedGroups.Take(6).Max(group => group.Rows.Count),
+                columnMask: CodexConversationDisplay.ColumnMask(displayRows));
             var radar = RadarPopoverLayout.CreateGrouped(dpi, presentation.Rows.Select(row => row.Model.Model).ToArray(),
                 new HashSet<string>(), false, showLegend: false);
             var expanded = mode == "expanded";

@@ -7,7 +7,9 @@ public sealed record CodexModelSpeedGroup(string Model, IReadOnlyList<CodexModel
 public static class CodexConversationSpeeds
 {
     public static IReadOnlyList<CodexModelSpeedGroup> GroupModels(IReadOnlyList<CodexModelSpeed> rows) =>
-        rows.GroupBy(row => row.Model).Select(group => new CodexModelSpeedGroup(group.Key,
+        rows.Where(row => !string.IsNullOrWhiteSpace(row.Effort) && row.Effort is not ("unknown" or "未知" or "—" or "mixed")
+            && row.ServiceTier is "standard" or "fast" or "ultrafast" or "flex" or "batch")
+        .GroupBy(row => row.Model).Select(group => new CodexModelSpeedGroup(group.Key,
             group.OrderByDescending(row => EffortOrder(row.Effort)).ThenBy(row => row.ServiceTier, StringComparer.Ordinal).ToArray()))
         .OrderByDescending(group => group.Rows.Max(row => row.LatestAt)).ToArray();
 

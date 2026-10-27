@@ -38,7 +38,7 @@ public sealed class RadarPopoverLayout
     public const int ConversationHeaderHeight = 36;
     public const int ConversationRowHeight = 46;
     public const int PrimaryConversationRowHeight = 44;
-    public const int LogicalConversationWidth = 920;
+    public const int LogicalConversationWidth = 800;
     public const int LogicalRadarColumnWidth = 400;
     public const int LogicalRecentColumnLeft = 428;
     public const int LogicalRecentColumnWidth = 476;
@@ -123,6 +123,7 @@ public sealed class RadarPopoverLayout
     public bool ConversationPrimary { get; private init; }
     public Rectangle RadarToggleBounds { get; private init; }
     public Rectangle ModelSpeedBounds { get; private init; }
+    public int ConversationColumnMask { get; private init; } = 1023;
     public Rectangle RadarCollapseBounds => new(BodySize.Width - (int)Math.Round(90 * Dpi / 96d),
         (int)Math.Round(14 * Dpi / 96d), (int)Math.Round(76 * Dpi / 96d), (int)Math.Round(20 * Dpi / 96d));
     public int RecentRowHeight => ConversationPrimary ? PrimaryConversationRowHeight : ConversationRowHeight;
@@ -135,15 +136,19 @@ public sealed class RadarPopoverLayout
             int Scale(int value) => (int)Math.Round(value * Dpi / 96d);
             if (ConversationPrimary)
             {
-                var fixedWidths = new[] { 76, 72, 52, 48, 48, 56, 64, 70, 40 }.Select(Scale).ToArray();
+                var fixedWidths = new[] { 76, 72, 52, 48, 48, 56, 64, 70, 40 }
+                    .Select((width, index) => (ConversationColumnMask & (1 << (index + 1))) == 0 ? 0 : Scale(width)).ToArray();
                 var gapWidth = Scale(5);
-                var nameWidth = RecentTurnsBounds.Width - fixedWidths.Sum() - 9 * gapWidth;
+                var nameWidth = RecentTurnsBounds.Width - fixedWidths.Sum() - fixedWidths.Count(width => width > 0) * gapWidth;
                 var result = new List<RadarPopoverColumn>();
                 var x = RecentTurnsBounds.Left;
+                var hasColumn = false;
                 foreach (var width in new[] { Math.Max(1, nameWidth) }.Concat(fixedWidths))
                 {
+                    if (width > 0 && hasColumn) x += gapWidth;
                     result.Add(new(x, x + width));
-                    x += width + gapWidth;
+                    x += width;
+                    if (width > 0) hasColumn = true;
                 }
                 return result;
             }
@@ -478,9 +483,10 @@ public sealed class RadarPopoverLayout
     private static int RecentTurnsHeight(int count) => count <= 0 ? 0 : 44 + Math.Min(CodexConversationPage.PageSize, count) * ConversationRowHeight;
 
     public static RadarPopoverLayout CreateConversationUsage(int dpi, int recentTurnCount, bool radarEnabled,
-        int maximumBodyHeight = int.MaxValue, int speedGroupCount = 0, int speedDetailRows = 1)
+        int maximumBodyHeight = int.MaxValue, int speedGroupCount = 0, int speedDetailRows = 1, int columnMask = 1023)
     {
         dpi = Math.Max(96, dpi);
+        columnMask |= 7;
         int Scale(int value) => (int)Math.Round(value * dpi / 96d, MidpointRounding.AwayFromZero);
         Rectangle Rect(int x, int y, int width, int height) => Rectangle.FromLTRB(
             Scale(x), Scale(y), Scale(x + width), Scale(y + height));
@@ -490,7 +496,9 @@ public sealed class RadarPopoverLayout
         var pageSize = (int)maximumRows;
         var visibleRows = Math.Min(pageSize, Math.Max(3, recentTurnCount));
         var height = 178 + visibleRows * PrimaryConversationRowHeight + speedHeight;
-        var width = LogicalConversationWidth;
+        var fixedWidths = new[] { 76, 72, 52, 48, 48, 56, 64, 70, 40 };
+        var hiddenWidth = fixedWidths.Select((value, index) => (columnMask & (1 << (index + 1))) == 0 ? value + 5 : 0).Sum();
+        var width = Math.Max(480, LogicalConversationWidth - hiddenWidth);
         var contentWidth = width - 28;
         return new RadarPopoverLayout(dpi, true, false, new Size(Scale(width), Scale(height)),
             Scale(LogicalTail), Scale(LogicalGap), Rect(14, 12, 26, 26),
@@ -501,6 +509,7 @@ public sealed class RadarPopoverLayout
             new(default, default, default, default, default, default, default, default))
         {
             ConversationPrimary = true,
+            ConversationColumnMask = columnMask | 7,
             RecentTurnsBounds = Rect(14, 54, contentWidth, ConversationHeaderHeight + visibleRows * PrimaryConversationRowHeight),
             RecentPageSize = pageSize,
             FooterCompactBounds = Rect(14, height - 82, contentWidth, 68),

@@ -111,7 +111,9 @@ an owned window to the right, retaining its own model folding, scrolling and
 benchmark selection. Opening the conversation view does not request a Radar fetch;
 expanding Radar requests one without resetting conversation paging. Closing the
 primary view closes its extension, and pointer containment includes both windows.
-The compact two-line table groups the chat name above model/effort/tier metadata;
+The compact two-line table caps the title column at approximately 200 logical
+units and ellipsizes longer names, preserving their full hover text. It groups
+the chat name above known model/effort/tier metadata;
 state has a dedicated centered column. Each turn retains its full local start
 date/time and adds cached input divided by total input as its cache hit percentage.
 Missing/zero input remains unavailable. Long names use ellipsis and row hover
@@ -121,6 +123,12 @@ and are never persisted to the token ledger. A missing title displays the projec
 and short session ID rather than an indistinguishable unnamed label. The main
 view uses larger title/body/number fonts and 44-unit two-line rows; the Radar
 extension keeps its separate sizing and has its own collapse control.
+Missing metric cells are blank; columns with no measured values anywhere in the
+retained display list are removed, reducing the whole popup width. Rows without
+any measured usage/timing are omitted. Display paging and hover use the same
+filtered list, leaving the ledger and exported measurements unchanged. The
+primary hover lists only recorded fields, including response/routing evidence
+when present, without repeated unknown or unavailable messages.
 The primary model label is the session setting. Timestamped `response.completed`
 records are accepted as response evidence only with an explicit matching turn,
 matching thread when present, a completed response envelope and a response ID.
@@ -147,7 +155,11 @@ summed output divided by summed whole-turn duration; the maximum is the highest
 individual turn average, not instantaneous decoding speed. Running, interrupted,
 stale, partial and invalid-duration turns are excluded. Up to six most recently
 active models are visible, with each model's effort/tier rows collected under
-one heading and fixed effort colors. Up to four setting combinations are shown
+one heading. Model identifiers and effort names independently map to stable,
+automatically generated high-contrast text accents, without per-model settings
+or runtime-random hashes. Unknown/mixed service tiers and missing effort are
+excluded from the comparison display; the raw measurements remain available.
+Up to four setting combinations are shown
 per model, with sample counts; hover lists every combination and the measurement
 definition. This comparison alone does not establish model routing.
 

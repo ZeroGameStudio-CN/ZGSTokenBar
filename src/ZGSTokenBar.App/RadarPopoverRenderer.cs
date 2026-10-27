@@ -643,20 +643,13 @@ internal sealed class RadarPopoverRenderer : IDisposable
                 var tile = new Rectangle(speedBounds.Left + index % columns * tileWidth,
                     speedBounds.Top + Scale(layout.Dpi, 22 + index / columns * tileHeight), tileWidth - Scale(layout.Dpi, 12), Scale(layout.Dpi, tileHeight));
                 DrawText(graphics, group.Model + (group.Rows.Count > 4 ? $" · 4/{group.Rows.Count}" : ""), fonts.EmphasizedModel,
-                    Color.FromArgb(226, 232, 240), tile with { Height = Scale(layout.Dpi, 18) }, CellTextFlags);
+                    ModelIdentityColors.Model(group.Model), tile with { Height = Scale(layout.Dpi, 18) }, CellTextFlags);
                 for (var rowIndex = 0; rowIndex < Math.Min(4, group.Rows.Count); rowIndex++)
                 {
                     var row = group.Rows[rowIndex];
                     var settingWidth = Math.Min(Scale(layout.Dpi, 112), tile.Width / 3);
                     var setting = new Rectangle(tile.Left, tile.Top + Scale(layout.Dpi, 24 + rowIndex * 20), settingWidth, Scale(layout.Dpi, 17));
-                    var color = row.Effort?.ToLowerInvariant() switch
-                    {
-                        "max" => Color.FromArgb(246, 196, 83),
-                        "xhigh" => Color.FromArgb(190, 160, 245),
-                        "high" => Color.FromArgb(96, 190, 245),
-                        "medium" => Color.FromArgb(94, 207, 188),
-                        _ => Color.FromArgb(168, 180, 198),
-                    };
+                    var color = ModelIdentityColors.Effort(row.Effort!);
                     DrawText(graphics, text.CodexModelSpeedSetting(row), fonts.Meta, color, setting, CellTextFlags);
                     DrawText(graphics, text.CodexModelSpeedCompactValue(row), fonts.Meta, Color.FromArgb(203, 213, 225),
                         new Rectangle(setting.Right + Scale(layout.Dpi, 8), setting.Top,
@@ -686,9 +679,10 @@ internal sealed class RadarPopoverRenderer : IDisposable
     {
         if (layout.RecentTurnsBounds.IsEmpty) return;
         var bounds = Offset(layout.RecentTurnsBounds, origin);
+        var turns = layout.ConversationPrimary ? CodexConversationDisplay.Select(usage) : usage.ConversationTurns;
         var page = CodexConversationPage.Create(
             recentTurnOffset,
-            usage.ConversationTurns.Count,
+            turns.Count,
             layout.RecentPageSize);
         var labelColor = Color.FromArgb(148, 163, 184);
         var columns = layout.RecentColumns;
@@ -715,10 +709,13 @@ internal sealed class RadarPopoverRenderer : IDisposable
         }
         var headers = layout.ConversationPrimary ? text.CodexPrimaryConversationHeaders : text.CodexConversationHeaders;
         for (var column = 0; column < columns.Count; column++)
+        {
+            if (columns[column].Width <= 0) continue;
             DrawText(graphics, headers[column], fonts.Badge, labelColor,
                 new Rectangle(origin.X + columns[column].Left, bounds.Top + Scale(layout.Dpi, 18),
                     columns[column].Width, Scale(layout.Dpi, 14)),
                 CellTextFlags | RecentColumnAlignment(column, layout.ConversationPrimary));
+        }
         var y = bounds.Top + Scale(layout.Dpi, RadarPopoverLayout.ConversationHeaderHeight);
         using var divider = new Pen(Color.FromArgb(24, 71, 85, 105));
         using var alternateRow = new SolidBrush(Color.FromArgb(10, 148, 163, 184));
@@ -728,7 +725,7 @@ internal sealed class RadarPopoverRenderer : IDisposable
                     : text.CodexNoRecentTurns, fonts.Meta, labelColor,
                 Offset(layout.EmptyBounds, origin), CellTextFlags);
         var rowIndex = 0;
-        foreach (var turn in usage.ConversationTurns.Skip(page.Offset).Take(page.Count))
+        foreach (var turn in turns.Skip(page.Offset).Take(page.Count))
         {
             if (rowIndex++ % 2 == 0)
             {
@@ -794,14 +791,29 @@ internal sealed class RadarPopoverRenderer : IDisposable
         DrawText(graphics, text.CodexTurnName(turn), fonts.EmphasizedModel, Color.FromArgb(226, 232, 240),
             new Rectangle(x + columns[0].Left, y + Scale(layout.Dpi, 3), columns[0].Width, Scale(layout.Dpi, 18)), CellTextFlags);
         var meta = new Rectangle(x + columns[0].Left, y + Scale(layout.Dpi, 24), columns[0].Width, Scale(layout.Dpi, 16));
-        var prefix = $"{turn.Model ?? "—"} · {turn.Effort ?? "—"} · ";
-        var tier = text.CodexTurnTier(turn);
-        var tierWidth = TextRenderer.MeasureText(graphics, tier, fonts.Meta, Size.Empty, BaseTextFlags).Width;
-        var prefixWidth = Math.Min(Math.Max(1, meta.Width - tierWidth),
-            TextRenderer.MeasureText(graphics, prefix, fonts.Meta, Size.Empty, BaseTextFlags).Width);
-        DrawText(graphics, prefix, fonts.Meta, muted, meta with { Width = prefixWidth }, CellTextFlags);
-        DrawText(graphics, tier, fonts.Meta, turn.ServiceTier is "fast" or "ultrafast" ? Color.FromArgb(167, 139, 250) : muted,
-            new Rectangle(meta.Left + prefixWidth, meta.Top, Math.Max(1, meta.Width - prefixWidth), meta.Height), CellTextFlags);
+        var tier = text.CodexKnownTier(turn);
+        var parts = new List<(string Text, Color Color)>();
+        if (turn.Model is { Length: > 0 } model) parts.Add((model, ModelIdentityColors.Model(model)));
+        if (turn.Effort is { Length: > 0 } effort) parts.Add((effort, ModelIdentityColors.Effort(effort)));
+        if (tier.Length > 0) parts.Add((tier, muted));
+        var textLeft = meta.Left;
+        for (var index = 0; index < parts.Count && textLeft < meta.Right; index++)
+        {
+            if (index > 0)
+            {
+                var dividerWidth = TextRenderer.MeasureText(graphics, " · ", fonts.Meta, Size.Empty, BaseTextFlags).Width;
+                DrawText(graphics, " · ", fonts.Meta, muted, new Rectangle(textLeft, meta.Top,
+                    Math.Min(dividerWidth, meta.Right - textLeft), meta.Height), CellTextFlags);
+                textLeft += dividerWidth;
+            }
+            var remaining = meta.Right - textLeft;
+            if (remaining <= 0) break;
+            var measured = TextRenderer.MeasureText(graphics, parts[index].Text, fonts.Meta, Size.Empty, BaseTextFlags).Width;
+            var width = Math.Min(measured, remaining);
+            DrawText(graphics, parts[index].Text, fonts.Meta, parts[index].Color,
+                new Rectangle(textLeft, meta.Top, width, meta.Height), CellTextFlags);
+            textLeft += width;
+        }
         var statusColor = turn.State switch
         {
             "running" => Color.FromArgb(52, 211, 153),
@@ -825,10 +837,13 @@ internal sealed class RadarPopoverRenderer : IDisposable
             turn.FirstTokenSeconds is { } first ? $"{first:0.#}" : "—",
         };
         for (var column = 3; column < columns.Count; column++)
+        {
+            if (columns[column].Width <= 0 || values[column - 3] == "—") continue;
             DrawText(graphics, values[column - 3], column == 7 ? fonts.EmphasizedNumber : fonts.Number,
-                values[column - 3] == "—" ? muted : column == 8 ? Color.FromArgb(52, 211, 153) : valueColor,
+                column == 8 ? Color.FromArgb(52, 211, 153) : valueColor,
                 new Rectangle(x + columns[column].Left, y, columns[column].Width, rowHeight),
                 CellTextFlags | RecentColumnAlignment(column, true));
+        }
     }
 
     private static TextFormatFlags RecentColumnAlignment(int column, bool primary = false) => primary

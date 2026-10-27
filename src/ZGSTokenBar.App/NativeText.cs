@@ -978,7 +978,7 @@ internal sealed class NativeText
     public string CodexRadarExpansion(bool expanded) => expanded ? T("收起雷达 ‹", "Hide Radar ‹") : T("雷达 ›", "Radar ›");
     public string CodexNoRecentTurns => T("暂无对话记录", "No recent conversations");
     public string[] CodexPrimaryConversationHeaders =>
-        [T("对话 / 模型", "Chat / Model"), T("状态", "State"), T("开始时间", "Started"), T("新增输入", "Input"),
+        [T("对话 / 设置模型", "Chat / Configured model"), T("状态", "State"), T("开始时间", "Started"), T("新增输入", "Input"),
          T("输出", "Output"), T("缓存", "Cached"), T("缓存率", "Cache hit"), T("估算 $", "Est. $"),
          T("均速 tok/s", "Avg tok/s"), T("首字 s", "First s")];
     public string[] CodexConversationHeaders =>
@@ -998,8 +998,11 @@ internal sealed class NativeText
             : "$" + cost.ToString(cost >= 100 ? "0" : cost >= 1 ? "0.00" : "0.0000", CultureInfo.InvariantCulture);
         return amount + (turn.CostIsPartial ? "+" : "");
     }
-    public string CodexTurnLabel(CodexConversationTurn turn) =>
-        $"{turn.ProjectName ?? T("对话", "Chat")} · {turn.Model ?? T("多模型/未知", "Mixed/unknown")} {turn.Effort}".TrimEnd();
+    public string CodexTurnLabel(CodexConversationTurn turn) => JoinKnown(turn.ProjectName, turn.Model, turn.Effort);
+    private static string JoinKnown(params string?[] parts) => string.Join(" · ", parts.Where(part => !string.IsNullOrWhiteSpace(part)));
+    public string CodexKnownTier(CodexConversationTurn turn) => turn.ServiceTier is "standard" or "fast" or "ultrafast" or "flex" or "batch"
+        ? CodexTurnTier(turn) : "";
+    public string CodexTurnModelDetails(CodexConversationTurn turn) => JoinKnown(turn.Model, turn.Effort, CodexKnownTier(turn));
     public string CodexTurnName(CodexConversationTurn turn) => turn.Title
         ?? $"{turn.ProjectName ?? T("对话", "Chat")} · {turn.SessionId[^Math.Min(8, turn.SessionId.Length)..]}";
     public string CodexTurnTier(CodexConversationTurn turn) => CodexServiceTier(turn.ServiceTier);
@@ -1026,35 +1029,43 @@ internal sealed class NativeText
     public string CodexModelSpeedTooltip(IReadOnlyList<CodexModelSpeed> rows) =>
         T("近24小时已记录、完整结束且有输出的轮次；按模型、强度和档位分组。\n均速=输出总量÷总耗时；最高值是单轮均速，包含工具和等待。\n",
             "Recorded complete turns with output in the last 24h, grouped by model, effort and tier.\nAverage is total output / total time; the maximum is a turn average, including tools and waits.\n")
-        + string.Join('\n', rows.Select(row => CodexModelSpeedLabel(row) + "\n" + CodexModelSpeedValue(row)));
+        + string.Join('\n', CodexConversationSpeeds.GroupModels(rows).SelectMany(group => group.Rows)
+            .Select(row => CodexModelSpeedLabel(row) + "\n" + CodexModelSpeedValue(row)));
     public string CodexTurnState(CodexConversationTurn turn) => turn.State switch
     {
         "interrupted" => T("已中断", "Interrupted"),
         "completed" => T("已结束", "Ended"),
-        "stale" => T("待更新", "Unknown"),
+        "stale" => T("待更新", "Waiting"),
         _ => T("运行中", "Running"),
     };
     public string CodexTurnSpeedNote => T("含思考、工具和等待时间；不是纯生成速度", "Includes reasoning, tools and waiting; not decode speed");
     public string CodexTurnDetail(CodexConversationTurn turn) => T(
         $"{turn.SessionId[^Math.Min(8, turn.SessionId.Length)..]} · {CodexTurnDate(turn)} {CodexTurnTime(turn)} · 输出 {turn.OutputTokens:N0} · {CodexTurnState(turn)}",
         $"{turn.SessionId[^Math.Min(8, turn.SessionId.Length)..]} · {CodexTurnDate(turn)} {CodexTurnTime(turn)} · out {turn.OutputTokens:N0} · {CodexTurnState(turn)}");
-    public string CodexTurnTooltip(CodexConversationTurn turn) =>
-        $"{CodexTurnName(turn)}\n{CodexTurnLabel(turn)} · {CodexTurnTier(turn)}\n{turn.SessionId}\n{CodexTurnDetail(turn)}\n"
-        + T($"新增输入 {turn.NewInputTokens?.ToString("N0") ?? "—"} · 缓存 {turn.CachedInputTokens?.ToString("N0") ?? "—"} · 估算 {CodexTurnCost(turn)}\n",
-            $"New input {turn.NewInputTokens?.ToString("N0") ?? "—"} · Cached {turn.CachedInputTokens?.ToString("N0") ?? "—"} · Estimate {CodexTurnCost(turn)}\n")
-        + T($"缓存率 {FormatCacheHitPercent(turn.CacheHitPercent)}\n", $"Cache hit {FormatCacheHitPercent(turn.CacheHitPercent)}\n")
-        + (turn.Title is null ? T("尚无对话标题，按项目和对话 ID 显示。\n", "No chat title is recorded; showing project and chat ID.\n") : "")
-        + T($"设置模型 {turn.Model ?? "—"} · 响应模型 {turn.ResponseModels ?? "未取得记录"}\n",
-            $"Configured model {turn.Model ?? "—"} · Response model {turn.ResponseModels ?? "not recorded"}\n")
-        + (turn.RoutedToModel is { } target ? T(
-            $"最近路由通知 {turn.RoutedFromModel} → {target} · {turn.RoutingReason ?? "—"}\n",
-            $"Latest routing notice {turn.RoutedFromModel} → {target} · {turn.RoutingReason ?? "—"}\n")
-            : T("未取得可核对的路由通知；不能据此确认是否发生路由。\n", "No routing notice is recorded; routing cannot be determined from this alone.\n"))
-        + T($"整轮耗时 {turn.ElapsedSeconds:0.0}s", $"Turn duration {turn.ElapsedSeconds:0.0}s")
-        + (turn.FirstTokenSeconds is { } first ? T($" · 首 Token {first:0.0}s", $" · First token {first:0.0}s") : "")
-        + $"\n{CodexTurnSpeedNote}"
-        + (turn.State == "stale" ? T("\n用量更新已过期或日志暂时无法读取，无法确认是否仍在运行。",
-            "\nUsage updates are stale or the log is unavailable; running status is uncertain.") : "");
+    public string CodexTurnTooltip(CodexConversationTurn turn)
+    {
+        var lines = new List<string> { CodexTurnName(turn) };
+        var model = CodexTurnModelDetails(turn);
+        if (model.Length > 0) lines.Add(T("设置模型 ", "Configured model ") + model);
+        lines.Add(turn.SessionId);
+        lines.Add($"{CodexTurnDate(turn)} {CodexTurnTime(turn)} · {CodexTurnState(turn)}");
+        var metrics = new List<string>();
+        if (turn.NewInputTokens is { } input) metrics.Add(T($"新增输入 {input:N0}", $"New input {input:N0}"));
+        if (turn.UsageComplete || turn.OutputTokens > 0)
+            metrics.Add(T($"输出 {turn.OutputTokens:N0}", $"Output {turn.OutputTokens:N0}") + (turn.UsageComplete ? "" : "+"));
+        if (turn.CachedInputTokens is { } cached) metrics.Add(T($"缓存 {cached:N0}", $"Cached {cached:N0}"));
+        if (turn.ApiEquivalentUsd is not null) metrics.Add(T("估算 ", "Estimate ") + CodexTurnCost(turn));
+        if (metrics.Count > 0) lines.Add(string.Join(" · ", metrics));
+        if (turn.CacheHitPercent is not null) lines.Add(T("缓存率 ", "Cache hit ") + FormatCacheHitPercent(turn.CacheHitPercent));
+        if (turn.ResponseModels is { Length: > 0 } response) lines.Add(T("响应模型 ", "Response model ") + response);
+        if (turn.RoutedToModel is { } target) lines.Add(T("最近路由通知 ", "Latest routing notice ")
+            + $"{turn.RoutedFromModel} → {target}" + (turn.RoutingReason is { Length: > 0 } reason ? " · " + reason : ""));
+        if (double.IsFinite(turn.ElapsedSeconds) && turn.ElapsedSeconds > 0)
+            lines.Add(T($"整轮耗时 {turn.ElapsedSeconds:0.0}s", $"Turn duration {turn.ElapsedSeconds:0.0}s"));
+        if (turn.FirstTokenSeconds is { } first) lines.Add(T($"首 Token {first:0.0}s", $"First token {first:0.0}s"));
+        if (turn.OutputTokensPerSecond is not null) lines.Add(CodexTurnSpeedNote);
+        return string.Join('\n', lines);
+    }
     public string RadarBenchmarkSwitch(bool trial) => trial
         ? T("试跑 /100 · 历史 ›", "Trial /100 · History ›")
         : T("历史 /150 · 试跑 ›", "History /150 · Trial ›");
