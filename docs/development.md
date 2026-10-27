@@ -105,22 +105,42 @@ local token index for up to 90 days or 500 turns, keyed by session and turn;
 prompts and responses are never written. The popover starts at the newest
 summaries and pages through the retained records, while unfinished turns remain
 in the live window. Plugin snapshot details continue to expose the bounded recent
-view. The compact table shows each turn's local start time (including seconds),
-full date and service tier. The wider chat column groups the name, model/effort,
-and tier/status badges into three lines. Time and date align to the row center;
-long names use ellipsis and row hover shows the full name. Names are read
+view. The Codex surface opens the conversation list as its primary view, with
+spend, Token and overall cache summaries beneath it. Its optional Radar opens as
+an owned window to the right, retaining its own model folding, scrolling and
+benchmark selection. Opening the conversation view does not request a Radar fetch;
+expanding Radar requests one without resetting conversation paging. Closing the
+primary view closes its extension, and pointer containment includes both windows.
+The compact two-line table groups the chat name above model/effort/tier metadata;
+state has a dedicated centered column. Each turn retains its full local start
+date/time and adds cached input divided by total input as its cache hit percentage.
+Missing/zero input remains unavailable. Long names use ellipsis and row hover
+shows the full name and cache percentage. Names are read
 from a bounded, change-cached 2 MiB tail of each registered home's session index
-and are never persisted to the token ledger. Explicit context or
+and are never persisted to the token ledger. A missing title displays the project
+and short session ID rather than an indistinguishable unnamed label. The model
+shown is the session setting: the sampled local rollouts do not retain the
+Responses API response envelope/model, so the tooltip explicitly says that the
+response model is unavailable. Settings and sub-agent activity model fields are
+not treated as server response evidence. Explicit context or
 `thread_settings_applied` events identify Fast/Standard; missing records remain
 unknown and turns with multiple observed tiers show mixed.
 Alternating row shading and aligned numeric columns
 show new input (input minus cache hits), output, cached input, API-equivalent
 cost, turn-average output rate and first-token latency. Cost is summed per proven
 request/model/tier; unknown coverage is unavailable or marked with a plus.
-Each model's final line pairs the tier with a status badge: running, ended,
+The state column distinguishes running, ended,
 interrupted or unknown after two minutes without usage updates or on a log read failure. Unknown does not
 assert that a turn has stopped. First-token headings and values are centered.
 Project, identity and metric definitions live in hover details.
+
+The primary view also summarizes recorded complete output-producing turns from
+the last 24 hours, grouped by model, effort and service tier. Average speed is
+summed output divided by summed whole-turn duration; the maximum is the highest
+individual turn average, not instantaneous decoding speed. Running, interrupted,
+stale, partial and invalid-duration turns are excluded. Up to six most recently
+active groups are visible, with sample counts; hover lists every group and the
+measurement definition. This comparison alone does not establish model routing.
 
 The Radar subtitle switches between the Codex trial (/100) and historical (/150)
 views. API contributions keep those datasets separate and include sample counts.

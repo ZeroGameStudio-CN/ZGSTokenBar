@@ -23,6 +23,9 @@ public sealed record CodexConversationTurn(
     public long? CacheWriteInputTokens { get; init; }
     public long? NewInputTokens => InputTokens is { } input && CachedInputTokens is { } cached && cached <= input
         ? input - cached : null;
+    [JsonIgnore]
+    public double? CacheHitPercent => InputTokens is > 0 && CachedInputTokens is >= 0
+        && CachedInputTokens <= InputTokens ? CachedInputTokens.Value * 100d / InputTokens.Value : null;
     public decimal? ApiEquivalentUsd { get; init; }
     public bool CostIsPartial { get; init; }
     public bool IsTerminal => Completed || Interrupted;

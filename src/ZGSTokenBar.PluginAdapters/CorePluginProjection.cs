@@ -155,6 +155,7 @@ public static class CorePluginProjection
                 new("usage.turn.output", new("integer", Integer: turn.OutputTokens)),
                 new("usage.turn.new-input", new("integer", Integer: turn.NewInputTokens)),
                 new("usage.turn.cached-input", new("integer", Integer: turn.CachedInputTokens)),
+                new("usage.turn.cache-hit-percent", new("number", Number: turn.CacheHitPercent)),
                 new("usage.turn.cache-write-input", new("integer", Integer: turn.CacheWriteInputTokens)),
                 new("usage.turn.api-equivalent", new("currency", Text: "USD", Decimal: turn.ApiEquivalentUsd),
                     turn.ApiEquivalentUsd is null ? "unpriced" : turn.CostIsPartial ? "partial" : "estimated"),

@@ -24,6 +24,9 @@ internal static class RadarAndUsageUpdateTests
         CurrentPricing();
         ConversationDates();
         Layouts();
+        PrimaryConversationMetrics();
+        PrimaryLayouts();
+        PrimaryWindowLifecycle();
     }
 
     private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-10-23T08:00:00Z");
@@ -559,6 +562,133 @@ internal static class RadarAndUsageUpdateTests
             "a tall Radar page uses the available height for two-line conversations");
     }
 
+    private static void PrimaryConversationMetrics()
+    {
+        var turn = Usage().RecentTurns[0] with { InputTokens = 1000, CachedInputTokens = 800 };
+        Check(turn.CacheHitPercent == 80, "per-turn cache percentage uses all input, excluding output from its denominator");
+        Check((turn with { InputTokens = 0, CachedInputTokens = 0 }).CacheHitPercent is null
+            && (turn with { CachedInputTokens = null }).CacheHitPercent is null
+            && (turn with { CachedInputTokens = 1001 }).CacheHitPercent is null,
+            "missing, zero and invalid cache denominators remain unavailable");
+        Check((turn with { CachedInputTokens = 0 }).CacheHitPercent == 0, "a proven zero cache hit remains a real zero");
+        foreach (var text in new[] { NativeText.For("zh-CN"), NativeText.For("en") })
+        {
+            var unnamed = turn with { Title = null, ProjectName = "POB" };
+            Check(text.CodexTurnName(unnamed).Contains("POB")
+                && text.CodexTurnName(unnamed) != text.CodexTurnName(unnamed with { SessionId = "another-session" }),
+                "missing chat titles fall back to an identifiable project and session");
+        }
+        var a = turn with { TurnId = "a", OutputTokens = 100, ElapsedSeconds = 10, Effort = "max", ServiceTier = "standard" };
+        var b = a with { TurnId = "b", OutputTokens = 900, ElapsedSeconds = 30 };
+        var fast = a with { TurnId = "fast", ServiceTier = "fast", OutputTokens = 500 };
+        var usage = Usage() with
+        {
+            ConversationHistory = [a],
+            RecentTurns = [a, b, fast, a with { TurnId = "high", Effort = "high" },
+                a with { TurnId = "running", Completed = false }, a with { TurnId = "partial", UsageComplete = false },
+                a with { TurnId = "stale", Stale = true }, a with { TurnId = "aborted", Interrupted = true },
+                a with { TurnId = "old", ObservedAt = Now.AddHours(-25) }, a with { TurnId = "bad", ElapsedSeconds = double.PositiveInfinity }],
+        };
+        var speeds = CodexConversationSpeeds.Build(usage, Now);
+        var standard = speeds.Single(row => row.ServiceTier == "standard" && row.Effort == "max");
+        Check(speeds.Count == 3 && standard.SampleCount == 2 && standard.AverageTokensPerSecond == 25
+            && standard.MaximumTurnTokensPerSecond == 30, "model averages are time weighted, deduplicated and separate tier/effort groups");
+        Check(CodexConversationSpeeds.Build(usage, Now.AddHours(25)).Count == 0,
+            "the recent comparison expires old samples even when no new token log arrives");
+        var projection = CorePluginProjection.CodexUsage("zgstokenbar.usage.codex-local", Usage() with { RecentTurns = [turn] }, Now);
+        Check(projection.Details.SelectMany(detail => detail.Sections).SelectMany(section => section.Rows)
+            .Single(row => row.LabelKey == "usage.turn.cache-hit-percent").Value.Number == 80,
+            "CLI exposes the same measured per-turn cache percentage");
+    }
+
+    private static void PrimaryLayouts()
+    {
+        foreach (var dpi in new[] { 96, 144, 192 })
+        {
+            var layout = RadarPopoverLayout.CreateConversationUsage(dpi, 500, true, dpi * 5, 6);
+            Check(layout.ConversationPrimary && layout.RecentColumns.Count == 10 && !layout.RadarToggleBounds.IsEmpty,
+                "the primary view has independent state, cache percentage and expansion controls");
+            Check(layout.RecentColumns[0].Width >= 200 * dpi / 96
+                && layout.RecentTurnsBounds.Bottom < layout.ModelSpeedBounds.Top
+                && layout.ModelSpeedBounds.Bottom <= layout.FooterCompactBounds.Top
+                && layout.FooterCompactBounds.Bottom <= layout.BodySize.Height
+                && layout.BodySize.Height <= dpi * 5, "conversation, model speeds and settlement regions fit without overlap");
+            using var font = new Font("Segoe UI", (float)Math.Round(8 * dpi / 96d, MidpointRounding.AwayFromZero), FontStyle.Regular, GraphicsUnit.Pixel);
+            foreach (var text in new[] { NativeText.For("zh-CN"), NativeText.For("en") })
+            foreach (var state in new[] { Usage().RecentTurns[0] with { Completed = false },
+                Usage().RecentTurns[0] with { Interrupted = true }, Usage().RecentTurns[0] })
+                Check(System.Windows.Forms.TextRenderer.MeasureText("● " + text.CodexTurnState(state), font, Size.Empty,
+                    System.Windows.Forms.TextFormatFlags.NoPadding | System.Windows.Forms.TextFormatFlags.SingleLine).Width
+                    <= layout.RecentColumns[1].Width, "every centered status fits its dedicated column");
+            var top = layout.RecentTurnsBounds.Top + (int)Math.Round(RadarPopoverLayout.ConversationHeaderHeight * dpi / 96d);
+            var rowHeight = (int)Math.Round(layout.RecentRowHeight * dpi / 96d);
+            var pageOffset = layout.RecentPageSize;
+            Check(layout.RecentTurnIndexAt(new Point(layout.RecentColumns[0].Left, top), pageOffset, 20) == pageOffset
+                && layout.RecentTurnIndexAt(new Point(layout.RecentColumns[0].Left, top + rowHeight), pageOffset, 20) == pageOffset + 1,
+                "two-line primary rows retain correct paging and tooltip identity");
+            Check(RadarPopoverLayout.CreateConversationUsage(dpi, 0, false).RadarToggleBounds.IsEmpty,
+                "disabling Radar keeps the conversation view available without an expansion action");
+        }
+        var workingArea = new Rectangle(-1920, 0, 1920, 1040);
+        var extension = TaskbarMiniPopoverMath.PlaceRightExtension(new Rectangle(-1800, 100, 784, 450),
+            new Size(476, 380), 8, 8, workingArea);
+        Check(extension.Location.X == -1008 && extension.Location.Y == 100 && extension.TailSide == PopoverTailSide.Left,
+            "Radar expands to the right of its owner on a monitor with negative coordinates");
+        var constrained = TaskbarMiniPopoverMath.PlaceRightExtension(new Rectangle(-150, 900, 100, 80),
+            new Size(476, 380), 8, 8, workingArea);
+        Check(workingArea.Contains(new Rectangle(constrained.Location, constrained.WindowSize)),
+            "the extension remains within the working area near a screen edge");
+    }
+
+    private static void PrimaryWindowLifecycle()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                using var owner = new BarForm(new AppSettings { EnableAnimations = false, TaskbarDocked = false },
+                    new QuotaSnapshot([], [], Now), renderOnly: true);
+                _ = owner.Handle;
+                using var logo = new Bitmap(24, 24);
+                using var form = new ProviderRadarPopoverForm();
+                var area = System.Windows.Forms.Screen.PrimaryScreen!.WorkingArea;
+                var anchor = new Rectangle(area.Left + 20, area.Bottom - 32, 24, 24);
+                var state = new RadarViewState(Snapshot(), Now, false, null);
+                var requests = 0;
+                form.RadarExtensionRequested += (_, _) => requests++;
+                form.ShowFor(owner, anchor, state, NativeText.For("zh-CN"), logo, 1, false, true, true, Usage());
+                Check(form.Visible && !form.RadarExtensionVisible && requests == 0,
+                    "opening usage does not expand or request Radar");
+                form.ChangeConversationPage(1);
+                var page = form.ConversationPageOffset;
+                form.SetRadarExpanded(true);
+                var child = form.OwnedForms.Single();
+                Check(form.RadarExtensionVisible && requests == 1 && form.ConversationPageOffset == page
+                    && form.ContainsScreenPoint(new Point(child.Left + 2, child.Top + 2)),
+                    "the owned Radar opens independently while preserving usage paging and pointer containment");
+                form.ShowFor(owner, anchor, state with { Error = RadarErrorCode.Timeout }, NativeText.For("zh-CN"), logo,
+                    1, false, true, true, Usage());
+                Check(form.RadarExtensionVisible && form.ConversationPageOffset == page,
+                    "a Radar fetch error does not reset the conversation view");
+                form.SetRadarExpanded(false);
+                Check(!child.Visible && form.Visible && form.ConversationPageOffset == page,
+                    "closing the extension preserves the primary view and selected page");
+                form.SetRadarExpanded(true);
+                form.HidePopover();
+                Check(!form.Visible && !child.Visible, "closing usage closes its owned extension");
+                form.Dispose();
+                Check(child.IsDisposed, "disposing the primary view disposes the extension");
+            }
+            catch (Exception exception) { failure = exception; }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.IsBackground = true;
+        thread.Start();
+        if (!thread.Join(TimeSpan.FromSeconds(20))) throw new TimeoutException("Conversation extension lifecycle did not finish.");
+        if (failure is not null) throw new InvalidOperationException("Conversation extension lifecycle failed.", failure);
+    }
+
     internal static void Capture(string directory)
     {
         Directory.CreateDirectory(directory);
@@ -599,6 +729,37 @@ internal static class RadarAndUsageUpdateTests
                 new RadarViewState(snapshot, Now, false, null), radar ? presentation : null, null,
                 NativeText.For(locale), usage, recentTurnOffset: offset, canSwitchBenchmark: radar);
             bitmap.Save(Path.Combine(directory, $"{(radar ? "radar-trial" : "local-turns")}-{locale}-{dpi}-page-{offset}.png"), ImageFormat.Png);
+        }
+        foreach (var dpi in new[] { 96, 144, 192 })
+        foreach (var locale in new[] { "zh-CN", "en" })
+        foreach (var mode in new[] { "main", "expanded", "empty" })
+        {
+            var data = mode == "empty" ? usage with { RecentTurns = [], ConversationHistory = [] } : usage;
+            var speeds = CodexConversationSpeeds.Build(data, data.CapturedAt);
+            var main = RadarPopoverLayout.CreateConversationUsage(dpi, data.ConversationTurns.Count, true,
+                speedGroupCount: speeds.Count);
+            var radar = RadarPopoverLayout.CreateGrouped(dpi, presentation.Rows.Select(row => row.Model.Model).ToArray(),
+                new HashSet<string>(), false, showLegend: false);
+            var expanded = mode == "expanded";
+            var gap = (int)Math.Round(8 * dpi / 96d);
+            using var bitmap = new Bitmap(main.BodySize.Width + (expanded ? gap + radar.BodySize.Width + radar.TailSize : 0),
+                Math.Max(main.BodySize.Height + main.TailSize, expanded ? radar.BodySize.Height : 0));
+            bitmap.SetResolution(dpi, dpi);
+            using var graphics = Graphics.FromImage(bitmap);
+            using var renderer = new RadarPopoverRenderer();
+            var state = new RadarViewState(snapshot, Now, false, null);
+            renderer.Draw(graphics, main, PopoverTailSide.Bottom, main.BodySize.Width / 2, state, null, null,
+                NativeText.For(locale), data, radarExpanded: expanded, modelSpeeds: speeds);
+            if (expanded)
+            {
+                using var radarBitmap = new Bitmap(radar.BodySize.Width + radar.TailSize, radar.BodySize.Height);
+                radarBitmap.SetResolution(dpi, dpi);
+                using var radarGraphics = Graphics.FromImage(radarBitmap);
+                renderer.Draw(radarGraphics, radar, PopoverTailSide.Left, gap * 5, state, presentation, null,
+                    NativeText.For(locale), canSwitchBenchmark: true);
+                graphics.DrawImageUnscaled(radarBitmap, main.BodySize.Width + gap, 0);
+            }
+            bitmap.Save(Path.Combine(directory, $"conversations-{mode}-{locale}-{dpi}.png"), ImageFormat.Png);
         }
     }
 

@@ -47,7 +47,9 @@ internal sealed class RadarPopoverRenderer : IDisposable
         bool spendCardHovered = false,
         string? hoveredModelGroup = null,
         int recentTurnOffset = 0,
-        bool canSwitchBenchmark = false)
+        bool canSwitchBenchmark = false,
+        bool radarExpanded = false,
+        IReadOnlyList<CodexModelSpeed>? modelSpeeds = null)
     {
         var fonts = Fonts(layout.Dpi);
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
@@ -56,6 +58,12 @@ internal sealed class RadarPopoverRenderer : IDisposable
 
         var body = BodyBounds(layout, tailSide);
         DrawBody(graphics, layout, tailSide, tailOffset, body);
+        if (layout.ConversationPrimary)
+        {
+            DrawConversationOverview(graphics, layout, body.Location, tokenUsage, logo, fonts, text,
+                pinned, recentTurnOffset, radarExpanded, modelSpeeds);
+            return;
+        }
         if (layout.HasRecentColumn)
             DrawRecentColumnSurface(graphics, layout, body.Location);
         if (layout.TokenOnly)
@@ -583,6 +591,65 @@ internal sealed class RadarPopoverRenderer : IDisposable
         DrawRecentTurns(graphics, layout, origin, tokenUsage, fonts, text, recentTurnOffset);
     }
 
+    private static void DrawConversationOverview(Graphics graphics, RadarPopoverLayout layout, Point origin,
+        CodexTokenUsageSummary? usage, Image? logo, RadarPopoverFonts fonts, NativeText text,
+        bool pinned, int offset, bool radarExpanded, IReadOnlyList<CodexModelSpeed>? modelSpeeds)
+    {
+        if (logo is not null) graphics.DrawImage(logo, Offset(layout.LogoBounds, origin));
+        DrawText(graphics, text.CodexTokenTitle, fonts.Title, Color.FromArgb(226, 232, 240),
+            Offset(layout.TitleBounds, origin), CellTextFlags);
+        DrawText(graphics, text.CodexTokenPopoverSubtitle(pinned), fonts.Meta, Color.FromArgb(148, 163, 184),
+            Offset(layout.SubtitleBounds, origin), CellTextFlags);
+        if (!layout.RadarToggleBounds.IsEmpty)
+        {
+            var button = Offset(layout.RadarToggleBounds, origin);
+            using var shape = RoundedRectangle(button, Scale(layout.Dpi, 5));
+            using var fill = new SolidBrush(Color.FromArgb(20, 148, 163, 184));
+            graphics.FillPath(fill, shape);
+            DrawText(graphics, text.CodexRadarExpansion(radarExpanded), fonts.Meta, Color.FromArgb(203, 213, 225),
+                button, CellTextFlags | TextFormatFlags.HorizontalCenter);
+        }
+        if (usage is null)
+        {
+            DrawText(graphics, text.CodexNoRecentTurns, fonts.Model, Color.FromArgb(148, 163, 184),
+                Offset(layout.EmptyBounds, origin), CellTextFlags);
+            return;
+        }
+        DrawRecentTurns(graphics, layout, origin, usage, fonts, text, offset);
+        if (!layout.ModelSpeedBounds.IsEmpty)
+        {
+            var speedBounds = Offset(layout.ModelSpeedBounds, origin);
+            var rows = modelSpeeds ?? CodexConversationSpeeds.Build(usage, usage.CapturedAt);
+            DrawText(graphics, text.CodexModelSpeedsTitle(rows.Count), fonts.Badge, Color.FromArgb(148, 163, 184),
+                speedBounds with { Height = Scale(layout.Dpi, 14) }, CellTextFlags);
+            var tileWidth = speedBounds.Width / 3;
+            for (var index = 0; index < Math.Min(6, rows.Count); index++)
+            {
+                var tile = new Rectangle(speedBounds.Left + index % 3 * tileWidth,
+                    speedBounds.Top + Scale(layout.Dpi, 18 + index / 3 * 36), tileWidth - Scale(layout.Dpi, 8), Scale(layout.Dpi, 32));
+                DrawText(graphics, text.CodexModelSpeedLabel(rows[index]), fonts.Meta, Color.FromArgb(203, 213, 225),
+                    tile with { Height = Scale(layout.Dpi, 13) }, CellTextFlags);
+                DrawText(graphics, text.CodexModelSpeedValue(rows[index]), fonts.Meta, Color.FromArgb(148, 163, 184),
+                    new Rectangle(tile.Left, tile.Top + Scale(layout.Dpi, 15), tile.Width, Scale(layout.Dpi, 13)), CellTextFlags);
+            }
+        }
+        var footer = Offset(layout.FooterCompactBounds, origin);
+        var gap = Scale(layout.Dpi, 8);
+        var width = (footer.Width - gap * 2) / 3;
+        var labels = Color.FromArgb(148, 163, 184);
+        var values = Color.FromArgb(226, 232, 240);
+        DrawTokenMetricGroup(graphics, layout.Dpi, footer with { Width = width }, text.CodexCompactSpendMetricTitle,
+            text.CodexTodayMetricLabel, text.CodexApiEquivalent(usage.TodaySpend),
+            text.CodexLast30DaysMetricLabel, text.CodexApiEquivalent(usage.Last30DaysSpend), labels, labels, values, fonts);
+        DrawTokenMetricGroup(graphics, layout.Dpi, new Rectangle(footer.Left + width + gap, footer.Top, width, footer.Height),
+            text.CodexTokenRadarMetricTitle, text.CodexTodayMetricLabel, NativeText.FormatTokenCount(usage.TodayTokens),
+            text.CodexTotalMetricLabel, NativeText.FormatTokenCount(usage.LocalTokens), labels, labels, values, fonts);
+        DrawTokenMetricGroup(graphics, layout.Dpi, new Rectangle(footer.Left + (width + gap) * 2, footer.Top,
+                footer.Width - (width + gap) * 2, footer.Height), text.CodexCacheRadarMetricTitle,
+            text.CodexTodayMetricLabel, NativeText.FormatCacheHitPercent(usage.TodayCacheHitPercent),
+            text.CodexTotalMetricLabel, NativeText.FormatCacheHitPercent(usage.TotalCacheHitPercent), labels, labels, values, fonts);
+    }
+
     private static void DrawRecentTurns(Graphics graphics, RadarPopoverLayout layout, Point origin,
         CodexTokenUsageSummary usage, RadarPopoverFonts fonts, NativeText text, int recentTurnOffset)
     {
@@ -615,16 +682,20 @@ internal sealed class RadarPopoverRenderer : IDisposable
             DrawText(graphics, "›", fonts.Model, page.HasNext ? Color.White : labelColor, next,
                 CellTextFlags | TextFormatFlags.HorizontalCenter);
         }
-        var headers = text.CodexConversationHeaders;
+        var headers = layout.ConversationPrimary ? text.CodexPrimaryConversationHeaders : text.CodexConversationHeaders;
         for (var column = 0; column < columns.Count; column++)
             DrawText(graphics, headers[column], fonts.Badge, labelColor,
                 new Rectangle(origin.X + columns[column].Left, bounds.Top + Scale(layout.Dpi, 18),
                     columns[column].Width, Scale(layout.Dpi, 14)),
-                CellTextFlags | RecentColumnAlignment(column));
+                CellTextFlags | RecentColumnAlignment(column, layout.ConversationPrimary));
         var y = bounds.Top + Scale(layout.Dpi, RadarPopoverLayout.ConversationHeaderHeight);
         using var divider = new Pen(Color.FromArgb(24, 71, 85, 105));
         using var alternateRow = new SolidBrush(Color.FromArgb(10, 148, 163, 184));
-        var rowHeight = Scale(layout.Dpi, RadarPopoverLayout.ConversationRowHeight);
+        var rowHeight = Scale(layout.Dpi, layout.RecentRowHeight);
+        if (page.Count == 0 && layout.ConversationPrimary)
+            DrawText(graphics, usage.PendingConversationCount > 0 ? text.CodexConversationsIndexing(usage.PendingConversationCount)
+                    : text.CodexNoRecentTurns, fonts.Meta, labelColor,
+                Offset(layout.EmptyBounds, origin), CellTextFlags);
         var rowIndex = 0;
         foreach (var turn in usage.ConversationTurns.Skip(page.Offset).Take(page.Count))
         {
@@ -637,6 +708,12 @@ internal sealed class RadarPopoverRenderer : IDisposable
             }
             graphics.DrawLine(divider, origin.X + columns[0].Left, y,
                 origin.X + columns[^1].Right, y);
+            if (layout.ConversationPrimary)
+            {
+                DrawPrimaryConversationRow(graphics, layout, origin.X, y, rowHeight, columns, turn, fonts, text);
+                y += rowHeight;
+                continue;
+            }
             DrawText(graphics, text.CodexTurnTime(turn), fonts.Number, Color.FromArgb(203, 213, 225),
                 new Rectangle(origin.X + columns[0].Left, y + Scale(layout.Dpi, 9),
                     columns[0].Width, Scale(layout.Dpi, 14)), CellTextFlags);
@@ -677,7 +754,55 @@ internal sealed class RadarPopoverRenderer : IDisposable
         }
     }
 
-    private static TextFormatFlags RecentColumnAlignment(int column) => column switch
+    private static void DrawPrimaryConversationRow(Graphics graphics, RadarPopoverLayout layout, int x, int y,
+        int rowHeight, IReadOnlyList<RadarPopoverColumn> columns, CodexConversationTurn turn,
+        RadarPopoverFonts fonts, NativeText text)
+    {
+        var muted = Color.FromArgb(148, 163, 184);
+        var valueColor = Color.FromArgb(203, 213, 225);
+        DrawText(graphics, text.CodexTurnName(turn), fonts.EmphasizedModel, Color.FromArgb(226, 232, 240),
+            new Rectangle(x + columns[0].Left, y + Scale(layout.Dpi, 2), columns[0].Width, Scale(layout.Dpi, 14)), CellTextFlags);
+        var meta = new Rectangle(x + columns[0].Left, y + Scale(layout.Dpi, 18), columns[0].Width, Scale(layout.Dpi, 12));
+        var prefix = $"{turn.Model ?? "—"} · {turn.Effort ?? "—"} · ";
+        var tier = text.CodexTurnTier(turn);
+        var tierWidth = TextRenderer.MeasureText(graphics, tier, fonts.Meta, Size.Empty, BaseTextFlags).Width;
+        var prefixWidth = Math.Min(Math.Max(1, meta.Width - tierWidth),
+            TextRenderer.MeasureText(graphics, prefix, fonts.Meta, Size.Empty, BaseTextFlags).Width);
+        DrawText(graphics, prefix, fonts.Meta, muted, meta with { Width = prefixWidth }, CellTextFlags);
+        DrawText(graphics, tier, fonts.Meta, turn.ServiceTier is "fast" or "ultrafast" ? Color.FromArgb(167, 139, 250) : muted,
+            new Rectangle(meta.Left + prefixWidth, meta.Top, Math.Max(1, meta.Width - prefixWidth), meta.Height), CellTextFlags);
+        var statusColor = turn.State switch
+        {
+            "running" => Color.FromArgb(52, 211, 153),
+            "interrupted" => Color.FromArgb(251, 191, 36),
+            _ => muted,
+        };
+        DrawText(graphics, "● " + text.CodexTurnState(turn), fonts.Meta, statusColor,
+            new Rectangle(x + columns[1].Left, y, columns[1].Width, rowHeight),
+            CellTextFlags | TextFormatFlags.HorizontalCenter);
+        DrawText(graphics, text.CodexTurnTime(turn), fonts.Number, valueColor,
+            new Rectangle(x + columns[2].Left, y + Scale(layout.Dpi, 2), columns[2].Width, Scale(layout.Dpi, 14)), CellTextFlags);
+        DrawText(graphics, text.CodexTurnDate(turn), fonts.Meta, muted,
+            new Rectangle(x + columns[2].Left, y + Scale(layout.Dpi, 17), columns[2].Width, Scale(layout.Dpi, 12)), CellTextFlags);
+        var values = new[]
+        {
+            turn.NewInputTokens is { } input ? NativeText.FormatTokenCount(input) : "—",
+            !turn.UsageComplete && turn.OutputTokens == 0 ? "—" : NativeText.FormatTokenCount(turn.OutputTokens) + (turn.UsageComplete ? "" : "+"),
+            turn.CachedInputTokens is { } cached ? NativeText.FormatTokenCount(cached) : "—",
+            NativeText.FormatCacheHitPercent(turn.CacheHitPercent), text.CodexTurnCost(turn),
+            turn.OutputTokensPerSecond is { } speed ? $"≈{speed:0.#}" : "—",
+            turn.FirstTokenSeconds is { } first ? $"{first:0.#}" : "—",
+        };
+        for (var column = 3; column < columns.Count; column++)
+            DrawText(graphics, values[column - 3], column == 7 ? fonts.EmphasizedNumber : fonts.Number,
+                column == 8 ? Color.FromArgb(52, 211, 153) : valueColor,
+                new Rectangle(x + columns[column].Left, y, columns[column].Width, rowHeight),
+                CellTextFlags | RecentColumnAlignment(column, true));
+    }
+
+    private static TextFormatFlags RecentColumnAlignment(int column, bool primary = false) => primary
+        ? column switch { 0 or 2 => TextFormatFlags.Left, 1 or 9 => TextFormatFlags.HorizontalCenter, _ => TextFormatFlags.Right }
+        : column switch
     {
         < 2 => TextFormatFlags.Left,
         7 => TextFormatFlags.HorizontalCenter,

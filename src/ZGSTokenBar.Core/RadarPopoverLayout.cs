@@ -37,6 +37,8 @@ public sealed class RadarPopoverLayout
     public const int LogicalTokenHeight = 162;
     public const int ConversationHeaderHeight = 36;
     public const int ConversationRowHeight = 46;
+    public const int PrimaryConversationRowHeight = 34;
+    public const int LogicalConversationWidth = 784;
     public const int LogicalRadarColumnWidth = 400;
     public const int LogicalRecentColumnLeft = 428;
     public const int LogicalRecentColumnWidth = 476;
@@ -118,6 +120,10 @@ public sealed class RadarPopoverLayout
     public Rectangle RecentColumnBounds { get; private init; }
     public bool HasRecentColumn => !RecentColumnBounds.IsEmpty;
     public int RecentPageSize { get; private init; } = CodexConversationPage.PageSize;
+    public bool ConversationPrimary { get; private init; }
+    public Rectangle RadarToggleBounds { get; private init; }
+    public Rectangle ModelSpeedBounds { get; private init; }
+    public int RecentRowHeight => ConversationPrimary ? PrimaryConversationRowHeight : ConversationRowHeight;
     public Rectangle RecentPreviousBounds => RecentPageButton(64);
     public Rectangle RecentNextBounds => RecentPageButton(20);
     public IReadOnlyList<RadarPopoverColumn> RecentColumns
@@ -125,6 +131,20 @@ public sealed class RadarPopoverLayout
         get
         {
             int Scale(int value) => (int)Math.Round(value * Dpi / 96d);
+            if (ConversationPrimary)
+            {
+                var fixedWidths = new[] { 64, 60, 44, 44, 44, 46, 56, 58, 36 }.Select(Scale).ToArray();
+                var gapWidth = Scale(5);
+                var nameWidth = RecentTurnsBounds.Width - fixedWidths.Sum() - 9 * gapWidth;
+                var result = new List<RadarPopoverColumn>();
+                var x = RecentTurnsBounds.Left;
+                foreach (var width in new[] { Math.Max(1, nameWidth) }.Concat(fixedWidths))
+                {
+                    result.Add(new(x, x + width));
+                    x += width + gapWidth;
+                }
+                return result;
+            }
             var widths = new[] { 40, 40, 36, 50, 50, 32 }.Select(Scale).ToArray();
             var timeWidth = Scale(52);
             var gap = Scale(4);
@@ -147,7 +167,7 @@ public sealed class RadarPopoverLayout
     public int RecentTurnIndexAt(Point point, int offset, int total)
     {
         var top = RecentTurnsBounds.Top + (int)Math.Round(ConversationHeaderHeight * Dpi / 96d);
-        var rowHeight = (int)Math.Round(ConversationRowHeight * Dpi / 96d);
+        var rowHeight = (int)Math.Round(RecentRowHeight * Dpi / 96d);
         if (!RecentTurnsBounds.Contains(point) || point.Y < top) return -1;
         var index = (point.Y - top) / rowHeight;
         var page = CodexConversationPage.Create(offset, total, RecentPageSize);
@@ -454,6 +474,38 @@ public sealed class RadarPopoverLayout
     }
 
     private static int RecentTurnsHeight(int count) => count <= 0 ? 0 : 44 + Math.Min(CodexConversationPage.PageSize, count) * ConversationRowHeight;
+
+    public static RadarPopoverLayout CreateConversationUsage(int dpi, int recentTurnCount, bool radarEnabled,
+        int maximumBodyHeight = int.MaxValue, int speedGroupCount = 0)
+    {
+        dpi = Math.Max(96, dpi);
+        int Scale(int value) => (int)Math.Round(value * dpi / 96d, MidpointRounding.AwayFromZero);
+        Rectangle Rect(int x, int y, int width, int height) => Rectangle.FromLTRB(
+            Scale(x), Scale(y), Scale(x + width), Scale(y + height));
+        var speedHeight = speedGroupCount > 0 ? 32 + (Math.Min(speedGroupCount, 6) + 2) / 3 * 36 : 0;
+        var maximumRows = Math.Clamp((maximumBodyHeight * 96d / dpi - 178 - speedHeight) / PrimaryConversationRowHeight, 1, 8);
+        var pageSize = (int)maximumRows;
+        var visibleRows = Math.Min(pageSize, Math.Max(3, recentTurnCount));
+        var height = 178 + visibleRows * PrimaryConversationRowHeight + speedHeight;
+        var width = LogicalConversationWidth;
+        var contentWidth = width - 28;
+        return new RadarPopoverLayout(dpi, true, false, new Size(Scale(width), Scale(height)),
+            Scale(LogicalTail), Scale(LogicalGap), Rect(14, 12, 26, 26),
+            Rect(48, 10, width - 146, 18), Rect(48, 29, width - 146, 13),
+            Rectangle.Empty, Rectangle.Empty, Rectangle.Empty, 0, [], Rectangle.Empty,
+            Rect(14, 96, contentWidth, PrimaryConversationRowHeight),
+            Rect(14, height - 82, (contentWidth - 16) / 3, 68), Rectangle.Empty, Rectangle.Empty,
+            new(default, default, default, default, default, default, default, default))
+        {
+            ConversationPrimary = true,
+            RecentTurnsBounds = Rect(14, 54, contentWidth, ConversationHeaderHeight + visibleRows * PrimaryConversationRowHeight),
+            RecentPageSize = pageSize,
+            FooterCompactBounds = Rect(14, height - 82, contentWidth, 68),
+            RadarToggleBounds = radarEnabled ? Rect(width - 94, 17, 80, 20) : Rectangle.Empty,
+            ModelSpeedBounds = speedHeight == 0 ? Rectangle.Empty
+                : Rect(14, 96 + visibleRows * PrimaryConversationRowHeight, contentWidth, speedHeight - 10),
+        };
+    }
 
     public static RadarPopoverLayout CreateTokenUsage(int dpi, int recentTurnCount = 0)
     {

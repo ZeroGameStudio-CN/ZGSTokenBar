@@ -205,7 +205,7 @@ internal sealed class BarForm : Form
     private Dictionary<string, bool> _radarModelGroups = new(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyDictionary<string, bool> RadarModelGroups => _radarModelGroups;
     internal long? DisplayedTokenTotal => _codexTokenUsage?.LocalTokens;
-    internal bool RadarVisible => _radarPopover?.Visible == true;
+    internal bool RadarVisible => _radarPopover?.RadarContentVisible == true;
     internal string[]? DisplayedRadarModelGroups => _radarPopover?.DisplayedModelGroups;
 
     public void SetRadarModelGroups(IReadOnlyDictionary<string, bool> groups)
@@ -4836,7 +4836,7 @@ internal sealed class BarForm : Form
         if (_systemUsagePopover?.Visible == true || _hoverSystemUsage) HideSystemUsagePopover();
         if (_quotaPopover?.Visible == true || _popoverTargetId is not null) HideQuotaPopover();
         var radarEnabled = _radarProviders.Contains(target.SourceProvider);
-        if (requestRefresh && radarEnabled)
+        if (requestRefresh && radarEnabled && (target.DeepSeekOnly || _radarPopover?.RadarExtensionVisible == true))
         {
             RadarPreviewRequested?.Invoke(
                 this,
@@ -4845,6 +4845,11 @@ internal sealed class BarForm : Form
         if (_radarPopover is null)
         {
             _radarPopover = new ProviderRadarPopoverForm();
+            _radarPopover.RadarExtensionRequested += (_, _) =>
+            {
+                if (_hoverRadarTarget is { } current)
+                    RadarPreviewRequested?.Invoke(this, new RadarPreviewRequest(current.SourceProvider, current.SurfaceId));
+            };
             _radarPopover.RestoreModelGroups(_radarModelGroups);
             _radarPopover.ModelGroupsChanged += (_, _) =>
             {
@@ -4931,14 +4936,14 @@ internal sealed class BarForm : Form
             var outsideClick = mouseDown
                 && !_popoverMouseWasDown
                 && !anchor.Contains(cursor)
-                && !_radarPopover.Bounds.Contains(cursor);
+                && !_radarPopover.ContainsScreenPoint(cursor);
             var escapePressed = escapeDown && !_popoverEscapeWasDown;
             _popoverMouseWasDown = mouseDown;
             _popoverEscapeWasDown = escapeDown;
             if (outsideClick || escapePressed) HideRadarPopover();
             return;
         }
-        if (anchor.Contains(cursor) || _radarPopover.Bounds.Contains(cursor))
+        if (anchor.Contains(cursor) || _radarPopover.ContainsScreenPoint(cursor))
         {
             _popoverLeaveStarted = null;
             return;

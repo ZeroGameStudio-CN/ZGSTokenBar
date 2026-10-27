@@ -461,6 +461,20 @@ public readonly record struct TaskbarMiniPopoverPlacement(
 
 public static class TaskbarMiniPopoverMath
 {
+    public static TaskbarMiniPopoverPlacement PlaceRightExtension(Rectangle primary, Size bodySize,
+        int tailSize, int gap, Rectangle workingArea)
+    {
+        tailSize = Math.Max(1, tailSize);
+        var windowSize = new Size(bodySize.Width + tailSize, bodySize.Height);
+        var x = Math.Clamp(primary.Right + Math.Max(0, gap), workingArea.Left,
+            Math.Max(workingArea.Left, workingArea.Right - windowSize.Width));
+        var y = Math.Clamp(primary.Top, workingArea.Top,
+            Math.Max(workingArea.Top, workingArea.Bottom - windowSize.Height));
+        return new(new Point(x, y), windowSize, PopoverTailSide.Left,
+            Math.Clamp(primary.Top + Math.Min(primary.Height, bodySize.Height) / 2 - y,
+                tailSize * 2, Math.Max(tailSize * 2, bodySize.Height - tailSize * 2)));
+    }
+
     public static TaskbarMiniPopoverPlacement Place(
         Rectangle anchor,
         Size bodySize,
