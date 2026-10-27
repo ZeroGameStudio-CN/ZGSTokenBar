@@ -111,7 +111,10 @@ and effort on separate lines. Alternating row shading and aligned numeric column
 show new input (input minus cache hits), output, cached input, API-equivalent
 cost, turn-average output rate and first-token latency. Cost is summed per proven
 request/model/tier; unknown coverage is unavailable or marked with a plus.
-Project, identity, state and metric definitions live in hover details.
+Each model's second line pairs effort with a status badge: running, ended,
+interrupted or unknown after two minutes without usage updates or on a log read failure. Unknown does not
+assert that a turn has stopped. First-token headings and values are centered.
+Project, identity and metric definitions live in hover details.
 
 The Radar subtitle switches between the Codex trial (/100) and historical (/150)
 views. API contributions keep those datasets separate and include sample counts.

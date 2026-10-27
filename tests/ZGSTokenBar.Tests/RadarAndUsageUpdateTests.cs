@@ -220,15 +220,17 @@ internal static class RadarAndUsageUpdateTests
                 + Tokens(Now.AddSeconds(10), 300, 300));
             var reader = new CodexConversationUsageReader();
             var turn = reader.Refresh([path], Now.AddSeconds(20)).Single();
-            Check(turn.OutputTokensPerSecond == 15, "explicit turn start excludes log delivery delay");
-            Check(reader.Refresh([path], Now.AddMinutes(3)).Single().OutputTokensPerSecond is null,
+            Check(turn.State == "running" && turn.OutputTokensPerSecond == 15,
+                "unfinished recent turn is running and explicit start excludes log delivery delay");
+            var dormant = reader.Refresh([path], Now.AddMinutes(3)).Single();
+            Check(dormant.State == "stale" && dormant.OutputTokensPerSecond is null,
                 "unfinished dormant sessions do not pretend to be live speeds");
             File.AppendAllText(path, Event(Now.AddSeconds(70), new
             {
                 type = "task_complete", turn_id = "one", completed_at = Now.AddSeconds(60), time_to_first_token_ms = 1200,
             }));
             turn = reader.Refresh([path], Now.AddMinutes(4)).Single();
-            Check(turn.Completed && turn.OutputTokensPerSecond == 5 && turn.FirstTokenSeconds == 1.2,
+            Check(turn.State == "completed" && turn.OutputTokensPerSecond == 5 && turn.FirstTokenSeconds == 1.2,
                 "explicit completion timing and first token latency remain separate");
             File.AppendAllText(path, Event(Now.AddMinutes(5), new { type = "task_started", turn_id = "two" })
                 + Tokens(Now.AddMinutes(5).AddSeconds(10), 400, 100)
@@ -473,11 +475,12 @@ internal static class RadarAndUsageUpdateTests
         {
             RecentTurns = usage.RecentTurns.Select((turn, index) => index switch
             {
-                1 => turn with { Model = "gpt-6.1-sol-long-model-name", Interrupted = true },
+                0 => turn with { Completed = false },
+                1 => turn with { Model = "gpt-6.1-sol-long-model-name", Effort = "xhigh", Completed = false, Interrupted = true },
                 2 => turn with { Model = null, Effort = null, InputTokens = null,
                     CachedInputTokens = null, ApiEquivalentUsd = null, FirstTokenSeconds = null,
                     UsageComplete = false, OutputTokens = 0 },
-                3 => turn with { Stale = true, CostIsPartial = true },
+                3 => turn with { Completed = false, Stale = true, CostIsPartial = true },
                 _ => turn,
             }).ToArray(),
         };

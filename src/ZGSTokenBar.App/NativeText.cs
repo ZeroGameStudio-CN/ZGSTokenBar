@@ -997,8 +997,8 @@ internal sealed class NativeText
     {
         "interrupted" => T("已中断", "Interrupted"),
         "completed" => T("已结束", "Ended"),
-        "stale" => T("等待更新", "Awaiting update"),
-        _ => T("进行中", "Active"),
+        "stale" => T("待更新", "Unknown"),
+        _ => T("运行中", "Running"),
     };
     public string CodexTurnSpeedNote => T("含思考、工具和等待时间；不是纯生成速度", "Includes reasoning, tools and waiting; not decode speed");
     public string CodexTurnDetail(CodexConversationTurn turn) => T(
@@ -1010,7 +1010,9 @@ internal sealed class NativeText
             $"New input {turn.NewInputTokens?.ToString("N0") ?? "—"} · Cached {turn.CachedInputTokens?.ToString("N0") ?? "—"} · Estimate {CodexTurnCost(turn)}\n")
         + T($"整轮耗时 {turn.ElapsedSeconds:0.0}s", $"Turn duration {turn.ElapsedSeconds:0.0}s")
         + (turn.FirstTokenSeconds is { } first ? T($" · 首 Token {first:0.0}s", $" · First token {first:0.0}s") : "")
-        + $"\n{CodexTurnSpeedNote}";
+        + $"\n{CodexTurnSpeedNote}"
+        + (turn.State == "stale" ? T("\n用量更新已过期或日志暂时无法读取，无法确认是否仍在运行。",
+            "\nUsage updates are stale or the log is unavailable; running status is uncertain.") : "");
     public string RadarBenchmarkSwitch(bool trial) => trial
         ? T("试跑 /100 · 历史 ›", "Trial /100 · History ›")
         : T("历史 /150 · 试跑 ›", "History /150 · Trial ›");
