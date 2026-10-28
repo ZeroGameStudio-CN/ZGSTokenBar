@@ -66,3 +66,11 @@ ordering during navigation, and retain explicit refresh with snapshot timestamps
 No cached history can authorize controls. Verify local page hits, window bounds,
 context changes, rapid navigation, read cancellation, DPI layout and a live
 read-only paging benchmark. The Router API and scheduling remain unchanged.
+
+The next refinement restores wheel navigation over each table without adding
+scrollbars: one notch pages that table, partial deltas accumulate, and page edges
+do not issue redundant reads. Wheel navigation also works in the hover preview;
+it grants no execution controls. Prefer a 760-by-720 logical-pixel body and split
+remaining height equally between queue and history, exposing at least seven rows
+of each on a sufficiently tall desktop. Clamp the popup to the working area on
+short/high-DPI desktops and verify complete rows and screen bounds there.

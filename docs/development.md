@@ -90,6 +90,10 @@ refresh or context change. The snapshot time is available with history statistic
 History is never used as execution or release authority. Current execution
 actions use the existing dark context-menu renderer. Filters are collapsed by
 default; full timestamps and waiting/cleanup durations remain in row hover/details.
+Wheel gestures page the table under the pointer, including hover previews;
+high-resolution partial deltas accumulate and page boundaries do not reread.
+The preferred popup body is 760 by 720 logical pixels, with equal queue/history
+height. Short desktops clamp it to their working area and retain whole-row pages.
 The registered project selector uses flat chips for the current small catalog,
 with selected state and pending counts. Switching uses the opaque registered key;
 short display labels never select a path. A larger catalog retains every other

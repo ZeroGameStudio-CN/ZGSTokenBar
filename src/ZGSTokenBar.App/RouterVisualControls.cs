@@ -165,6 +165,8 @@ internal sealed class RouterSurface : Panel
 
 internal sealed class RouterGrid : DataGridView
 {
+    private int _wheelRemainder;
+    internal event EventHandler<int>? PageRequested;
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     internal string EmptyTitle { get; set; } = "队列为空";
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -172,6 +174,18 @@ internal sealed class RouterGrid : DataGridView
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     internal RouterVisualPalette Palette { get; set; } = new(Color.FromArgb(9, 11, 15));
     internal RouterGrid() { DoubleBuffered = true; }
+    internal void PageFromWheel(int delta)
+    {
+        _wheelRemainder += delta;
+        var pages = _wheelRemainder / SystemInformation.MouseWheelScrollDelta;
+        _wheelRemainder -= pages * SystemInformation.MouseWheelScrollDelta;
+        if (pages != 0) PageRequested?.Invoke(this, -pages);
+    }
+    protected override void OnMouseWheel(MouseEventArgs e)
+    {
+        PageFromWheel(e.Delta);
+        if (e is HandledMouseEventArgs handled) handled.Handled = true;
+    }
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
