@@ -85,6 +85,10 @@ or scrollbars. Both tables request only the visible row count through the existi
 bounded API; older records remain available through paging. Current execution
 actions use the existing dark context-menu renderer. Filters are collapsed by
 default; full timestamps and waiting/cleanup durations remain in row hover/details.
+The registered project selector uses flat chips for the current small catalog,
+with selected state and pending counts. Switching uses the opaque registered key;
+short display labels never select a path. A larger catalog retains every other
+project behind the existing styled More menu, without horizontal scrolling.
 `ZGSTokenBar.Cli router show --json`, `router hide --json` and `window inspect
 --json` expose presentation-only acceptance. Synthetic HTTP, control and capture
 checks run with `dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj

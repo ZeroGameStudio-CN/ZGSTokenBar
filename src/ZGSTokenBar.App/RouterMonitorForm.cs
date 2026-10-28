@@ -13,7 +13,10 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     private readonly RouterMonitorClient _client;
     private readonly CancellationTokenSource _stop = new();
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 2000 };
-    private readonly ComboBox _projects = Combo(230);
+    private readonly FlowLayoutPanel _projects = new() { Width = 300, Height = 28, Margin = Padding.Empty, WrapContents = false, AutoScroll = false };
+    private readonly Dictionary<string, RouterButton> _projectButtons = new(StringComparer.Ordinal);
+    private readonly ContextMenuStrip _projectMenu = new() { ShowImageMargin = false };
+    private string _projectMenuRevision = "";
     private readonly Label _freshness = Label("连接中", 350);
     private readonly RouterStatusBadge _headline = new() { Text = "读取中", Margin = Padding.Empty };
     private readonly Label _metrics = Label("", 420);
@@ -43,7 +46,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     private readonly Dictionary<Control, (string Family, float Pixels, FontStyle Style)> _logicalFonts = [];
     private readonly Dictionary<(string Family, float Pixels, FontStyle Style), Font> _scaledFonts = [];
     private RouterSnapshot? _snapshot;
-    private bool _refreshing, _controlling, _binding, _available, _disposed;
+    private bool _refreshing, _controlling, _available, _disposed;
     private int _queueOffset, _historyOffset, _generation, _historyGeneration, _queuePageSize = 3, _historyPageSize = 5, _queueTotal, _historyTotal;
     private bool _filtersVisible;
     private DateTimeOffset _historyReadAt;
@@ -51,7 +54,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     internal RouterSnapshot? Snapshot => _snapshot;
     internal string FreshnessText => _freshness.Text;
     internal bool Pinned => _pinned;
-    public bool InteractionOpen => _modal || _controlling || _currentMenu.Visible || _query.Focused || _projects.DroppedDown || _kind.DroppedDown || _outcome.DroppedDown || _day.DroppedDown;
+    public bool InteractionOpen => _modal || _controlling || _currentMenu.Visible || _projectMenu.Visible || _query.Focused || _kind.DroppedDown || _outcome.DroppedDown || _day.DroppedDown;
     public event EventHandler<bool>? PinChanged;
     public event EventHandler? CloseRequested;
 
@@ -78,7 +81,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
             new RowStyle(SizeType.Absolute, 30), new RowStyle(SizeType.Percent, 35), new RowStyle(SizeType.Absolute, 30),
             new RowStyle(SizeType.Absolute, 0), new RowStyle(SizeType.Percent, 65), new RowStyle(SizeType.Absolute, 24) }) _root.RowStyles.Add(style);
         Controls.Add(_root);
-        _projects.Width = 140; _projects.AccessibleName = "工程"; _freshness.Width = 170;
+        _projects.AccessibleName = "工程切换"; _freshness.Width = 140;
         _kind.Width = _outcome.Width = 92; _day.Width = 112; _query.Width = 160;
         _kind.AccessibleName = "任务类型"; _outcome.AccessibleName = "结果"; _day.AccessibleName = "日期"; _query.AccessibleName = "搜索任务或对话";
         _pin = IconButton(RouterButtonIcon.Pin, "固定弹层", () => { PinChanged?.Invoke(this, !_pinned); return Task.CompletedTask; });
@@ -139,13 +142,6 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
             Column("state", "结果", 90), Column("executionSeconds", "耗时", 70), Column("cleanupVerified", "释放", 55));
         _history.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0) ShowRecord(_history.Rows[e.RowIndex]); };
         _root.Controls.Add(_history, 0, 6); _root.Controls.Add(_notice, 0, 7);
-        _projects.SelectedIndexChanged += async (_, _) =>
-        {
-            if (_binding) return;
-            _project = (_projects.SelectedItem as Choice)?.Key; _generation++; _queueOffset = _historyOffset = 0;
-            _snapshot = null; UpdateControls(); await RefreshViewAsync();
-            _historyReadAt = default; await HistoryAsync();
-        };
         _timer.Tick += async (_, _) => { if (Visible) await RefreshViewAsync(); };
         _notice.TextChanged += (_, _) => _tips.SetToolTip(_notice, _notice.Text);
         _history.CellPainting += PaintHistoryStatus;
@@ -275,6 +271,8 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         }
         _currentMenu.Renderer = new DarkContextMenuRenderer(_palette.Surface, _palette.Input, _palette.Border, _palette.Text, _palette.Muted);
         _currentMenu.Font = Font;
+        _projectMenu.Renderer = new DarkContextMenuRenderer(_palette.Surface, _palette.Input, _palette.Border, _palette.Text, _palette.Muted);
+        _projectMenu.Font = Font;
         if (!_available && _snapshot is not null) _freshness.ForeColor = RouterVisualPalette.State("warning");
     }
 
@@ -308,12 +306,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     {
         _snapshot = snapshot; _project = snapshot.ProjectKey;
         _available = true;
-        _binding = true;
-        var choices = snapshot.Projects.EnumerateArray().Select(p => new Choice(RouterJson.Text(p, "key"), RouterJson.Text(p, "name"))).ToArray();
-        if (!choices.Select(c => c.Key).SequenceEqual(_projects.Items.Cast<Choice>().Select(c => c.Key)))
-        { _projects.Items.Clear(); _projects.Items.AddRange(choices); }
-        _projects.SelectedItem = _projects.Items.Cast<Choice>().FirstOrDefault(c => c.Key == snapshot.ProjectKey);
-        _binding = false;
+        ApplyProjectTabs(snapshot);
         _headline.Text = RouterJson.Text(snapshot.View, "headline", "状态未确认");
         _headline.Accent = RouterVisualPalette.State(RouterJson.Text(snapshot.View, "tone")); _headline.Invalidate();
         var task = RouterJson.Text(snapshot.View, "task");
@@ -328,6 +321,74 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _freshness.Text = snapshot.IsFresh(DateTimeOffset.UtcNow) ? "更新于 " + snapshot.ReceivedAt.ToLocalTime().ToString("HH:mm:ss") : "数据过期 · 状态未确认";
         _freshness.ForeColor = snapshot.IsFresh(DateTimeOffset.UtcNow) ? Color.FromArgb(148, 163, 184) : Color.Salmon;
         UpdateControls();
+    }
+
+    private void ApplyProjectTabs(RouterSnapshot snapshot)
+    {
+        var catalog = snapshot.Projects.EnumerateArray().ToArray();
+        var shown = catalog.Take(catalog.Length > 3 ? 2 : 3).ToList();
+        if (shown.All(row => RouterJson.Text(row, "key") != snapshot.ProjectKey))
+        {
+            var selected = catalog.First(row => RouterJson.Text(row, "key") == snapshot.ProjectKey);
+            if (shown.Count == 2) shown.RemoveAt(1);
+            shown.Add(selected);
+        }
+        var keys = shown.Select(row => RouterJson.Text(row, "key")).ToArray();
+        if (!_projectButtons.Keys.SequenceEqual(keys))
+        {
+            foreach (var child in _projects.Controls.Cast<Control>().ToArray()) child.Dispose();
+            _projects.Controls.Clear(); _projectButtons.Clear();
+            foreach (var row in shown)
+            {
+                var key = RouterJson.Text(row, "key");
+                var button = Button("", () => SelectProjectAsync(key));
+                button.AutoSize = false; button.Palette = _palette;
+                _projectButtons[key] = button; _projects.Controls.Add(button);
+            }
+            if (catalog.Length > 3)
+            {
+                var more = Button("…", () => { _projectMenu.Show(_projects, new Point(0, _projects.Height)); return Task.CompletedTask; });
+                more.Palette = _palette; more.AccessibleName = "更多工程"; _projects.Controls.Add(more);
+            }
+        }
+        var scale = RouterVisualGeometry.Scale(_projects);
+        var maximum = Math.Max(40, (_projects.Width - (catalog.Length > 3 ? (int)(30 * scale) : 0)) / Math.Max(1, shown.Count) - (int)(4 * scale));
+        foreach (var row in catalog)
+        {
+            var key = RouterJson.Text(row, "key"); var name = RouterJson.Text(row, "name"); var pending = RouterJson.Integer(row, "pending");
+            if (_projectButtons.TryGetValue(key, out var button))
+            {
+                var caption = name switch { "ZGSProject_5" => "P5", "POB_Manual" => "Manual", _ => name };
+                button.Text = caption + (pending > 0 ? "  " + pending : ""); button.Selected = key == snapshot.ProjectKey;
+                button.AccessibleName = "切换工程 " + name;
+                button.Width = Math.Min(maximum, button.GetPreferredSize(Size.Empty).Width); button.Height = (int)(26 * scale);
+                _tips.SetToolTip(button, name + (pending > 0 ? $" · {pending} 项尚未结束" : ""));
+            }
+        }
+        var hidden = catalog.Where(row => !_projectButtons.ContainsKey(RouterJson.Text(row, "key"))).ToArray();
+        var revision = string.Join("|", hidden.Select(row => RouterJson.Text(row, "key") + RouterJson.Text(row, "name") + RouterJson.Integer(row, "pending")));
+        if (revision != _projectMenuRevision && !_projectMenu.Visible)
+        {
+            foreach (var item in _projectMenu.Items.Cast<ToolStripItem>().ToArray()) item.Dispose();
+            _projectMenu.Items.Clear();
+            foreach (var row in hidden)
+            {
+                var key = RouterJson.Text(row, "key"); var name = RouterJson.Text(row, "name"); var pending = RouterJson.Integer(row, "pending");
+                _projectMenu.Items.Add(MenuItem(name + (pending > 0 ? "  " + pending : ""), () => SelectProjectAsync(key)));
+            }
+            _projectMenuRevision = revision;
+        }
+    }
+
+    private async Task SelectProjectAsync(string key)
+    {
+        if (_controlling || key == _project) return;
+        if (!_pinned) PinChanged?.Invoke(this, true);
+        _project = key; _generation++; _queueOffset = _historyOffset = 0; _historyReadAt = default;
+        _snapshot = null; _available = false; _headline.Text = "读取中"; _task.Text = ""; _detail.Text = ""; _metrics.Text = "";
+        _queue.Rows.Clear(); _history.Rows.Clear();
+        foreach (var item in _projectButtons) item.Value.Selected = item.Key == key;
+        UpdateControls(); await RefreshViewAsync(); await HistoryAsync();
     }
 
     internal void ApplyUnavailable(string message)
@@ -480,7 +541,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _historyPrevious.Enabled = _available && _historyOffset > 0;
         _historyNext.Enabled = _available && _historyOffset + _historyPageSize < _historyTotal;
         _filterToggle.Enabled = _pinned && !_controlling;
-        _projects.Enabled = _pinned && !_controlling;
+        _projects.Enabled = !_controlling;
         _query.Enabled = _kind.Enabled = _outcome.Enabled = _day.Enabled = _pinned;
     }
     private void ShowRecord(DataGridViewRow row)
@@ -540,6 +601,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
             _disposed = true; _timer.Stop(); _timer.Dispose(); _stop.Cancel(); _stop.Dispose(); _client.Dispose();
             _tips.Dispose();
             _currentMenu.Dispose();
+            _projectMenu.Dispose();
             foreach (var font in _scaledFonts.Values) font.Dispose();
         }
         base.Dispose(disposing);

@@ -50,3 +50,7 @@ viewport and page older records through the existing bounded API. Keep current
 execution actions in the existing dark context menu, queue actions/pagers as
 small glyphs, and filters collapsed until requested. Show execution duration by
 default; retain waiting/cleanup timings in row hover and original detail data.
+Replace the project dropdown with flat short labels for the current projects.
+Highlight selection, retain pending counts and full-name hover text, and switch
+using the original opaque project key. Keep a compact More menu for a larger
+catalog so every registered project remains reachable without a scrolling strip.
