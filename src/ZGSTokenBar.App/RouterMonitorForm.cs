@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Drawing.Drawing2D;
+using System.Globalization;
 using ZGSTokenBar.Core;
 using ZGSTokenBar.Plugin.Router;
 
@@ -14,22 +15,27 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 2000 };
     private readonly ComboBox _projects = Combo(230);
     private readonly Label _freshness = Label("连接中", 350);
-    private readonly Label _headline = Label("读取中", 760);
+    private readonly RouterStatusBadge _headline = new() { Text = "读取中", Margin = Padding.Empty };
+    private readonly Label _metrics = Label("", 420);
     private readonly Label _task = Label("", 760);
     private readonly Label _detail = Label("", 760);
     private readonly Label _notice = Label("", 760);
     private readonly Label _queuePage = Label("", 180);
     private readonly Label _historyPage = Label("", 180);
-    private readonly Label _statistics = Label("", 760);
-    private readonly DataGridView _queue = Grid();
-    private readonly DataGridView _history = Grid();
+    private string _statistics = "";
+    private readonly RouterGrid _queue = Grid();
+    private readonly RouterGrid _history = Grid();
     private readonly ComboBox _kind = Combo(110), _outcome = Combo(110), _day = Combo(135);
     private readonly TextBox _query = new() { Width = 190, MaxLength = 160, PlaceholderText = "搜索任务或对话" };
-    private readonly Panel _pages = new() { Dock = DockStyle.Fill };
-    private readonly List<Button> _pageTabs = [];
-    private readonly Button _cancel, _release, _nativeStop, _queueCancel, _top, _up, _down;
-    private readonly List<Control> _controls = [];
+    private readonly ToolStripMenuItem _cancel, _release, _nativeStop;
+    private readonly Button _queueCancel, _top, _up, _down, _currentMenuButton, _filterToggle, _queuePrevious, _queueNext, _historyPrevious, _historyNext;
+    private readonly ContextMenuStrip _currentMenu = new() { ShowImageMargin = false };
+    private readonly TableLayoutPanel _root;
+    private readonly FlowLayoutPanel _filters;
+    private readonly Label _queueHeading = Label("队列", 120), _historyHeading = Label("最近记录", 100), _historySummary = Label("", 210);
     private readonly Button _pin;
+    private readonly ToolTip _tips = new() { InitialDelay = 450, ReshowDelay = 150, AutoPopDelay = 12000 };
+    private RouterVisualPalette _palette = new(Color.FromArgb(9, 11, 15));
     private bool _pinned, _modal;
     private PopoverTailSide _tailSide = PopoverTailSide.Bottom;
     private float _tailOffset, _popoverScale = 1;
@@ -38,12 +44,14 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     private readonly Dictionary<(string Family, float Pixels, FontStyle Style), Font> _scaledFonts = [];
     private RouterSnapshot? _snapshot;
     private bool _refreshing, _controlling, _binding, _available, _disposed;
-    private int _queueOffset, _historyOffset, _generation, _selectedPage;
+    private int _queueOffset, _historyOffset, _generation, _historyGeneration, _queuePageSize = 3, _historyPageSize = 5, _queueTotal, _historyTotal;
+    private bool _filtersVisible;
+    private DateTimeOffset _historyReadAt;
     private string? _project;
     internal RouterSnapshot? Snapshot => _snapshot;
     internal string FreshnessText => _freshness.Text;
     internal bool Pinned => _pinned;
-    public bool InteractionOpen => _modal || _controlling || _projects.DroppedDown || _kind.DroppedDown || _outcome.DroppedDown || _day.DroppedDown;
+    public bool InteractionOpen => _modal || _controlling || _currentMenu.Visible || _query.Focused || _projects.DroppedDown || _kind.DroppedDown || _outcome.DroppedDown || _day.DroppedDown;
     public event EventHandler<bool>? PinChanged;
     public event EventHandler? CloseRequested;
 
@@ -64,88 +72,86 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         TopMost = true;
         DoubleBuffered = true;
 
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), ColumnCount = 1, RowCount = 7 };
-        root.RowStyles.Add(new(SizeType.Absolute, 36));
-        root.RowStyles.Add(new(SizeType.Absolute, 30));
-        root.RowStyles.Add(new(SizeType.Absolute, 26));
-        root.RowStyles.Add(new(SizeType.Absolute, 42));
-        root.RowStyles.Add(new(SizeType.Absolute, 36));
-        root.RowStyles.Add(new(SizeType.Percent, 100));
-        root.RowStyles.Add(new(SizeType.Absolute, 28));
-        Controls.Add(root);
-        _projects.Width = 160;
-        _freshness.Width = 190;
+        _root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), ColumnCount = 1, RowCount = 8 };
+        _root.ColumnStyles.Add(new(SizeType.Percent, 100));
+        foreach (var style in new[] { new RowStyle(SizeType.Absolute, 34), new RowStyle(SizeType.Absolute, 82),
+            new RowStyle(SizeType.Absolute, 30), new RowStyle(SizeType.Percent, 35), new RowStyle(SizeType.Absolute, 30),
+            new RowStyle(SizeType.Absolute, 0), new RowStyle(SizeType.Percent, 65), new RowStyle(SizeType.Absolute, 24) }) _root.RowStyles.Add(style);
+        Controls.Add(_root);
+        _projects.Width = 140; _projects.AccessibleName = "工程"; _freshness.Width = 170;
         _kind.Width = _outcome.Width = 92; _day.Width = 112; _query.Width = 160;
-        _pin = Button("固定", () => { PinChanged?.Invoke(this, !_pinned); return Task.CompletedTask; });
-        var header = Flow(_projects, _freshness, Button("刷新", async () => await RefreshViewAsync()), _pin,
-            Button("×", () => { CloseRequested?.Invoke(this, EventArgs.Empty); return Task.CompletedTask; }));
-        root.Controls.Add(header, 0, 0);
-        _headline.Font = new Font(Font.FontFamily, 16, FontStyle.Bold, GraphicsUnit.Pixel);
-        _headline.Height = 28;
-        _task.Height = 25;
-        _detail.Height = 40;
-        _notice.Height = 26;
-        _statistics.Dock = DockStyle.Fill;
-        _headline.Dock = _task.Dock = _detail.Dock = _notice.Dock = DockStyle.Fill;
-        root.Controls.Add(_headline, 0, 1);
-        root.Controls.Add(_task, 0, 2);
-        root.Controls.Add(_detail, 0, 3);
-        _pageTabs.Add(Button("当前与队列", async () => { SelectPage(0); await RefreshViewAsync(); }));
-        _pageTabs.Add(Button("历史记录", async () => { SelectPage(1); await HistoryAsync(); }));
-        root.Controls.Add(Flow(_pageTabs.ToArray()), 0, 4);
-        root.Controls.Add(_pages, 0, 5);
-        root.Controls.Add(_notice, 0, 6);
+        _kind.AccessibleName = "任务类型"; _outcome.AccessibleName = "结果"; _day.AccessibleName = "日期"; _query.AccessibleName = "搜索任务或对话";
+        _pin = IconButton(RouterButtonIcon.Pin, "固定弹层", () => { PinChanged?.Invoke(this, !_pinned); return Task.CompletedTask; });
+        var brand = Label("ROUTER", 70); brand.Font = new Font("Segoe UI Semibold", 12, FontStyle.Regular, GraphicsUnit.Pixel);
+        var header = Header(Flow(brand, _projects, _freshness), Flow(IconButton(RouterButtonIcon.Refresh, "刷新", async () => { await RefreshViewAsync(); await HistoryAsync(); }), _pin,
+            IconButton(RouterButtonIcon.Close, "收起弹层", () => { CloseRequested?.Invoke(this, EventArgs.Empty); return Task.CompletedTask; })), 108);
+        _root.Controls.Add(header, 0, 0);
+        _headline.Font = new Font(Font.FontFamily, 11.5f, FontStyle.Bold, GraphicsUnit.Pixel);
+        _task.Font = new Font(Font.FontFamily, 14, FontStyle.Bold, GraphicsUnit.Pixel);
+        _metrics.Font = _detail.Font = _freshness.Font = _notice.Font = _historySummary.Font = new Font(Font.FontFamily, 11.5f, FontStyle.Regular, GraphicsUnit.Pixel);
+        _metrics.TextAlign = ContentAlignment.MiddleRight;
+        _task.Dock = _detail.Dock = _notice.Dock = _metrics.Dock = DockStyle.Fill;
+        _task.Margin = _detail.Margin = _metrics.Margin = Padding.Empty;
+        var summary = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = new Padding(4, 3, 4, 3), ColumnCount = 1, RowCount = 3 };
+        summary.ColumnStyles.Add(new(SizeType.Percent, 100));
+        summary.RowStyles.Add(new(SizeType.Absolute, 26)); summary.RowStyles.Add(new(SizeType.Absolute, 26)); summary.RowStyles.Add(new(SizeType.Percent, 100));
+        var status = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 3 };
+        status.ColumnStyles.Add(new(SizeType.Absolute, 120)); status.ColumnStyles.Add(new(SizeType.Percent, 100)); status.ColumnStyles.Add(new(SizeType.Absolute, 36));
+        _currentMenuButton = IconButton(RouterButtonIcon.More, "当前任务操作", () => { _currentMenu.Show(_currentMenuButton!, new Point(0, _currentMenuButton!.Height)); return Task.CompletedTask; });
+        _nativeStop = MenuItem("停止并收尾", () => CurrentControlAsync("stop"));
+        _cancel = MenuItem("请求取消", () => CurrentControlAsync("cancel"));
+        _release = MenuItem("复检清理", () => CurrentControlAsync("release"));
+        _currentMenu.Items.AddRange([_nativeStop, _cancel, _release]);
+        status.Controls.Add(_headline, 0, 0); status.Controls.Add(_metrics, 1, 0); status.Controls.Add(_currentMenuButton, 2, 0);
+        summary.Controls.Add(status, 0, 0); summary.Controls.Add(_task, 0, 1); summary.Controls.Add(_detail, 0, 2);
+        _root.Controls.Add(summary, 0, 1);
 
-        var queueTab = new Panel { Dock = DockStyle.Fill, BackColor = BackColor, ForeColor = ForeColor };
-        var historyTab = new Panel { Dock = DockStyle.Fill, BackColor = BackColor, ForeColor = ForeColor };
-        _pages.Controls.AddRange([queueTab, historyTab]);
         _queue.Columns.AddRange(Column("task", "任务", 270), Column("source", "来源对话", 210), Column("wait", "等待", 80));
         _queue.SelectionChanged += (_, _) => UpdateControls();
-        var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3 };
-        body.RowStyles.Add(new(SizeType.Absolute, 44)); body.RowStyles.Add(new(SizeType.Percent, 100)); body.RowStyles.Add(new(SizeType.Absolute, 44));
-        _nativeStop = Button("停止并收尾", () => CurrentControlAsync("stop"));
-        _cancel = Button("请求取消", () => CurrentControlAsync("cancel"));
-        _release = Button("复检清理", () => CurrentControlAsync("release"));
-        body.Controls.Add(Flow(_nativeStop, _cancel, _release), 0, 0);
-        body.Controls.Add(_queue, 0, 1);
-        _top = Button("置顶", () => QueueControlAsync("move", 1));
-        _up = Button("上移", () => QueueControlAsync("move", -1));
-        _down = Button("下移", () => QueueControlAsync("move", 0));
-        _queueCancel = Button("取消排队", () => QueueControlAsync("cancel", null));
-        body.Controls.Add(Flow(_top, _up, _down, _queueCancel,
-            Button("上一页", async () => { _queueOffset = Math.Max(0, _queueOffset - 20); await RefreshViewAsync(); }),
-            _queuePage, Button("下一页", async () => { if (_snapshot is not null && _queueOffset + 20 < RouterJson.Integer(_snapshot.View, "queuedCount")) _queueOffset += 20; await RefreshViewAsync(); })), 0, 2);
-        queueTab.Controls.Add(body);
-        _controls.AddRange([_nativeStop, _cancel, _release, _top, _up, _down, _queueCancel]);
+        _top = IconButton(RouterButtonIcon.Top, "置顶", () => QueueControlAsync("move", 1));
+        _up = IconButton(RouterButtonIcon.Up, "上移", () => QueueControlAsync("move", -1));
+        _down = IconButton(RouterButtonIcon.Down, "下移", () => QueueControlAsync("move", 0));
+        _queueCancel = IconButton(RouterButtonIcon.Close, "取消排队任务", () => QueueControlAsync("cancel", null));
+        _queuePrevious = IconButton(RouterButtonIcon.Previous, "队列上一页", async () => { _queueOffset = Math.Max(0, _queueOffset - _queuePageSize); await RefreshViewAsync(); });
+        _queueNext = IconButton(RouterButtonIcon.Next, "队列下一页", async () => { if (_queueOffset + _queuePageSize < _queueTotal) _queueOffset += _queuePageSize; await RefreshViewAsync(); });
+        _queuePage.Width = 64; _queuePage.TextAlign = ContentAlignment.MiddleCenter;
+        _root.Controls.Add(Header(Flow(_queueHeading), Flow(_top, _up, _down, _queueCancel, _queuePrevious, _queuePage, _queueNext), 280), 0, 2);
+        _root.Controls.Add(_queue, 0, 3);
 
-        var historyBody = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4 };
-        historyBody.RowStyles.Add(new(SizeType.Absolute, 44)); historyBody.RowStyles.Add(new(SizeType.Percent, 100));
-        historyBody.RowStyles.Add(new(SizeType.Absolute, 44)); historyBody.RowStyles.Add(new(SizeType.Absolute, 50));
+        _historyPrevious = IconButton(RouterButtonIcon.Previous, "历史上一页", async () => { _historyOffset = Math.Max(0, _historyOffset - _historyPageSize); await HistoryAsync(); });
+        _historyNext = IconButton(RouterButtonIcon.Next, "历史下一页", async () => { if (_historyOffset + _historyPageSize < _historyTotal) _historyOffset += _historyPageSize; await HistoryAsync(); });
+        _filterToggle = IconButton(RouterButtonIcon.Filter, "筛选记录", async () =>
+        {
+            _filtersVisible = !_filtersVisible; _filters!.Visible = _filtersVisible; _root.RowStyles[5].Height = _filtersVisible ? 34 * _popoverScale : 0;
+            ((RouterButton)_filterToggle!).Selected = _filtersVisible; _root.PerformLayout(); await RefreshViewAsync(); await HistoryAsync();
+        });
+        _historyPage.Width = 64; _historyPage.TextAlign = ContentAlignment.MiddleCenter;
+        _root.Controls.Add(Header(Flow(_historyHeading, _historySummary), Flow(_filterToggle, IconButton(RouterButtonIcon.Export, "导出 CSV", ExportAsync), _historyPrevious, _historyPage, _historyNext), 208), 0, 4);
         Options(_kind, [("all", "全部类型"), ("compile", "编译"), ("editmode", "EditMode"), ("playmode", "PlayMode"), ("script", "脚本")]);
         Options(_outcome, [("all", "全部结果"), ("completed", "成功"), ("failed", "失败"), ("cancelled", "取消"), ("pending", "未结束")]);
         Options(_day, [("all", "全部日期")]);
-        historyBody.Controls.Add(Flow(_kind, _outcome, _day, _query,
-            Button("筛选", async () => { _historyOffset = 0; await HistoryAsync(); }), Button("导出 CSV", ExportAsync)), 0, 0);
-        _history.Columns.AddRange(Column("createdLocal", "提交时间", 145), Column("task", "任务", 240),
-            Column("source", "来源对话", 155), Column("state", "结果", 90), Column("queueSeconds", "等待", 65),
-            Column("executionSeconds", "执行", 65), Column("cleanupSeconds", "清理", 65), Column("cleanupVerified", "释放", 55));
+        var search = new RouterSurface { Input = true, Width = 160, Height = 30, Padding = new Padding(8, 6, 8, 6) };
+        _query.Dock = DockStyle.Fill; _query.BorderStyle = BorderStyle.None; search.Controls.Add(_query);
+        _filters = Flow(_kind, _outcome, _day, search, Button("筛选", async () => { _historyOffset = 0; await HistoryAsync(); }, RouterButtonKind.Primary));
+        _filters.Visible = false; _root.Controls.Add(_filters, 0, 5);
+        _history.EmptyTitle = "没有匹配的记录"; _history.EmptyDetail = "调整筛选条件后重试";
+        _history.Columns.AddRange(Column("createdLocal", "提交时间", 115), Column("task", "任务", 255), Column("source", "来源对话", 150),
+            Column("state", "结果", 90), Column("executionSeconds", "耗时", 70), Column("cleanupVerified", "释放", 55));
         _history.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0) ShowRecord(_history.Rows[e.RowIndex]); };
-        historyBody.Controls.Add(_history, 0, 1);
-        historyBody.Controls.Add(Flow(Button("上一页", async () => { _historyOffset = Math.Max(0, _historyOffset - 25); await HistoryAsync(); }), _historyPage,
-            Button("下一页", async () => { if (int.TryParse(_history.Tag?.ToString(), out var total) && _historyOffset + 25 < total) _historyOffset += 25; await HistoryAsync(); })), 0, 2);
-        historyBody.Controls.Add(_statistics, 0, 3);
-        historyTab.Controls.Add(historyBody);
+        _root.Controls.Add(_history, 0, 6); _root.Controls.Add(_notice, 0, 7);
         _projects.SelectedIndexChanged += async (_, _) =>
         {
             if (_binding) return;
             _project = (_projects.SelectedItem as Choice)?.Key; _generation++; _queueOffset = _historyOffset = 0;
             _snapshot = null; UpdateControls(); await RefreshViewAsync();
-            if (_selectedPage == 1) await HistoryAsync();
+            _historyReadAt = default; await HistoryAsync();
         };
         _timer.Tick += async (_, _) => { if (Visible) await RefreshViewAsync(); };
+        _notice.TextChanged += (_, _) => _tips.SetToolTip(_notice, _notice.Text);
+        _history.CellPainting += PaintHistoryStatus;
         if (observe) VisibleChanged += async (_, _) => { if (Visible) { _timer.Start(); await RefreshViewAsync(); } else _timer.Stop(); };
-        SelectPage(0);
         UpdateControls();
+        ApplyPalette(QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
         ResumeLayout(true);
         foreach (var control in new[] { this }.Concat(Children(this)))
         {
@@ -162,14 +168,17 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     public void SetPinned(bool pinned)
     {
         var changed = _pinned != pinned; _pinned = pinned;
-        _pin.Text = pinned ? "已固定" : "固定";
+        ((RouterButton)_pin).Selected = pinned;
+        _pin.AccessibleName = pinned ? "取消固定" : "固定弹层";
+        _tips.SetToolTip(_pin, pinned ? "取消固定" : "固定后可操作队列与历史");
+        if (string.IsNullOrEmpty(_notice.Text) || _notice.Text is "悬停预览 · 点击模块固定后可操作" or "已固定 · Esc 或点击外部收起")
+            _notice.Text = pinned ? "已固定 · Esc 或点击外部收起" : "悬停预览 · 点击模块固定后可操作";
         if (changed && IsHandleCreated) RecreateHandle();
         UpdateControls();
         if (pinned && Visible) Activate();
     }
     internal void ShowFor(BarForm owner, Rectangle anchor, bool pinned, float scale, QuotaBackgroundTheme theme)
     {
-        if (!Visible) SelectPage(0);
         ConfigureFor(anchor, pinned, scale, theme, Screen.FromRectangle(anchor).WorkingArea);
         if (!Visible) Show(owner);
         if (pinned) Activate();
@@ -192,11 +201,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
             ResumeLayout(true);
         }
         _popoverScale = Math.Max(1, scale);
-        BackColor = theme.Popover;
-        foreach (var control in Children(this))
-        {
-            if (control is System.Windows.Forms.Label or Panel) control.BackColor = theme.Popover;
-        }
+        ApplyPalette(theme);
         _bodySize = new(Math.Min((int)(720 * _popoverScale), area.Width - 16), Math.Min((int)(520 * _popoverScale), area.Height - 24));
         var tail = (int)(8 * _popoverScale);
         var placement = TaskbarMiniPopoverMath.Place(anchor, _bodySize, tail, (int)(3 * _popoverScale), area);
@@ -226,14 +231,77 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     }
     private static IEnumerable<Control> Children(Control parent) => parent.Controls.Cast<Control>().SelectMany(child => new[] { child }.Concat(Children(child)));
 
-    internal void SelectPage(int page)
+    private void ApplyPalette(QuotaBackgroundTheme theme)
     {
-        _selectedPage = Math.Clamp(page, 0, 1);
-        for (var i = 0; i < _pages.Controls.Count; i++)
+        _palette = new(theme.Popover); BackColor = _palette.Background;
+        Color SurfaceFor(Control control)
         {
-            _pages.Controls[i].Visible = i == _selectedPage;
-            _pageTabs[i].BackColor = i == _selectedPage ? Color.FromArgb(37, 74, 106) : Color.FromArgb(30, 41, 59);
+            for (var parent = control.Parent; parent is not null; parent = parent.Parent)
+                if (parent is RouterSurface surface) return surface.Input ? _palette.Input : _palette.Surface;
+            return _palette.Background;
         }
+        foreach (var control in Children(this))
+        {
+            switch (control)
+            {
+                case RouterSurface surface:
+                    surface.Palette = _palette; surface.BackColor = surface.Input ? _palette.Input : _palette.Surface; surface.Invalidate(); break;
+                case RouterButton button:
+                    button.Palette = _palette; button.Invalidate(); break;
+                case RouterStatusBadge badge:
+                    badge.Palette = _palette with { Background = _palette.Surface }; badge.Invalidate(); break;
+                case RouterCombo combo:
+                    combo.Palette = _palette; combo.BackColor = _palette.Input; combo.ForeColor = _palette.Text; combo.Invalidate(); break;
+                case RouterGrid grid:
+                    var scale = RouterVisualGeometry.Scale(grid);
+                    grid.Palette = _palette; grid.BackgroundColor = _palette.Background; grid.GridColor = _palette.Border;
+                    grid.ColumnHeadersDefaultCellStyle.BackColor = _palette.Surface;
+                    grid.ColumnHeadersDefaultCellStyle.ForeColor = _palette.Muted;
+                    grid.ColumnHeadersDefaultCellStyle.Padding = new Padding((int)(4 * scale), (int)(6 * scale), (int)(4 * scale), (int)(6 * scale));
+                    grid.DefaultCellStyle.BackColor = _palette.Background; grid.DefaultCellStyle.ForeColor = _palette.Text;
+                    grid.DefaultCellStyle.SelectionBackColor = RouterVisualPalette.Mix(_palette.Background, _palette.Accent, .11f);
+                    grid.DefaultCellStyle.SelectionForeColor = _palette.Text;
+                    grid.DefaultCellStyle.Padding = new Padding((int)(8 * scale), (int)(4 * scale), (int)(8 * scale), (int)(4 * scale));
+                    grid.RowTemplate.Height = (int)Math.Round(26 * scale);
+                    foreach (DataGridViewRow row in grid.Rows) row.Height = grid.RowTemplate.Height;
+                    grid.Invalidate(); break;
+                case TextBox box: box.BackColor = _palette.Input; box.ForeColor = _palette.Text; break;
+                case System.Windows.Forms.Label label:
+                    label.BackColor = SurfaceFor(label);
+                    label.ForeColor = label == _task ? _palette.Text : label == _queueHeading || label == _historyHeading
+                        ? Color.FromArgb(165, 180, 252) : _palette.Muted; break;
+                case Panel panel: panel.BackColor = SurfaceFor(panel); break;
+            }
+        }
+        _currentMenu.Renderer = new DarkContextMenuRenderer(_palette.Surface, _palette.Input, _palette.Border, _palette.Text, _palette.Muted);
+        _currentMenu.Font = Font;
+        if (!_available && _snapshot is not null) _freshness.ForeColor = RouterVisualPalette.State("warning");
+    }
+
+    private void PaintHistoryStatus(object? sender, DataGridViewCellPaintingEventArgs e)
+    {
+        if (e.Graphics is not { } graphics || e.RowIndex < 0 || e.ColumnIndex < 0 || _history.Rows[e.RowIndex].Tag is not JsonElement row) return;
+        var column = _history.Columns[e.ColumnIndex].Name;
+        if (column is not ("state" or "cleanupVerified")) return;
+        e.PaintBackground(e.ClipBounds, true);
+        var s = RouterVisualGeometry.Scale(_history);
+        var text = e.FormattedValue?.ToString() ?? "";
+        var color = RouterVisualPalette.State(column == "state" ? RouterJson.Text(row, "outcome")
+            : RouterJson.Boolean(row, "cleanupVerified") ? "completed" : "warning");
+        if (column == "state")
+        {
+            var w = Math.Min(e.CellBounds.Width - 8 * s, TextRenderer.MeasureText(text, _history.Font).Width + 16 * s);
+            var h = Math.Min(e.CellBounds.Height - 6 * s, 23 * s);
+            var bounds = new RectangleF(e.CellBounds.X + (e.CellBounds.Width - w) / 2, e.CellBounds.Y + (e.CellBounds.Height - h) / 2, w, h);
+            graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using var path = RouterVisualGeometry.Rounded(bounds, 5 * s);
+            using var fill = new SolidBrush(RouterVisualPalette.Mix(_palette.Background, color, .10f)); graphics.FillPath(fill, path);
+            TextRenderer.DrawText(graphics, text, _history.Font, Rectangle.Round(bounds), color,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+        }
+        else TextRenderer.DrawText(graphics, text, _history.Font, e.CellBounds, color,
+            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+        e.Handled = true;
     }
 
     internal void ApplySnapshot(RouterSnapshot snapshot)
@@ -247,11 +315,16 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _projects.SelectedItem = _projects.Items.Cast<Choice>().FirstOrDefault(c => c.Key == snapshot.ProjectKey);
         _binding = false;
         _headline.Text = RouterJson.Text(snapshot.View, "headline", "状态未确认");
-        _task.Text = RouterJson.Text(snapshot.View, "task");
+        _headline.Accent = RouterVisualPalette.State(RouterJson.Text(snapshot.View, "tone")); _headline.Invalidate();
+        var task = RouterJson.Text(snapshot.View, "task");
+        _task.Text = string.IsNullOrWhiteSpace(task) || task == "—" ? "暂无正在执行的任务" : task;
+        _tips.SetToolTip(_task, _task.Text);
         var owner = RouterJson.Text(RouterJson.Field(snapshot.View, "owner"), "label");
-        _detail.Text = owner + "  ·  已运行 " + RouterJson.Text(snapshot.View, "elapsed") + "  ·  "
-            + RouterJson.Text(snapshot.View, "progressClock") + Environment.NewLine
-            + RouterJson.Text(snapshot.View, "detail") + "  " + RouterJson.Text(snapshot.View, "error");
+        _metrics.Text = string.IsNullOrEmpty(RouterJson.Text(snapshot.View, "requestId")) ? ""
+            : "运行 " + RouterJson.Text(snapshot.View, "elapsed") + "    " + RouterJson.Text(snapshot.View, "progressClock");
+        _detail.Text = string.Join("  ·  ", new[] { owner, RouterJson.Text(snapshot.View, "detail"), RouterJson.Text(snapshot.View, "error") }.Where(text => !string.IsNullOrWhiteSpace(text)));
+        _tips.SetToolTip(_detail, _detail.Text);
+        _queueHeading.Text = "排队  ·  " + RouterJson.Integer(snapshot.View, "queuedCount");
         _freshness.Text = snapshot.IsFresh(DateTimeOffset.UtcNow) ? "更新于 " + snapshot.ReceivedAt.ToLocalTime().ToString("HH:mm:ss") : "数据过期 · 状态未确认";
         _freshness.ForeColor = snapshot.IsFresh(DateTimeOffset.UtcNow) ? Color.FromArgb(148, 163, 184) : Color.Salmon;
         UpdateControls();
@@ -261,8 +334,9 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     {
         _available = false;
         _freshness.Text = "连接中断 · 状态未确认"; _freshness.ForeColor = Color.Salmon;
+        _headline.Text = "状态未确认"; _headline.Accent = RouterVisualPalette.State("warning"); _headline.Invalidate();
         _notice.Text = message;
-        foreach (var button in _controls) button.Enabled = false;
+        UpdateControls();
     }
 
     internal async Task RefreshViewAsync()
@@ -275,22 +349,26 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
             var snapshot = await _client.SnapshotAsync(_project, _stop.Token);
             if (generation != _generation || IsDisposed) return;
             ApplySnapshot(snapshot);
-            if (_selectedPage == 0)
             {
-                var page = await _client.QueueAsync(snapshot.ProjectKey, _queueOffset, _stop.Token);
+                _queuePageSize = PageRows(_queue);
+                var page = await _client.QueueAsync(snapshot.ProjectKey, _queueOffset, _stop.Token, _queuePageSize);
                 if (generation != _generation || IsDisposed) return;
                 var selected = Selected(_queue);
                 _queue.Rows.Clear();
-                foreach (var row in RouterJson.Rows(page, "items"))
+                var items = RouterJson.Rows(page, "items").ToArray();
+                if (items.Length > _queuePageSize) throw new InvalidDataException("Queue page exceeds the visible row bound.");
+                foreach (var row in items)
                 {
                     var n = _queue.Rows.Add(RouterJson.Text(row, "task"), RouterJson.Text(row, "source"), RouterJson.Text(row, "wait"));
                     _queue.Rows[n].Tag = row;
                     _queue.Rows[n].Selected = RouterJson.Text(row, "id") == selected;
                 }
                 _queueOffset = RouterJson.Integer(page, "offset");
-                _queuePage.Text = $"{_queueOffset + (_queue.Rows.Count > 0 ? 1 : 0)}–{_queueOffset + _queue.Rows.Count} / {RouterJson.Integer(page, "total")}";
+                _queueTotal = RouterJson.Integer(page, "total");
+                _queuePage.Text = PageLabel(_queueOffset, _queueTotal, _queuePageSize);
                 UpdateControls();
             }
+            if (!InteractionOpen && (DateTimeOffset.UtcNow - _historyReadAt).TotalSeconds >= 10) await HistoryAsync();
         }
         catch (Exception e) when (Expected(e)) { if (!IsDisposed && !_stop.IsCancellationRequested) ApplyUnavailable(e.Message); }
         finally { _refreshing = false; }
@@ -301,27 +379,37 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         if (_snapshot is null || _controlling || IsDisposed) return;
         var project = _snapshot.ProjectKey;
         var generation = _generation;
+        var historyGeneration = ++_historyGeneration;
         try
         {
-            var page = await _client.HistoryAsync(project, Key(_kind), Key(_outcome), Key(_day), _query.Text, _historyOffset, _stop.Token);
-            if (generation != _generation || IsDisposed) return;
+            _historyPageSize = PageRows(_history);
+            var page = await _client.HistoryAsync(project, Key(_kind), Key(_outcome), Key(_day), _query.Text, _historyOffset, _stop.Token, _historyPageSize);
+            if (generation != _generation || historyGeneration != _historyGeneration || IsDisposed) return;
             _history.Rows.Clear();
-            foreach (var row in RouterJson.Rows(page, "items"))
+            var items = RouterJson.Rows(page, "items").ToArray();
+            if (items.Length > _historyPageSize) throw new InvalidDataException("History page exceeds the visible row bound.");
+            foreach (var row in items)
             {
-                var n = _history.Rows.Add(RouterJson.Text(row, "createdLocal").Replace('T', ' '), RouterJson.Text(row, "task"),
-                    RouterJson.Text(row, "source", RouterJson.Text(row, "threadId")), ResultName(row), Seconds(row, "queueSeconds"),
-                    Seconds(row, "executionSeconds"), Seconds(row, "cleanupSeconds"), RouterJson.Boolean(row, "cleanupVerified") ? "✓" : "待确认");
+                var n = _history.Rows.Add(SubmittedTime(RouterJson.Text(row, "createdLocal")), RouterJson.Text(row, "task"),
+                    RouterJson.Text(row, "source", RouterJson.Text(row, "threadId")), ResultName(row),
+                    Seconds(row, "executionSeconds"), RouterJson.Boolean(row, "cleanupVerified") ? "✓" : "待确认");
                 _history.Rows[n].Tag = row;
+                _history.Rows[n].Cells[0].ToolTipText = RouterJson.Text(row, "createdLocal");
+                _history.Rows[n].Cells[4].ToolTipText = $"等待 {Seconds(row, "queueSeconds")}\n执行 {Seconds(row, "executionSeconds")}\n清理 {Seconds(row, "cleanupSeconds")}";
             }
             var total = RouterJson.Integer(page, "total"); _history.Tag = total;
-            _historyPage.Text = $"{_historyOffset + (_history.Rows.Count > 0 ? 1 : 0)}–{_historyOffset + _history.Rows.Count} / {total}";
+            _historyTotal = total; _historyPage.Text = PageLabel(_historyOffset, total, _historyPageSize);
             var selectedDay = Key(_day);
             Options(_day, new[] { ("all", "全部日期") }.Concat(RouterJson.Rows(page, "days").Select(d => (RouterJson.Text(d, "date"), RouterJson.Text(d, "date")))).ToArray());
             _day.SelectedItem = _day.Items.Cast<Choice>().FirstOrDefault(c => c.Key == selectedDay) ?? _day.Items[0];
             var counts = RouterJson.Field(page, "counts");
-            _statistics.Text = $"成功 {RouterJson.Integer(counts, "completed")} · 失败 {RouterJson.Integer(counts, "failed")} · 取消 {RouterJson.Integer(counts, "cancelled")} · 未结束 {RouterJson.Integer(counts, "pending")}" + Environment.NewLine
+            _statistics = $"成功 {RouterJson.Integer(counts, "completed")} · 失败 {RouterJson.Integer(counts, "failed")} · 取消 {RouterJson.Integer(counts, "cancelled")} · 未结束 {RouterJson.Integer(counts, "pending")}" + Environment.NewLine
                 + string.Join("   ", RouterJson.Rows(page, "groups").Where(g => RouterJson.Integer(g, "count") > 0)
                     .Select(g => $"{RouterJson.Text(g, "category")} P95 等待/执行/清理 {Seconds(g, "queueSecondsP95")}/{Seconds(g, "executionSecondsP95")}/{Seconds(g, "cleanupSecondsP95")}"));
+            _historySummary.Text = $"{total} 条  ·  {RouterJson.Integer(counts, "failed")} 失败";
+            _tips.SetToolTip(_historySummary, _statistics); _historySummary.AccessibleDescription = _statistics;
+            _historyReadAt = DateTimeOffset.UtcNow;
+            UpdateControls();
         }
         catch (Exception e) when (Expected(e)) { if (!IsDisposed) _notice.Text = e.Message; }
     }
@@ -378,6 +466,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     {
         var fresh = _pinned && _available && !_controlling && _snapshot?.IsFresh(DateTimeOffset.UtcNow) == true;
         var current = fresh && RouterJson.IsHex(RouterJson.Text(_snapshot!.View, "requestId"), 32);
+        _currentMenuButton.Enabled = current;
         _cancel.Enabled = _release.Enabled = current;
         var primary = _snapshot is null ? default : RouterJson.Field(RouterJson.Field(_snapshot.View, "resourceRecovery"), "primary");
         _nativeStop.Enabled = current && primary.ValueKind == JsonValueKind.Object;
@@ -386,6 +475,11 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _queueCancel.Enabled = fresh && row.ValueKind == JsonValueKind.Object;
         _top.Enabled = _up.Enabled = _queueCancel.Enabled && RouterJson.Integer(row, "rank") > 1;
         _down.Enabled = _queueCancel.Enabled && !RouterJson.Boolean(row, "last");
+        _queuePrevious.Enabled = _available && _queueOffset > 0;
+        _queueNext.Enabled = _available && _queueOffset + _queuePageSize < _queueTotal;
+        _historyPrevious.Enabled = _available && _historyOffset > 0;
+        _historyNext.Enabled = _available && _historyOffset + _historyPageSize < _historyTotal;
+        _filterToggle.Enabled = _pinned && !_controlling;
         _projects.Enabled = _pinned && !_controlling;
         _query.Enabled = _kind.Enabled = _outcome.Enabled = _day.Enabled = _pinned;
     }
@@ -403,30 +497,49 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _ => RouterJson.Text(row, "outcome") switch { "completed" => "成功", "failed" => "失败", "cancelled" => "取消", _ => "未结束" },
     };
     private static string Seconds(JsonElement row, string name) => RouterJson.Number(row, name) is { } n ? $"{n:0.##}s" : "—";
+    private static string SubmittedTime(string value) => DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var time)
+        ? time.ToString("MM-dd HH:mm", CultureInfo.InvariantCulture) : value;
     private static bool Expected(Exception e) => e is HttpRequestException or OperationCanceledException or JsonException or InvalidDataException or IOException or InvalidOperationException or RouterCompatibilityException;
     private static string Selected(DataGridView grid) => grid.SelectedRows.Count > 0 && grid.SelectedRows[0].Tag is JsonElement row ? RouterJson.Text(row, "id") : "";
     private static string Key(ComboBox combo) => (combo.SelectedItem as Choice)?.Key ?? "all";
     private static void Options(ComboBox combo, (string Key, string Text)[] choices) { combo.Items.Clear(); combo.Items.AddRange(choices.Select(c => new Choice(c.Key, c.Text)).ToArray()); combo.SelectedIndex = 0; }
-    private static ComboBox Combo(int width) => new() { Width = width, DropDownStyle = ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(30, 41, 59), ForeColor = Color.White };
+    private static ComboBox Combo(int width) => new RouterCombo { Width = width };
     private static Label Label(string text, int width) => new() { Text = text, Width = width, Height = 31, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft };
-    private static FlowLayoutPanel Flow(params Control[] children) { var flow = new FlowLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, WrapContents = false, AutoScroll = true }; flow.Controls.AddRange(children); return flow; }
-    private static Button Button(string text, Func<Task> action) { var button = new Button { Text = text, AutoSize = true, FlatStyle = FlatStyle.Flat, Height = 31, BackColor = Color.FromArgb(30, 41, 59), ForeColor = Color.White }; button.FlatAppearance.BorderColor = Color.FromArgb(51, 65, 85); button.Click += async (_, _) => await action(); return button; }
+    private static FlowLayoutPanel Flow(params Control[] children) { var flow = new FlowLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, WrapContents = false, AutoScroll = false }; flow.Controls.AddRange(children); return flow; }
+    private static TableLayoutPanel Header(Control left, Control right, int rightWidth)
+    {
+        var header = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 2, RowCount = 1 };
+        header.ColumnStyles.Add(new(SizeType.Percent, 100)); header.ColumnStyles.Add(new(SizeType.Absolute, rightWidth));
+        header.Controls.Add(left, 0, 0); header.Controls.Add(right, 1, 0); return header;
+    }
+    private static ToolStripMenuItem MenuItem(string text, Func<Task> action)
+    { var item = new ToolStripMenuItem(text); item.Click += async (_, _) => await action(); return item; }
+    private int PageRows(RouterGrid grid) => Math.Clamp((grid.ClientSize.Height - grid.ColumnHeadersHeight - 2) /
+        Math.Max(1, (int)Math.Round(26 * _popoverScale)), 1, 20);
+    private static string PageLabel(int offset, int total, int size) => total == 0 ? "0/0" : $"{offset / size + 1}/{(total + size - 1) / size}";
+    private static RouterButton Button(string text, Func<Task> action, RouterButtonKind kind = RouterButtonKind.Quiet)
+    { var button = new RouterButton { Text = text, AccessibleName = text, Kind = kind }; button.Click += async (_, _) => await action(); return button; }
+    private RouterButton IconButton(RouterButtonIcon icon, string label, Func<Task> action)
+    { var button = Button(label, action); button.Icon = icon; button.AutoSize = true; _tips.SetToolTip(button, label); return button; }
     private static DataGridViewTextBoxColumn Column(string name, string title, int width) => new() { Name = name, HeaderText = title, FillWeight = width, MinimumWidth = 50, SortMode = DataGridViewColumnSortMode.NotSortable };
-    private static DataGridView Grid() => new()
+    private static RouterGrid Grid() => new()
     {
         Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AllowUserToDeleteRows = false,
         AllowUserToResizeRows = false, RowHeadersVisible = false, MultiSelect = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-        AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, BackgroundColor = Color.FromArgb(17, 21, 29), BorderStyle = BorderStyle.None,
+        AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, BorderStyle = BorderStyle.None,
+        CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal, ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None,
         ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize,
         EnableHeadersVisualStyles = false, ColumnHeadersDefaultCellStyle = new() { BackColor = Color.FromArgb(30, 41, 59), ForeColor = Color.FromArgb(203, 213, 225), Padding = new Padding(4) },
         DefaultCellStyle = new() { BackColor = Color.FromArgb(22, 30, 42), ForeColor = Color.FromArgb(229, 234, 243), SelectionBackColor = Color.FromArgb(42, 62, 89), SelectionForeColor = Color.White, Padding = new Padding(4) },
-        AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells,
+        AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None, ScrollBars = ScrollBars.None,
     };
     protected override void Dispose(bool disposing)
     {
         if (disposing && !_disposed)
         {
             _disposed = true; _timer.Stop(); _timer.Dispose(); _stop.Cancel(); _stop.Dispose(); _client.Dispose();
+            _tips.Dispose();
+            _currentMenu.Dispose();
             foreach (var font in _scaledFonts.Values) font.Dispose();
         }
         base.Dispose(disposing);
