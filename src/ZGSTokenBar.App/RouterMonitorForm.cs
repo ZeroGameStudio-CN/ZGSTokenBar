@@ -36,14 +36,15 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     private readonly ContextMenuStrip _currentMenu = new() { ShowImageMargin = false };
     private readonly TableLayoutPanel _root;
     private readonly FlowLayoutPanel _filters;
-    private readonly Label _queueHeading = Label("队列", 120), _historyHeading = Label("最近记录", 100), _historySummary = Label("", 210);
+    private readonly Label _currentHeading = Label("当前", 52), _queueHeading = Label("排队", 120), _historyHeading = Label("历史", 70), _historySummary = Label("", 210);
+    private readonly TableLayoutPanel _historyBody;
     private readonly Button _pin;
     private readonly ToolTip _tips = new() { InitialDelay = 450, ReshowDelay = 150, AutoPopDelay = 12000 };
     private RouterVisualPalette _palette = new(Color.FromArgb(9, 11, 15));
     private bool _pinned, _modal;
     private PopoverTailSide _tailSide = PopoverTailSide.Bottom;
     private float _tailOffset, _popoverScale = 1;
-    private static readonly Size PreferredBodySize = new(760, 720);
+    private static readonly Size PreferredBodySize = new(760, 760);
     private Size _bodySize = PreferredBodySize;
     private readonly Dictionary<Control, (string Family, float Pixels, FontStyle Style)> _logicalFonts = [];
     private readonly Dictionary<(string Family, float Pixels, FontStyle Style), Font> _scaledFonts = [];
@@ -83,11 +84,10 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         TopMost = true;
         DoubleBuffered = true;
 
-        _root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), ColumnCount = 1, RowCount = 8 };
+        _root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), ColumnCount = 1, RowCount = 5 };
         _root.ColumnStyles.Add(new(SizeType.Percent, 100));
-        foreach (var style in new[] { new RowStyle(SizeType.Absolute, 34), new RowStyle(SizeType.Absolute, 100),
-            new RowStyle(SizeType.Absolute, 30), new RowStyle(SizeType.Percent, 50), new RowStyle(SizeType.Absolute, 30),
-            new RowStyle(SizeType.Absolute, 0), new RowStyle(SizeType.Percent, 50), new RowStyle(SizeType.Absolute, 24) }) _root.RowStyles.Add(style);
+        foreach (var style in new[] { new RowStyle(SizeType.Absolute, 34), new RowStyle(SizeType.Absolute, 120),
+            new RowStyle(SizeType.Percent, 50), new RowStyle(SizeType.Percent, 50), new RowStyle(SizeType.Absolute, 24) }) _root.RowStyles.Add(style);
         Controls.Add(_root);
         _projects.AccessibleName = "工程切换"; _freshness.Width = 140;
         _kind.Width = _outcome.Width = 92; _day.Width = 112; _query.Width = 160;
@@ -100,22 +100,26 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _headline.Font = new Font(Font.FontFamily, 11.5f, FontStyle.Bold, GraphicsUnit.Pixel);
         _task.Font = new Font(Font.FontFamily, 14, FontStyle.Bold, GraphicsUnit.Pixel);
         _metrics.Font = _detail.Font = _source.Font = _freshness.Font = _notice.Font = _historySummary.Font = new Font(Font.FontFamily, 11.5f, FontStyle.Regular, GraphicsUnit.Pixel);
+        _currentHeading.Font = _queueHeading.Font = _historyHeading.Font = new Font(Font.FontFamily, 13, FontStyle.Bold, GraphicsUnit.Pixel);
+        _currentHeading.Height = 24; _queueHeading.Height = _historyHeading.Height = _historySummary.Height = 30;
+        _currentHeading.Margin = _queueHeading.Margin = _historyHeading.Margin = _historySummary.Margin = Padding.Empty;
         _metrics.TextAlign = ContentAlignment.MiddleRight;
         _task.Dock = _detail.Dock = _source.Dock = _notice.Dock = _metrics.Dock = DockStyle.Fill;
         _task.Margin = _detail.Margin = _source.Margin = _metrics.Margin = Padding.Empty;
-        var summary = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = new Padding(4, 3, 4, 3), ColumnCount = 1, RowCount = 4 };
+        var summary = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 1, RowCount = 4 };
         summary.ColumnStyles.Add(new(SizeType.Percent, 100));
         summary.RowStyles.Add(new(SizeType.Absolute, 24)); summary.RowStyles.Add(new(SizeType.Absolute, 26)); summary.RowStyles.Add(new(SizeType.Absolute, 20)); summary.RowStyles.Add(new(SizeType.Percent, 100));
-        var status = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 3 };
-        status.ColumnStyles.Add(new(SizeType.Absolute, 120)); status.ColumnStyles.Add(new(SizeType.Percent, 100)); status.ColumnStyles.Add(new(SizeType.Absolute, 36));
+        var status = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 3, RowCount = 1 };
+        status.RowStyles.Add(new(SizeType.Percent, 100));
+        status.ColumnStyles.Add(new(SizeType.Absolute, 200)); status.ColumnStyles.Add(new(SizeType.Percent, 100)); status.ColumnStyles.Add(new(SizeType.Absolute, 36));
         _currentMenuButton = IconButton(RouterButtonIcon.More, "当前任务操作", () => { _currentMenu.Show(_currentMenuButton!, new Point(0, _currentMenuButton!.Height)); return Task.CompletedTask; });
         _nativeStop = MenuItem("停止并收尾", () => CurrentControlAsync("stop"));
         _cancel = MenuItem("请求取消", () => CurrentControlAsync("cancel"));
         _release = MenuItem("复检清理", () => CurrentControlAsync("release"));
         _currentMenu.Items.AddRange([_nativeStop, _cancel, _release]);
-        status.Controls.Add(_headline, 0, 0); status.Controls.Add(_metrics, 1, 0); status.Controls.Add(_currentMenuButton, 2, 0);
+        status.Controls.Add(Flow(_currentHeading, _headline), 0, 0); status.Controls.Add(_metrics, 1, 0); status.Controls.Add(_currentMenuButton, 2, 0);
         summary.Controls.Add(status, 0, 0); summary.Controls.Add(_task, 0, 1); summary.Controls.Add(_detail, 0, 2); summary.Controls.Add(_source, 0, 3);
-        _root.Controls.Add(summary, 0, 1);
+        var currentSection = Section("当前"); currentSection.Controls.Add(summary); _root.Controls.Add(currentSection, 0, 1);
 
         _queue.Columns.AddRange(Column("task", "任务", 270), Column("source", "来源对话", 210), Column("wait", "等待", 80));
         _queue.SelectionChanged += (_, _) => { if (!_applyingQueue) UpdateControls(); };
@@ -127,31 +131,40 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _queueNext = IconButton(RouterButtonIcon.Next, "队列下一页", () => PageQueueAsync(1));
         _queue.PageRequested += async (_, pages) => await PageQueueAsync(pages);
         _queuePage.Width = 64; _queuePage.TextAlign = ContentAlignment.MiddleCenter;
-        _root.Controls.Add(Header(Flow(_queueHeading), Flow(_top, _up, _down, _queueCancel, _queuePrevious, _queuePage, _queueNext), 280), 0, 2);
-        _root.Controls.Add(_queue, 0, 3);
+        var queueBody = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 1, RowCount = 2 };
+        queueBody.ColumnStyles.Add(new(SizeType.Percent, 100)); queueBody.RowStyles.Add(new(SizeType.Absolute, 30)); queueBody.RowStyles.Add(new(SizeType.Percent, 100));
+        queueBody.Controls.Add(Header(Flow(_queueHeading), Flow(_top, _up, _down, _queueCancel, _queuePrevious, _queuePage, _queueNext), 280), 0, 0);
+        _queue.Margin = Padding.Empty; queueBody.Controls.Add(_queue, 0, 1);
+        var queueSection = Section("排队"); queueSection.Controls.Add(queueBody); _root.Controls.Add(queueSection, 0, 2);
+
+        _historyBody = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 1, RowCount = 3 };
+        _historyBody.ColumnStyles.Add(new(SizeType.Percent, 100)); _historyBody.RowStyles.Add(new(SizeType.Absolute, 30));
+        _historyBody.RowStyles.Add(new(SizeType.Absolute, 0)); _historyBody.RowStyles.Add(new(SizeType.Percent, 100));
 
         _historyPrevious = IconButton(RouterButtonIcon.Previous, "历史上一页", () => PageHistoryAsync(-1));
         _historyNext = IconButton(RouterButtonIcon.Next, "历史下一页", () => PageHistoryAsync(1));
         _history.PageRequested += async (_, pages) => await PageHistoryAsync(pages);
         _filterToggle = IconButton(RouterButtonIcon.Filter, "筛选记录", async () =>
         {
-            _filtersVisible = !_filtersVisible; _filters!.Visible = _filtersVisible; _root.RowStyles[5].Height = _filtersVisible ? 34 * _popoverScale : 0;
+            _filtersVisible = !_filtersVisible; _filters!.Visible = _filtersVisible; _historyBody.RowStyles[1].Height = _filtersVisible ? 34 * _popoverScale : 0;
             ((RouterButton)_filterToggle!).Selected = _filtersVisible; _root.PerformLayout(); await RefreshViewAsync(); await HistoryAsync();
         });
         _historyPage.Width = 64; _historyPage.TextAlign = ContentAlignment.MiddleCenter;
-        _root.Controls.Add(Header(Flow(_historyHeading, _historySummary), Flow(_filterToggle, IconButton(RouterButtonIcon.Export, "导出 CSV", ExportAsync), _historyPrevious, _historyPage, _historyNext), 208), 0, 4);
+        _historyBody.Controls.Add(Header(Flow(_historyHeading, _historySummary), Flow(_filterToggle, IconButton(RouterButtonIcon.Export, "导出 CSV", ExportAsync), _historyPrevious, _historyPage, _historyNext), 208), 0, 0);
         Options(_kind, [("all", "全部类型"), ("compile", "编译"), ("editmode", "EditMode"), ("playmode", "PlayMode"), ("script", "脚本")]);
         Options(_outcome, [("all", "全部结果"), ("completed", "成功"), ("failed", "失败"), ("cancelled", "取消"), ("pending", "未结束")]);
         Options(_day, [("all", "全部日期")]);
         var search = new RouterSurface { Input = true, Width = 160, Height = 30, Padding = new Padding(8, 6, 8, 6) };
         _query.Dock = DockStyle.Fill; _query.BorderStyle = BorderStyle.None; search.Controls.Add(_query);
         _filters = Flow(_kind, _outcome, _day, search, Button("筛选", async () => { _historyOffset = 0; await HistoryAsync(); }, RouterButtonKind.Primary));
-        _filters.Visible = false; _root.Controls.Add(_filters, 0, 5);
+        _filters.Visible = false; _historyBody.Controls.Add(_filters, 0, 1);
         _history.EmptyTitle = "没有匹配的记录"; _history.EmptyDetail = "调整筛选条件后重试";
         _history.Columns.AddRange(Column("createdLocal", "提交时间", 115), Column("task", "任务", 255), Column("source", "来源对话", 150),
             Column("state", "结果", 90), Column("executionSeconds", "耗时", 70), Column("cleanupVerified", "释放", 55));
         _history.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0) ShowRecord(_history.Rows[e.RowIndex]); };
-        _root.Controls.Add(_history, 0, 6); _root.Controls.Add(_notice, 0, 7);
+        _history.Margin = Padding.Empty; _historyBody.Controls.Add(_history, 0, 2);
+        var historySection = Section("历史"); historySection.Controls.Add(_historyBody); _root.Controls.Add(historySection, 0, 3);
+        _root.Controls.Add(_notice, 0, 4);
         _timer.Tick += async (_, _) => { if (Visible) await RefreshViewAsync(); };
         _notice.TextChanged += (_, _) => _tips.SetToolTip(_notice, _notice.Text);
         _history.CellPainting += PaintHistoryStatus;
@@ -269,7 +282,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
                     combo.Palette = _palette; combo.BackColor = _palette.Input; combo.ForeColor = _palette.Text; combo.Invalidate(); break;
                 case RouterGrid grid:
                     var scale = RouterVisualGeometry.Scale(grid);
-                    grid.Palette = _palette; grid.BackgroundColor = _palette.Background; grid.GridColor = _palette.Border;
+                    grid.Palette = _palette; grid.BackgroundColor = SurfaceFor(grid); grid.GridColor = _palette.Border;
                     grid.ColumnHeadersDefaultCellStyle.BackColor = _palette.Surface;
                     grid.ColumnHeadersDefaultCellStyle.ForeColor = _palette.Muted;
                     grid.ColumnHeadersDefaultCellStyle.Padding = new Padding((int)(4 * scale), (int)(6 * scale), (int)(4 * scale), (int)(6 * scale));
@@ -671,6 +684,8 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     private static ComboBox Combo(int width) => new RouterCombo { Width = width };
     private static Label Label(string text, int width) => new() { Text = text, Width = width, Height = 31, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft };
     private static FlowLayoutPanel Flow(params Control[] children) { var flow = new FlowLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, WrapContents = false, AutoScroll = false }; flow.Controls.AddRange(children); return flow; }
+    private static RouterSurface Section(string title) => new()
+    { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 8), Padding = new Padding(10, 6, 10, 8), AccessibleName = title, AccessibleRole = AccessibleRole.Grouping };
     private static TableLayoutPanel Header(Control left, Control right, int rightWidth)
     {
         var header = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 2, RowCount = 1 };

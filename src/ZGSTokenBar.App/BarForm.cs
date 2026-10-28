@@ -1473,7 +1473,7 @@ internal sealed partial class BarForm : Form
         DrawTaskbarCardShell(graphics, bounds);
         if (view.PluginId == MiniAreaIds.Router)
         {
-            RouterCardRenderer.Draw(graphics, bounds, view.Card, _badgeFont);
+            RouterCardRenderer.Draw(graphics, bounds, view.Card, _badgeFont, collapsed, _cardTitleFont, _subtitleFont);
             return;
         }
         var iconBounds = collapsed
@@ -5565,7 +5565,7 @@ internal sealed partial class BarForm : Form
     {
         var normalized = _miniAreaLayouts.TryGetValue(areaId, out var layout)
             ? layout.Normalized(areaId)
-            : new MiniAreaLayout();
+            : new MiniAreaLayout(Collapsed: areaId == MiniAreaIds.Router);
         return normalized;
     }
 

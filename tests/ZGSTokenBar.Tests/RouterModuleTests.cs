@@ -18,6 +18,7 @@ internal static class RouterModuleTests
         HistoryBuffer();
         PagingReads();
         WheelPaging();
+        ExpandedSummary();
         using var handler = new Fixture();
         using var client = new RouterMonitorClient(handler);
         var snapshot = client.SnapshotAsync().GetAwaiter().GetResult();
@@ -64,6 +65,33 @@ internal static class RouterModuleTests
         Check(RouterTaskPresentation.Heading("D:/scripts/author-install-r2.py").Title == "author-install-r2.py", "Script file names are not treated as namespaces");
         Check(RouterTaskPresentation.Heading("编译").Title == "编译" && RouterTaskPresentation.Heading("—").Title == "暂无正在执行的任务", "Plain and idle task headings");
         Check(RouterTaskPresentation.Source("pro2 · \n" + new string('长', 100)).Length == 72, "Long source is one bounded line");
+    }
+
+    private static void ExpandedSummary()
+    {
+        using var handler = new Fixture();
+        var plugin = new RouterPlugin(new RouterMonitorClient(handler));
+        try
+        {
+            var snapshot = plugin.RefreshAsync(new PluginRefreshContext(DateTimeOffset.UtcNow, "test", 0), default).AsTask().GetAwaiter().GetResult();
+            string Value(string key) => snapshot.MiniCards.Single().Summary.Single(item => item.LabelKey == key).Value.Text ?? "";
+            Check(Value("router.project") == "POB" && Value("router.phase") == "清理" && Value("router.elapsed") == "1:25",
+                "Expanded bar reads the public project, phase and elapsed metadata");
+            handler.NativeError = true;
+            snapshot = plugin.RefreshAsync(new PluginRefreshContext(DateTimeOffset.UtcNow, "test", 0), default).AsTask().GetAwaiter().GetResult();
+            Check(Value("router.phase") == "有错误" && snapshot.MiniCards.Single().Summary.Single(item => item.LabelKey == "router.state").Status == "attention",
+                "A native error observation has an attention icon even while the original operation continues");
+            handler.NativeError = false;
+            handler.Empty = true;
+            snapshot = plugin.RefreshAsync(new PluginRefreshContext(DateTimeOffset.UtcNow, "test", 0), default).AsTask().GetAwaiter().GetResult();
+            Check(Value("router.phase") == "空闲" && Value("router.elapsed") == "", "Idle expanded cards do not retain a running duration");
+            handler.Stale = true;
+            snapshot = plugin.RefreshAsync(new PluginRefreshContext(DateTimeOffset.UtcNow, "test", 0), default).AsTask().GetAwaiter().GetResult();
+            Check(Value("router.phase") == "状态未确认" && Value("router.elapsed") == "", "Stale expanded data is explicitly unconfirmed");
+            Check(handler.Posts == 0 && handler.Routes.All(uri => uri.AbsolutePath is "/health" or "/api/projects" or "/api/view"),
+                "Expanded presentation needs no additional endpoints or execution controls");
+        }
+        finally { plugin.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
     }
 
     private static void HistoryBuffer()
@@ -247,6 +275,9 @@ internal static class RouterModuleTests
                 && taskTitle.AccessibleDescription!.Contains("DesktopAspectLockTemporaryVerification"), $"Readable current task retains the original identity at {dpi} DPI");
             Check(AllControls(form).OfType<System.Windows.Forms.Label>().Any(label => label.Text.StartsWith("来源   pro2")
                 && label.AccessibleDescription!.Length > label.Text.Length), "Source has its own line and a complete accessible description");
+            var metrics = AllControls(form).OfType<System.Windows.Forms.Label>().Single(label => label.Text.StartsWith("运行 "));
+            Check(metrics.Visible && metrics.Width > 180 * scale && metrics.Height >= metrics.Font.Height && metrics.Parent!.ClientRectangle.Contains(metrics.Bounds),
+                $"Current execution timings remain visible at {dpi} DPI: {metrics.Bounds}, parent {metrics.Parent!.ClientSize}, text {metrics.Text}");
             var close = AllControls(form).OfType<System.Windows.Forms.Button>().Single(button => button.AccessibleName == "收起弹层");
             var closePosition = form.PointToClient(close.PointToScreen(Point.Empty));
             Check(closePosition.X + close.Width <= form.ClientSize.Width, $"Header controls fit popup at {dpi} DPI");
@@ -265,6 +296,9 @@ internal static class RouterModuleTests
                 Check(table.Rows.Cast<System.Windows.Forms.DataGridViewRow>().Sum(row => row.Height) <= table.ClientSize.Height - table.ColumnHeadersHeight,
                     $"Visible page rows fit without scrolling at {dpi} DPI");
             }
+            var sections = AllControls(form).OfType<RouterSurface>().Where(surface => !surface.Input).ToArray();
+            Check(sections.Select(section => section.AccessibleName).SequenceEqual(new[] { "当前", "排队", "历史" }), "Three named sections share one visible popup");
+            Check(sections.Zip(sections.Skip(1)).All(pair => pair.First.Bottom < pair.Second.Top), "Current, queue and history have distinct gaps and do not overlap");
             Check(AllControls(form).OfType<RouterGrid>().All(table => table.Rows.Count >= 7), $"Taller popup exposes at least seven queue/history rows at {dpi} DPI: "
                 + string.Join("; ", AllControls(form).OfType<RouterGrid>().Select(table => $"{table.Rows.Count} rows, height {table.ClientSize.Height}, header {table.ColumnHeadersHeight}")));
             Save(form, Path.Combine(directory, $"router-history-{dpi}.png"));
@@ -327,7 +361,9 @@ internal static class RouterModuleTests
 
     private static MiniCardContribution Card(string status, long queued = 0) => new("card.router", RouterPlugin.Id,
         "router", ContributionKind.Metric, 0, "Router", "router.icon", "accent.router",
-        [new("router.state", new("text", Text: "状态说明只在弹层出现"), status), new("router.queued", new("integer", Integer: queued))]);
+        [new("router.state", new("text", Text: "状态说明只在弹层出现"), status), new("router.queued", new("integer", Integer: queued)),
+         new("router.project", new("text", Text: "POB")), new("router.phase", new("text", Text: status switch { "idle" => "空闲", "cleanup" => "清理", _ => "测试" })),
+         new("router.elapsed", new("text", Text: status == "idle" ? "" : "1:25"))]);
 
     private static void PopoverInteraction()
     {
@@ -337,8 +373,8 @@ internal static class RouterModuleTests
         Check(!BarForm.ShouldDismissPluginPopover(true, false, false, false, TimeSpan.FromSeconds(5)), "Pin survives pointer leave");
         Check(BarForm.ShouldDismissPluginPopover(true, false, true, false, null), "Outside click dismisses pin");
         Check(BarForm.ShouldDismissPluginPopover(true, true, false, true, null), "Escape dismisses pin");
-        Check(TaskbarMiniLayoutMath.MinimumAreaContentWidthFor(MiniAreaIds.Router) == 32, "Icon module has independent compact minimum");
-        Check(TaskbarMiniLayoutMath.AreaWidth(RouterCardRenderer.Width, false, MiniAreaIds.Router) < TaskbarMiniLayoutMath.ServiceCardWidth, "Router width is compact without text");
+        Check(TaskbarMiniLayoutMath.MinimumAreaContentWidthFor(MiniAreaIds.Router) == 112, "Expanded Router summary has enough readable content width");
+        Check(TaskbarMiniLayoutMath.AreaWidth(RouterCardRenderer.Width, true, MiniAreaIds.Router) < TaskbarMiniLayoutMath.ServiceCardWidth, "Collapsed Router remains an icon module");
 
         var settings = new AppSettings();
         settings.PluginEnabled[MiniAreaIds.SystemMetrics] = false;
@@ -348,6 +384,15 @@ internal static class RouterModuleTests
         { Location = new(-30000, -30000) };
         var view = new PluginMiniCardView(RouterPlugin.Id, "Router", Card("running", 3), new Dictionary<string, string>());
         bar.SetPluginMiniCards([view]);
+        Check(bar.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Router).Collapsed, "New Router modules default to the compact icon");
+        var compactWidth = bar.Width;
+        Check(bar.SetMiniAreaFromCommand(MiniAreaIds.Router, false, null), "Existing module control expands the Router summary");
+        Check(!bar.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Router).Collapsed && bar.Width > compactWidth,
+            "Expanded and compact modes have different useful content widths");
+        bar.SetMiniAreaLayouts(new Dictionary<string, MiniAreaLayout> { [MiniAreaIds.Router] = new(false, 48) });
+        Check(bar.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Router) is { Collapsed: false, Width: 112 },
+            "Saved expanded preference is preserved while old widths are normalized for the new content");
+        bar.SetMiniAreaFromCommand(MiniAreaIds.Router, true, null);
         bar.PluginPopoverRequested += (_, request) =>
         {
             popup.SetPinned(request.Pinned);
@@ -383,6 +428,13 @@ internal static class RouterModuleTests
                 graphics.DrawString(states[i], font, Brushes.LightSlateGray, i * 76 + 4, 48);
             }
             bitmap.Save(Path.Combine(directory, $"router-bar-icons-{dpi}.png"), ImageFormat.Png);
+            using var expanded = new Bitmap((int)(RouterCardRenderer.Width * 3 * scale), (int)(48 * scale));
+            using var expandedGraphics = Graphics.FromImage(expanded); expandedGraphics.Clear(Color.FromArgb(17, 21, 29)); expandedGraphics.ScaleTransform(scale, scale);
+            using var titleFont = new Font("Microsoft YaHei UI", 10.5f, FontStyle.Bold, GraphicsUnit.Pixel);
+            using var detailFont = new Font("Microsoft YaHei UI", 9, FontStyle.Regular, GraphicsUnit.Pixel);
+            foreach (var (state, index) in new[] { "running", "cleanup", "idle" }.Select((state, index) => (state, index)))
+                RouterCardRenderer.Draw(expandedGraphics, new RectangleF(index * RouterCardRenderer.Width, 6, RouterCardRenderer.Width, 36), Card(state, state == "idle" ? 0 : 3), font, false, titleFont, detailFont);
+            expanded.Save(Path.Combine(directory, $"router-bar-expanded-{dpi}.png"), ImageFormat.Png);
         }
     }
     private static void Save(System.Windows.Forms.Form form, string path)
@@ -402,7 +454,7 @@ internal static class RouterModuleTests
         internal int Posts, ReadsCanceled, HistoryTotal = 76;
         internal TaskCompletionSource? HoldHistory, HoldQueue, HoldHealth;
         internal JsonElement? LastControl;
-        internal bool LoseControlReply, OldApi, WrongProject, Stale, Oversized, Empty;
+        internal bool LoseControlReply, OldApi, WrongProject, Stale, Oversized, Empty, NativeError;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Routes.Add(request.RequestUri!);
@@ -434,6 +486,8 @@ internal static class RouterModuleTests
                 observedAt = DateTimeOffset.UtcNow.AddMinutes(Stale ? -1 : 0).ToUnixTimeMilliseconds() / 1000d,
                 requestId = Empty ? "" : new string('a', 32), headline = Empty ? "空闲" : "清理中", task = Empty ? "—" : "POB.Tests.Runtime.DesktopAspectLockTemporaryVerification.BootToBase_ThenVerifyScenario",
                 queuedCount = Empty ? 0 : 41, elapsed = "1:25", progressClock = Empty ? "" : "距原生变化 0:08", detail = Empty ? "" : "等待原生清理证据；当前任务输入保留。", tone = Empty ? "idle" : "warning",
+                currentExecution = Empty ? null : new { phase = NativeError ? "running" : "settling", kind = "test" },
+                progressState = NativeError ? "native_error" : "observing",
                 owner = new { label = Empty ? "" : "pro2 · 现在问题在于 · 桌面宽高比与初始化流程验证 · " + new string('长', 80) }, resourceRecovery = new { primary = new { action = "stop", label = "停止并收尾" } },
             });
             var parameters = request.RequestUri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries)

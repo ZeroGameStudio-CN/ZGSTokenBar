@@ -25,13 +25,13 @@ states, original-instance/request/project binding, stale queue refusal, safe sto
 qualification, pagination beyond the first page, filter/statistic parity, bounded
 payloads, and DPI rendering. Production controls are not exercised on others' jobs.
 
-The user's refined presentation contract is an icon-only bar module with a small
+The user's compact presentation contract is an icon-only bar module with a small
 queue count, matching the existing Codex hover/pin interaction. Hover opens an
 anchored, borderless preview without activation; clicking the module pins it.
 Leaving both anchor and popup dismisses the preview after the shared grace period;
 outside click/Escape dismisses a pinned view. Execution controls require pinning.
 Reuse the bar's hover timer, pointer supervision, screen-edge placement and palette.
-Keep task names and state explanations in the popup rather than the compact bar.
+Keep full task names and state explanations in the popup rather than the compact bar.
 
 The 2026-10-28 visual refinement keeps this interaction and transport contract.
 Use the existing palette with a distinct current-task summary, quiet rounded
@@ -70,7 +70,16 @@ read-only paging benchmark. The Router API and scheduling remain unchanged.
 The next refinement restores wheel navigation over each table without adding
 scrollbars: one notch pages that table, partial deltas accumulate, and page edges
 do not issue redundant reads. Wheel navigation also works in the hover preview;
-it grants no execution controls. Prefer a 760-by-720 logical-pixel body and split
+it grants no execution controls. Prefer a 760-by-760 logical-pixel body and split
 remaining height equally between queue and history, exposing at least seven rows
 of each on a sufficiently tall desktop. Clamp the popup to the working area on
 short/high-DPI desktops and verify complete rows and screen bounds there.
+
+The bar defaults to a compact state icon and queue count. Its existing optional
+expand action now reveals the project name, current phase and elapsed duration;
+keep full task/source information in the hover popup. Preserve explicit saved
+expanded preferences and normalize old expanded widths to the readable minimum.
+These are presentation fields read from existing public metadata, without extra
+endpoints or Router execution rules. The popup groups its content into three
+named surfaces: Current, Queue and History. Use consistent headings, quiet rounded
+borders and gaps, retaining at least seven queue/history rows on a tall desktop.
