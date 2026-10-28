@@ -99,6 +99,10 @@ headings and spacing. The bar defaults to the compact icon; the existing expand
 control reveals project/phase/elapsed metadata, while full task details remain
 in the hover popup. Saved expanded preferences remain effective; old narrow
 expanded widths normalize to the readable minimum.
+History labels the retained dispatch-to-cleanup interval as resource occupancy.
+Known starter refusals have their own result badge; row details show preflight,
+dispatch-recovery wait and reported native-runner time separately. Older servers
+without those optional fields remain readable.
 The registered project selector uses flat chips for the current small catalog,
 with selected state and pending counts. Switching uses the opaque registered key;
 short display labels never select a path. A larger catalog retains every other
@@ -250,6 +254,12 @@ account-wide Profile counter as a floor. Keep this ledger with the app's data
 directory when moving machines; do not add totals from separate copies together.
 Desktop and built-in/CLI refreshes use the same ledger transaction: acquire the
 cross-process file lock, reload the latest index, scan, and atomically commit.
+Index loading deserializes once, with a typed schema-header converter rejecting
+unsupported headers before they can be normalized. It avoids a second full JSON
+DOM without changing ledger locks, write order or accounting. The opt-in
+`--ledger-memory-probe baseline|optimized <temporary-index-copy> <report>` test
+route compares fresh processes using the same private snapshot and normalized
+data fingerprint; it never forces collection in the running App.
 Failed writes retain pending session records for retry even after sources disappear;
 retry reconciles session watermarks without adding overlapping totals or baselines.
 The built-in adapters receive the explicit host data root through `PluginStartContext.HostDataRoot`;

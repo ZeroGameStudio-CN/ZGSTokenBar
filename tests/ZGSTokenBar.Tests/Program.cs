@@ -18,6 +18,12 @@ using ZGSTokenBar.Plugin.AiGatewayObserver;
 
 if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJobExitCode;
 
+if (args.Length == 4 && args[0] == "--ledger-memory-probe")
+{
+    LedgerMemoryTests.Probe(args[1], args[2], args[3]);
+    return 0;
+}
+
 if (args.Length == 2 && args[0] == "--router-history-benchmark")
 {
     RouterModuleTests.Benchmark(args[1]);
@@ -69,6 +75,7 @@ if (args.Length > 0 && args[0] == "--radar-usage-update")
 if (args.Length == 1 && args[0] == "--persistence-regressions")
 {
     PersistenceRegressionTests.SettingsTransientRead();
+    LedgerMemoryTests.Run();
     PersistenceRegressionTests.LedgerTransactions();
     PersistenceRegressionTests.LedgerSaveRetry();
     PersistenceRegressionTests.ConversationHistoryPersistence();
@@ -344,6 +351,7 @@ if (args.Length > 0)
 var tests = new (string Name, Action Run)[]
 {
     ("Settings transient read recovery", PersistenceRegressionTests.SettingsTransientRead),
+    ("Token index single-pass schema compatibility", LedgerMemoryTests.Run),
     ("Token ledger serialized writers", PersistenceRegressionTests.LedgerTransactions),
     ("Token ledger failed-save retry", PersistenceRegressionTests.LedgerSaveRetry),
     ("Conversation history persistence", PersistenceRegressionTests.ConversationHistoryPersistence),

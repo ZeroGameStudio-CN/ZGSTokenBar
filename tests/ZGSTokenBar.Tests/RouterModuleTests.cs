@@ -18,6 +18,7 @@ internal static class RouterModuleTests
         HistoryBuffer();
         PagingReads();
         WheelPaging();
+        RefusalTiming();
         ExpandedSummary();
         using var handler = new Fixture();
         using var client = new RouterMonitorClient(handler);
@@ -65,6 +66,18 @@ internal static class RouterModuleTests
         Check(RouterTaskPresentation.Heading("D:/scripts/author-install-r2.py").Title == "author-install-r2.py", "Script file names are not treated as namespaces");
         Check(RouterTaskPresentation.Heading("编译").Title == "编译" && RouterTaskPresentation.Heading("—").Title == "暂无正在执行的任务", "Plain and idle task headings");
         Check(RouterTaskPresentation.Source("pro2 · \n" + new string('长', 100)).Length == 72, "Long source is one bounded line");
+    }
+
+    private static void RefusalTiming()
+    {
+        using var form = new RouterMonitorForm(new RouterMonitorClient(new Fixture { PreflightRefusal = true }), observe: false)
+        { ShowInTaskbar = false, StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
+        form.Show(); Pump(form.RefreshViewAsync());
+        var grid = AllControls(form).OfType<RouterGrid>().Single(table => table.Columns.Count == 6);
+        Check(grid.Rows[0].Cells[3].Value?.ToString() == "派发前拒绝", "Starter refusals are distinct from assertion failures");
+        Check(grid.Columns[4].HeaderText == "占用" && grid.Rows[0].Cells[4].ToolTipText.Contains("原生操作未执行")
+            && grid.Rows[0].Cells[4].ToolTipText.Contains("派发恢复等待 2999s"), "Occupied time remains visible with the known preflight/recovery split");
+        form.Close();
     }
 
     private static void ExpandedSummary()
@@ -454,7 +467,7 @@ internal static class RouterModuleTests
         internal int Posts, ReadsCanceled, HistoryTotal = 76;
         internal TaskCompletionSource? HoldHistory, HoldQueue, HoldHealth;
         internal JsonElement? LastControl;
-        internal bool LoseControlReply, OldApi, WrongProject, Stale, Oversized, Empty, NativeError;
+        internal bool LoseControlReply, OldApi, WrongProject, Stale, Oversized, Empty, NativeError, PreflightRefusal;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Routes.Add(request.RequestUri!);
@@ -503,7 +516,8 @@ internal static class RouterModuleTests
             {
                 total = HistoryTotal, offset,
                 items = Enumerable.Range(offset, Math.Min(limit, Math.Max(0, HistoryTotal - offset))).Select(i => new { id = i.ToString("x32"), createdLocal = "2026-10-27T21:00:00+08:00", task = "独立测试与回执 " + i,
-                    source = "原对话 " + i, outcome = i % 3 == 0 ? "failed" : "completed", failureClass = i % 3 == 0 ? "validation_failed" : "", queueSeconds = 12.5,
+                    source = "原对话 " + i, outcome = i % 3 == 0 ? "failed" : "completed", failureClass = PreflightRefusal && i == 0 ? "dispatch_preflight_failed" : i % 3 == 0 ? "validation_failed" : "", queueSeconds = 12.5,
+                    preflightSeconds = PreflightRefusal && i == 0 ? (double?)1 : null, dispatchRecoveryWaitSeconds = PreflightRefusal && i == 0 ? (double?)2999 : null,
                     executionSeconds = 41.2, cleanupSeconds = 3.1, cleanupVerified = true }),
                 counts = new { completed = 74, failed = 2, cancelled = 0, pending = 0 },
                 days = new[] { new { date = "2026-10-27", total = 76 } },

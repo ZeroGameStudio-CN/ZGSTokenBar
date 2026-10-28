@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace ZGSTokenBar.Core;
 
@@ -76,6 +77,7 @@ public sealed class CodexTokenUsageIndex
     public const int ConversationHistoryLimit = 500;
     public const int ConversationHistoryRetentionDays = 90;
 
+    [JsonConverter(typeof(CodexTokenIndexSchemaConverter))]
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public List<CodexTokenUsageFileIndex> Files { get; set; } = [];
     public List<CodexConversationTurn> ConversationHistory { get; set; } = [];
@@ -96,6 +98,18 @@ public sealed class CodexTokenUsageIndex
             }).ToList(),
         };
     }
+}
+
+internal sealed class CodexTokenIndexSchemaConverter : JsonConverter<int>
+{
+    public override int Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType != JsonTokenType.Number || !reader.TryGetInt32(out var version)
+            || version is < 1 or > CodexTokenUsageIndex.CurrentSchemaVersion)
+            throw new JsonException("Unsupported Codex token usage index schema.");
+        return version;
+    }
+    public override void Write(Utf8JsonWriter writer, int value, JsonSerializerOptions options) => writer.WriteNumberValue(value);
 }
 
 public sealed record CodexDailyModelUsage(
