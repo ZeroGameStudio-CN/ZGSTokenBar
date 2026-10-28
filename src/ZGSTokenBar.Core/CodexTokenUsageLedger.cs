@@ -143,6 +143,12 @@ public sealed class CodexTokenUsageLedger
         var completed = summary.RecentTurns.Where(turn => turn.IsTerminal).ToArray();
         if (completed.Length == 0) return summary;
 
+        // Unchanged local history needs no full-ledger transaction. New turns,
+        // pending saves and due retention still merge the latest index under lock.
+        if (HistoryEquals(summary.ConversationHistory,
+                MergeConversationHistory(summary.ConversationHistory, completed, now)))
+            return summary;
+
         try
         {
             var persisted = _store.UpdateCodexTokenUsageIndex(current =>
