@@ -45,7 +45,7 @@ use synthetic data; production execution controls remain outside visual checks.
 
 The user's later refinement requires a single compact page like the Codex history
 surface, with current execution, queue and recent records visible together. No
-tab navigation or scrollbars: request only the number of rows fitting each
+tab navigation or scrollbars: render only the number of rows fitting each
 viewport and page older records through the existing bounded API. Keep current
 execution actions in the existing dark context menu, queue actions/pagers as
 small glyphs, and filters collapsed until requested. Show execution duration by
@@ -54,3 +54,15 @@ Replace the project dropdown with flat short labels for the current projects.
 Highlight selection, retain pending counts and full-name hover text, and switch
 using the original opaque project key. Keep a compact More menu for a larger
 catalog so every registered project remains reachable without a scrolling strip.
+
+The subsequent readability/performance change uses a short human-readable method
+title, a separate native-progress line and a separate source-chat line. Preserve
+the exact task/source in hover and accessibility descriptions. Queue navigation
+reads fresh pages directly, independently of full snapshot polling. History keeps
+one bounded 100-record read-only window per instance/project/filter context and
+slices adjacent pages locally; share matching in-flight reads and cancel obsolete
+reads only. Refresh the first page every ten seconds, preserve older snapshot
+ordering during navigation, and retain explicit refresh with snapshot timestamps.
+No cached history can authorize controls. Verify local page hits, window bounds,
+context changes, rapid navigation, read cancellation, DPI layout and a live
+read-only paging benchmark. The Router API and scheduling remain unchanged.

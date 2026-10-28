@@ -18,6 +18,12 @@ using ZGSTokenBar.Plugin.AiGatewayObserver;
 
 if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJobExitCode;
 
+if (args.Length == 2 && args[0] == "--router-history-benchmark")
+{
+    RouterModuleTests.Benchmark(args[1]);
+    return 0;
+}
+
 if (args.Length > 0 && args[0] == "--router-module")
 {
     RouterModuleTests.Run();

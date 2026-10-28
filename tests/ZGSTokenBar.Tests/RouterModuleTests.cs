@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Diagnostics;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -13,6 +14,9 @@ internal static class RouterModuleTests
     internal static void Run()
     {
         PopoverInteraction();
+        TaskHeading();
+        HistoryBuffer();
+        PagingReads();
         using var handler = new Fixture();
         using var client = new RouterMonitorClient(handler);
         var snapshot = client.SnapshotAsync().GetAwaiter().GetResult();
@@ -49,6 +53,141 @@ internal static class RouterModuleTests
         Throws<InvalidDataException>(() => client.SnapshotAsync().GetAwaiter().GetResult());
     }
 
+    private static void TaskHeading()
+    {
+        const string original = "POB.Tests.Runtime.DesktopAspectLockTemporaryVerification.BootToBase_ThenVerifyScenario";
+        var heading = RouterTaskPresentation.Heading(original);
+        Check(heading.Title == "Boot To Base · Then Verify Scenario" && heading.Context == "Desktop Aspect Lock Temporary Verification"
+            && heading.Original == original, "Current task is readable while retaining its exact identity");
+        Check(RouterTaskPresentation.Heading("2/3 · POB.Fixture(\"a.b\").RunHTTPTest(1.5)").Title == "2/3 · Run HTTP Test(1.5)", "Stage and dotted parameters are preserved");
+        Check(RouterTaskPresentation.Heading("D:/scripts/author-install-r2.py").Title == "author-install-r2.py", "Script file names are not treated as namespaces");
+        Check(RouterTaskPresentation.Heading("编译").Title == "编译" && RouterTaskPresentation.Heading("—").Title == "暂无正在执行的任务", "Plain and idle task headings");
+        Check(RouterTaskPresentation.Source("pro2 · \n" + new string('长', 100)).Length == 72, "Long source is one bounded line");
+    }
+
+    private static void HistoryBuffer()
+    {
+        var buffer = new RouterHistoryBuffer();
+        JsonElement Window(int offset, int total, int? count = null) => JsonSerializer.SerializeToElement(new
+        { offset, total, items = Enumerable.Range(offset, count ?? Math.Min(100, Math.Max(0, total - offset))).Select(i => new { id = i }) });
+        buffer.Store("instance/project/filter", Window(0, 206));
+        Check(buffer.TryRead("instance/project/filter", 95, 5, out var slice) && slice!.Items.Count == 5
+            && RouterJson.Integer(slice.Items[0], "id") == 95, "History window covers local pages through its boundary");
+        Check(!buffer.TryRead("instance/project/filter", 96, 5, out _) && !buffer.TryRead("other/project/filter", 0, 5, out _)
+            && !buffer.TryRead("instance/project/other-filter", 0, 5, out _), "Uncovered or differently bound history is never reused");
+        buffer.Store("last", Window(200, 206));
+        Check(buffer.TryRead("last", 204, 5, out slice) && slice!.Items.Count == 2, "Partial final page is retained");
+        buffer.Store("empty", Window(0, 0));
+        Check(buffer.TryRead("empty", 0, 5, out slice) && slice!.Items.Count == 0, "Empty filtered history is a valid snapshot");
+        Throws<InvalidDataException>(() => buffer.Store("bad", Window(0, 206, 101)));
+        Throws<InvalidDataException>(() => buffer.Store("short", Window(0, 206, 5)));
+        buffer.Clear(); Check(!buffer.TryRead("empty", 0, 5, out _), "History reset removes prior bindings");
+    }
+
+    private static void PagingReads()
+    {
+        using var handler = new Fixture { HistoryTotal = 206 };
+        using var form = new RouterMonitorForm(new RouterMonitorClient(handler), observe: false)
+        { ShowInTaskbar = false, StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
+        form.SetPinned(true); form.Show();
+        using var observer = new RouterMonitorClient(new Fixture());
+        form.ApplySnapshot(observer.SnapshotAsync().GetAwaiter().GetResult());
+        handler.HoldHistory = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var first = form.HistoryAsync(); var shared = form.HistoryAsync();
+        Check(handler.Routes.Count(uri => uri.AbsolutePath == "/api/history") == 1, "Overlapping page reads share one history request");
+        handler.HoldHistory.SetResult(); Pump(Task.WhenAll(first, shared)); handler.HoldHistory = null;
+        var history = AllControls(form).OfType<System.Windows.Forms.DataGridView>().Single(grid => grid.Columns.Count == 6);
+        var next = AllControls(form).OfType<System.Windows.Forms.Button>().Single(button => button.AccessibleName == "历史下一页");
+        var requests = handler.Routes.Count; var initial = RouterJson.Text((JsonElement)history.Rows[0].Tag!, "id");
+        for (var i = 0; i < 8; i++) next.PerformClick();
+        Check(handler.Routes.Count == requests && RouterJson.Text((JsonElement)history.Rows[0].Tag!, "id") != initial,
+            "Adjacent history pages render synchronously without network reads");
+        handler.HoldHistory = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var obsolete = form.HistoryAsync(forceRefresh: true);
+        AllControls(form).OfType<System.Windows.Forms.TextBox>().Single().Text = "latest & filter";
+        var latest = form.HistoryAsync();
+        handler.HoldHistory.SetResult(); Pump(Task.WhenAll(obsolete, latest)); handler.HoldHistory = null;
+        Check(handler.ReadsCanceled == 1 && handler.Routes.Last().Query.Contains("latest%20%26%20filter")
+            && !form.FreshnessText.Contains("中断"), "Changed filters supersede only obsolete reads without marking the Router offline");
+        requests = handler.Routes.Count;
+        form.ApplySnapshot(form.Snapshot! with { InstanceId = new string('b', 32) });
+        Pump(form.HistoryAsync());
+        Check(handler.Routes.Count == requests + 1, "Server instance changes invalidate the history window");
+
+        Pump(form.RefreshViewAsync());
+        var queue = AllControls(form).OfType<System.Windows.Forms.DataGridView>().Single(grid => grid.Columns.Count == 3);
+        var queueNext = AllControls(form).OfType<System.Windows.Forms.Button>().Single(button => button.AccessibleName == "队列下一页");
+        handler.HoldHealth = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var background = form.RefreshViewAsync();
+        requests = handler.Routes.Count; queueNext.PerformClick();
+        Check(handler.Routes.Count == requests + 1 && handler.Routes.Last().AbsolutePath == "/api/queue"
+            && RouterJson.Integer((JsonElement)queue.Rows[0].Tag!, "rank") > 1, "Queue paging does not wait for background snapshot polling");
+        handler.HoldHealth.SetResult(); Pump(background); handler.HoldHealth = null;
+        handler.HoldQueue = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var oldQueue = form.RefreshQueueAsync(); queueNext.PerformClick(); queueNext.PerformClick();
+        var newestQueue = form.RefreshQueueAsync(userInitiated: true);
+        handler.HoldQueue.SetResult(); Pump(Task.WhenAll(oldQueue, newestQueue)); handler.HoldQueue = null;
+        Check(RouterJson.Integer((JsonElement)queue.Rows[0].Tag!, "rank") == 1 + queue.Rows.Count * 3,
+            "Rapid queue paging keeps the newest page when older reads finish");
+        Check(handler.Posts == 0, "Paging and cache work never send execution controls");
+        form.Close();
+    }
+
+    private static void Pump(Task task)
+    {
+        var deadline = Stopwatch.StartNew();
+        while (!task.IsCompleted && deadline.Elapsed < TimeSpan.FromSeconds(6))
+        { System.Windows.Forms.Application.DoEvents(); Thread.Sleep(1); }
+        Check(task.IsCompleted, "Synthetic read completes within its deadline"); task.GetAwaiter().GetResult();
+    }
+
+    // Explicit opt-in: fixed loopback metadata only; no controls or production settings.
+    internal static void Benchmark(string directory)
+    {
+        Directory.CreateDirectory(directory);
+        using var handler = new ReadProbe();
+        using var client = new RouterMonitorClient(handler);
+        var snapshotTask = client.SnapshotAsync(); Pump(snapshotTask); var snapshot = snapshotTask.Result;
+        var watch = Stopwatch.StartNew();
+        var small = client.HistoryAsync(snapshot.ProjectKey, "all", "all", "all", "", 0, limit: 5); Pump(small);
+        var fiveRowReadMilliseconds = watch.Elapsed.TotalMilliseconds;
+        using var form = new RouterMonitorForm(client, observe: false)
+        { ShowInTaskbar = false, StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
+        form.SetPinned(true); form.Show(); form.ApplySnapshot(snapshot);
+        watch.Restart(); Pump(form.HistoryAsync()); var windowReadMilliseconds = watch.Elapsed.TotalMilliseconds;
+        var history = AllControls(form).OfType<System.Windows.Forms.DataGridView>().Single(grid => grid.Columns.Count == 6);
+        var next = AllControls(form).OfType<System.Windows.Forms.Button>().Single(button => button.AccessibleName == "历史下一页");
+        var reads = handler.HistoryReads; var samples = new List<double>();
+        var pages = Math.Min(16, Math.Max(0, Math.Min(100, (int)history.Tag!) / Math.Max(1, history.Rows.Count) - 1));
+        for (var i = 0; i < pages; i++)
+        {
+            watch.Restart(); next.PerformClick(); history.Refresh(); System.Windows.Forms.Application.DoEvents();
+            samples.Add(watch.Elapsed.TotalMilliseconds);
+        }
+        Check(samples.Count > 0 && handler.HistoryReads == reads, "Live history pages reuse the bounded read without HTTP");
+        var sorted = samples.Order().ToArray();
+        File.WriteAllText(Path.Combine(directory, "router-history-performance.json"), JsonSerializer.Serialize(new
+        {
+            measuredAt = DateTimeOffset.UtcNow, project = snapshot.ProjectKey, retainedRecords = (int)history.Tag!,
+            fiveRowReadMilliseconds, windowReadMilliseconds, cachedPages = samples.Count, cachedPageHttpReads = handler.HistoryReads - reads,
+            cachedPageMedianMilliseconds = sorted[sorted.Length / 2], cachedPageP95Milliseconds = sorted[(int)Math.Ceiling(sorted.Length * .95) - 1],
+            samplesMilliseconds = samples, handler.ControlRequests,
+        }, new JsonSerializerOptions { WriteIndented = true }));
+        Check(handler.ControlRequests == 0, "Live benchmark sends no execution controls"); form.Close();
+    }
+
+    private sealed class ReadProbe : DelegatingHandler
+    {
+        internal int HistoryReads, ControlRequests;
+        internal ReadProbe() : base(new HttpClientHandler { AllowAutoRedirect = false, UseProxy = false }) { }
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.Method != HttpMethod.Get) { ControlRequests++; throw new InvalidOperationException("Read-only benchmark"); }
+            if (request.RequestUri!.AbsolutePath == "/api/history") HistoryReads++;
+            return base.SendAsync(request, cancellationToken);
+        }
+    }
+
     internal static void Capture(string directory)
     {
         Directory.CreateDirectory(directory);
@@ -66,6 +205,11 @@ internal static class RouterModuleTests
             form.RefreshViewAsync().GetAwaiter().GetResult();
             form.PerformLayout();
             System.Windows.Forms.Application.DoEvents();
+            var taskTitle = AllControls(form).OfType<System.Windows.Forms.Label>().Single(label => label.Text == "Boot To Base · Then Verify Scenario");
+            Check(System.Windows.Forms.TextRenderer.MeasureText(taskTitle.Text, taskTitle.Font).Width < taskTitle.ClientSize.Width
+                && taskTitle.AccessibleDescription!.Contains("DesktopAspectLockTemporaryVerification"), $"Readable current task retains the original identity at {dpi} DPI");
+            Check(AllControls(form).OfType<System.Windows.Forms.Label>().Any(label => label.Text.StartsWith("来源   pro2")
+                && label.AccessibleDescription!.Length > label.Text.Length), "Source has its own line and a complete accessible description");
             var close = AllControls(form).OfType<System.Windows.Forms.Button>().Single(button => button.AccessibleName == "收起弹层");
             var closePosition = form.PointToClient(close.PointToScreen(Point.Empty));
             Check(closePosition.X + close.Width <= form.ClientSize.Width, $"Header controls fit popup at {dpi} DPI");
@@ -203,7 +347,8 @@ internal static class RouterModuleTests
     {
         internal const string Project = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
         internal readonly List<Uri> Routes = [];
-        internal int Posts;
+        internal int Posts, ReadsCanceled, HistoryTotal = 76;
+        internal TaskCompletionSource? HoldHistory, HoldQueue, HoldHealth;
         internal JsonElement? LastControl;
         internal bool LoseControlReply, OldApi, WrongProject, Stale, Oversized, Empty;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -218,6 +363,12 @@ internal static class RouterModuleTests
                 return Json(new { ok = true, requestId = new string('a', 32), notice = "取消已请求 · 等待清理", result = new { cleanupVerified = false } });
             }
             var route = request.RequestUri!.AbsolutePath;
+            var gate = route switch { "/api/history" => HoldHistory, "/api/queue" => HoldQueue, "/health" => HoldHealth, _ => null };
+            if (gate is not null)
+            {
+                try { await gate.Task.WaitAsync(cancellationToken); }
+                catch (OperationCanceledException) { ReadsCanceled++; throw; }
+            }
             if (route == "/health")
             {
                 if (Oversized) return new(HttpStatusCode.OK) { Content = new StringContent(new string('x', 1024 * 1024 + 1)) };
@@ -229,9 +380,9 @@ internal static class RouterModuleTests
             {
                 projectKey = WrongProject ? new string('d', 64) : selectedProject,
                 observedAt = DateTimeOffset.UtcNow.AddMinutes(Stale ? -1 : 0).ToUnixTimeMilliseconds() / 1000d,
-                requestId = Empty ? "" : new string('a', 32), headline = Empty ? "空闲" : "清理中", task = Empty ? "—" : "合成原生运行与清理观察 · 保留完整长任务名",
+                requestId = Empty ? "" : new string('a', 32), headline = Empty ? "空闲" : "清理中", task = Empty ? "—" : "POB.Tests.Runtime.DesktopAspectLockTemporaryVerification.BootToBase_ThenVerifyScenario",
                 queuedCount = Empty ? 0 : 41, elapsed = "1:25", progressClock = Empty ? "" : "距原生变化 0:08", detail = Empty ? "" : "等待原生清理证据；当前任务输入保留。", tone = Empty ? "idle" : "warning",
-                owner = new { label = Empty ? "" : "成长面板视觉验证" }, resourceRecovery = new { primary = new { action = "stop", label = "停止并收尾" } },
+                owner = new { label = Empty ? "" : "pro2 · 现在问题在于 · 桌面宽高比与初始化流程验证 · " + new string('长', 80) }, resourceRecovery = new { primary = new { action = "stop", label = "停止并收尾" } },
             });
             var parameters = request.RequestUri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries)
                 .Select(part => part.Split('=', 2)).ToDictionary(part => part[0], part => part.Length == 2 ? part[1] : "");
@@ -244,8 +395,8 @@ internal static class RouterModuleTests
             });
             if (route == "/api/history") return Json(new
             {
-                total = 76, offset,
-                items = Enumerable.Range(offset, Math.Min(limit, Math.Max(0, 76 - offset))).Select(i => new { id = i.ToString("x32"), createdLocal = "2026-10-27T21:00:00+08:00", task = "独立测试与回执 " + i,
+                total = HistoryTotal, offset,
+                items = Enumerable.Range(offset, Math.Min(limit, Math.Max(0, HistoryTotal - offset))).Select(i => new { id = i.ToString("x32"), createdLocal = "2026-10-27T21:00:00+08:00", task = "独立测试与回执 " + i,
                     source = "原对话 " + i, outcome = i % 3 == 0 ? "failed" : "completed", failureClass = i % 3 == 0 ? "validation_failed" : "", queueSeconds = 12.5,
                     executionSeconds = 41.2, cleanupSeconds = 3.1, cleanupVerified = true }),
                 counts = new { completed = 74, failed = 2, cancelled = 0, pending = 0 },
