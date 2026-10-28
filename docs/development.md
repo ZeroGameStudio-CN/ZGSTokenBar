@@ -81,8 +81,13 @@ as Codex; dialogs/dropdowns retain interaction. Only a pinned view enables
 execution controls. Data-only card refreshes do not reset window placement or
 dismiss a pinned popup. Screen placement, palette and DPI geometry reuse the bar.
 Current execution, queue and recent history share one page with no tab navigation
-or scrollbars. Both tables request only the visible row count through the existing
-bounded API; older records remain available through paging. Current execution
+or scrollbars. Queue pages request the visible row count and bypass background
+snapshot polling. History reads one bounded 100-record window and slices visible
+pages locally, keyed by server instance, project and filters. Obsolete read requests
+are cancelled; matching in-flight history reads are shared. The first history page
+refreshes every ten seconds, while older pages retain their snapshot until explicit
+refresh or context change. The snapshot time is available with history statistics.
+History is never used as execution or release authority. Current execution
 actions use the existing dark context-menu renderer. Filters are collapsed by
 default; full timestamps and waiting/cleanup durations remain in row hover/details.
 The registered project selector uses flat chips for the current small catalog,
@@ -93,6 +98,11 @@ project behind the existing styled More menu, without horizontal scrolling.
 --json` expose presentation-only acceptance. Synthetic HTTP, control and capture
 checks run with `dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj
 -c Release -- --router-module <temporary-capture-directory>`.
+The current task uses a readable method title, separate progress/source lines and
+the exact full task/source in hover and accessibility descriptions. An explicit
+read-only local performance probe runs with the same command and
+`--router-history-benchmark <temporary-output-directory>`; it measures live reads
+and cached native page rendering without execution controls or production settings.
 
 All acceptance is non-interactive and CLI-only. Do not use desktop automation, injected pointer/keyboard input, or user-performed GUI interaction as required evidence.
 
