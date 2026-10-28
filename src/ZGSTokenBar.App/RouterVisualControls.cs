@@ -89,7 +89,7 @@ internal sealed class RouterButton : Button
         if ((_hovered || Focused && ShowFocusCues || _selected) && Enabled)
         { using var border = new Pen(RouterVisualPalette.Mix(fill, accent, .32f), s); g.DrawPath(border, shape); }
         if (!IconOnly)
-            TextRenderer.DrawText(g, Text, Font, ClientRectangle, ink, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+            TextRenderer.DrawText(g, Text, Font, ClientRectangle, ink, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
         else DrawIcon(g, ink, s);
     }
     private void DrawIcon(Graphics g, Color color, float s)

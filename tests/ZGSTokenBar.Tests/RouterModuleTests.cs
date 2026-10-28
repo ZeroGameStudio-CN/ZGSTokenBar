@@ -85,6 +85,13 @@ internal static class RouterModuleTests
                     $"Visible page rows fit without scrolling at {dpi} DPI");
             }
             Save(form, Path.Combine(directory, $"router-history-{dpi}.png"));
+            var projectButtons = AllControls(form).OfType<RouterButton>().Where(button => button.AccessibleName?.StartsWith("切换工程 ") == true).ToArray();
+            Check(projectButtons.Length == 3 && projectButtons.Count(button => button.Selected) == 1, "Registered projects use flat selected chips");
+            projectButtons.Single(button => button.AccessibleName == "切换工程 ZGSProject_5").PerformClick();
+            System.Windows.Forms.Application.DoEvents();
+            Check(form.Snapshot?.ProjectKey == new string('e', 64), "Project chip selects the exact registered key");
+            projectButtons.Single(button => button.AccessibleName == "切换工程 POB").PerformClick();
+            System.Windows.Forms.Application.DoEvents();
             var first = ((JsonElement)grid.Rows[0].Tag!).GetProperty("id").GetString();
             AllControls(form).OfType<System.Windows.Forms.Button>().Single(button => button.AccessibleName == "历史下一页").PerformClick();
             System.Windows.Forms.Application.DoEvents();
@@ -216,10 +223,11 @@ internal static class RouterModuleTests
                 if (Oversized) return new(HttpStatusCode.OK) { Content = new StringContent(new string('x', 1024 * 1024 + 1)) };
                 return Json(new { apiVersion = OldApi ? 0 : 1, instanceId = new string('d', 32) });
             }
-            if (route == "/api/projects") return Json(new[] { new { key = Project, name = "POB", pending = 41 }, new { key = new string('e', 64), name = "另一工程", pending = 0 } });
+            if (route == "/api/projects") return Json(new[] { new { key = Project, name = "POB", pending = 41 }, new { key = new string('e', 64), name = "ZGSProject_5", pending = 2 }, new { key = new string('f', 64), name = "POB_Manual", pending = 0 } });
+            var selectedProject = request.RequestUri.Query.Split('&').FirstOrDefault(part => part.TrimStart('?').StartsWith("project="))?.Split('=', 2)[1] ?? Project;
             if (route == "/api/view") return Json(new
             {
-                projectKey = WrongProject ? new string('f', 64) : Project,
+                projectKey = WrongProject ? new string('d', 64) : selectedProject,
                 observedAt = DateTimeOffset.UtcNow.AddMinutes(Stale ? -1 : 0).ToUnixTimeMilliseconds() / 1000d,
                 requestId = Empty ? "" : new string('a', 32), headline = Empty ? "空闲" : "清理中", task = Empty ? "—" : "合成原生运行与清理观察 · 保留完整长任务名",
                 queuedCount = Empty ? 0 : 41, elapsed = "1:25", progressClock = Empty ? "" : "距原生变化 0:08", detail = Empty ? "" : "等待原生清理证据；当前任务输入保留。", tone = Empty ? "idle" : "warning",
