@@ -20,6 +20,9 @@ internal static class RouterModuleTests
         Check(handler.Routes.All(uri => uri.Host == "127.0.0.1" && uri.Port == 18761), "Fixed loopback only");
         var queue = client.QueueAsync(snapshot.ProjectKey, 20).GetAwaiter().GetResult();
         Check(RouterJson.Integer(queue, "offset") == 20 && RouterJson.Rows(queue, "items").Count() == 20, "Queue page beyond first");
+        var compactQueue = client.QueueAsync(snapshot.ProjectKey, 2, limit: 2).GetAwaiter().GetResult();
+        Check(RouterJson.Rows(compactQueue, "items").Count() == 2 && handler.Routes.Last().Query.Contains("limit=2"), "Visible queue page is bounded at the API");
+        Throws<ArgumentOutOfRangeException>(() => client.QueueAsync(snapshot.ProjectKey, 0, limit: 101).GetAwaiter().GetResult());
         client.HistoryAsync(Fixture.Project, "playmode", "failed", "2026-10-27", "测试 & x", 25).GetAwaiter().GetResult();
         var query = handler.Routes.Last().Query;
         Check(query.Contains("offset=25") && query.Contains("outcome=failed") && query.Contains("%26"), "History filter and pagination binding");
@@ -56,25 +59,64 @@ internal static class RouterModuleTests
             { ShowInTaskbar = false, StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
             form.SetPinned(true);
             Check(!form.ShowInTaskbar && form.FormBorderStyle == System.Windows.Forms.FormBorderStyle.None, "Anchored popup has no independent window chrome");
-            form.Show();
-            form.RefreshViewAsync().GetAwaiter().GetResult();
             var scale = dpi / 96f;
             form.ConfigureFor(new Rectangle(400, (int)(600 * scale), 48, 44), true, scale,
                 QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), new Rectangle(0, 0, (int)(1280 * scale), (int)(800 * scale)));
+            form.Show();
+            form.RefreshViewAsync().GetAwaiter().GetResult();
             form.PerformLayout();
+            System.Windows.Forms.Application.DoEvents();
+            var close = AllControls(form).OfType<System.Windows.Forms.Button>().Single(button => button.AccessibleName == "收起弹层");
+            var closePosition = form.PointToClient(close.PointToScreen(Point.Empty));
+            Check(closePosition.X + close.Width <= form.ClientSize.Width, $"Header controls fit popup at {dpi} DPI");
             Save(form, Path.Combine(directory, $"router-queue-{dpi}.png"));
-            form.SelectPage(1);
             form.HistoryAsync().GetAwaiter().GetResult();
             form.PerformLayout();
             System.Windows.Forms.Application.DoEvents();
-            var grid = AllControls(form).OfType<System.Windows.Forms.DataGridView>().Single(g => g.Columns.Count == 8);
+            var grid = AllControls(form).OfType<System.Windows.Forms.DataGridView>().Single(g => g.Columns.Count == 6);
             Check(grid.Columns.Cast<System.Windows.Forms.DataGridViewColumn>().Sum(c => c.Width) <= grid.ClientSize.Width,
                 $"History columns fit native popup at {dpi} DPI: client {grid.ClientSize.Width}, columns {grid.Columns.Cast<System.Windows.Forms.DataGridViewColumn>().Sum(c => c.Width)}");
+            var gridPosition = form.PointToClient(grid.PointToScreen(Point.Empty));
+            Check(gridPosition.X + grid.Width <= form.ClientSize.Width, $"History viewport fits popup at {dpi} DPI");
+            foreach (var table in AllControls(form).OfType<System.Windows.Forms.DataGridView>())
+            {
+                Check(table.Visible && table.ScrollBars == System.Windows.Forms.ScrollBars.None, "Queue and history share one scroll-free page");
+                Check(table.Rows.Cast<System.Windows.Forms.DataGridViewRow>().Sum(row => row.Height) <= table.ClientSize.Height - table.ColumnHeadersHeight,
+                    $"Visible page rows fit without scrolling at {dpi} DPI");
+            }
             Save(form, Path.Combine(directory, $"router-history-{dpi}.png"));
+            var first = ((JsonElement)grid.Rows[0].Tag!).GetProperty("id").GetString();
+            AllControls(form).OfType<System.Windows.Forms.Button>().Single(button => button.AccessibleName == "历史下一页").PerformClick();
+            System.Windows.Forms.Application.DoEvents();
+            Check(((JsonElement)grid.Rows[0].Tag!).GetProperty("id").GetString() != first, "Older history remains accessible through paging");
+            AllControls(form).OfType<System.Windows.Forms.Button>().Single(button => button.AccessibleName == "筛选记录").PerformClick();
+            System.Windows.Forms.Application.DoEvents();
+            foreach (var table in AllControls(form).OfType<System.Windows.Forms.DataGridView>())
+                Check(table.Rows.Cast<System.Windows.Forms.DataGridViewRow>().Sum(row => row.Height) <= table.ClientSize.Height - table.ColumnHeadersHeight,
+                    $"Filter expansion also remains scroll-free at {dpi} DPI");
+            Save(form, Path.Combine(directory, $"router-filters-{dpi}.png"));
+            AllControls(form).OfType<System.Windows.Forms.Button>().Single(button => button.AccessibleName == "筛选记录").PerformClick();
+            form.SetPinned(false);
+            Save(form, Path.Combine(directory, $"router-hover-{dpi}.png"));
+            form.SetPinned(true);
             form.ApplyUnavailable("合成断线情形：保留原任务和回执，等待重新观察。");
             Check(form.FreshnessText.Contains("未确认"), "Unavailable is not idle");
             Save(form, Path.Combine(directory, $"router-unavailable-{dpi}.png"));
             form.Close();
+
+            using var empty = new RouterMonitorForm(new RouterMonitorClient(new Fixture { Empty = true }), observe: false)
+            { StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
+            empty.SetPinned(true); empty.Show(); empty.RefreshViewAsync().GetAwaiter().GetResult();
+            empty.ConfigureFor(new Rectangle(400, (int)(600 * scale), 48, 44), true, scale,
+                QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), new Rectangle(0, 0, (int)(1280 * scale), (int)(800 * scale)));
+            empty.PerformLayout(); System.Windows.Forms.Application.DoEvents();
+            Save(empty, Path.Combine(directory, $"router-empty-{dpi}.png"));
+            if (dpi == 144)
+            {
+                empty.ConfigureFor(new Rectangle(400, 900, 48, 44), true, scale, QuotaBackgroundPalette.Resolve("navy"), new Rectangle(0, 0, 1920, 1200));
+                empty.PerformLayout(); Save(empty, Path.Combine(directory, "router-navy-144.png"));
+            }
+            empty.Close();
         }
     }
     private static IEnumerable<System.Windows.Forms.Control> AllControls(System.Windows.Forms.Control parent) =>
@@ -156,7 +198,7 @@ internal static class RouterModuleTests
         internal readonly List<Uri> Routes = [];
         internal int Posts;
         internal JsonElement? LastControl;
-        internal bool LoseControlReply, OldApi, WrongProject, Stale, Oversized;
+        internal bool LoseControlReply, OldApi, WrongProject, Stale, Oversized, Empty;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Routes.Add(request.RequestUri!);
@@ -179,20 +221,23 @@ internal static class RouterModuleTests
             {
                 projectKey = WrongProject ? new string('f', 64) : Project,
                 observedAt = DateTimeOffset.UtcNow.AddMinutes(Stale ? -1 : 0).ToUnixTimeMilliseconds() / 1000d,
-                requestId = new string('a', 32), headline = "清理中", task = "合成原生运行与清理观察 · 保留完整长任务名",
-                queuedCount = 41, elapsed = "1:25", progressClock = "距原生变化 0:08", detail = "等待原生清理证据；当前任务输入保留。",
-                owner = new { label = "成长面板视觉验证" }, resourceRecovery = new { primary = new { action = "stop", label = "停止并收尾" } },
+                requestId = Empty ? "" : new string('a', 32), headline = Empty ? "空闲" : "清理中", task = Empty ? "—" : "合成原生运行与清理观察 · 保留完整长任务名",
+                queuedCount = Empty ? 0 : 41, elapsed = "1:25", progressClock = Empty ? "" : "距原生变化 0:08", detail = Empty ? "" : "等待原生清理证据；当前任务输入保留。", tone = Empty ? "idle" : "warning",
+                owner = new { label = Empty ? "" : "成长面板视觉验证" }, resourceRecovery = new { primary = new { action = "stop", label = "停止并收尾" } },
             });
-            var offset = request.RequestUri.Query.Contains("offset=20") ? 20 : request.RequestUri.Query.Contains("offset=25") ? 25 : 0;
+            var parameters = request.RequestUri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries)
+                .Select(part => part.Split('=', 2)).ToDictionary(part => part[0], part => part.Length == 2 ? part[1] : "");
+            var offset = parameters.TryGetValue("offset", out var offsetText) ? int.Parse(offsetText) : 0;
+            var limit = parameters.TryGetValue("limit", out var limitText) ? int.Parse(limitText) : 25;
             if (route == "/api/queue") return Json(new
             {
-                offset, total = 41,
-                items = Enumerable.Range(offset, 20).Select(i => new { id = i.ToString("x32"), task = "合成测试 · " + i + " · " + new string('长', 28), source = "原对话 " + i, wait = "2:10", rank = i + 1, last = false, version = new string('b', 64) }),
+                offset, total = Empty ? 0 : 41,
+                items = Enumerable.Range(offset, Empty ? 0 : Math.Min(limit, Math.Max(0, 41 - offset))).Select(i => new { id = i.ToString("x32"), task = "合成测试 · " + i + " · " + new string('长', 28), source = "原对话 " + i, wait = "2:10", rank = i + 1, last = false, version = new string('b', 64) }),
             });
             if (route == "/api/history") return Json(new
             {
                 total = 76, offset,
-                items = Enumerable.Range(offset, 25).Select(i => new { id = i.ToString("x32"), createdLocal = "2026-10-27T21:00:00+08:00", task = "独立测试与回执 " + i,
+                items = Enumerable.Range(offset, Math.Min(limit, Math.Max(0, 76 - offset))).Select(i => new { id = i.ToString("x32"), createdLocal = "2026-10-27T21:00:00+08:00", task = "独立测试与回执 " + i,
                     source = "原对话 " + i, outcome = i % 3 == 0 ? "failed" : "completed", failureClass = i % 3 == 0 ? "validation_failed" : "", queueSeconds = 12.5,
                     executionSeconds = 41.2, cleanupSeconds = 3.1, cleanupVerified = true }),
                 counts = new { completed = 74, failed = 2, cancelled = 0, pending = 0 },

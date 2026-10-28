@@ -62,8 +62,9 @@ unavailable and long-name cases at 96, 144 and 192 DPI.
 The optional `zgstokenbar.monitor.router` module is a client of the separately
 installed Router monitor at `127.0.0.1:18761`. It is disabled by default and has
 no project/journal/Unity dependency. An enabled module refreshes its compact card
-every two seconds; the native window reads queue pages while visible and fetches
-history only on demand. The monitor caches observations across clients. Closing
+every two seconds; the native popup reads viewport-sized queue pages while visible
+and refreshes recent records at most every ten seconds outside text/menu interaction.
+Explicit paging/filtering remains on demand. The monitor caches observations across clients. Closing
 Token Bar or disabling this module does not stop the monitor or any Editor job.
 Enable it in Settings or with `ZGSTokenBar.Cli plugin enable zgstokenbar.monitor.router --json`.
 
@@ -79,6 +80,11 @@ pointer timer provides the same leave grace, outside-click and Escape dismissal
 as Codex; dialogs/dropdowns retain interaction. Only a pinned view enables
 execution controls. Data-only card refreshes do not reset window placement or
 dismiss a pinned popup. Screen placement, palette and DPI geometry reuse the bar.
+Current execution, queue and recent history share one page with no tab navigation
+or scrollbars. Both tables request only the visible row count through the existing
+bounded API; older records remain available through paging. Current execution
+actions use the existing dark context-menu renderer. Filters are collapsed by
+default; full timestamps and waiting/cleanup durations remain in row hover/details.
 `ZGSTokenBar.Cli router show --json`, `router hide --json` and `window inspect
 --json` expose presentation-only acceptance. Synthetic HTTP, control and capture
 checks run with `dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj

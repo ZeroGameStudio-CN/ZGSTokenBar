@@ -53,13 +53,13 @@ public sealed class RouterMonitorClient : IDisposable
         return new(RouterJson.Text(health, "instanceId"), key, projects, view, DateTimeOffset.UtcNow);
     }
 
-    public Task<JsonElement> QueueAsync(string project, int offset, CancellationToken cancellationToken = default) =>
-        ReadAsync($"api/queue?project={Project(project)}&offset={Math.Max(0, offset)}&limit=20", cancellationToken);
+    public Task<JsonElement> QueueAsync(string project, int offset, CancellationToken cancellationToken = default, int limit = 20) =>
+        ReadAsync($"api/queue?project={Project(project)}&offset={Math.Max(0, offset)}&limit={PageLimit(limit)}", cancellationToken);
 
     public Task<JsonElement> HistoryAsync(string project, string kind, string outcome, string day, string query,
-        int offset, CancellationToken cancellationToken = default) =>
+        int offset, CancellationToken cancellationToken = default, int limit = 25) =>
         ReadAsync($"api/history?project={Project(project)}&category={Escape(kind)}&outcome={Escape(outcome)}"
-            + $"&day={Escape(day)}&query={Escape(query.Length > 160 ? query[..160] : query)}&offset={Math.Max(0, offset)}&limit=25", cancellationToken);
+            + $"&day={Escape(day)}&query={Escape(query.Length > 160 ? query[..160] : query)}&offset={Math.Max(0, offset)}&limit={PageLimit(limit)}", cancellationToken);
 
     public async Task<string> ExportAsync(string project, CancellationToken cancellationToken = default)
     {
@@ -113,6 +113,7 @@ public sealed class RouterMonitorClient : IDisposable
         return output.ToArray();
     }
     private static string Project(string key) => RouterJson.IsHex(key, 64) ? key : throw new ArgumentException("Select a registered project.");
+    private static int PageLimit(int limit) => limit is >= 1 and <= 100 ? limit : throw new ArgumentOutOfRangeException(nameof(limit));
     private static string Escape(string value) => Uri.EscapeDataString(value);
     public void Dispose() => _http.Dispose();
 }

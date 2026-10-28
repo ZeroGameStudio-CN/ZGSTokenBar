@@ -32,3 +32,21 @@ Leaving both anchor and popup dismisses the preview after the shared grace perio
 outside click/Escape dismisses a pinned view. Execution controls require pinning.
 Reuse the bar's hover timer, pointer supervision, screen-edge placement and palette.
 Keep task names and state explanations in the popup rather than the compact bar.
+
+The 2026-10-28 visual refinement keeps this interaction and transport contract.
+Use the existing palette with a distinct current-task summary, quiet rounded
+toolbars, a dark search field, lighter horizontal table separators and semantic
+result badges. Keep complete timestamps in row details/hover while showing a
+compact local date/time in the table. Idle views disable irrelevant actions;
+unavailable observations keep their explicit warning and disabled controls.
+Verify queue/history/hover/unavailable/empty states at 96/144/192 DPI, including
+header and viewport bounds, and one additional existing palette. All fixtures
+use synthetic data; production execution controls remain outside visual checks.
+
+The user's later refinement requires a single compact page like the Codex history
+surface, with current execution, queue and recent records visible together. No
+tab navigation or scrollbars: request only the number of rows fitting each
+viewport and page older records through the existing bounded API. Keep current
+execution actions in the existing dark context menu, queue actions/pagers as
+small glyphs, and filters collapsed until requested. Show execution duration by
+default; retain waiting/cleanup timings in row hover and original detail data.
