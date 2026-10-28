@@ -18,6 +18,12 @@ using ZGSTokenBar.Plugin.AiGatewayObserver;
 
 if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJobExitCode;
 
+if (args.Length == 3 && args[0] == "--history-refresh-memory-probe")
+{
+    ConversationHistoryRefreshTests.Probe(args[1], args[2]);
+    return 0;
+}
+
 if (args.Length == 4 && args[0] == "--ledger-memory-probe")
 {
     LedgerMemoryTests.Probe(args[1], args[2], args[3]);
@@ -79,6 +85,7 @@ if (args.Length == 1 && args[0] == "--persistence-regressions")
     PersistenceRegressionTests.LedgerTransactions();
     PersistenceRegressionTests.LedgerSaveRetry();
     PersistenceRegressionTests.ConversationHistoryPersistence();
+    ConversationHistoryRefreshTests.Run();
     PersistenceRegressionTests.BuiltinDataRootIsolation();
     PluginLifecycleRegressionTests.Run();
     Console.WriteLine("PASS persistence and plugin lifecycle regressions");
@@ -355,6 +362,7 @@ var tests = new (string Name, Action Run)[]
     ("Token ledger serialized writers", PersistenceRegressionTests.LedgerTransactions),
     ("Token ledger failed-save retry", PersistenceRegressionTests.LedgerSaveRetry),
     ("Conversation history persistence", PersistenceRegressionTests.ConversationHistoryPersistence),
+    ("Unchanged conversation refresh allocation and persistence", ConversationHistoryRefreshTests.Run),
     ("Built-in plugin host data-root isolation", PersistenceRegressionTests.BuiltinDataRootIsolation),
     ("Plugin refresh and disable lifecycle", PluginLifecycleRegressionTests.Run),
     ("Claude usage parser", TestClaudeParser),

@@ -160,8 +160,15 @@ explicit first-token latency remains a separate metric. Interrupted turns freeze
 their timing; dormant unfinished turns show unavailable speed. The lifetime
 baseline is unchanged. Completed turn summaries are retained in the existing
 local token index for up to 90 days or 500 turns, keyed by session and turn;
-prompts and responses are never written. The popover starts at the newest
-summaries and pages through the retained records, while unfinished turns remain
+prompts and responses are never written. Unchanged terminal turns reuse the
+in-memory history instead of
+reloading the full token ledger on every fast refresh. New turns, failed-save
+retries and due retention still merge with the latest durable index under its
+existing cross-process lock. The opt-in `--history-refresh-memory-probe
+<temporary-index-copy> <report>` test command compares this refresh path using
+an isolated session and ledger, with unchanged on-disk bytes checked.
+The popover starts at the newest summaries and pages through the retained records,
+while unfinished turns remain
 in the live window. Plugin snapshot details continue to expose the bounded recent
 view. The Codex surface opens the conversation list as its primary view, with
 spend, Token and overall cache summaries beneath it. Its optional Radar opens as
