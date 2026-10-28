@@ -947,13 +947,12 @@ public sealed class AppSettingsStore
 
     private static CodexTokenUsageIndex ParseCodexTokenUsageIndex(string json)
     {
-        using var document = JsonDocument.Parse(json);
-        var schemaVersion = document.RootElement.TryGetProperty("schemaVersion", out var schema)
-            && schema.TryGetInt32(out var parsedSchema) ? parsedSchema : 1;
-        if (schemaVersion is < 1 or > CodexTokenUsageIndex.CurrentSchemaVersion)
-            throw new JsonException("Unsupported Codex token usage index schema.");
         var index = JsonSerializer.Deserialize(json, SettingsJsonContext.CodexTokenUsageIndex)
             ?? throw new JsonException("Invalid Codex token usage index.");
+        // Validate the deserialized header without building a second full DOM.
+        // A missing legacy header still normalizes to the current in-memory schema.
+        if (index.SchemaVersion is < 1 or > CodexTokenUsageIndex.CurrentSchemaVersion)
+            throw new JsonException("Unsupported Codex token usage index schema.");
         if (index.HistoricalBaselineTokens is < 0
             || (index.HistoricalBaselineTokens is null) != (index.HistoricalBaselineAt is null))
             throw new JsonException("Invalid historical Token baseline.");

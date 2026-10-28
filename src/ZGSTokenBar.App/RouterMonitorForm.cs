@@ -160,7 +160,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _filters.Visible = false; _historyBody.Controls.Add(_filters, 0, 1);
         _history.EmptyTitle = "没有匹配的记录"; _history.EmptyDetail = "调整筛选条件后重试";
         _history.Columns.AddRange(Column("createdLocal", "提交时间", 115), Column("task", "任务", 255), Column("source", "来源对话", 150),
-            Column("state", "结果", 90), Column("executionSeconds", "耗时", 70), Column("cleanupVerified", "释放", 55));
+            Column("state", "结果", 90), Column("executionSeconds", "占用", 70), Column("cleanupVerified", "释放", 55));
         _history.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0) ShowRecord(_history.Rows[e.RowIndex]); };
         _history.Margin = Padding.Empty; _historyBody.Controls.Add(_history, 0, 2);
         var historySection = Section("历史"); historySection.Controls.Add(_historyBody); _root.Controls.Add(historySection, 0, 3);
@@ -569,7 +569,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
                         Seconds(row, "executionSeconds"), RouterJson.Boolean(row, "cleanupVerified") ? "✓" : "待确认");
                     _history.Rows[n].Tag = row;
                     _history.Rows[n].Cells[0].ToolTipText = RouterJson.Text(row, "createdLocal");
-                    _history.Rows[n].Cells[4].ToolTipText = $"等待 {Seconds(row, "queueSeconds")}\n执行 {Seconds(row, "executionSeconds")}\n清理 {Seconds(row, "cleanupSeconds")}";
+                    _history.Rows[n].Cells[4].ToolTipText = TimingDetails(row);
                 }
             }
             finally { _history.ResumeLayout(); }
@@ -581,7 +581,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
             var counts = RouterJson.Field(metadata, "counts");
             _statistics = $"成功 {RouterJson.Integer(counts, "completed")} · 失败 {RouterJson.Integer(counts, "failed")} · 取消 {RouterJson.Integer(counts, "cancelled")} · 未结束 {RouterJson.Integer(counts, "pending")}" + Environment.NewLine
                 + string.Join("   ", RouterJson.Rows(metadata, "groups").Where(g => RouterJson.Integer(g, "count") > 0)
-                    .Select(g => $"{RouterJson.Text(g, "category")} P95 等待/执行/清理 {Seconds(g, "queueSecondsP95")}/{Seconds(g, "executionSecondsP95")}/{Seconds(g, "cleanupSecondsP95")}"));
+                    .Select(g => $"{RouterJson.Text(g, "category")} P95 排队/占用/清理 {Seconds(g, "queueSecondsP95")}/{Seconds(g, "executionSecondsP95")}/{Seconds(g, "cleanupSecondsP95")}"));
             _historySummary.Text = $"{total} 条  ·  {RouterJson.Integer(counts, "failed")} 失败";
             _historyReadAt = slice.CapturedAt;
             _statistics = "记录快照 " + _historyReadAt.ToLocalTime().ToString("HH:mm:ss") + Environment.NewLine + _statistics;
@@ -670,10 +670,21 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     }
     private static string ResultName(JsonElement row) => RouterJson.Text(row, "failureClass") switch
     {
+        "dispatch_preflight_failed" => "派发前拒绝",
         "input_changed_before_dispatch" => "输入变化 · 未执行", "compile_failed" => "编译失败", "validation_failed" => "测试失败",
         "queue_timeout" => "排队超时", "execution_timeout" => "执行超时", "cleanup_unconfirmed" => "清理待确认",
         _ => RouterJson.Text(row, "outcome") switch { "completed" => "成功", "failed" => "失败", "cancelled" => "取消", _ => "未结束" },
     };
+    private static string TimingDetails(JsonElement row)
+    {
+        var lines = new List<string> { $"排队 {Seconds(row, "queueSeconds")}", $"资源占用 {Seconds(row, "executionSeconds")}" };
+        if (RouterJson.Text(row, "failureClass") == "dispatch_preflight_failed") lines.Add("原生操作未执行");
+        foreach (var (field, label) in new[] { ("preflightSeconds", "派发前检查"), ("dispatchRecoveryWaitSeconds", "派发恢复等待"),
+                     ("nativeTestSeconds", "原生测试"), ("recoverySeconds", "恢复执行"), ("recoveryWaitSeconds", "恢复等待") })
+            if (RouterJson.Number(row, field) is not null) lines.Add(label + " " + Seconds(row, field));
+        lines.Add("清理 " + Seconds(row, "cleanupSeconds"));
+        return string.Join(Environment.NewLine, lines);
+    }
     private static string Seconds(JsonElement row, string name) => RouterJson.Number(row, name) is { } n ? $"{n:0.##}s" : "—";
     private static string SubmittedTime(string value) => DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var time)
         ? time.ToString("MM-dd HH:mm", CultureInfo.InvariantCulture) : value;
