@@ -43,7 +43,8 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     private bool _pinned, _modal;
     private PopoverTailSide _tailSide = PopoverTailSide.Bottom;
     private float _tailOffset, _popoverScale = 1;
-    private Size _bodySize = new(720, 520);
+    private static readonly Size PreferredBodySize = new(760, 720);
+    private Size _bodySize = PreferredBodySize;
     private readonly Dictionary<Control, (string Family, float Pixels, FontStyle Style)> _logicalFonts = [];
     private readonly Dictionary<(string Family, float Pixels, FontStyle Style), Font> _scaledFonts = [];
     private RouterSnapshot? _snapshot;
@@ -75,7 +76,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         BackColor = Color.FromArgb(17, 21, 29);
         ForeColor = Color.FromArgb(229, 234, 243);
         FormBorderStyle = FormBorderStyle.None;
-        ClientSize = new Size(720, 520);
+        ClientSize = PreferredBodySize;
         StartPosition = FormStartPosition.Manual;
         ShowInTaskbar = false;
         ShowIcon = false;
@@ -85,8 +86,8 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), ColumnCount = 1, RowCount = 8 };
         _root.ColumnStyles.Add(new(SizeType.Percent, 100));
         foreach (var style in new[] { new RowStyle(SizeType.Absolute, 34), new RowStyle(SizeType.Absolute, 100),
-            new RowStyle(SizeType.Absolute, 30), new RowStyle(SizeType.Percent, 35), new RowStyle(SizeType.Absolute, 30),
-            new RowStyle(SizeType.Absolute, 0), new RowStyle(SizeType.Percent, 65), new RowStyle(SizeType.Absolute, 24) }) _root.RowStyles.Add(style);
+            new RowStyle(SizeType.Absolute, 30), new RowStyle(SizeType.Percent, 50), new RowStyle(SizeType.Absolute, 30),
+            new RowStyle(SizeType.Absolute, 0), new RowStyle(SizeType.Percent, 50), new RowStyle(SizeType.Absolute, 24) }) _root.RowStyles.Add(style);
         Controls.Add(_root);
         _projects.AccessibleName = "工程切换"; _freshness.Width = 140;
         _kind.Width = _outcome.Width = 92; _day.Width = 112; _query.Width = 160;
@@ -122,14 +123,16 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _up = IconButton(RouterButtonIcon.Up, "上移", () => QueueControlAsync("move", -1));
         _down = IconButton(RouterButtonIcon.Down, "下移", () => QueueControlAsync("move", 0));
         _queueCancel = IconButton(RouterButtonIcon.Close, "取消排队任务", () => QueueControlAsync("cancel", null));
-        _queuePrevious = IconButton(RouterButtonIcon.Previous, "队列上一页", async () => { _queueOffset = Math.Max(0, _queueOffset - _queuePageSize); await RefreshQueueAsync(userInitiated: true); });
-        _queueNext = IconButton(RouterButtonIcon.Next, "队列下一页", async () => { if (_queueOffset + _queuePageSize < _queueTotal) _queueOffset += _queuePageSize; await RefreshQueueAsync(userInitiated: true); });
+        _queuePrevious = IconButton(RouterButtonIcon.Previous, "队列上一页", () => PageQueueAsync(-1));
+        _queueNext = IconButton(RouterButtonIcon.Next, "队列下一页", () => PageQueueAsync(1));
+        _queue.PageRequested += async (_, pages) => await PageQueueAsync(pages);
         _queuePage.Width = 64; _queuePage.TextAlign = ContentAlignment.MiddleCenter;
         _root.Controls.Add(Header(Flow(_queueHeading), Flow(_top, _up, _down, _queueCancel, _queuePrevious, _queuePage, _queueNext), 280), 0, 2);
         _root.Controls.Add(_queue, 0, 3);
 
-        _historyPrevious = IconButton(RouterButtonIcon.Previous, "历史上一页", async () => { _historyOffset = Math.Max(0, _historyOffset - _historyPageSize); await HistoryAsync(); });
-        _historyNext = IconButton(RouterButtonIcon.Next, "历史下一页", async () => { if (_historyOffset + _historyPageSize < _historyTotal) _historyOffset += _historyPageSize; await HistoryAsync(); });
+        _historyPrevious = IconButton(RouterButtonIcon.Previous, "历史上一页", () => PageHistoryAsync(-1));
+        _historyNext = IconButton(RouterButtonIcon.Next, "历史下一页", () => PageHistoryAsync(1));
+        _history.PageRequested += async (_, pages) => await PageHistoryAsync(pages);
         _filterToggle = IconButton(RouterButtonIcon.Filter, "筛选记录", async () =>
         {
             _filtersVisible = !_filtersVisible; _filters!.Visible = _filtersVisible; _root.RowStyles[5].Height = _filtersVisible ? 34 * _popoverScale : 0;
@@ -205,7 +208,8 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         }
         _popoverScale = Math.Max(1, scale);
         ApplyPalette(theme);
-        _bodySize = new(Math.Min((int)(720 * _popoverScale), area.Width - 16), Math.Min((int)(520 * _popoverScale), area.Height - 24));
+        _bodySize = new(Math.Min((int)(PreferredBodySize.Width * _popoverScale), area.Width - (int)(16 * _popoverScale)),
+            Math.Min((int)(PreferredBodySize.Height * _popoverScale), area.Height - (int)(28 * _popoverScale)));
         var tail = (int)(8 * _popoverScale);
         var placement = TaskbarMiniPopoverMath.Place(anchor, _bodySize, tail, (int)(3 * _popoverScale), area);
         _tailSide = placement.TailSide; _tailOffset = placement.TailOffset;
@@ -231,6 +235,14 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         base.OnPaint(e); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         using var path = SurfacePath(); using var border = new Pen(Color.FromArgb(86, 100, 116, 139));
         e.Graphics.DrawPath(border, path);
+    }
+    protected override void OnMouseWheel(MouseEventArgs e)
+    {
+        var point = PointToScreen(e.Location);
+        var grid = new[] { _queue, _history }.FirstOrDefault(table => table.RectangleToScreen(table.ClientRectangle).Contains(point));
+        if (grid is null) { base.OnMouseWheel(e); return; }
+        grid.PageFromWheel(e.Delta);
+        if (e is HandledMouseEventArgs handled) handled.Handled = true;
     }
     private static IEnumerable<Control> Children(Control parent) => parent.Controls.Cast<Control>().SelectMany(child => new[] { child }.Concat(Children(child)));
 
@@ -440,6 +452,27 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
             if (!IsDisposed && !_stop.IsCancellationRequested && generation != _generation) await RefreshViewAsync();
         }
     }
+
+    private async Task PageQueueAsync(int pages)
+    {
+        if (!_available || _controlling) return;
+        var offset = PageOffset(_queueOffset, pages, _queuePageSize, _queueTotal);
+        if (offset == _queueOffset) return;
+        _queueOffset = offset;
+        await RefreshQueueAsync(userInitiated: true);
+    }
+
+    private async Task PageHistoryAsync(int pages)
+    {
+        if (!_available || _controlling) return;
+        var offset = PageOffset(_historyOffset, pages, _historyPageSize, _historyTotal);
+        if (offset == _historyOffset) return;
+        _historyOffset = offset;
+        await HistoryAsync();
+    }
+
+    private static int PageOffset(int offset, int pages, int size, int total) =>
+        (int)Math.Clamp(offset + (long)pages * size, 0, Math.Max(0, (total - 1) / size * size));
 
     internal async Task RefreshQueueAsync(bool userInitiated = false)
     {

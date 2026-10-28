@@ -26,6 +26,7 @@ if (args.Length == 2 && args[0] == "--router-history-benchmark")
 
 if (args.Length > 0 && args[0] == "--router-module")
 {
+    System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
     RouterModuleTests.Run();
     if (args.Length == 2) RouterModuleTests.Capture(args[1]);
     Console.WriteLine("PASS native Router transport, controls, freshness and presentation");

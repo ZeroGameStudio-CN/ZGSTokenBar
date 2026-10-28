@@ -17,6 +17,7 @@ internal static class RouterModuleTests
         TaskHeading();
         HistoryBuffer();
         PagingReads();
+        WheelPaging();
         using var handler = new Fixture();
         using var client = new RouterMonitorClient(handler);
         var snapshot = client.SnapshotAsync().GetAwaiter().GetResult();
@@ -141,6 +142,42 @@ internal static class RouterModuleTests
         Check(task.IsCompleted, "Synthetic read completes within its deadline"); task.GetAwaiter().GetResult();
     }
 
+    private static void WheelPaging()
+    {
+        using var handler = new Fixture { HistoryTotal = 206 };
+        using var form = new RouterMonitorForm(new RouterMonitorClient(handler), observe: false)
+        { ShowInTaskbar = false, StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
+        form.Show(); Pump(form.RefreshViewAsync());
+        var grids = AllControls(form).OfType<RouterGrid>().ToArray();
+        var queue = grids.Single(grid => grid.Columns.Count == 3); var history = grids.Single(grid => grid.Columns.Count == 6);
+        string First(RouterGrid grid) => RouterJson.Text((JsonElement)grid.Rows[0].Tag!, "id");
+        void Wheel(RouterGrid grid, int delta)
+        {
+            var args = new System.Windows.Forms.HandledMouseEventArgs(System.Windows.Forms.MouseButtons.None, 0, 10, 10, delta);
+            typeof(RouterGrid).GetMethod("OnMouseWheel", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(grid, [args]);
+            Check(args.Handled, "Wheel paging consumes the native grid wheel event");
+        }
+        var original = First(history); var requests = handler.Routes.Count;
+        Wheel(history, 120); Wheel(history, -60);
+        Check(First(history) == original && handler.Routes.Count == requests, "First-page boundary and partial wheel deltas do not read or skip a page");
+        Wheel(history, -60);
+        Check(First(history) == history.Rows.Count.ToString("x32") && handler.Routes.Count == requests, "High-resolution wheel deltas accumulate into one cached history page");
+        Wheel(history, -240);
+        Check(First(history) == (history.Rows.Count * 3).ToString("x32"), "Multi-notch wheel input preserves page distance");
+        var point = form.PointToClient(history.PointToScreen(new Point(10, 10)));
+        var parentWheel = new System.Windows.Forms.HandledMouseEventArgs(System.Windows.Forms.MouseButtons.None, 0, point.X, point.Y, 120);
+        typeof(RouterMonitorForm).GetMethod("OnMouseWheel", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(form, [parentWheel]);
+        Check(parentWheel.Handled && First(history) == (history.Rows.Count * 2).ToString("x32"), "Popup wheel delivery routes to the table at the event location");
+        var historyPosition = First(history); Wheel(queue, -120);
+        Check(RouterJson.Integer((JsonElement)queue.Rows[0].Tag!, "rank") == queue.Rows.Count + 1
+            && First(history) == historyPosition && handler.Routes.Last().AbsolutePath == "/api/queue", "Queue wheel paging reads fresh data without moving history");
+        Wheel(queue, -12000); var last = First(queue); requests = handler.Routes.Count; Wheel(queue, -120);
+        Check(First(queue) == last && handler.Routes.Count == requests, "Last-page wheel input clamps without redundant reads");
+        form.ApplyUnavailable("Synthetic disconnect"); requests = handler.Routes.Count; Wheel(history, -120); Wheel(queue, 120);
+        Check(handler.Routes.Count == requests && handler.Posts == 0, "Wheel gestures neither act on unavailable data nor send controls");
+        form.Close();
+    }
+
     // Explicit opt-in: fixed loopback metadata only; no controls or production settings.
     internal static void Benchmark(string directory)
     {
@@ -228,6 +265,8 @@ internal static class RouterModuleTests
                 Check(table.Rows.Cast<System.Windows.Forms.DataGridViewRow>().Sum(row => row.Height) <= table.ClientSize.Height - table.ColumnHeadersHeight,
                     $"Visible page rows fit without scrolling at {dpi} DPI");
             }
+            Check(AllControls(form).OfType<RouterGrid>().All(table => table.Rows.Count >= 7), $"Taller popup exposes at least seven queue/history rows at {dpi} DPI: "
+                + string.Join("; ", AllControls(form).OfType<RouterGrid>().Select(table => $"{table.Rows.Count} rows, height {table.ClientSize.Height}, header {table.ColumnHeadersHeight}")));
             Save(form, Path.Combine(directory, $"router-history-{dpi}.png"));
             var projectButtons = AllControls(form).OfType<RouterButton>().Where(button => button.AccessibleName?.StartsWith("切换工程 ") == true).ToArray();
             Check(projectButtons.Length == 3 && projectButtons.Count(button => button.Selected) == 1, "Registered projects use flat selected chips");
@@ -269,6 +308,19 @@ internal static class RouterModuleTests
             }
             empty.Close();
         }
+        using var compact = new RouterMonitorForm(new RouterMonitorClient(new Fixture()), observe: false)
+        { StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
+        var smallArea = new Rectangle(0, 0, 1920, 1040);
+        compact.ConfigureFor(new Rectangle(400, 980, 48, 44), true, 2,
+            QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), smallArea);
+        compact.Show(); compact.ConfigureFor(new Rectangle(400, 980, 48, 44), true, 2,
+            QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), smallArea);
+        Pump(compact.RefreshViewAsync()); System.Windows.Forms.Application.DoEvents();
+        Check(smallArea.Contains(compact.Bounds), "Taller popup stays inside a short high-DPI desktop");
+        foreach (var table in AllControls(compact).OfType<RouterGrid>())
+            Check(table.Rows.Cast<System.Windows.Forms.DataGridViewRow>().Sum(row => row.Height) <= table.ClientSize.Height - table.ColumnHeadersHeight,
+                "Short desktops retain bounded visible pages without scrollbars");
+        Save(compact, Path.Combine(directory, "router-short-desktop-192.png")); compact.Close();
     }
     private static IEnumerable<System.Windows.Forms.Control> AllControls(System.Windows.Forms.Control parent) =>
         parent.Controls.Cast<System.Windows.Forms.Control>().SelectMany(child => new[] { child }.Concat(AllControls(child)));
