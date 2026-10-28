@@ -73,8 +73,8 @@ queued-only cancellation and version-bound order changes, qualified stop and
 cleanup inspection, filtered/paged history, phase timings/P95 and original CSV
 export. Unavailable observations are never rendered as idle. Controls are
 instance/request/project bound and are never retried after a lost reply.
-The bar area contains a state glyph and optional queue-count badge, with no task
-name or status sentence. Hover uses the existing bar's delayed, anchored popup;
+The compact bar area contains a state glyph and optional queue-count badge, with
+full task information kept in the popup. Hover uses the existing bar's delayed, anchored popup;
 clicking pins it. The popup has no taskbar entry or window chrome. The shared
 pointer timer provides the same leave grace, outside-click and Escape dismissal
 as Codex; dialogs/dropdowns retain interaction. Only a pinned view enables
@@ -92,8 +92,13 @@ actions use the existing dark context-menu renderer. Filters are collapsed by
 default; full timestamps and waiting/cleanup durations remain in row hover/details.
 Wheel gestures page the table under the pointer, including hover previews;
 high-resolution partial deltas accumulate and page boundaries do not reread.
-The preferred popup body is 760 by 720 logical pixels, with equal queue/history
+The preferred popup body is 760 by 760 logical pixels, with equal queue/history
 height. Short desktops clamp it to their working area and retain whole-row pages.
+Current, queue and history each have a named rounded surface with consistent
+headings and spacing. The bar defaults to the compact icon; the existing expand
+control reveals project/phase/elapsed metadata, while full task details remain
+in the hover popup. Saved expanded preferences remain effective; old narrow
+expanded widths normalize to the readable minimum.
 The registered project selector uses flat chips for the current small catalog,
 with selected state and pending counts. Switching uses the opaque registered key;
 short display labels never select a path. A larger catalog retains every other

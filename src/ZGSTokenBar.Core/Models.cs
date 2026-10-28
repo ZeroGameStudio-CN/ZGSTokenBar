@@ -427,7 +427,7 @@ public static class TaskbarMiniLayoutMath
     public static int NormalizeAreaContentWidth(int width, string? areaId) =>
         Math.Clamp(width, MinimumAreaContentWidthFor(areaId), MaximumAreaContentWidth);
 
-    public static int MinimumAreaContentWidthFor(string? areaId) => areaId == MiniAreaIds.Router ? 32 : MinimumAreaContentWidth;
+    public static int MinimumAreaContentWidthFor(string? areaId) => areaId == MiniAreaIds.Router ? 112 : MinimumAreaContentWidth;
 
     public static int AreaWidth(int contentWidth, bool collapsed) =>
         ProviderCollapseHandleWidth
