@@ -92,7 +92,7 @@ actions use the existing dark context-menu renderer. Filters are collapsed by
 default; full timestamps and waiting/cleanup durations remain in row hover/details.
 Wheel gestures page the table under the pointer, including hover previews;
 high-resolution partial deltas accumulate and page boundaries do not reread.
-The preferred popup body is 760 by 760 logical pixels, with equal queue/history
+The preferred popup body is 760 by 796 logical pixels, with equal queue/history
 height. Short desktops clamp it to their working area and retain whole-row pages.
 Current, queue and history each have a named rounded surface with consistent
 headings and spacing. The bar defaults to the compact icon; the existing expand
@@ -103,6 +103,11 @@ History labels the retained dispatch-to-cleanup interval as resource occupancy.
 Known starter refusals have their own result badge; row details show preflight,
 dispatch-recovery wait and reported native-runner time separately. Older servers
 without those optional fields remain readable.
+The project selector has its own full-width surface below the observation/actions
+row. Projects sort by cumulative recorded task count, then pending count and a
+stable name/key tie-break. The top three remain visible; a selected lower-ranked
+project replaces the last visible slot, preserving the two busiest projects.
+Overflow follows the same ranking in the styled More menu.
 The registered project selector uses flat chips for the current small catalog,
 with selected state and pending counts. Switching uses the opaque registered key;
 short display labels never select a path. A larger catalog retains every other

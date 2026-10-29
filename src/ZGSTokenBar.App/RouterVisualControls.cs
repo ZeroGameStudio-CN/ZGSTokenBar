@@ -153,12 +153,14 @@ internal sealed class RouterSurface : Panel
     internal RouterVisualPalette Palette { get; set; } = new(Color.FromArgb(9, 11, 15));
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     internal bool Input { get; set; }
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    internal bool EmphasizedBorder { get; set; }
     internal RouterSurface() { DoubleBuffered = true; }
     protected override void OnPaintBackground(PaintEventArgs e)
     {
         e.Graphics.Clear(Parent?.BackColor ?? Palette.Background); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         using var path = RouterVisualGeometry.Rounded(new RectangleF(.5f, .5f, Width - 1, Height - 1), 8 * RouterVisualGeometry.Scale(this));
-        using var fill = new SolidBrush(Input ? Palette.Input : Palette.Surface); using var border = new Pen(Palette.Border);
+        using var fill = new SolidBrush(Input ? Palette.Input : Palette.Surface); using var border = new Pen(EmphasizedBorder ? RouterVisualPalette.Mix(Palette.Background, Color.White, .18f) : Palette.Border);
         e.Graphics.FillPath(fill, path); e.Graphics.DrawPath(border, path);
     }
 }

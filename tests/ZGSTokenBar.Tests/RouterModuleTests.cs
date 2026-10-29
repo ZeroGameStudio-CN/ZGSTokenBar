@@ -13,6 +13,7 @@ internal static class RouterModuleTests
 {
     internal static void Run()
     {
+        ProjectOrdering();
         PopoverInteraction();
         TaskHeading();
         HistoryBuffer();
@@ -266,6 +267,16 @@ internal static class RouterModuleTests
         }
     }
 
+    private static void ProjectOrdering()
+    {
+            var ordered = RouterMonitorForm.OrderedProjects(JsonSerializer.SerializeToElement(new[] {
+                new { key = "temp", name = "A temporary", recorded = 1, pending = 20 },
+                new { key = "main", name = "POB", recorded = 1000, pending = 0 },
+                new { key = "tie-b", name = "B", recorded = 100, pending = 0 },
+                new { key = "tie-a", name = "A", recorded = 100, pending = 0 } }));
+            Check(ordered.Select(row => row.GetProperty("key").GetString()).SequenceEqual(new[] { "main", "tie-a", "tie-b", "temp" }), "Cumulative task volume ranks common projects ahead of temporary bursts, with deterministic ties");
+    }
+
     internal static void Capture(string directory)
     {
         Directory.CreateDirectory(directory);
@@ -317,6 +328,8 @@ internal static class RouterModuleTests
             Save(form, Path.Combine(directory, $"router-history-{dpi}.png"));
             var projectButtons = AllControls(form).OfType<RouterButton>().Where(button => button.AccessibleName?.StartsWith("切换工程 ") == true).ToArray();
             Check(projectButtons.Length == 3 && projectButtons.Count(button => button.Selected) == 1, "Registered projects use flat selected chips");
+            Check(projectButtons[0].AccessibleName == "切换工程 POB", "Most-used project stays first even when the catalog arrives alphabetically");
+
             projectButtons.Single(button => button.AccessibleName == "切换工程 ZGSProject_5").PerformClick();
             System.Windows.Forms.Application.DoEvents();
             Check(form.Snapshot?.ProjectKey == new string('e', 64), "Project chip selects the exact registered key");
@@ -491,7 +504,7 @@ internal static class RouterModuleTests
                 if (Oversized) return new(HttpStatusCode.OK) { Content = new StringContent(new string('x', 1024 * 1024 + 1)) };
                 return Json(new { apiVersion = OldApi ? 0 : 1, instanceId = new string('d', 32) });
             }
-            if (route == "/api/projects") return Json(new[] { new { key = Project, name = "POB", pending = 41 }, new { key = new string('e', 64), name = "ZGSProject_5", pending = 2 }, new { key = new string('f', 64), name = "POB_Manual", pending = 0 } });
+            if (route == "/api/projects") return Json(new[] { new { key = Project, name = "POB", pending = 41, recorded = 1000 }, new { key = new string('a', 64), name = "Temporary_Long_Project_Name", pending = 0, recorded = 1 }, new { key = new string('f', 64), name = "POB_Manual", pending = 0, recorded = 10 }, new { key = new string('e', 64), name = "ZGSProject_5", pending = 2, recorded = 100 } });
             var selectedProject = request.RequestUri.Query.Split('&').FirstOrDefault(part => part.TrimStart('?').StartsWith("project="))?.Split('=', 2)[1] ?? Project;
             if (route == "/api/view") return Json(new
             {
