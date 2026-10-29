@@ -5964,7 +5964,7 @@ internal sealed partial class BarForm : Form
             plugin);
 
         public static TaskbarMiniAreaContent ForLiveMetrics(string title) => new(
-            MiniAreaIds.LiveMetrics, title, 160, null, null);
+            MiniAreaIds.LiveMetrics, title, 104, null, null);
 
         public static TaskbarMiniAreaContent ForSystem(string title) => new(
             MiniAreaIds.SystemMetrics,
