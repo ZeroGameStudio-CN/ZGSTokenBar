@@ -13,7 +13,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     private readonly RouterMonitorClient _client;
     private readonly CancellationTokenSource _stop = new();
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 2000 };
-    private readonly FlowLayoutPanel _projects = new() { Width = 300, Height = 28, Margin = Padding.Empty, WrapContents = false, AutoScroll = false };
+    private readonly FlowLayoutPanel _projects = new() { Dock = DockStyle.Fill, Height = 28, Margin = Padding.Empty, WrapContents = false, AutoScroll = false };
     private readonly Dictionary<string, RouterButton> _projectButtons = new(StringComparer.Ordinal);
     private readonly ContextMenuStrip _projectMenu = new() { ShowImageMargin = false };
     private string _projectMenuRevision = "";
@@ -44,7 +44,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     private bool _pinned, _modal;
     private PopoverTailSide _tailSide = PopoverTailSide.Bottom;
     private float _tailOffset, _popoverScale = 1;
-    private static readonly Size PreferredBodySize = new(760, 760);
+    private static readonly Size PreferredBodySize = new(760, 796);
     private Size _bodySize = PreferredBodySize;
     private readonly Dictionary<Control, (string Family, float Pixels, FontStyle Style)> _logicalFonts = [];
     private readonly Dictionary<(string Family, float Pixels, FontStyle Style), Font> _scaledFonts = [];
@@ -86,7 +86,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
 
         _root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), ColumnCount = 1, RowCount = 5 };
         _root.ColumnStyles.Add(new(SizeType.Percent, 100));
-        foreach (var style in new[] { new RowStyle(SizeType.Absolute, 34), new RowStyle(SizeType.Absolute, 120),
+        foreach (var style in new[] { new RowStyle(SizeType.Absolute, 64), new RowStyle(SizeType.Absolute, 110),
             new RowStyle(SizeType.Percent, 50), new RowStyle(SizeType.Percent, 50), new RowStyle(SizeType.Absolute, 24) }) _root.RowStyles.Add(style);
         Controls.Add(_root);
         _projects.AccessibleName = "工程切换"; _freshness.Width = 140;
@@ -94,9 +94,19 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _kind.AccessibleName = "任务类型"; _outcome.AccessibleName = "结果"; _day.AccessibleName = "日期"; _query.AccessibleName = "搜索任务或对话";
         _pin = IconButton(RouterButtonIcon.Pin, "固定弹层", () => { PinChanged?.Invoke(this, !_pinned); return Task.CompletedTask; });
         var brand = Label("ROUTER", 70); brand.Font = new Font("Segoe UI Semibold", 12, FontStyle.Regular, GraphicsUnit.Pixel);
-        var header = Header(Flow(brand, _projects, _freshness), Flow(IconButton(RouterButtonIcon.Refresh, "刷新", async () => { await RefreshViewAsync(); await HistoryAsync(forceRefresh: true); }), _pin,
-            IconButton(RouterButtonIcon.Close, "收起弹层", () => { CloseRequested?.Invoke(this, EventArgs.Empty); return Task.CompletedTask; })), 108);
-        _root.Controls.Add(header, 0, 0);
+        var header = Header(Flow(brand), Flow(_freshness, IconButton(RouterButtonIcon.Refresh, "刷新", async () => { await RefreshViewAsync(); await HistoryAsync(forceRefresh: true); }), _pin,
+            IconButton(RouterButtonIcon.Close, "收起弹层", () => { CloseRequested?.Invoke(this, EventArgs.Empty); return Task.CompletedTask; })), 240);
+        var navigation = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 1, RowCount = 2 };
+        navigation.ColumnStyles.Add(new(SizeType.Percent, 100));
+        navigation.RowStyles.Add(new(SizeType.Absolute, 30)); navigation.RowStyles.Add(new(SizeType.Percent, 100));
+        navigation.Controls.Add(header, 0, 0);
+        var projectSurface = new RouterSurface { Dock = DockStyle.Fill, Input = true, Padding = new Padding(8, 2, 8, 2), Margin = new Padding(0, 0, 0, 4), AccessibleName = "项目切换区" };
+        var projectRow = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 2, RowCount = 1 };
+        projectRow.ColumnStyles.Add(new(SizeType.Absolute, 44)); projectRow.ColumnStyles.Add(new(SizeType.Percent, 100));
+        var projectLabel = Label("项目", 40); projectLabel.Dock = DockStyle.Fill;
+        projectRow.Controls.Add(projectLabel, 0, 0); projectRow.Controls.Add(_projects, 1, 0);
+        projectSurface.Controls.Add(projectRow); navigation.Controls.Add(projectSurface, 0, 1);
+        _root.Controls.Add(navigation, 0, 0);
         _headline.Font = new Font(Font.FontFamily, 11.5f, FontStyle.Bold, GraphicsUnit.Pixel);
         _task.Font = new Font(Font.FontFamily, 14, FontStyle.Bold, GraphicsUnit.Pixel);
         _metrics.Font = _detail.Font = _source.Font = _freshness.Font = _notice.Font = _historySummary.Font = new Font(Font.FontFamily, 11.5f, FontStyle.Regular, GraphicsUnit.Pixel);
@@ -361,14 +371,20 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         UpdateControls();
     }
 
+    internal static JsonElement[] OrderedProjects(JsonElement projects) => projects.EnumerateArray()
+        .OrderByDescending(row => RouterJson.Integer(row, "recorded"))
+        .ThenByDescending(row => RouterJson.Integer(row, "pending"))
+        .ThenBy(row => RouterJson.Text(row, "name"), StringComparer.OrdinalIgnoreCase)
+        .ThenBy(row => RouterJson.Text(row, "key"), StringComparer.Ordinal).ToArray();
+
     private void ApplyProjectTabs(RouterSnapshot snapshot)
     {
-        var catalog = snapshot.Projects.EnumerateArray().ToArray();
-        var shown = catalog.Take(catalog.Length > 3 ? 2 : 3).ToList();
+        var catalog = OrderedProjects(snapshot.Projects);
+        var shown = catalog.Take(3).ToList();
         if (shown.All(row => RouterJson.Text(row, "key") != snapshot.ProjectKey))
         {
             var selected = catalog.First(row => RouterJson.Text(row, "key") == snapshot.ProjectKey);
-            if (shown.Count == 2) shown.RemoveAt(1);
+            if (shown.Count > 0) shown.RemoveAt(shown.Count - 1);
             shown.Add(selected);
         }
         var keys = shown.Select(row => RouterJson.Text(row, "key")).ToArray();
@@ -385,12 +401,12 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
             }
             if (catalog.Length > 3)
             {
-                var more = Button("…", () => { _projectMenu.Show(_projects, new Point(0, _projects.Height)); return Task.CompletedTask; });
+                var more = Button("更多", () => { _projectMenu.Show(_projects, new Point(_projects.Controls.Cast<Control>().Last().Left, _projects.Height)); return Task.CompletedTask; });
                 more.Palette = _palette; more.AccessibleName = "更多工程"; _projects.Controls.Add(more);
             }
         }
         var scale = RouterVisualGeometry.Scale(_projects);
-        var maximum = Math.Max(40, (_projects.Width - (catalog.Length > 3 ? (int)(30 * scale) : 0)) / Math.Max(1, shown.Count) - (int)(4 * scale));
+        var maximum = Math.Max(40, (_projects.Width - (catalog.Length > 3 ? (int)(54 * scale) : 0)) / Math.Max(1, shown.Count) - (int)(4 * scale));
         foreach (var row in catalog)
         {
             var key = RouterJson.Text(row, "key"); var name = RouterJson.Text(row, "name"); var pending = RouterJson.Integer(row, "pending");
@@ -400,7 +416,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
                 button.Text = caption + (pending > 0 ? "  " + pending : ""); button.Selected = key == snapshot.ProjectKey;
                 button.AccessibleName = "切换工程 " + name;
                 button.Width = Math.Min(maximum, button.GetPreferredSize(Size.Empty).Width); button.Height = (int)(26 * scale);
-                _tips.SetToolTip(button, name + (pending > 0 ? $" · {pending} 项尚未结束" : ""));
+                _tips.SetToolTip(button, name + $" · 累计 {RouterJson.Integer(row, "recorded")} 项" + (pending > 0 ? $" · {pending} 项尚未结束" : ""));
             }
         }
         var hidden = catalog.Where(row => !_projectButtons.ContainsKey(RouterJson.Text(row, "key"))).ToArray();
@@ -696,7 +712,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     private static Label Label(string text, int width) => new() { Text = text, Width = width, Height = 31, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft };
     private static FlowLayoutPanel Flow(params Control[] children) { var flow = new FlowLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, WrapContents = false, AutoScroll = false }; flow.Controls.AddRange(children); return flow; }
     private static RouterSurface Section(string title) => new()
-    { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 8), Padding = new Padding(10, 6, 10, 8), AccessibleName = title, AccessibleRole = AccessibleRole.Grouping };
+    { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 10), Padding = new Padding(10, 6, 10, 8), EmphasizedBorder = true, AccessibleName = title, AccessibleRole = AccessibleRole.Grouping };
     private static TableLayoutPanel Header(Control left, Control right, int rightWidth)
     {
         var header = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 2, RowCount = 1 };
