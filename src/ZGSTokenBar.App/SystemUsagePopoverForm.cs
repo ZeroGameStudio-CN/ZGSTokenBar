@@ -35,6 +35,7 @@ internal sealed class SystemUsagePopoverForm : Form
     private MetricRow[] _metrics = [];
     private ProcessRow[] _processes = [];
     private string _capturedAt = string.Empty;
+    private int _logicalBodyHeight = LogicalBodyHeight;
     private NativeText _text = NativeText.For("zh-CN");
     private PopoverTailSide _tailSide = PopoverTailSide.Bottom;
     private float _tailOffset = LogicalBodyWidth / 2f;
@@ -146,11 +147,16 @@ internal sealed class SystemUsagePopoverForm : Form
                 FormatProcessMemory(process.PrivateWorkingSetBytes),
                 FormatUsage(process.GpuPercent))).ToArray();
         }
+        _logicalBodyHeight = content.LiveRates
+            ? LogicalBodyHeight
+            : Math.Clamp(282 + Math.Max(0, _processes.Length - 1) * 18, 282, LogicalBodyHeight);
         _capturedAt = _text.SystemUsageCapturedAt(snapshot.CapturedAt);
         Invalidate();
     }
 
     internal bool LiveRatesContentForAcceptance => _content?.LiveRates == true;
+
+    internal int CurrentLogicalBodyHeight => _logicalBodyHeight;
 
     internal IReadOnlyList<string> MetricLabelsForAcceptance =>
         _metrics.Select(metric => metric.Label).ToArray();
@@ -177,7 +183,7 @@ internal sealed class SystemUsagePopoverForm : Form
         UpdateContent(content, text);
         _scale = Math.Max(1, scale);
 
-        var bodySize = new Size(Scale(LogicalBodyWidth), Scale(LogicalBodyHeight));
+        var bodySize = new Size(Scale(LogicalBodyWidth), Scale(_logicalBodyHeight));
         var placement = TaskbarMiniPopoverMath.Place(
             anchorScreen,
             bodySize,
@@ -224,7 +230,7 @@ internal sealed class SystemUsagePopoverForm : Form
         _scale = Math.Max(1, dpi / 96f);
         _tailSide = PopoverTailSide.Bottom;
         _tailOffset = LogicalBodyWidth / 2f;
-        ClientSize = new Size(Scale(LogicalBodyWidth), Scale(LogicalBodyHeight + LogicalTailSize));
+        ClientSize = new Size(Scale(LogicalBodyWidth), Scale(_logicalBodyHeight + LogicalTailSize));
         CreateControl();
         UpdateWindowRegion();
 
@@ -331,8 +337,18 @@ internal sealed class SystemUsagePopoverForm : Form
 
         if (_processes.Length == 0)
         {
+            var emptyBounds = new RectangleF(
+                body.X + 16,
+                body.Y + 236,
+                body.Width - 32,
+                Math.Max(28, body.Bottom - body.Y - 274));
+            using var emptyPath = RoundedRectangle(emptyBounds, 7);
+            using var emptyFill = new SolidBrush(Color.FromArgb(18, 100, 116, 139));
+            using var emptyBorder = new Pen(Color.FromArgb(28, 100, 116, 139), 1);
+            graphics.FillPath(emptyFill, emptyPath);
+            graphics.DrawPath(emptyBorder, emptyPath);
             DrawString(graphics, _text.SystemUsageTopProcessesUnavailable, _detailFont, muted,
-                new RectangleF(body.X + 16, body.Y + 238, body.Width - 32, 16), StringAlignment.Near);
+                emptyBounds, StringAlignment.Center);
         }
         else
         {
@@ -356,12 +372,21 @@ internal sealed class SystemUsagePopoverForm : Form
         if (metric.IsReadout)
         {
             using var readoutBrush = new SolidBrush(metric.Accent ?? Color.FromArgb(241, 245, 249));
+            if (metric.Accent is { } accent)
+            {
+                using var accentBrush = new SolidBrush(accent);
+                graphics.FillRoundedRectangle(
+                    accentBrush,
+                    new RectangleF(bounds.X, bounds.Y + 3, 3, 27),
+                    1.5f);
+            }
+            var contentX = bounds.X + (metric.Accent is not null ? 8 : 0);
             DrawString(graphics, metric.Label, _metricLabelFont, primary,
-                new RectangleF(bounds.X, bounds.Y, bounds.Width - 100, 14), StringAlignment.Near);
+                new RectangleF(contentX, bounds.Y, bounds.Width - 100 - (contentX - bounds.X), 14), StringAlignment.Near);
             DrawString(graphics, metric.Value, _metricValueFont, readoutBrush,
                 new RectangleF(bounds.Right - 100, bounds.Y - 1, 100, 16), StringAlignment.Far);
             DrawString(graphics, metric.Detail, _subtitleFont, muted,
-                new RectangleF(bounds.X, bounds.Y + 18, bounds.Width, 14), StringAlignment.Near);
+                new RectangleF(contentX, bounds.Y + 18, bounds.Width - (contentX - bounds.X), 14), StringAlignment.Near);
             return;
         }
         var color = metric.Percent is { } percent ? UsageColor(percent) : Color.FromArgb(100, 116, 139);
@@ -452,7 +477,7 @@ internal sealed class SystemUsagePopoverForm : Form
     private RectangleF BodyBounds() => TaskbarPopoverMath.BodyBounds(
         _tailSide,
         LogicalBodyWidth,
-        LogicalBodyHeight,
+        _logicalBodyHeight,
         LogicalTailSize);
 
     private PointF[] TailPoints(RectangleF body) => TaskbarPopoverMath.TailPoints(

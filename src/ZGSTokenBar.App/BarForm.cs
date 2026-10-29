@@ -649,7 +649,12 @@ internal sealed partial class BarForm : Form
         _systemUsage = snapshot;
         if (_systemUsagePopover?.Visible == true)
         {
+            var previousHeight = _systemUsagePopover.CurrentLogicalBodyHeight;
             _systemUsagePopover.UpdateContent(new SystemUsagePopoverContent(snapshot, _popoverPinned, _systemAnchorIsLive), _text);
+            if (previousHeight != _systemUsagePopover.CurrentLogicalBodyHeight)
+            {
+                RepositionPopovers();
+            }
         }
         Invalidate();
     }
@@ -1591,7 +1596,7 @@ internal sealed partial class BarForm : Form
         var sendText = "↑" + NetworkUsageSampler.Compact(_systemUsage.CurrentNetworkSend) + "/s";
         var halfWidth = (bounds.Width - 9) / 2;
         DrawString(graphics, receiveText, _subtitleFont, receive,
-            new RectangleF(bounds.X + 5, bounds.Y + 27, halfWidth, 10), StringAlignment.Near);
+            new RectangleF(bounds.X + 5, bounds.Y + 27, halfWidth, 10), StringAlignment.Far);
         DrawString(graphics, sendText, _subtitleFont, send,
             new RectangleF(bounds.X + 5 + halfWidth, bounds.Y + 27, halfWidth, 10), StringAlignment.Near);
     }
@@ -2148,7 +2153,7 @@ internal sealed partial class BarForm : Form
     {
         using var path = RoundedRectangle(bounds, 6);
         using var fill = new SolidBrush(_backgroundTheme.ProviderGroup);
-        using var border = new Pen(Color.FromArgb(38, 51, 65, 85), 1);
+        using var border = new Pen(Color.FromArgb(24, 51, 65, 85), 1);
         graphics.FillPath(fill, path);
         graphics.DrawPath(border, path);
     }
@@ -2160,7 +2165,7 @@ internal sealed partial class BarForm : Form
             _backgroundTheme.Outer,
             _backgroundTheme.QuotaGroup,
             .72f));
-        using var border = new Pen(Color.FromArgb(96, 100, 116, 139), 1);
+        using var border = new Pen(Color.FromArgb(76, 100, 116, 139), 1);
         graphics.FillPath(fill, path);
         graphics.DrawPath(border, path);
     }
