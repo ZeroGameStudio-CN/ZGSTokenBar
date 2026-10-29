@@ -106,7 +106,7 @@ internal sealed class SystemUsagePopoverForm : Form
         _metrics = [.. _metrics,
             new MetricRow(_text.IsChinese ? "合计观测输出" : "Observed output total", null,
                 snapshot.CurrentOutputRate is { } rate ? $"{rate:0.#} tok/s" : "—",
-                _text.IsChinese ? "Codex 已接入会话 · 约5秒增量 · 非解码速率" : "Connected Codex chats · ~5s deltas · not decode rate", true),
+                _text.IsChinese ? "Codex 可读会话 · 约5秒增量 · 非解码速率" : "Readable Codex chats · ~5s deltas · not decode rate", true),
             new MetricRow(_text.IsChinese ? "网络接收" : "Network receive", null, NetworkUsageSampler.Compact(snapshot.CurrentNetworkReceive) + "/s",
                 _text.IsChinese ? $"{snapshot.NetworkInterfaces} 个默认联网接口 · K/M/G 按1024换算" : $"{snapshot.NetworkInterfaces} default-gateway interfaces · K/M/G use 1024", true),
             new MetricRow(_text.IsChinese ? "网络发送" : "Network send", null, NetworkUsageSampler.Compact(snapshot.CurrentNetworkSend) + "/s",

@@ -18,9 +18,10 @@ using ZGSTokenBar.Plugin.AiGatewayObserver;
 
 if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJobExitCode;
 
-if (args.Length == 1 && args[0] == "--live-metrics")
+if (args.Length > 0 && args[0] == "--live-metrics")
 {
     LiveMetricTests.Run();
+    if (args.Length > 1) LiveMetricTests.Render(args[1]);
     Console.WriteLine("PASS observed output and network delta sampling");
     return 0;
 }
@@ -8687,6 +8688,7 @@ static void RenderQuotaTokenEstimateCaptures(string outputDirectory)
 
 static void RenderTaskbarMiniCaptures(string outputDirectory)
 {
+    LiveMetricTests.Render(outputDirectory);
     Directory.CreateDirectory(outputDirectory);
     var systemUsage = new SystemUsageSnapshot(
         78,

@@ -669,6 +669,7 @@ public static class MiniAreaIds
     public const string AiGateway = "zgstokenbar.provider.ai-gateway";
     public const string RadarReset = "zgstokenbar.radar.reset";
     public const string SystemMetrics = "zgstokenbar.metrics.system";
+    public const string LiveMetrics = "zgstokenbar.metrics.live";
 }
 
 public sealed record MiniAreaLayout(bool Collapsed = false, int? Width = null)

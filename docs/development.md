@@ -363,10 +363,11 @@ dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj -c Release
 
 ## Live taskbar readouts
 
-The expanded system area includes a summed Codex observed-output rate and
-receive/send byte rates for up, non-loopback/non-tunnel interfaces with default
-gateways. Wider areas retain the CPU/RAM/disk/GPU tracks beside these values;
-user-saved narrow areas use compact text rather than discarding the live values.
+The system area's CPU/RAM/disk/GPU tracks keep their original layout at every
+width. A separate live-rates area appears after Codex sampling starts, with observed
+output and network RX/TX. It reuses the existing width, collapse, ordering and
+system hover-detail interactions without changing the CPU area. Network uses up,
+non-loopback/non-tunnel interfaces with default gateways.
 Hover details state the scope and units. K/M/G use powers of 1024, per second.
 Interface discovery is cached for thirty seconds; counter-read failure expires
 that cache immediately. This reads counters, never intercepts packets or changes
@@ -375,7 +376,9 @@ network configuration, and does not attribute traffic to a model/process.
 Output is a roughly five-second difference of observed complete local turn
 counters, summed across the connected Codex session window. It is neither server
 decode speed nor guaranteed coverage of every request/client. Initial samples,
-resets, long gaps, stale/incomplete logs and expired observations show unavailable;
+resets, long gaps, no readable logs and expired observations show unavailable;
+stale/incomplete sessions are excluded from this observed subset rather than
+hiding readable active output. Late historical discovery is only a baseline;
 unchanged measured counters show zero. No original provider accounting is changed.
 The existing taskbar placement supports dragging to snap near the taskbar and
 dragging away to float, with saved monitor/position profiles. General settings now
