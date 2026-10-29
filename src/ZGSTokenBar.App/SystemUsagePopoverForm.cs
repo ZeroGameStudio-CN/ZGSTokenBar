@@ -3,12 +3,12 @@ using ZGSTokenBar.Core;
 
 namespace ZGSTokenBar.App;
 
-internal sealed record SystemUsagePopoverContent(SystemUsageSnapshot Snapshot, bool Pinned);
+internal sealed record SystemUsagePopoverContent(SystemUsageSnapshot Snapshot, bool Pinned, bool LiveRates = false);
 
 internal sealed class SystemUsagePopoverForm : Form
 {
     internal const int LogicalBodyWidth = 300;
-    internal const int LogicalBodyHeight = 472;
+    internal const int LogicalBodyHeight = 352;
     private const int LogicalTailSize = 8;
     private const int LogicalGap = 3;
     private const int ToolWindowStyle = 0x00000080;
@@ -90,7 +90,7 @@ internal sealed class SystemUsagePopoverForm : Form
         if (_content == content && ReferenceEquals(_text, text)) return;
         _content = content;
         _text = text;
-        Text = _text.SystemUsageTitle;
+        Text = content.LiveRates ? (_text.IsChinese ? "实时速率" : "Live rates") : _text.SystemUsageTitle;
         var snapshot = content.Snapshot;
         _metrics =
         [
@@ -103,14 +103,28 @@ internal sealed class SystemUsagePopoverForm : Form
             Metric(_text.SystemUsageGpu, snapshot.GpuPercent,
                 _text.SystemUsageGpuDetail(snapshot.GpuPercent, snapshot.GpuEngine, snapshot.GpuProcessCount)),
         ];
-        _metrics = [.. _metrics,
-            new MetricRow(_text.IsChinese ? "合计观测输出" : "Observed output total", null,
-                snapshot.CurrentOutputRate is { } rate ? $"{rate:0.#} tok/s" : "—",
-                _text.IsChinese ? "Codex 可读会话 · 约5秒增量 · 非解码速率" : "Readable Codex chats · ~5s deltas · not decode rate", true),
-            new MetricRow(_text.IsChinese ? "网络接收" : "Network receive", null, NetworkUsageSampler.Compact(snapshot.CurrentNetworkReceive) + "/s",
-                _text.IsChinese ? $"{snapshot.NetworkInterfaces} 个默认联网接口 · K/M/G 按1024换算" : $"{snapshot.NetworkInterfaces} default-gateway interfaces · K/M/G use 1024", true),
-            new MetricRow(_text.IsChinese ? "网络发送" : "Network send", null, NetworkUsageSampler.Compact(snapshot.CurrentNetworkSend) + "/s",
-                _text.IsChinese ? "非特定模型或进程的流量；不含无默认网关接口" : "Not attributed to a model or process; no-gateway interfaces excluded", true)];
+        if (content.LiveRates)
+        {
+            var live = snapshot.LiveRate;
+            var zh = _text.IsChinese;
+            _metrics =
+            [
+                new(zh ? "合计输出" : "Output total", null, snapshot.CurrentOutputRate is { } rate ? $"{(live?.HasEstimate == true ? "≈" : "")}{rate:0.#} tok/s" : "—",
+                    zh ? "最近3秒响应区间重叠 · 含单列估算" : "3s response overlap · estimates separated below", true),
+                new(zh ? "已记录" : "Recorded", null, live is null ? "—" : $"{live.Measured:0.#} tok/s",
+                    zh ? "按响应起止分摊，不按日志读取间隔除算" : "Response intervals, not polling-time bursts", true),
+                new(zh ? "生成中估算" : "In-flight estimate", null, live is null ? "—" : $"{live.Estimated:0.#} tok/s",
+                    zh ? $"占比 {live?.EstimatedShare:P0} · 近期响应加权参考" : $"{live?.EstimatedShare:P0} share · recent weighted responses", true),
+                new(zh ? "会话状态" : "Chat activity", null, live is null ? "—" : $"{live.Generating} / {live.Tools}",
+                    zh ? "生成中 / 工具中 · 工具阶段不补估算" : "Generating / tools · no tool-time extrapolation", true),
+                new(zh ? "网络接收" : "Network receive", null, NetworkUsageSampler.Compact(snapshot.CurrentNetworkReceive) + "/s",
+                    zh ? $"{snapshot.NetworkInterfaces} 个默认联网接口 · 非模型专属流量" : $"{snapshot.NetworkInterfaces} default NICs · not model traffic", true),
+                new(zh ? "网络发送" : "Network send", null, NetworkUsageSampler.Compact(snapshot.CurrentNetworkSend) + "/s",
+                    zh ? "K/M/G 按1024换算 · 系统网卡计数" : "K/M/G use 1024 · system adapter counters", true),
+                new(zh ? "采集范围" : "Coverage", null, live is null ? "—" : $"{live.Sessions} Codex",
+                    zh ? $"本机已接入日志 · {live?.Pending ?? 0} 条待追平 · 非服务端解码速率" : $"Local connected logs · {live?.Pending ?? 0} catching up · not decode rate", true)
+            ];
+        }
         _processes = snapshot.TopProcesses.Take(5).Select(process => new ProcessRow(
             process.Name,
             process.ProcessCount > 1 ? $"×{process.ProcessCount}" : string.Empty,
@@ -268,7 +282,7 @@ internal sealed class SystemUsagePopoverForm : Form
         using var muted = new SolidBrush(Color.FromArgb(148, 163, 184));
         using var divider = new Pen(Color.FromArgb(36, 100, 116, 139), 1);
 
-        DrawString(graphics, _text.SystemUsageTitle, _titleFont, primary,
+        DrawString(graphics, Text, _titleFont, primary,
             new RectangleF(body.X + 16, body.Y + 12, 120, 18), StringAlignment.Near);
         DrawString(graphics, _text.SystemUsagePopoverSubtitle(content.Pinned), _subtitleFont, muted,
             new RectangleF(body.X + 142, body.Y + 15, body.Width - 158, 14), StringAlignment.Far);
@@ -280,22 +294,28 @@ internal sealed class SystemUsagePopoverForm : Form
                 _metrics[index], primary, muted);
         }
 
-        graphics.DrawLine(divider, body.X + 16, body.Y + 324, body.Right - 16, body.Y + 324);
+        if (content.LiveRates)
+        {
+            DrawString(graphics, _capturedAt, _subtitleFont, muted,
+                new RectangleF(body.X + 16, body.Bottom - 18, body.Width - 32, 12), StringAlignment.Near);
+            return;
+        }
+        graphics.DrawLine(divider, body.X + 16, body.Y + 204, body.Right - 16, body.Y + 204);
         DrawString(graphics, _text.SystemUsageTopProcesses, _subtitleFont, muted,
-            new RectangleF(body.X + 16, body.Y + 336, 124, 14), StringAlignment.Near);
-        DrawProcessValues(graphics, body, body.Y + 336, _subtitleFont, muted,
+            new RectangleF(body.X + 16, body.Y + 216, 124, 14), StringAlignment.Near);
+        DrawProcessValues(graphics, body, body.Y + 216, _subtitleFont, muted,
             _text.SystemUsageCpu, _text.SystemUsageMemory, _text.SystemUsageGpu);
 
         if (_processes.Length == 0)
         {
             DrawString(graphics, _text.SystemUsageTopProcessesUnavailable, _detailFont, muted,
-                new RectangleF(body.X + 16, body.Y + 358, body.Width - 32, 16), StringAlignment.Near);
+                new RectangleF(body.X + 16, body.Y + 238, body.Width - 32, 16), StringAlignment.Near);
         }
         else
         {
             for (var index = 0; index < _processes.Length; index++)
             {
-                DrawProcessRow(graphics, body, body.Y + 356 + index * 18, _processes[index], primary, muted);
+                DrawProcessRow(graphics, body, body.Y + 236 + index * 18, _processes[index], primary, muted);
             }
         }
 

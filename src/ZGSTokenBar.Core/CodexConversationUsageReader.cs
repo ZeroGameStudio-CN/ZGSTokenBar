@@ -48,6 +48,7 @@ public sealed class CodexConversationUsageReader
     internal long ParsedFiles { get; private set; }
     internal long ScannedBytes { get; private set; }
     public int PendingSessions { get; private set; }
+    public CodexLiveRateFeed? LiveRateFeed { get; private set; }
 
     public IReadOnlyList<CodexConversationTurn> Refresh(
         IReadOnlyList<string> paths, DateTimeOffset now, CancellationToken cancellationToken = default)
@@ -97,6 +98,7 @@ public sealed class CodexConversationUsageReader
                     state.SaveCheckpoint(stream);
                 }
                 state.CaughtUp = state.Offset >= length;
+                state.ReadFailed = false;
                 if (state.Offset < length)
                 {
                     PendingSessions++;
@@ -106,11 +108,15 @@ public sealed class CodexConversationUsageReader
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
+                if (state is not null) state.ReadFailed = true;
                 if (state is { CaughtUp: false }) PendingSessions++;
                 else if (state?.ToTurn(now) is { } cached) turns.Add(cached with { Stale = true });
             }
         }
         foreach (var key in _cache.Keys.Where(key => !retained.Contains(key)).ToArray()) _cache.Remove(key);
+        var readable = _cache.Where(pair => retained.Contains(pair.Key) && pair.Value.CaughtUp && !pair.Value.ReadFailed).Select(pair => pair.Value).ToArray();
+        LiveRateFeed = new(now, readable.SelectMany(state => state.Responses).Where(r => r.End >= now.AddMinutes(-30)).ToArray(),
+            readable.Select(state => state.LiveSession).Where(s => s is not null).Cast<CodexLiveSession>().ToArray(), PendingSessions);
         return turns.GroupBy(turn => turn.SessionId, StringComparer.Ordinal)
             .Select(group => group.OrderByDescending(turn => turn.ObservedAt).First())
             .OrderByDescending(turn => turn.ObservedAt).Take(MaximumSessions).ToArray();
@@ -175,7 +181,20 @@ public sealed class CodexConversationUsageReader
         public List<byte> Line = [];
         public bool LineTooLong;
         public bool CaughtUp;
+        public bool ReadFailed;
         public TurnState? Active;
+        public List<CodexResponseSample> Responses = [];
+        private DateTimeOffset? _responseStart;
+        private DateTimeOffset _lastActivity;
+        private bool _streaming;
+        private string _phase = "idle";
+        public CodexLiveSession? LiveSession => Active is null ? null : new(sessionId, Active.Model, _phase,
+            _phase == "generating" ? _responseStart : null, _lastActivity);
+        private void OnInput(DateTimeOffset at)
+        {
+            if (!_streaming) { _responseStart = at; _phase = "generating"; }
+            _lastActivity = at;
+        }
         private CodexTokenUsageEvent? _previousUsage;
         private string? _projectName;
         private string? _serviceTier;
@@ -207,6 +226,7 @@ public sealed class CodexConversationUsageReader
             if (!line.Contains("\"event_msg\"", StringComparison.Ordinal)
                 && !line.Contains("\"turn_context\"", StringComparison.Ordinal)
                 && !line.Contains("\"session_meta\"", StringComparison.Ordinal)
+                && !line.Contains("\"response_item\"", StringComparison.Ordinal)
                 && !line.Contains("\"response.completed\"", StringComparison.Ordinal)
                 && !line.Contains("\"model/rerouted\"", StringComparison.Ordinal)) return;
             try
@@ -240,6 +260,16 @@ public sealed class CodexConversationUsageReader
                     if (payload.TryGetProperty("service_tier", out _)) _serviceTier = NormalizeTier(payload.StringProperty("service_tier"));
                     return;
                 }
+                if (type == "response_item")
+                {
+                    var kind = payload.StringProperty("type") ?? string.Empty;
+                    if (kind == "reasoning" || kind.EndsWith("_call", StringComparison.Ordinal)
+                        || kind == "message" && payload.StringProperty("role") == "assistant")
+                    { _streaming = true; _phase = "generating"; _lastActivity = at; }
+                    else if (kind.EndsWith("_output", StringComparison.Ordinal)
+                        || kind == "message" && payload.StringProperty("role") is "user" or "developer") OnInput(at);
+                    return;
+                }
                 if (type != "event_msg") return;
                 switch (payload.StringProperty("type"))
                 {
@@ -248,11 +278,16 @@ public sealed class CodexConversationUsageReader
                             && settings.TryGetProperty("service_tier", out _))
                             _serviceTier = NormalizeTier(settings.StringProperty("service_tier"));
                         break;
+                    case "user_message":
+                        OnInput(at);
+                        break;
                     case "task_started":
                         if (payload.StringProperty("turn_id") is { Length: > 0 } id)
                         {
                             var startedAt = Date(payload, "started_at");
                             Active = new(id, startedAt is { } start && start <= at ? start : at, _previousUsage is not null);
+                            _streaming = false;
+                            OnInput(Active.StartedAt);
                         }
                         break;
                     case "token_count":
@@ -268,6 +303,19 @@ public sealed class CodexConversationUsageReader
                             else current.UsageComplete = false;
                             RecordInputAndCost(current, usage, delta, reset);
                             current.ObservedAt = at;
+                            if (delta is >= 0 && _responseStart is { } responseStart && at >= responseStart
+                                && (_previousUsage is null || usage.TotalTokens != _previousUsage.TotalTokens))
+                            {
+                                Responses.Add(new(sessionId, current.Model, responseStart, at, delta.Value));
+                                if (Responses.Count > 256) Responses.RemoveRange(0, Responses.Count - 256);
+                            }
+                            if (_previousUsage is null || usage.TotalTokens != _previousUsage.TotalTokens)
+                            {
+                                _responseStart = at;
+                                _lastActivity = at;
+                                _streaming = false;
+                                _phase = "tools";
+                            }
                         }
                         _previousUsage = usage;
                         break;
@@ -280,6 +328,10 @@ public sealed class CodexConversationUsageReader
                         terminal.EndedAt = end;
                         terminal.ObservedAt = at;
                         terminal.Interrupted = payload.StringProperty("type") == "turn_aborted";
+                        _phase = "idle";
+                        _responseStart = null;
+                        _streaming = false;
+                        _lastActivity = at;
                         if (payload.NumberProperty("time_to_first_token_ms") is { } first
                             && double.IsFinite(first) && first >= 0 && first <= (end - terminal.StartedAt).TotalMilliseconds)
                             terminal.FirstTokenSeconds = first / 1000;

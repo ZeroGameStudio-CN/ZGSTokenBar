@@ -23,6 +23,8 @@ public sealed record CodexTokenUsageSummary(
     public IReadOnlyList<CodexConversationTurn> RecentTurns { get; init; } = [];
     public IReadOnlyList<CodexConversationTurn> ConversationHistory { get; init; } = [];
     public int PendingConversationCount { get; init; }
+    [JsonIgnore]
+    public CodexLiveRateFeed? LiveRateFeed { get; init; }
     public IReadOnlyList<CodexConversationTurn> ConversationTurns =>
         ConversationHistory
             .Concat(RecentTurns)

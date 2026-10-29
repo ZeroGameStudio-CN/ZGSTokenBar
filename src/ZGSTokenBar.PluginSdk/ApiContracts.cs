@@ -97,6 +97,11 @@ public sealed record WindowInspection(
     public bool TaskbarDocked { get; init; }
     public double? ObservedOutputTokensPerSecond { get; init; }
     public DateTimeOffset? OutputRateCapturedAt { get; init; }
+    public double? MeasuredOutputTokensPerSecond { get; init; }
+    public double? EstimatedOutputTokensPerSecond { get; init; }
+    public int OutputRateWindowSeconds { get; init; }
+    public int GeneratingSessionCount { get; init; }
+    public int ToolsSessionCount { get; init; }
     public double? NetworkReceiveBytesPerSecond { get; init; }
     public double? NetworkSendBytesPerSecond { get; init; }
     public DateTimeOffset? NetworkCapturedAt { get; init; }

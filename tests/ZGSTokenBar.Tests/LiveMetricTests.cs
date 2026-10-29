@@ -6,21 +6,28 @@ internal static class LiveMetricTests
     internal static void Run()
     {
         var at = DateTimeOffset.UtcNow;
-        CodexConversationTurn Turn(string id, long output) => new("s", id, "model", "high", at.AddMinutes(-1), at,
-            output, 60, false, true);
         var tracker = new ObservedOutputRate();
-        Check(tracker.Observe([Turn("a", 100), Turn("b", 20)], at) is null, "First observation is a baseline, not a burst.");
-        Check(tracker.Observe([Turn("a", 150), Turn("b", 70)], at.AddSeconds(5)) == 20, "Observed deltas sum concurrent turns over sample time.");
-        Check(tracker.Observe([Turn("a", 150), Turn("b", 70)], at.AddSeconds(10)) == 0, "Unchanged counters give a measured zero.");
-        Check(tracker.Observe([Turn("a", 10)], at.AddSeconds(15)) is null, "Counter resets are not negative output.");
-        Check(tracker.Observe([Turn("a", 30)], at.AddSeconds(60)) is null, "Suspended sampling does not smear an old burst over a gap.");
-        Check(tracker.Observe([Turn("a", 40) with { Stale = true }], at.AddSeconds(65)) is null, "Read failures are unavailable, not idle.");
-        var mixed = new ObservedOutputRate();
-        mixed.Observe([Turn("active", 100), Turn("orphan", 20) with { Stale = true }], at);
-        Check(mixed.Observe([Turn("active", 150), Turn("orphan", 20) with { Stale = true }], at.AddSeconds(5)) == 10,
-            "An old unavailable session cannot hide readable active output.");
-        Check(mixed.Observe([Turn("late", 90000)], at.AddSeconds(10)) == 0,
-            "Late historical discovery is a baseline, not a current burst.");
+        CodexResponseSample Response(string id, int start, int end, long count) => new(id, "model", at.AddSeconds(start), at.AddSeconds(end), count);
+        CodexLiveRateFeed Feed(CodexResponseSample[] rows, CodexLiveSession[]? sessions = null) => new(at, rows, sessions ?? [], 0);
+        var summed = tracker.Observe(Feed([Response("a", -4, 0, 400), Response("b", -1, 0, 30)]), at);
+        Check(Math.Abs(summed.Measured - 110) < .001, "Concurrent response intervals sum by three-second overlap.");
+        Check(tracker.Observe(Feed([Response("old", -15, -10, 90000)]), at).Total == 0,
+            "Late historical discovery never becomes a polling-time burst.");
+        var active = new CodexLiveSession("a", "model", "generating", at.AddSeconds(-2), at);
+        var estimated = tracker.Observe(Feed([Response("a", -7, -5, 200)], [active]), at);
+        Check(Math.Abs(estimated.Estimated - 200d / 3) < .001 && estimated.HasEstimate,
+            "Generating uses recent response-weighted speed and exposes the estimated share.");
+        Check(tracker.Observe(Feed([Response("a", -7, -5, 200)], [active with { Phase = "tools" }]), at).Total == 0,
+            "Tool time does not inherit generation estimates.");
+        var overlap = tracker.Observe(Feed([Response("a", -3, -1, 200)], [active with { InFlightStart = at.AddSeconds(-4) }]), at);
+        Check(Math.Abs(overlap.Total!.Value - 100) < .001, "Estimates begin after the last recorded response and cannot overlap it.");
+        Check(tracker.Observe(Feed([Response("fast", 0, 0, 30)]), at).Measured == 10,
+            "Sub-500ms responses use a bounded interval rather than dividing by zero.");
+        Check(tracker.Observe(Feed([]) with { CapturedAt = at.AddMinutes(-1) }, at).Total is null,
+            "Expired feeds are unavailable.");
+        Check(tracker.Observe(Feed([]), at).Total is null, "No readable session is unavailable, not a measured zero.");
+        Check(tracker.Observe(Feed([], [active with { Phase = "idle" }]), at).Total == 0, "An observed idle session has zero current output.");
+        ReaderIntervals(at);
         var network = new NetworkUsageSampler();
         Check(network.Observe([new("a", 1000, 2000)], 1).Received is null, "Network needs a baseline.");
         var rate = network.Observe([new("a", 3000, 3000)], 3);
@@ -44,19 +51,61 @@ internal static class LiveMetricTests
             var original = form.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.SystemMetrics);
             form.SetSystemUsage(new SystemUsageSnapshot(34, 32UL << 30, 32UL << 30, 64UL << 30, 12, "3D", 2, 16, at)
             { DiskActivePercent = 22, NetworkReceiveBytesPerSecond = 12.5 * 1024 * 1024, NetworkSendBytesPerSecond = 128 * 1024, NetworkInterfaces = 1 });
-            form.SetObservedOutputRate(53.2, at);
+            form.SetLiveOutputRate(new(at, 53.2, 33.2, 20, 2, 1, 4, 0));
             Check(form.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.SystemMetrics) == original,
                 "Live readouts cannot change the CPU area's saved layout.");
             Check(form.GetMiniAreaStates().Count(area => area.AreaId == MiniAreaIds.LiveMetrics) == 1,
                 "Rates use their own existing-style Mini area.");
             form.CreateControl();
-            using var bitmap = new System.Drawing.Bitmap(form.ClientSize.Width, form.ClientSize.Height);
-            form.DrawToBitmap(bitmap, new System.Drawing.Rectangle(System.Drawing.Point.Empty, bitmap.Size));
-            bitmap.Save(Path.Combine(directory, $"live-rates-{dpi}dpi.png"), System.Drawing.Imaging.ImageFormat.Png);
-            Check(form.SetMiniAreaFromCommand(MiniAreaIds.LiveMetrics, true, null), "The independent rates area can collapse.");
+            foreach (var collapsed in new[] { true, false })
+            {
+                form.SetMiniAreaFromCommand(MiniAreaIds.LiveMetrics, collapsed, null);
+                using var bitmap = new System.Drawing.Bitmap(form.ClientSize.Width, form.ClientSize.Height);
+                form.DrawToBitmap(bitmap, new System.Drawing.Rectangle(System.Drawing.Point.Empty, bitmap.Size));
+                bitmap.Save(Path.Combine(directory, $"live-rates-{(collapsed ? "collapsed" : "expanded")}-{dpi}dpi.png"), System.Drawing.Imaging.ImageFormat.Png);
+            }
+            foreach (var live in new[] { true, false })
+            {
+                using var popover = new SystemUsagePopoverForm();
+                using var bitmap = popover.RenderForTest(new SystemUsagePopoverContent(form.LiveMetrics, false, live),
+                    NativeText.For("zh-CN"), QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), dpi);
+                bitmap.Save(Path.Combine(directory, $"hover-{(live ? "rates" : "cpu")}-{dpi}dpi.png"), System.Drawing.Imaging.ImageFormat.Png);
+            }
             Check(form.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.SystemMetrics) == original,
                 "Collapsing rates preserves CPU state.");
         }
+    }
+    private static void ReaderIntervals(DateTimeOffset at)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "tokenbar-response-fixture-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, "session-test.jsonl");
+            string Line(int seconds, string type, object payload) => System.Text.Json.JsonSerializer.Serialize(new
+            { timestamp = at.AddSeconds(seconds).ToString("O"), type, payload });
+            object Usage(long output, long total) => new { type = "token_count", info = new {
+                total_token_usage = new { output_tokens = output, total_tokens = total, input_tokens = total-output, cached_input_tokens = 0 },
+                last_token_usage = new { output_tokens = 90, total_tokens = 100, input_tokens = 10, cached_input_tokens = 0 } } };
+            File.WriteAllLines(path, [Line(-11, "event_msg", Usage(100, 200)),
+                Line(-10, "event_msg", new { type = "task_started", turn_id = "turn" }),
+                Line(-9, "response_item", new { type = "reasoning" }),
+                Line(-1, "event_msg", Usage(190, 300))]);
+            var reader = new CodexConversationUsageReader();
+            reader.Refresh([path], at);
+            var sample = reader.LiveRateFeed!.Responses.Single();
+            Check(sample.Output == 90 && sample.Start == at.AddSeconds(-10) && sample.End == at.AddSeconds(-1),
+                "The reader emits per-response counter deltas and log timestamps.");
+            Check(reader.LiveRateFeed.Sessions.Single().Phase == "tools", "Completed response enters the tools phase.");
+            File.AppendAllText(path, Line(0, "response_item", new { type = "function_call_output" }) + Environment.NewLine);
+            reader.Refresh([path], at);
+            Check(reader.LiveRateFeed!.Sessions.Single().Phase == "generating", "Tool output begins the next generation interval.");
+            File.AppendAllText(path, Line(0, "event_msg", Usage(190, 300)) + Environment.NewLine);
+            reader.Refresh([path], at.AddSeconds(1));
+            Check(reader.LiveRateFeed!.Sessions.Single().Phase == "generating", "Duplicate counters cannot end active generation.");
+            Check(reader.LiveRateFeed!.Responses.Count == 1, "Unchanged polling never duplicates responses.");
+        }
+        finally { Directory.Delete(directory, true); }
     }
     private static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
 }
