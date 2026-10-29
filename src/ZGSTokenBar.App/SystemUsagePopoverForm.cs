@@ -23,6 +23,11 @@ internal sealed class SystemUsagePopoverForm : Form
     private readonly Font _detailFont = new("Segoe UI", 9.5f, FontStyle.Regular, GraphicsUnit.Pixel);
     private readonly Font _metricValueFont = new("Cascadia Mono", 10.5f, FontStyle.Regular, GraphicsUnit.Pixel);
     private readonly Font _tableValueFont = new("Cascadia Mono", 9f, FontStyle.Regular, GraphicsUnit.Pixel);
+    private static readonly Color RecordedAccent = Color.FromArgb(110, 231, 183);
+    private static readonly Color EstimateAccent = Color.FromArgb(251, 191, 36);
+    private static readonly Color ReceiveAccent = Color.FromArgb(125, 211, 252);
+    private static readonly Color SendAccent = Color.FromArgb(196, 181, 253);
+    private static readonly Color ActivityAccent = Color.FromArgb(167, 243, 208);
     private readonly AlignedStringFormats _textFormats = new();
     private readonly System.Windows.Forms.Timer _entranceTimer = new() { Interval = 16 };
     private readonly System.Windows.Forms.Timer _exitTimer = new() { Interval = 16 };
@@ -99,19 +104,20 @@ internal sealed class SystemUsagePopoverForm : Form
             _metrics =
             [
                 new(zh ? "合计输出" : "Output total", null, snapshot.CurrentOutputRate is { } rate ? $"{(live?.HasEstimate == true ? "≈" : "")}{rate:0.#} tok/s" : "—",
-                    zh ? "最近3秒响应区间重叠 · 含单列估算" : "3s response overlap · estimates separated below", true),
+                    zh ? "最近3秒响应区间重叠 · 含单列估算" : "3s response overlap · estimates separated below", true,
+                    live?.HasEstimate == true ? EstimateAccent : RecordedAccent),
                 new(zh ? "已记录" : "Recorded", null, live is null ? "—" : $"{live.Measured:0.#} tok/s",
-                    zh ? "按响应起止分摊，不按日志读取间隔除算" : "Response intervals, not polling-time bursts", true),
+                    zh ? "按响应起止分摊，不按日志读取间隔除算" : "Response intervals, not polling-time bursts", true, RecordedAccent),
                 new(zh ? "生成中估算" : "In-flight estimate", null, live is null ? "—" : $"{live.Estimated:0.#} tok/s",
-                    zh ? $"占比 {live?.EstimatedShare:P0} · 近期响应加权参考" : $"{live?.EstimatedShare:P0} share · recent weighted responses", true),
+                    zh ? $"占比 {live?.EstimatedShare:P0} · 近期响应加权参考" : $"{live?.EstimatedShare:P0} share · recent weighted responses", true, EstimateAccent),
                 new(zh ? "会话状态" : "Chat activity", null, live is null ? "—" : $"{live.Generating} / {live.Tools}",
-                    zh ? "生成中 / 工具中 · 工具阶段不补估算" : "Generating / tools · no tool-time extrapolation", true),
+                    zh ? "生成中 / 工具中 · 工具阶段不补估算" : "Generating / tools · no tool-time extrapolation", true, ActivityAccent),
                 new(zh ? "网络接收" : "Network receive", null, NetworkUsageSampler.Compact(snapshot.CurrentNetworkReceive) + "/s",
-                    zh ? $"{snapshot.NetworkInterfaces} 个默认联网接口 · 非模型专属流量" : $"{snapshot.NetworkInterfaces} default NICs · not model traffic", true),
+                    zh ? $"{snapshot.NetworkInterfaces} 个默认联网接口 · 非模型专属流量" : $"{snapshot.NetworkInterfaces} default NICs · not model traffic", true, ReceiveAccent),
                 new(zh ? "网络发送" : "Network send", null, NetworkUsageSampler.Compact(snapshot.CurrentNetworkSend) + "/s",
-                    zh ? "K/M/G 按1024换算 · 系统网卡计数" : "K/M/G use 1024 · system adapter counters", true),
+                    zh ? "K/M/G 按1024换算 · 系统网卡计数" : "K/M/G use 1024 · system adapter counters", true, SendAccent),
                 new(zh ? "采集范围" : "Coverage", null, live is null ? "—" : $"{live.Sessions} Codex",
-                    zh ? $"本机已接入日志 · {live?.Pending ?? 0} 条待追平 · 非服务端解码速率" : $"Local connected logs · {live?.Pending ?? 0} catching up · not decode rate", true)
+                    zh ? $"本机已接入日志 · {live?.Pending ?? 0} 条待追平 · 非服务端解码速率" : $"Local connected logs · {live?.Pending ?? 0} catching up · not decode rate", true, ActivityAccent)
             ];
 
             // Live-rate hover is a separate surface. Do not retain the CPU
@@ -154,7 +160,7 @@ internal sealed class SystemUsagePopoverForm : Form
     private static MetricRow Metric(string label, double? value, string detail) =>
         new(label, value, FormatUsage(value), detail);
 
-    private sealed record MetricRow(string Label, double? Percent, string Value, string Detail, bool IsReadout = false);
+    private sealed record MetricRow(string Label, double? Percent, string Value, string Detail, bool IsReadout = false, Color? Accent = null);
     private sealed record ProcessRow(string Name, string Count, string Cpu, string Memory, string Gpu);
 
     public void ShowFor(
@@ -312,6 +318,7 @@ internal sealed class SystemUsagePopoverForm : Form
 
         if (content.LiveRates)
         {
+            graphics.DrawLine(divider, body.X + 16, body.Y + 196, body.Right - 16, body.Y + 196);
             DrawString(graphics, _capturedAt, _subtitleFont, muted,
                 new RectangleF(body.X + 16, body.Bottom - 18, body.Width - 32, 12), StringAlignment.Near);
             return;
@@ -348,9 +355,10 @@ internal sealed class SystemUsagePopoverForm : Form
     {
         if (metric.IsReadout)
         {
+            using var readoutBrush = new SolidBrush(metric.Accent ?? Color.FromArgb(241, 245, 249));
             DrawString(graphics, metric.Label, _metricLabelFont, primary,
                 new RectangleF(bounds.X, bounds.Y, bounds.Width - 100, 14), StringAlignment.Near);
-            DrawString(graphics, metric.Value, _metricValueFont, primary,
+            DrawString(graphics, metric.Value, _metricValueFont, readoutBrush,
                 new RectangleF(bounds.Right - 100, bounds.Y - 1, 100, 16), StringAlignment.Far);
             DrawString(graphics, metric.Detail, _subtitleFont, muted,
                 new RectangleF(bounds.X, bounds.Y + 18, bounds.Width, 14), StringAlignment.Near);

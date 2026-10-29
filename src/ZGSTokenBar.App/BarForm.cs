@@ -1563,23 +1563,37 @@ internal sealed partial class BarForm : Form
     {
         DrawTaskbarCardShell(graphics, bounds);
         using var primary = new SolidBrush(Color.FromArgb(203, 213, 225));
-        using var network = new SolidBrush(Color.FromArgb(148, 163, 184));
-        var prefix = _systemUsage.LiveRate?.HasEstimate == true ? "~" : "Σ";
+        using var muted = new SolidBrush(Color.FromArgb(148, 163, 184));
+        using var observed = new SolidBrush(Color.FromArgb(110, 231, 183));
+        using var estimated = new SolidBrush(Color.FromArgb(251, 191, 36));
+        using var receive = new SolidBrush(Color.FromArgb(125, 211, 252));
+        using var send = new SolidBrush(Color.FromArgb(196, 181, 253));
+        var isEstimated = _systemUsage.LiveRate?.HasEstimate == true;
+        var prefix = isEstimated ? "~" : "Σ";
         var rate = _systemUsage.CurrentOutputRate is { } output ? $"{output:0.#}" : "—";
         if (collapsed)
         {
-            DrawString(graphics, $"{prefix} {rate} tok/s", _badgeFont, primary,
+            DrawString(graphics, $"{prefix} {rate} tok/s", _cardTitleFont, isEstimated ? estimated : observed,
                 new RectangleF(bounds.X + 3, bounds.Y + 10, bounds.Width - 6, 14), StringAlignment.Center);
             return;
         }
-        DrawString(graphics, $"{prefix} {rate} tok/s", _badgeFont, primary,
-            new RectangleF(bounds.X + 4, bounds.Y + 2, bounds.Width - 8, 12), StringAlignment.Near);
+        using var accent = new SolidBrush(isEstimated ? estimated.Color : observed.Color);
+        graphics.FillRoundedRectangle(accent, new RectangleF(bounds.X + 4, bounds.Y + 4, 2, 9), 1);
+        DrawString(graphics, $"{prefix} {rate} tok/s", _cardTitleFont, isEstimated ? estimated : observed,
+            new RectangleF(bounds.X + 10, bounds.Y + 2, bounds.Width - 14, 14), StringAlignment.Near);
         var detail = _systemUsage.LiveRate is { } live
-            ? (_text.IsChinese ? $"{live.Generating} 生成 · {live.Tools} 工具 · 估算 {live.EstimatedShare:P0}" : $"{live.Generating} generating · {live.Tools} tools · {live.EstimatedShare:P0} est.") : "—";
-        DrawString(graphics, detail, _subtitleFont, network,
-            new RectangleF(bounds.X + 4, bounds.Y + 14, bounds.Width - 8, 10), StringAlignment.Near);
-        DrawString(graphics, "↓" + NetworkUsageSampler.Compact(_systemUsage.CurrentNetworkReceive) + "/s  ↑" + NetworkUsageSampler.Compact(_systemUsage.CurrentNetworkSend) + "/s", _subtitleFont, network,
-            new RectangleF(bounds.X + 4, bounds.Y + 25, bounds.Width - 8, 10), StringAlignment.Near);
+            ? (_text.IsChinese ? $"生{live.Generating} · 工{live.Tools} · 估{live.EstimatedShare:P0}" : $"G{live.Generating} · T{live.Tools} · E{live.EstimatedShare:P0}") : "—";
+        DrawString(graphics, detail, _subtitleFont, muted,
+            new RectangleF(bounds.X + 5, bounds.Y + 16, bounds.Width - 9, 10), StringAlignment.Near);
+        using var divider = new Pen(Color.FromArgb(38, 100, 116, 139), 1);
+        graphics.DrawLine(divider, bounds.X + 5, bounds.Y + 26, bounds.Right - 5, bounds.Y + 26);
+        var receiveText = "↓" + NetworkUsageSampler.Compact(_systemUsage.CurrentNetworkReceive) + "/s";
+        var sendText = "↑" + NetworkUsageSampler.Compact(_systemUsage.CurrentNetworkSend) + "/s";
+        var halfWidth = (bounds.Width - 9) / 2;
+        DrawString(graphics, receiveText, _subtitleFont, receive,
+            new RectangleF(bounds.X + 5, bounds.Y + 27, halfWidth, 10), StringAlignment.Near);
+        DrawString(graphics, sendText, _subtitleFont, send,
+            new RectangleF(bounds.X + 5 + halfWidth, bounds.Y + 27, halfWidth, 10), StringAlignment.Near);
     }
 
     private void DrawSystemUsageCard(Graphics graphics, RectangleF bounds, bool collapsed)
