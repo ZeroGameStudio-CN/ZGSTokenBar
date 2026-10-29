@@ -1,30 +1,50 @@
 namespace ZGSTokenBar.Core;
 
-/// <summary>Observed log-counter deltas, not server decoding throughput.</summary>
+public sealed record CodexResponseSample(string SessionId, string? Model, DateTimeOffset Start, DateTimeOffset End, long Output);
+public sealed record CodexLiveSession(string SessionId, string? Model, string Phase, DateTimeOffset? InFlightStart, DateTimeOffset LastActivity);
+public sealed record CodexLiveRateFeed(DateTimeOffset CapturedAt, IReadOnlyList<CodexResponseSample> Responses,
+    IReadOnlyList<CodexLiveSession> Sessions, int Pending);
+public sealed record LiveOutputRate(DateTimeOffset CapturedAt, double? Total, double Measured, double Estimated,
+    int Generating, int Tools, int Sessions, int Pending)
+{
+    public bool HasEstimate => Estimated > 0;
+    public double EstimatedShare => Total is > 0 ? Estimated / Total.Value : 0;
+}
+
+/// <summary>Response-interval overlap in a three-second window, with explicitly separate in-flight estimates.</summary>
 public sealed class ObservedOutputRate
 {
-    private Dictionary<(string Session, string Turn), long> _previous = [];
-    private DateTimeOffset? _at;
-    public double? Observe(IReadOnlyList<CodexConversationTurn> turns, DateTimeOffset now)
+    public LiveOutputRate Observe(CodexLiveRateFeed? feed, DateTimeOffset now)
     {
-        var rows = turns.GroupBy(turn => (turn.SessionId, turn.TurnId))
-            .Select(group => group.OrderByDescending(turn => turn.ObservedAt).First()).ToArray();
-        var elapsed = _at is { } at ? (now - at).TotalSeconds : 0;
-        var readable = rows.Where(turn => !turn.Stale && turn.UsageComplete && turn.OutputTokens >= 0).ToArray();
-        var valid = elapsed is > 0 and <= 15 && readable.Length > 0;
-        double delta = 0;
-        foreach (var turn in readable)
+        if (feed is null || now < feed.CapturedAt || now - feed.CapturedAt > TimeSpan.FromSeconds(15))
+            return new(now, null, 0, 0, 0, 0, 0, feed?.Pending ?? 0);
+        var responses = feed.Responses.Where(r => r.Output >= 0 && r.End <= now && r.End >= now.AddMinutes(-30)
+                && r.End >= r.Start && r.End - r.Start <= TimeSpan.FromMinutes(15))
+            .GroupBy(r => (r.SessionId, r.End)).Select(g => g.Last())
+            .Select(r => r with { Start = r.End - r.Start < TimeSpan.FromMilliseconds(500) ? r.End.AddMilliseconds(-500) : r.Start })
+            .OrderByDescending(r => r.End).ToArray();
+        var sessions = feed.Sessions.GroupBy(s => s.SessionId).Select(g => g.OrderByDescending(s => s.LastActivity).First()).ToArray();
+        var window = now.AddSeconds(-3);
+        var measured = responses.Sum(r => r.Output * Overlap(window, now, r.Start, r.End) / (r.End - r.Start).TotalSeconds) / 3;
+        double estimated = 0;
+        var generating = sessions.Where(s => s.Phase == "generating" && s.LastActivity <= now
+            && now - s.LastActivity <= TimeSpan.FromMinutes(5) && s.InFlightStart is not null).ToArray();
+        foreach (var session in generating)
         {
-            if (_previous.TryGetValue((turn.SessionId, turn.TurnId), out var before))
-            {
-                if (turn.OutputTokens < before) valid = false;
-                else delta += turn.OutputTokens - before;
-            }
-            else if (_at is { } start && turn.StartedAt >= start && turn.ObservedAt <= now.AddSeconds(5))
-                delta += turn.OutputTokens;
+            var reference = responses.Where(r => r.SessionId == session.SessionId && r.End >= now.AddMinutes(-10)).Take(3).ToArray();
+            if (reference.Length == 0 && session.Model is not null)
+                reference = responses.Where(r => r.Model == session.Model).Take(10).ToArray();
+            if (reference.Length == 0) reference = responses.Take(10).ToArray();
+            if (reference.Length == 0) continue;
+            var speed = reference.Sum(r => (double)r.Output) / reference.Sum(r => (r.End - r.Start).TotalSeconds);
+            var end = responses.Where(r => r.SessionId == session.SessionId).Select(r => r.End).DefaultIfEmpty(session.InFlightStart!.Value).Max();
+            var start = session.InFlightStart!.Value > end ? session.InFlightStart.Value : end;
+            estimated += speed * Overlap(window, now, start, now) / 3;
         }
-        _previous = readable.ToDictionary(turn => (turn.SessionId, turn.TurnId), turn => turn.OutputTokens);
-        _at = now;
-        return valid ? delta / elapsed : null;
+        var known = sessions.Length > 0 || responses.Length > 0 || feed.Pending == 0;
+        return new(now, known ? measured + estimated : null, measured, estimated, generating.Length,
+            sessions.Count(s => s.Phase == "tools" && now - s.LastActivity <= TimeSpan.FromMinutes(5)), sessions.Length, feed.Pending);
     }
+    private static double Overlap(DateTimeOffset a, DateTimeOffset b, DateTimeOffset start, DateTimeOffset end) =>
+        Math.Max(0, ((b < end ? b : end) - (a > start ? a : start)).TotalSeconds);
 }

@@ -313,7 +313,7 @@ internal sealed partial class BarForm : Form
     public IReadOnlyList<string> MiniAreaOrder =>
         AppSettings.CopyMiniAreaOrder(_miniAreaOrder);
     public bool WantsSystemUsageDetails =>
-        _showSystemMetrics && (_hoverSystemUsage || _systemUsagePopover?.Visible == true);
+        _showSystemMetrics && !_systemAnchorIsLive && (_hoverSystemUsage || _systemUsagePopover?.Visible == true);
     internal bool IsRadarResetTimerEnabled => _radarResetTimer.Enabled;
     internal int RadarResetTimerInterval => _radarResetTimer.Interval;
     internal int CodexPoolAccountCountForAcceptance => _taskbarContentAreas
@@ -635,21 +635,21 @@ internal sealed partial class BarForm : Form
         }
     }
 
-    public void SetObservedOutputRate(double? rate, DateTimeOffset at)
+    public void SetLiveOutputRate(LiveOutputRate rate)
     {
         var first = _systemUsage.OutputRateCapturedAt is null;
-        _systemUsage = _systemUsage with { ObservedOutputTokensPerSecond = rate, OutputRateCapturedAt = at };
+        _systemUsage = _systemUsage with { ObservedOutputTokensPerSecond = rate.Total, OutputRateCapturedAt = rate.CapturedAt, LiveRate = rate };
         if (first) ApplySnapshotLayout();
         Invalidate();
     }
 
     public void SetSystemUsage(SystemUsageSnapshot snapshot)
     {
-        snapshot = snapshot with { ObservedOutputTokensPerSecond = _systemUsage.ObservedOutputTokensPerSecond, OutputRateCapturedAt = _systemUsage.OutputRateCapturedAt };
+        snapshot = snapshot with { ObservedOutputTokensPerSecond = _systemUsage.ObservedOutputTokensPerSecond, OutputRateCapturedAt = _systemUsage.OutputRateCapturedAt, LiveRate = _systemUsage.LiveRate };
         _systemUsage = snapshot;
         if (_systemUsagePopover?.Visible == true)
         {
-            _systemUsagePopover.UpdateContent(new SystemUsagePopoverContent(snapshot, _popoverPinned), _text);
+            _systemUsagePopover.UpdateContent(new SystemUsagePopoverContent(snapshot, _popoverPinned, _systemAnchorIsLive), _text);
         }
         Invalidate();
     }
@@ -1564,17 +1564,21 @@ internal sealed partial class BarForm : Form
         DrawTaskbarCardShell(graphics, bounds);
         using var primary = new SolidBrush(Color.FromArgb(203, 213, 225));
         using var network = new SolidBrush(Color.FromArgb(148, 163, 184));
+        var prefix = _systemUsage.LiveRate?.HasEstimate == true ? "~" : "Σ";
+        var rate = _systemUsage.CurrentOutputRate is { } output ? $"{output:0.#}" : "—";
         if (collapsed)
         {
-            DrawString(graphics, "Σ", _cardTitleFont, primary, bounds, StringAlignment.Center);
+            DrawString(graphics, $"{prefix} {rate} tok/s", _badgeFont, primary,
+                new RectangleF(bounds.X + 3, bounds.Y + 10, bounds.Width - 6, 14), StringAlignment.Center);
             return;
         }
-        var rate = _systemUsage.CurrentOutputRate is { } output ? $"{output:0.#}" : "—";
-        DrawString(graphics, $"Σ {rate} tok/s", _badgeFont, primary,
-            new RectangleF(bounds.X + 4, bounds.Y + 3, bounds.Width - 8, 12), StringAlignment.Near);
-        DrawString(graphics, "↓ " + NetworkUsageSampler.Compact(_systemUsage.CurrentNetworkReceive) + "/s", _subtitleFont, network,
-            new RectangleF(bounds.X + 4, bounds.Y + 15, bounds.Width - 8, 10), StringAlignment.Near);
-        DrawString(graphics, "↑ " + NetworkUsageSampler.Compact(_systemUsage.CurrentNetworkSend) + "/s", _subtitleFont, network,
+        DrawString(graphics, $"{prefix} {rate} tok/s", _badgeFont, primary,
+            new RectangleF(bounds.X + 4, bounds.Y + 2, bounds.Width - 8, 12), StringAlignment.Near);
+        var detail = _systemUsage.LiveRate is { } live
+            ? (_text.IsChinese ? $"{live.Generating} 生成 · {live.Tools} 工具 · 估算 {live.EstimatedShare:P0}" : $"{live.Generating} generating · {live.Tools} tools · {live.EstimatedShare:P0} est.") : "—";
+        DrawString(graphics, detail, _subtitleFont, network,
+            new RectangleF(bounds.X + 4, bounds.Y + 14, bounds.Width - 8, 10), StringAlignment.Near);
+        DrawString(graphics, "↓" + NetworkUsageSampler.Compact(_systemUsage.CurrentNetworkReceive) + "/s  ↑" + NetworkUsageSampler.Compact(_systemUsage.CurrentNetworkSend) + "/s", _subtitleFont, network,
             new RectangleF(bounds.X + 4, bounds.Y + 25, bounds.Width - 8, 10), StringAlignment.Near);
     }
 
@@ -4482,9 +4486,15 @@ internal sealed partial class BarForm : Form
 
     private bool SystemUsageTargetAt(PointF point)
     {
-        if (_liveMetricsBounds.Contains(point)) { _systemAnchorIsLive = true; return true; }
-        if (_systemUsageBounds.Contains(point)) { _systemAnchorIsLive = false; return true; }
-        return false;
+        var isLive = _liveMetricsBounds.Contains(point);
+        if (!isLive && !_systemUsageBounds.Contains(point)) return false;
+        if (_popoverPinned && _systemUsagePopover?.Visible == true) return isLive == _systemAnchorIsLive;
+        if (isLive != _systemAnchorIsLive)
+        {
+            HideSystemUsagePopover();
+            _systemAnchorIsLive = isLive;
+        }
+        return true;
     }
 
     private void UpdateSystemUsageHover(bool hovered)
@@ -4618,7 +4628,7 @@ internal sealed partial class BarForm : Form
     private void ShowSystemUsagePopover(bool pinned)
     {
         HidePluginPopover();
-        var needsDetails = _systemUsage.TopProcesses.Count == 0;
+        var needsDetails = !_systemAnchorIsLive && _systemUsage.TopProcesses.Count == 0;
         _popoverHoverTimer.Stop();
         if (_hintPopover?.Visible == true || _hoverHintTarget != HoverTarget.None) HideHintPopover();
         if (_codexAccountsPopover?.Visible == true) HideCodexAccountsPopover();
@@ -4629,7 +4639,7 @@ internal sealed partial class BarForm : Form
         _systemUsagePopover.ShowFor(
             this,
             QuotaTargetScreenBounds(SystemUsageAnchorBounds),
-            new SystemUsagePopoverContent(_systemUsage, pinned),
+            new SystemUsagePopoverContent(_systemUsage, pinned, _systemAnchorIsLive),
             _text,
             _scale,
             _animationsEnabled);
@@ -5609,7 +5619,7 @@ internal sealed partial class BarForm : Form
     {
         var normalized = _miniAreaLayouts.TryGetValue(areaId, out var layout)
             ? layout.Normalized(areaId)
-            : new MiniAreaLayout(Collapsed: areaId == MiniAreaIds.Router);
+            : new MiniAreaLayout(Collapsed: areaId is MiniAreaIds.Router or MiniAreaIds.LiveMetrics);
         return normalized;
     }
 
@@ -5935,7 +5945,7 @@ internal sealed partial class BarForm : Form
             plugin);
 
         public static TaskbarMiniAreaContent ForLiveMetrics(string title) => new(
-            MiniAreaIds.LiveMetrics, title, TaskbarMiniLayoutMath.ServiceCardWidth, null, null);
+            MiniAreaIds.LiveMetrics, title, 160, null, null);
 
         public static TaskbarMiniAreaContent ForSystem(string title) => new(
             MiniAreaIds.SystemMetrics,

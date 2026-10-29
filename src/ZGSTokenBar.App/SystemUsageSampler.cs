@@ -27,6 +27,7 @@ internal sealed record SystemUsageSnapshot(
     public double? NetworkSendBytesPerSecond { get; init; }
     public int NetworkInterfaces { get; init; }
     public double? ObservedOutputTokensPerSecond { get; init; }
+    public ZGSTokenBar.Core.LiveOutputRate? LiveRate { get; init; }
     public DateTimeOffset? OutputRateCapturedAt { get; init; }
     public double? CurrentOutputRate => OutputRateCapturedAt is { } at && DateTimeOffset.UtcNow >= at && DateTimeOffset.UtcNow - at <= TimeSpan.FromSeconds(15) ? ObservedOutputTokensPerSecond : null;
     public double? CurrentNetworkReceive => DateTimeOffset.UtcNow >= CapturedAt && DateTimeOffset.UtcNow - CapturedAt <= TimeSpan.FromSeconds(5) ? NetworkReceiveBytesPerSecond : null;

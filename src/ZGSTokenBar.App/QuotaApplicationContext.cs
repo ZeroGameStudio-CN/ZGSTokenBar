@@ -264,6 +264,8 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                 if (_bar.WantsSystemUsageDetails) _ = RefreshSystemUsageDetailsAsync();
                 else _ = RefreshSystemUsageOverviewAsync();
                 _bar.SyncTaskbarPlacement();
+                if (_settings.IsPluginEnabled("zgstokenbar.metrics.system", true) && _activeProviders.Contains(ProviderKind.Codex))
+                    _ = RefreshCodexConversationsAsync();
             }
             _bar.Invalidate();
         };
@@ -279,7 +281,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         _providerActivityTimer.Tick += (_, _) =>
         {
             UpdateProviderActivity(requestRefresh: true);
-            if ((_settings.IsPluginEnabled("zgstokenbar.metrics.system", true) || _bar.RadarVisible || _cachedCodexTokenUsage?.PendingConversationCount > 0)
+            if ((_bar.RadarVisible || _cachedCodexTokenUsage?.PendingConversationCount > 0)
                 && _activeProviders.Contains(ProviderKind.Codex))
                 _ = RefreshCodexConversationsAsync();
         };
@@ -1119,7 +1121,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             if (_shutdown.IsCancellationRequested || _bar.IsDisposed || summary is null
                 || !_activeProviders.Contains(ProviderKind.Codex)) return;
             _cachedCodexTokenUsage = summary;
-            _bar.SetObservedOutputRate(_observedOutput.Observe(summary.RecentTurns, DateTimeOffset.UtcNow), DateTimeOffset.UtcNow);
+            _bar.SetLiveOutputRate(_observedOutput.Observe(summary.LiveRateFeed, DateTimeOffset.UtcNow));
             _bar.SetCodexTokenUsage(summary);
             _pluginHost.Publish(CorePluginProjection.CodexUsage(
                 "zgstokenbar.usage.codex-local", summary, DateTimeOffset.UtcNow));
@@ -2025,6 +2027,11 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                 TaskbarDocked = _bar.IsTaskbarDocked,
                 ObservedOutputTokensPerSecond = _bar.LiveMetrics.CurrentOutputRate,
                 OutputRateCapturedAt = _bar.LiveMetrics.OutputRateCapturedAt,
+                MeasuredOutputTokensPerSecond = _bar.LiveMetrics.LiveRate?.Measured,
+                EstimatedOutputTokensPerSecond = _bar.LiveMetrics.LiveRate?.Estimated,
+                OutputRateWindowSeconds = 3,
+                GeneratingSessionCount = _bar.LiveMetrics.LiveRate?.Generating ?? 0,
+                ToolsSessionCount = _bar.LiveMetrics.LiveRate?.Tools ?? 0,
                 NetworkReceiveBytesPerSecond = _bar.LiveMetrics.CurrentNetworkReceive,
                 NetworkSendBytesPerSecond = _bar.LiveMetrics.CurrentNetworkSend,
                 NetworkCapturedAt = _bar.LiveMetrics.CapturedAt,

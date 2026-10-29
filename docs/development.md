@@ -363,24 +363,36 @@ dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj -c Release
 
 ## Live taskbar readouts
 
-The system area's CPU/RAM/disk/GPU tracks keep their original layout at every
-width. A separate live-rates area appears after Codex sampling starts, with observed
-output and network RX/TX. It reuses the existing width, collapse, ordering and
-system hover-detail interactions without changing the CPU area. Network uses up,
-non-loopback/non-tunnel interfaces with default gateways.
-Hover details state the scope and units. K/M/G use powers of 1024, per second.
-Interface discovery is cached for thirty seconds; counter-read failure expires
-that cache immediately. This reads counters, never intercepts packets or changes
-network configuration, and does not attribute traffic to a model/process.
+The system area's CPU/RAM/disk/GPU tracks and resource/process hover are preserved.
+The separate live-rates area defaults to collapsed and keeps a readable one-line
+summed output tok/s. Expand it for activity counts, estimate share and network
+RX/TX. It reuses module ordering, resizing, pin/dismiss and anchor geometry;
+its hover has independent rate content without CPU/process rows. No extra system
+process collection runs for the rates hover.
 
-Output is a roughly five-second difference of observed complete local turn
-counters, summed across the connected Codex session window. It is neither server
-decode speed nor guaranteed coverage of every request/client. Initial samples,
-resets, long gaps, no readable logs and expired observations show unavailable;
-stale/incomplete sessions are excluded from this observed subset rather than
-hiding readable active output. Late historical discovery is only a baseline;
-unchanged measured counters show zero. No original provider accounting is changed.
-The existing taskbar placement supports dragging to snap near the taskbar and
-dragging away to float, with saved monitor/position profiles. General settings now
-explain that entry. `window inspect --json` reports dock state and fresh live
-readouts as well as the existing module/data checks.
+Rates now use per-response log timestamps, not a difference of turn counters
+between polls. Sum each response's token fraction overlapping the latest three
+seconds and divide by three. Intervals under 500 ms use a 500 ms floor; missing,
+future, reversed or over-fifteen-minute intervals are excluded. During generating
+phases, estimate only the uncovered interval after the last response, using the
+same session's latest three responses within ten minutes, then up to ten matching
+model/source responses within thirty minutes as fallback. Tool/idle phases receive
+no extrapolation. A tilde denotes estimated output; hover exposes recorded and
+estimated values/share. These are response-window observations and estimates,
+not server decode speed or a guarantee that every client/request is captured.
+
+The existing bounded twelve-session incremental reader publishes a separate
+in-memory rate feed; it does not change durable token accounting/history. The
+existing one-second clock refreshes this feed under the existing non-overlap gate.
+No second watcher/timer or ledger is added. Unavailable/expired feeds remain
+unavailable; pending catch-up and observed session coverage are shown. Historical
+records are positioned on their original timestamps, so discovery cannot produce
+a current counter burst.
+
+Network reads up, non-loopback/non-tunnel default-gateway adapter byte counters,
+not model/process traffic. Discovery is cached thirty seconds, invalidated on read
+failure; K/M/G use powers of 1024 per second. No packet interception or network
+configuration changes occur. Existing taskbar drag-to-snap/float placement and
+user settings remain intact. `window inspect --json` includes the three-second
+window, recorded/estimated rates, generating/tools counts and existing module and
+data identity checks.
