@@ -41,9 +41,9 @@ public sealed class ObservedOutputRate
             var start = session.InFlightStart!.Value > end ? session.InFlightStart.Value : end;
             estimated += speed * Overlap(window, now, start, now) / 3;
         }
-        var known = sessions.Length > 0 || responses.Length > 0 || feed.Pending == 0;
+        var known = sessions.Length > 0 || responses.Length > 0;
         return new(now, known ? measured + estimated : null, measured, estimated, generating.Length,
-            sessions.Count(s => s.Phase == "tools" && now - s.LastActivity <= TimeSpan.FromMinutes(5)), sessions.Length, feed.Pending);
+            sessions.Count(s => s.Phase == "tools" && s.LastActivity <= now && now - s.LastActivity <= TimeSpan.FromMinutes(5)), sessions.Length, feed.Pending);
     }
     private static double Overlap(DateTimeOffset a, DateTimeOffset b, DateTimeOffset start, DateTimeOffset end) =>
         Math.Max(0, ((b < end ? b : end) - (a > start ? a : start)).TotalSeconds);

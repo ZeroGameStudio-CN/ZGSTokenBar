@@ -69,7 +69,7 @@ public sealed class CodexTokenUsageLedger
                 {
                     RecentTurns = _conversations.Refresh(observed.RecentSessionPaths, now, cancellationToken),
                     PendingConversationCount = _conversations.PendingSessions,
-                    LiveRateFeed = _conversations.LiveRateFeed,
+                LiveRateFeed = _conversations.LiveRateFeed,
                 };
                 _summary = PersistConversationHistory(_summary, now);
             }
@@ -106,7 +106,7 @@ public sealed class CodexTokenUsageLedger
             {
                 RecentTurns = _conversations.Refresh(recent, now, cancellationToken),
                 PendingConversationCount = _conversations.PendingSessions,
-                    LiveRateFeed = _conversations.LiveRateFeed,
+                LiveRateFeed = _conversations.LiveRateFeed,
             };
             _summary = PersistConversationHistory(_summary, now);
             return _titles.Apply(_summary, _homes(), cancellationToken);

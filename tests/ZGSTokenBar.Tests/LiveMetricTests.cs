@@ -25,7 +25,8 @@ internal static class LiveMetricTests
             "Sub-500ms responses use a bounded interval rather than dividing by zero.");
         Check(tracker.Observe(Feed([]) with { CapturedAt = at.AddMinutes(-1) }, at).Total is null,
             "Expired feeds are unavailable.");
-        Check(tracker.Observe(Feed([]), at).Total == 0, "An observed empty window is idle.");
+        Check(tracker.Observe(Feed([]), at).Total is null, "No readable session is unavailable, not a measured zero.");
+        Check(tracker.Observe(Feed([], [active with { Phase = "idle" }]), at).Total == 0, "An observed idle session has zero current output.");
         ReaderIntervals(at);
         var network = new NetworkUsageSampler();
         Check(network.Observe([new("a", 1000, 2000)], 1).Received is null, "Network needs a baseline.");
@@ -99,7 +100,9 @@ internal static class LiveMetricTests
             File.AppendAllText(path, Line(0, "response_item", new { type = "function_call_output" }) + Environment.NewLine);
             reader.Refresh([path], at);
             Check(reader.LiveRateFeed!.Sessions.Single().Phase == "generating", "Tool output begins the next generation interval.");
+            File.AppendAllText(path, Line(0, "event_msg", Usage(190, 300)) + Environment.NewLine);
             reader.Refresh([path], at.AddSeconds(1));
+            Check(reader.LiveRateFeed!.Sessions.Single().Phase == "generating", "Duplicate counters cannot end active generation.");
             Check(reader.LiveRateFeed!.Responses.Count == 1, "Unchanged polling never duplicates responses.");
         }
         finally { Directory.Delete(directory, true); }
