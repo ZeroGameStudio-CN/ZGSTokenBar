@@ -418,7 +418,7 @@ internal sealed class SettingsForm : Form
         var general = AddPage("general", _text.General);
         general.Add(new ValueSettingRow(_text.Language, _text.LanguageHint, _locale, Scale(196), _theme, _scale));
         general.Add(new ValueSettingRow(_text.AutomaticRefresh, _text.AutomaticRefreshHint, _refreshMinutes, Scale(196), _theme, _scale));
-        general.Add(new SectionNote(_text.IsChinese ? "任务栏固定：按住 Bar 的空白或拖动区域拖近任务栏，自动吸附；拖离可浮动，位置会保存。系统模块展开后显示观测输出速率和默认网络上下行。" : "Dock to taskbar: drag the Bar's empty/drag area close to the taskbar to snap; drag away to float. Placement is saved. Expanded system metrics include observed output and default-network traffic.", _theme, _scale));
+        general.Add(new SectionNote(_text.IsChinese ? "任务栏固定：按住 Bar 的空白或拖动区域拖近任务栏，自动吸附；拖离可浮动，位置会保存。独立速率模块显示观测输出速率和默认网络上下行，悬浮可看说明。" : "Dock to taskbar: drag the Bar's empty/drag area close to the taskbar to snap; drag away to float. Placement is saved. A separate live-rates module shows observed output and default-network traffic, with scope on hover.", _theme, _scale));
         general.Add(new ToggleSettingRow(_openAtLogin, _text.StartWithWindows, _text.StartWithWindowsHint, _theme, _scale));
         general.Add(new ToggleSettingRow(_animations, _text.AnimationsTitle, _text.Animations, _theme, _scale));
 

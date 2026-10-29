@@ -103,6 +103,9 @@ internal sealed partial class BarForm : Form
     private RectangleF _refreshBounds;
     private RectangleF _settingsBounds;
     private RectangleF _systemUsageBounds;
+    private RectangleF _liveMetricsBounds;
+    private bool _systemAnchorIsLive;
+    private RectangleF SystemUsageAnchorBounds => _systemAnchorIsLive ? _liveMetricsBounds : _systemUsageBounds;
     private HoverTarget _hoverTarget;
     private HoverTarget _pressedTarget;
     private bool _refreshing;
@@ -634,7 +637,9 @@ internal sealed partial class BarForm : Form
 
     public void SetObservedOutputRate(double? rate, DateTimeOffset at)
     {
+        var first = _systemUsage.OutputRateCapturedAt is null;
         _systemUsage = _systemUsage with { ObservedOutputTokensPerSecond = rate, OutputRateCapturedAt = at };
+        if (first) ApplySnapshotLayout();
         Invalidate();
     }
 
@@ -1235,6 +1240,7 @@ internal sealed partial class BarForm : Form
         _taskbarCodexAccountBounds.Clear();
         _taskbarAreaBounds.Clear();
         var x = (float)TaskbarMiniLayoutMath.OuterPadding;
+        _liveMetricsBounds = RectangleF.Empty;
         foreach (var area in _visibleTaskbarAreas)
         {
             var layout = AreaLayout(area.AreaId);
@@ -1362,6 +1368,11 @@ internal sealed partial class BarForm : Form
             {
                 _systemUsageBounds = bounds;
                 DrawSystemUsageCard(graphics, bounds, layout.Collapsed);
+            }
+            else if (string.Equals(area.AreaId, MiniAreaIds.LiveMetrics, StringComparison.Ordinal))
+            {
+                _liveMetricsBounds = bounds;
+                DrawLiveMetricsCard(graphics, bounds, layout.Collapsed);
             }
             DrawTaskbarCollapseHandle(graphics, target);
             DrawTaskbarReorderGrip(graphics, target);
@@ -1548,6 +1559,25 @@ internal sealed partial class BarForm : Form
             StringAlignment.Near);
     }
 
+    private void DrawLiveMetricsCard(Graphics graphics, RectangleF bounds, bool collapsed)
+    {
+        DrawTaskbarCardShell(graphics, bounds);
+        using var primary = new SolidBrush(Color.FromArgb(203, 213, 225));
+        using var network = new SolidBrush(Color.FromArgb(148, 163, 184));
+        if (collapsed)
+        {
+            DrawString(graphics, "Σ", _cardTitleFont, primary, bounds, StringAlignment.Center);
+            return;
+        }
+        var rate = _systemUsage.CurrentOutputRate is { } output ? $"{output:0.#}" : "—";
+        DrawString(graphics, $"Σ {rate} tok/s", _badgeFont, primary,
+            new RectangleF(bounds.X + 4, bounds.Y + 3, bounds.Width - 8, 12), StringAlignment.Near);
+        DrawString(graphics, "↓ " + NetworkUsageSampler.Compact(_systemUsage.CurrentNetworkReceive) + "/s", _subtitleFont, network,
+            new RectangleF(bounds.X + 4, bounds.Y + 15, bounds.Width - 8, 10), StringAlignment.Near);
+        DrawString(graphics, "↑ " + NetworkUsageSampler.Compact(_systemUsage.CurrentNetworkSend) + "/s", _subtitleFont, network,
+            new RectangleF(bounds.X + 4, bounds.Y + 25, bounds.Width - 8, 10), StringAlignment.Near);
+    }
+
     private void DrawSystemUsageCard(Graphics graphics, RectangleF bounds, bool collapsed)
     {
         DrawSystemUsageFrame(graphics, bounds);
@@ -1603,36 +1633,10 @@ internal sealed partial class BarForm : Form
 
     private void DrawSystemUsageRows(Graphics graphics, RectangleF bounds)
     {
-        var wide = bounds.Width >= 144;
-        var fullBounds = bounds;
-        if (wide) bounds = bounds with { Width = 82 };
-        if (wide)
-        {
-            DrawSystemUsageRow(graphics, bounds, 0, "CPU", _systemUsage.CpuPercent);
-            DrawSystemUsageRow(graphics, bounds, 1, "RAM", _systemUsage.MemoryPercent);
-            DrawSystemUsageRow(graphics, bounds, 2, "I/O", _systemUsage.DiskActivePercent);
-            DrawSystemUsageRow(graphics, bounds, 3, "GPU", _systemUsage.GpuPercent);
-        }
-        bounds = fullBounds;
-        using var brush = new SolidBrush(Color.FromArgb(169, 211, 239));
-        void Row(int index, string value) => DrawString(graphics, value, _accountOrdinalFont, brush,
-            new RectangleF(wide ? bounds.Left + 88 : bounds.Left + 4, bounds.Top + 3 + index * 8.2f,
-                wide ? bounds.Width - 92 : bounds.Width - 8, 7), StringAlignment.Near);
-        var rate = _systemUsage.CurrentOutputRate is { } output ? $"{output:0.#}" : "—";
-        if (wide)
-        {
-            Row(0, $"Σ {rate} tok/s");
-            Row(1, "↓ " + NetworkUsageSampler.Compact(_systemUsage.CurrentNetworkReceive) + "/s");
-            Row(2, "↑ " + NetworkUsageSampler.Compact(_systemUsage.CurrentNetworkSend) + "/s");
-            Row(3, _text.IsChinese ? "观测输出 · 默认网络" : "Observed · default NICs");
-        }
-        else
-        {
-            Row(0, $"CPU {CompactUsage(_systemUsage.CpuPercent)} RAM {CompactUsage(_systemUsage.MemoryPercent)}");
-            Row(1, $"GPU {CompactUsage(_systemUsage.GpuPercent)} I/O {CompactUsage(_systemUsage.DiskActivePercent)}");
-            Row(2, $"Σ {rate} tok/s");
-            Row(3, "↓" + NetworkUsageSampler.Compact(_systemUsage.CurrentNetworkReceive) + " ↑" + NetworkUsageSampler.Compact(_systemUsage.CurrentNetworkSend));
-        }
+        DrawSystemUsageRow(graphics, bounds, 0, "CPU", _systemUsage.CpuPercent);
+        DrawSystemUsageRow(graphics, bounds, 1, "RAM", _systemUsage.MemoryPercent);
+        DrawSystemUsageRow(graphics, bounds, 2, "I/O", _systemUsage.DiskActivePercent);
+        DrawSystemUsageRow(graphics, bounds, 3, "GPU", _systemUsage.GpuPercent);
     }
 
     private void DrawSystemUsageRow(
@@ -4476,8 +4480,12 @@ internal sealed partial class BarForm : Form
         return null;
     }
 
-    private bool SystemUsageTargetAt(PointF point) =>
-        _systemUsageBounds.Contains(point);
+    private bool SystemUsageTargetAt(PointF point)
+    {
+        if (_liveMetricsBounds.Contains(point)) { _systemAnchorIsLive = true; return true; }
+        if (_systemUsageBounds.Contains(point)) { _systemAnchorIsLive = false; return true; }
+        return false;
+    }
 
     private void UpdateSystemUsageHover(bool hovered)
     {
@@ -4620,7 +4628,7 @@ internal sealed partial class BarForm : Form
         _systemUsagePopover.ApplyTheme(_backgroundTheme);
         _systemUsagePopover.ShowFor(
             this,
-            QuotaTargetScreenBounds(_systemUsageBounds),
+            QuotaTargetScreenBounds(SystemUsageAnchorBounds),
             new SystemUsagePopoverContent(_systemUsage, pinned),
             _text,
             _scale,
@@ -4646,7 +4654,7 @@ internal sealed partial class BarForm : Form
         }
 
         var cursor = Cursor.Position;
-        var anchor = QuotaTargetScreenBounds(_systemUsageBounds);
+        var anchor = QuotaTargetScreenBounds(SystemUsageAnchorBounds);
         var mouseDown = Control.MouseButtons != MouseButtons.None;
         var escapeDown = IsEscapeDown();
         if (_popoverPinned)
@@ -4680,7 +4688,7 @@ internal sealed partial class BarForm : Form
         if (_hoverSystemUsage)
         {
             _popoverHoverTimer.Stop();
-            if (!QuotaTargetScreenBounds(_systemUsageBounds).Contains(Cursor.Position)) return;
+            if (!QuotaTargetScreenBounds(SystemUsageAnchorBounds).Contains(Cursor.Position)) return;
             ShowSystemUsagePopover(pinned: false);
             return;
         }
@@ -5227,6 +5235,8 @@ internal sealed partial class BarForm : Form
         if (_showSystemMetrics)
         {
             defaultAreas.Add(TaskbarMiniAreaContent.ForSystem(_text.SystemUsageTitle));
+            if (_systemUsage.OutputRateCapturedAt is not null)
+                defaultAreas.Add(TaskbarMiniAreaContent.ForLiveMetrics(_text.IsChinese ? "实时速率" : "Live rates"));
         }
         if (ShouldShowRadarResetArea())
         {
@@ -5923,6 +5933,9 @@ internal sealed partial class BarForm : Form
                 : TaskbarMiniLayoutMath.CardWidth,
             null,
             plugin);
+
+        public static TaskbarMiniAreaContent ForLiveMetrics(string title) => new(
+            MiniAreaIds.LiveMetrics, title, TaskbarMiniLayoutMath.ServiceCardWidth, null, null);
 
         public static TaskbarMiniAreaContent ForSystem(string title) => new(
             MiniAreaIds.SystemMetrics,
