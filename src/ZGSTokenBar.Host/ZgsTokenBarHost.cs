@@ -713,6 +713,7 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
                 "ui.mini.setArea" => await MiniAreaSetAsync(request.Params, cancellationToken),
                 "ui.mini.moveArea" => await MiniAreaMoveAsync(request.Params, cancellationToken),
                 "window.inspect" => await WindowInspectAsync(cancellationToken),
+                "ui.codex.history.export" => await CodexHistoryExportAsync(request.Params, cancellationToken),
                 "app.requestRefresh" => await RequestRefreshAsync(request.Params, cancellationToken),
                 "app.openSettings" => await OpenSettingsAsync(cancellationToken),
                 "ui.router.setVisible" => await RouterVisibleAsync(request.Params, cancellationToken),
@@ -965,6 +966,21 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
 
     private async ValueTask<JsonElement> WindowInspectAsync(CancellationToken cancellationToken) =>
         ToElement(await RequireDesktop().InspectWindowAsync(cancellationToken), ApiJsonContext.Default.WindowInspection);
+
+    private async ValueTask<JsonElement> CodexHistoryExportAsync(JsonElement? parameters, CancellationToken cancellationToken)
+    {
+        var desktop = RequireDesktop();
+        EnsureFields(parameters, ["period", "model", "project", "search", "sortColumn", "descending", "offset", "snapshot"]);
+        CodexHistoryExportRequest? request;
+        try { request = parameters is { } value ? JsonSerializer.Deserialize(value, ApiJsonContext.Default.CodexHistoryExportRequest) : new(); }
+        catch (JsonException) { throw new HostCommandException("invalid_request", "History export parameters are invalid."); }
+        if (request is null || request.Period is not ("retained" or "today" or "7d" or "30d")
+            || request.Offset is < 0 or > 16 * 1024 * 1024 || request.SortColumn is < -1 or > 9
+            || request.Search is null || request.Search.Length > 160 || request.Model?.Length > 512
+            || request.Project?.Length > 512 || request.Snapshot is { Length: not 64 })
+            throw new HostCommandException("invalid_request", "History export parameters are invalid.");
+        return ToElement(await desktop.ReadCodexHistoryAsync(request, cancellationToken), ApiJsonContext.Default.CodexHistoryExportChunk);
+    }
 
     private async ValueTask<JsonElement> RequestRefreshAsync(
         JsonElement? parameters,

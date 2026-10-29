@@ -1984,6 +1984,28 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             },
             cancellationToken));
 
+    public async ValueTask<CodexHistoryExportChunk> ReadCodexHistoryAsync(CodexHistoryExportRequest request, CancellationToken cancellationToken)
+    {
+        var usage = await InvokeOnUiAsync(() => _cachedCodexTokenUsage, cancellationToken)
+            ?? throw new HostCommandException("data_unavailable", "Retained usage has not been observed yet.");
+        try
+        {
+            return await Task.Run(() =>
+            {
+                var period = request.Period switch { "today" => CodexHistoryPeriod.Today, "7d" => CodexHistoryPeriod.Days7,
+                    "30d" => CodexHistoryPeriod.Days30, _ => CodexHistoryPeriod.Retained };
+                var view = CodexConversationView.Create(usage, new(period, request.Model, request.Project, request.Search,
+                    request.SortColumn, request.Descending), DateTimeOffset.UtcNow);
+                var chunk = view.ReadCsvChunk(request.Offset, request.Snapshot);
+                return new CodexHistoryExportChunk(chunk.Snapshot, chunk.NextOffset, chunk.TotalBytes, chunk.Data,
+                    view.Rows.Count, view.ObservedCount, usage.CapturedAt, usage.PendingConversationCount);
+            }, cancellationToken);
+        }
+        catch (CodexHistoryChangedException error) { throw new HostCommandException("data_changed", error.Message); }
+        catch (ArgumentException) { throw new HostCommandException("invalid_request", "History export offset is invalid."); }
+        catch (InvalidOperationException error) { throw new HostCommandException("export_limit", error.Message); }
+    }
+
     public ValueTask<WindowInspection> InspectWindowAsync(CancellationToken cancellationToken) =>
         new(InvokeOnUiAsync(
             () => new WindowInspection(

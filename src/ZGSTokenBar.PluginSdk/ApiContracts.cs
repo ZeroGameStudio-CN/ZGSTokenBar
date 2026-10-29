@@ -112,6 +112,13 @@ public sealed record SnapshotSummary(
     HostRevisions Revisions,
     IReadOnlyList<PluginSnapshotSummary> Plugins);
 
+public sealed record CodexHistoryExportRequest(string Period = "retained", string? Model = null,
+    string? Project = null, string Search = "", int SortColumn = -1, bool Descending = true,
+    int Offset = 0, string? Snapshot = null);
+
+public sealed record CodexHistoryExportChunk(string Snapshot, int NextOffset, int TotalBytes, byte[] Data,
+    int TurnCount, int ObservedCount, DateTimeOffset CapturedAt, int PendingCount);
+
 public sealed record PluginSnapshotSummary(
     string PluginId,
     bool Enabled,
@@ -148,6 +155,8 @@ public sealed record HostEvent(
 [JsonSerializable(typeof(MiniState))]
 [JsonSerializable(typeof(MiniMutationResult))]
 [JsonSerializable(typeof(WindowInspection))]
+[JsonSerializable(typeof(CodexHistoryExportRequest))]
+[JsonSerializable(typeof(CodexHistoryExportChunk))]
 [JsonSerializable(typeof(SnapshotSummary))]
 [JsonSerializable(typeof(PagedPluginData))]
 [JsonSerializable(typeof(HostEvent))]

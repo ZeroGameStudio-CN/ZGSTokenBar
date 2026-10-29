@@ -25,6 +25,8 @@ public interface IDesktopControl
         long expectedUiRevision,
         CancellationToken cancellationToken);
     ValueTask<WindowInspection> InspectWindowAsync(CancellationToken cancellationToken);
+    ValueTask<CodexHistoryExportChunk> ReadCodexHistoryAsync(CodexHistoryExportRequest request, CancellationToken cancellationToken) =>
+        ValueTask.FromException<CodexHistoryExportChunk>(new HostCommandException("command_requires_desktop", "History export requires the native desktop."));
     ValueTask RequestRefreshAsync(bool reloadSettings, CancellationToken cancellationToken);
     ValueTask OpenSettingsAsync(CancellationToken cancellationToken);
     ValueTask SetRouterVisibleAsync(bool visible, CancellationToken cancellationToken) =>

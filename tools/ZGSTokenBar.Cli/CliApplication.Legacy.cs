@@ -131,6 +131,7 @@ internal static partial class CliApplication
             "mini move <area-id> [before-area-id]",
             "window inspect",
             "router show|hide",
+            "codex-usage export --output <new.csv> [--range retained|today|7d|30d] [--model <name>] [--project <name>] [--search <text>] [--sort <column>] [--ascending]",
             "watch [--include-values]",
             "acceptance run --isolated --artifacts <dir>",
             "sub2api provision|configure|status|disconnect",

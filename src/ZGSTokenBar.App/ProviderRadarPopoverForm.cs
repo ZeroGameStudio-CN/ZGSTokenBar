@@ -2,7 +2,7 @@ using ZGSTokenBar.Core;
 
 namespace ZGSTokenBar.App;
 
-internal sealed class ProviderRadarPopoverForm : Form
+internal sealed partial class ProviderRadarPopoverForm : Form
 {
     private const int ToolWindowStyle = 0x00000080;
     private const int NoActivateStyle = 0x08000000;
@@ -57,6 +57,7 @@ internal sealed class ProviderRadarPopoverForm : Form
 
     public ProviderRadarPopoverForm()
     {
+        InitializeConversationTools();
         _motionTimer.Tick += (_, _) => AdvanceMotion();
         _countdownTimer.Tick += (_, _) => AdvanceCountdown();
         AutoScaleMode = AutoScaleMode.None;
@@ -87,8 +88,8 @@ internal sealed class ProviderRadarPopoverForm : Form
     internal bool RadarExtensionVisible => _radarExtension?.Visible == true;
     public bool RadarContentVisible => _usagePrimary ? RadarExtensionVisible : Visible;
     internal int ConversationPageOffset => _recentTurnOffset;
-    public bool ContainsScreenPoint(Point point) => RadarExtensionVisible
-        ? Rectangle.Union(Bounds, _radarExtension!.Bounds).Contains(point) : Bounds.Contains(point);
+    public bool ContainsScreenPoint(Point point) => _conversationDialog || _conversationMenu.Visible && _conversationMenu.Bounds.Contains(point)
+        || (RadarExtensionVisible ? Rectangle.Union(Bounds, _radarExtension!.Bounds).Contains(point) : Bounds.Contains(point));
 
     public void RestoreModelGroups(IReadOnlyDictionary<string, bool> groups)
     {
@@ -99,14 +100,14 @@ internal sealed class ProviderRadarPopoverForm : Form
         if (Visible) ApplyCurrentPlacement();
     }
 
-    protected override bool ShowWithoutActivation => true;
+    protected override bool ShowWithoutActivation => !(_usagePrimary && _pinned);
 
     protected override CreateParams CreateParams
     {
         get
         {
             var parameters = base.CreateParams;
-            parameters.ExStyle |= ToolWindowStyle | NoActivateStyle;
+            parameters.ExStyle |= ToolWindowStyle | (_usagePrimary && _pinned ? 0 : NoActivateStyle);
             return parameters;
         }
     }
@@ -126,6 +127,7 @@ internal sealed class ProviderRadarPopoverForm : Form
         bool deepSeekOnly = false)
     {
         var wasVisible = Visible;
+        var wasPinned = _pinned;
         _motionTimer.Stop();
         _exiting = false;
         _animateMotion = animateMotion;
@@ -138,14 +140,14 @@ internal sealed class ProviderRadarPopoverForm : Form
         _deepSeekOnly = deepSeekOnly;
         _usagePrimary = !deepSeekOnly && _extensionOwner is null;
         _radarEnabled = radarEnabled;
+        if (wasPinned != _pinned && _usagePrimary && IsHandleCreated) RecreateHandle();
         _barOwner = owner;
         if (!_usagePrimary || !radarEnabled) _radarExtension?.HidePopover();
         _state = state;
         _text = text;
         _tokenUsage = tokenUsage;
-        _displayTurns = _usagePrimary ? CodexConversationDisplay.Select(tokenUsage) : tokenUsage?.ConversationTurns ?? [];
-        _modelSpeeds = _usagePrimary && tokenUsage is not null ? CodexConversationSpeeds.Build(tokenUsage, DateTimeOffset.UtcNow) : [];
-        if (_hoveredRecentIndex == -3) _groupToolTip.SetToolTip(this, _text.CodexModelSpeedTooltip(_modelSpeeds));
+        RefreshConversationView();
+        if (_hoveredRecentIndex == -3) _groupToolTip.SetToolTip(this, ConversationSpeedTooltip());
         if (_hoveredRecentIndex >= 0)
         {
             var turns = _displayTurns;
@@ -217,6 +219,7 @@ internal sealed class ProviderRadarPopoverForm : Form
 
     public void HidePopover()
     {
+        _conversationMenu.Close();
         _radarExtension?.HidePopover();
         _countdownTimer.Stop();
         ResetHistoryView();
@@ -335,7 +338,7 @@ internal sealed class ProviderRadarPopoverForm : Form
             canSwitchBenchmark: CanSwitchBenchmark,
             radarExpanded: RadarExtensionVisible,
             modelSpeeds: _modelSpeeds,
-            radarExtension: _extensionOwner is not null);
+            radarExtension: _extensionOwner is not null, conversationView: _usagePrimary ? _conversationView : null);
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
@@ -364,12 +367,13 @@ internal sealed class ProviderRadarPopoverForm : Form
             return;
         }
 
+        if (ConversationToolsHover(BodyPoint(e.Location))) return;
         var hovered = HasSpendHistory(_tokenUsage) && SpendCardBounds().Contains(e.Location);
         var hoveredGroup = _layout.ModelGroupAt(BodyPoint(e.Location));
         var bodyPoint = BodyPoint(e.Location);
         if (_layout.ModelSpeedBounds.Contains(bodyPoint))
         {
-            _groupToolTip.SetToolTip(this, _text.CodexModelSpeedTooltip(_modelSpeeds));
+            _groupToolTip.SetToolTip(this, ConversationSpeedTooltip());
             _hoveredRecentIndex = -3;
             Cursor = Cursors.Default;
             return;
@@ -446,6 +450,7 @@ internal sealed class ProviderRadarPopoverForm : Form
             return;
         }
         var point = BodyPoint(e.Location);
+        if (ConversationToolsClick(point)) return;
         if (_extensionOwner is not null && _layout.RadarCollapseBounds.Contains(point))
         {
             _extensionOwner.SetRadarExpanded(false);
@@ -506,6 +511,7 @@ internal sealed class ProviderRadarPopoverForm : Form
 
     private void UpdateWindowRegion()
     {
+        PlaceConversationSearch();
         if (ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
         var next = _historyVisible && _historyLayout is { } historyLayout
             ? RadarPopoverRenderer.CreateWindowRegion(historyLayout, _tailSide, _tailOffset)
@@ -541,7 +547,7 @@ internal sealed class ProviderRadarPopoverForm : Form
             Screen.FromRectangle(_anchorScreen).WorkingArea.Height
                 - (int)Math.Ceiling((RadarPopoverLayout.LogicalTail + RadarPopoverLayout.LogicalGap * 2) * dpi / 96d),
             groups.Count, groups.Count == 0 ? 1 : groups.Take(6).Max(group => group.Rows.Count),
-            CodexConversationDisplay.ColumnMask(_displayTurns));
+            CodexConversationDisplay.ColumnMask(_displayTurns), historyTools: true);
     }
 
     internal void SetRadarExpanded(bool expanded)
@@ -678,7 +684,7 @@ internal sealed class ProviderRadarPopoverForm : Form
 
     protected override void WndProc(ref Message message)
     {
-        if (message.Msg == WmMouseActivate)
+        if (message.Msg == WmMouseActivate && !(_usagePrimary && _pinned))
         {
             message.Result = (IntPtr)MaNoActivate;
             return;
@@ -728,6 +734,7 @@ internal sealed class ProviderRadarPopoverForm : Form
         {
             Location = placement.Location;
         }
+        PlaceConversationSearch();
         UpdateCountdownTimer();
         Cursor = Cursors.Default;
         Invalidate();
@@ -775,6 +782,7 @@ internal sealed class ProviderRadarPopoverForm : Form
     {
         if (disposing)
         {
+            DisposeConversationTools();
             _radarExtension?.Dispose();
             _countdownTimer.Stop();
             _countdownTimer.Dispose();

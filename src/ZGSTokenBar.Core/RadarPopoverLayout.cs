@@ -124,6 +124,22 @@ public sealed class RadarPopoverLayout
     public Rectangle RadarToggleBounds { get; private init; }
     public Rectangle ModelSpeedBounds { get; private init; }
     public int ConversationColumnMask { get; private init; } = 1023;
+    public Rectangle ConversationToolbarBounds { get; private init; }
+    public Rectangle ConversationRangeBounds { get; private init; }
+    public Rectangle ConversationModelBounds { get; private init; }
+    public Rectangle ConversationProjectBounds { get; private init; }
+    public Rectangle ConversationSearchBounds { get; private init; }
+    public Rectangle ConversationExportBounds { get; private init; }
+    public Rectangle ConversationSummaryBounds { get; private init; }
+    public int ConversationHeaderAt(Point point)
+    {
+        var top = RecentTurnsBounds.Top + (int)Math.Round(18 * Dpi / 96d);
+        if (!ConversationPrimary || point.Y < top || point.Y >= RecentTurnsBounds.Top + (int)Math.Round(ConversationHeaderHeight * Dpi / 96d)) return -1;
+        for (var index = 0; index < RecentColumns.Count; index++)
+            if (RecentColumns[index].Width > 0 && point.X >= RecentColumns[index].Left && point.X < RecentColumns[index].Right) return index;
+        return -1;
+    }
+
     public Rectangle RadarCollapseBounds => new(BodySize.Width - (int)Math.Round(90 * Dpi / 96d),
         (int)Math.Round(14 * Dpi / 96d), (int)Math.Round(76 * Dpi / 96d), (int)Math.Round(20 * Dpi / 96d));
     public int RecentRowHeight => ConversationPrimary ? PrimaryConversationRowHeight : ConversationRowHeight;
@@ -483,7 +499,7 @@ public sealed class RadarPopoverLayout
     private static int RecentTurnsHeight(int count) => count <= 0 ? 0 : 44 + Math.Min(CodexConversationPage.PageSize, count) * ConversationRowHeight;
 
     public static RadarPopoverLayout CreateConversationUsage(int dpi, int recentTurnCount, bool radarEnabled,
-        int maximumBodyHeight = int.MaxValue, int speedGroupCount = 0, int speedDetailRows = 1, int columnMask = 1023)
+        int maximumBodyHeight = int.MaxValue, int speedGroupCount = 0, int speedDetailRows = 1, int columnMask = 1023, bool historyTools = false)
     {
         dpi = Math.Max(96, dpi);
         columnMask |= 7;
@@ -492,10 +508,13 @@ public sealed class RadarPopoverLayout
             Scale(x), Scale(y), Scale(x + width), Scale(y + height));
         var speedHeight = speedGroupCount > 0
             ? 34 + (Math.Min(speedGroupCount, 6) + 2) / 3 * (24 + Math.Clamp(speedDetailRows, 1, 4) * 20) : 0;
-        var maximumRows = Math.Clamp((maximumBodyHeight * 96d / dpi - 178 - speedHeight) / PrimaryConversationRowHeight, 1, 8);
+        var extra = historyTools ? 96 : 0;
+        if (historyTools && 178 + extra + PrimaryConversationRowHeight + speedHeight > maximumBodyHeight * 96d / dpi)
+            speedHeight = 0;
+        var maximumRows = Math.Clamp((maximumBodyHeight * 96d / dpi - 178 - extra - speedHeight) / PrimaryConversationRowHeight, 1, 8);
         var pageSize = (int)maximumRows;
         var visibleRows = Math.Min(pageSize, Math.Max(3, recentTurnCount));
-        var height = 178 + visibleRows * PrimaryConversationRowHeight + speedHeight;
+        var height = 178 + extra + visibleRows * PrimaryConversationRowHeight + speedHeight;
         var fixedWidths = new[] { 76, 72, 52, 48, 48, 56, 64, 70, 40 };
         var hiddenWidth = fixedWidths.Select((value, index) => (columnMask & (1 << (index + 1))) == 0 ? value + 5 : 0).Sum();
         var width = Math.Max(480, LogicalConversationWidth - hiddenWidth);
@@ -504,18 +523,25 @@ public sealed class RadarPopoverLayout
             Scale(LogicalTail), Scale(LogicalGap), Rect(14, 12, 26, 26),
             Rect(48, 10, width - 146, 18), Rect(48, 29, width - 146, 13),
             Rectangle.Empty, Rectangle.Empty, Rectangle.Empty, 0, [], Rectangle.Empty,
-            Rect(14, 96, contentWidth, PrimaryConversationRowHeight),
+            Rect(14, 96 + extra, contentWidth, PrimaryConversationRowHeight),
             Rect(14, height - 82, (contentWidth - 16) / 3, 68), Rectangle.Empty, Rectangle.Empty,
             new(default, default, default, default, default, default, default, default))
         {
             ConversationPrimary = true,
+            ConversationToolbarBounds = historyTools ? Rect(14, 54, contentWidth, 26) : Rectangle.Empty,
+            ConversationRangeBounds = historyTools ? Rect(14, 54, 84, 26) : Rectangle.Empty,
+            ConversationModelBounds = historyTools ? Rect(104, 54, 110, 26) : Rectangle.Empty,
+            ConversationProjectBounds = historyTools ? Rect(220, 54, 100, 26) : Rectangle.Empty,
+            ConversationSearchBounds = historyTools ? Rect(326, 54, contentWidth - 360, 26) : Rectangle.Empty,
+            ConversationExportBounds = historyTools ? Rect(width - 56, 54, 42, 26) : Rectangle.Empty,
+            ConversationSummaryBounds = historyTools ? Rect(14, 88, contentWidth, 54) : Rectangle.Empty,
             ConversationColumnMask = columnMask | 7,
-            RecentTurnsBounds = Rect(14, 54, contentWidth, ConversationHeaderHeight + visibleRows * PrimaryConversationRowHeight),
+            RecentTurnsBounds = Rect(14, 54 + extra, contentWidth, ConversationHeaderHeight + visibleRows * PrimaryConversationRowHeight),
             RecentPageSize = pageSize,
             FooterCompactBounds = Rect(14, height - 82, contentWidth, 68),
             RadarToggleBounds = radarEnabled ? Rect(width - 94, 17, 80, 20) : Rectangle.Empty,
             ModelSpeedBounds = speedHeight == 0 ? Rectangle.Empty
-                : Rect(14, 96 + visibleRows * PrimaryConversationRowHeight, contentWidth, speedHeight - 10),
+                : Rect(14, 96 + extra + visibleRows * PrimaryConversationRowHeight, contentWidth, speedHeight - 10),
         };
     }
 

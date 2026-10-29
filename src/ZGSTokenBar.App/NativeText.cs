@@ -976,6 +976,41 @@ internal sealed class NativeText
     public string CodexRecentTurnsTitle => T("最近对话", "Recent chats");
     public string CodexConversationsIndexing(int count) => T($"读取 {count}", $"Reading {count}");
     public string CodexRadarExpansion(bool expanded) => expanded ? T("收起雷达 ‹", "Hide Radar ‹") : T("雷达 ›", "Radar ›");
+    public string CodexHistoryCoverage(int count) => T($"已观测 {count} 轮 · 历史策略 500 轮 / 90 天", $"{count} observed turns · history retention 500 / 90 days");
+    public string CodexHistoryPeriod(CodexHistoryPeriod period) => period switch
+    {
+        ZGSTokenBar.Core.CodexHistoryPeriod.Today => T("今天", "Today"),
+        ZGSTokenBar.Core.CodexHistoryPeriod.Days7 => T("近7天", "Last 7 days"),
+        ZGSTokenBar.Core.CodexHistoryPeriod.Days30 => T("近30天", "Last 30 days"),
+        _ => T("全部记录", "Observed"),
+    };
+    public string CodexMatchingTurns => T("筛选明细", "Matching turns");
+    public string CodexNoMatchingTurns => T("没有匹配的对话记录", "No matching conversations");
+    public string CodexAllModels => T("所有模型", "All models");
+    public string CodexAllProjects => T("所有项目", "All projects");
+    public string CodexHistorySearch => T("搜索对话…", "Search chats…");
+    public string CodexSelectedTurns => T("筛选轮次", "Selected turns");
+    public string CodexSelectedOutput => T("已记录输出", "Recorded output");
+    public string CodexSelectedCost => T("API 等值估算", "API equivalent");
+    public string CodexWholeTurnAverage => T("整轮均速", "Whole-turn avg");
+    public string CodexTerminalCount(int count) => T($"{count} 轮已结束", $"{count} terminal turns");
+    public string CodexMeasuredCount(int count) => T($"{count} 轮有记录", $"{count} measured turns");
+    public string CodexSpeedSampleCount(int count) => T($"{count} 个完整样本", $"{count} complete samples");
+    public string CodexEstimateOnly => T("非订阅账单 · + 为部分", "Not billed cost · + partial");
+    public string CodexFilteredModelSpeeds(int count) => T("筛选模型速度 · 整轮均速", "Filtered models · whole-turn speeds")
+        + (count > 6 ? T($" · 最近6/{count}组", $" · latest 6/{count} groups") : "");
+    public string CodexFilteredSpeedHint => T("当前筛选中完整结束、有输出的轮次，按设置模型、强度与档位分组；未知强度或档位不进入卡片。\n均速=输出总量÷整轮总耗时；单轮最高包含思考、工具与等待。卡片显示最近6组、每组最多4种设置；下方列出全部分组。",
+        "Complete output-producing selected turns, grouped by configured model, effort and tier; unknown effort/tier is omitted from cards.\nAverage = total output / total whole-turn time; best-turn speed includes reasoning, tools and waits. Cards show six recent models and four settings each; all groups are listed below.");
+    public string CodexHistoryHint => T("只查询已观测并留存的轮次，不代表全部 API 请求。日期按本机时区的开始日筛选；点击表头排序。\n均速包含思考、工具与等待；首字仅使用日志记录。导出包含当前筛选的全部留存行。",
+        "Observed retained turns only, not all API requests. Dates filter local turn starts; click a column to sort.\nSpeed includes reasoning, tools and waits; first-token latency is recorded only. Export includes all matching retained rows.");
+    public string CodexExportHistory => T("导出筛选记录 CSV", "Export matching rows as CSV");
+    public string CodexHistoryCost(decimal? cost, bool partial)
+    {
+        if (cost is null) return "—";
+        var amount = cost is > 0 and < 0.0001m ? "<$0.0001"
+            : "$" + cost.Value.ToString(cost >= 100 ? "0" : cost >= 1 ? "0.00" : "0.0000", CultureInfo.InvariantCulture);
+        return amount + (partial ? "+" : "");
+    }
     public string CodexNoRecentTurns => T("暂无对话记录", "No recent conversations");
     public string[] CodexPrimaryConversationHeaders =>
         [T("对话 / 设置模型", "Chat / Configured model"), T("状态", "State"), T("开始时间", "Started"), T("新增输入", "Input"),
