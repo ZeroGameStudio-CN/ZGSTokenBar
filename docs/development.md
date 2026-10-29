@@ -219,8 +219,21 @@ interrupted or unknown after two minutes without usage updates or on a log read 
 assert that a turn has stopped. First-token headings and values are centered.
 Project, identity and metric definitions live in hover details.
 
-The primary view also summarizes recorded complete output-producing turns from
-the last 24 hours, grouped by model, effort and service tier. Average speed is
+The primary view includes local-start-date presets (observed history, today, seven
+or thirty local calendar days), exact recorded project-name and configured-model
+filters, metadata search and sortable column headings. Filters are in-memory;
+background refresh preserves the selection and typing. Changing a filter resets
+paging. The four summary cards describe matching observed turns, recorded output,
+API-equivalent cost (including partial coverage) and whole-turn average speed.
+They are not all-request totals; the current live window and retained terminal
+history remain bounded. Empty matches never fall back to unfiltered records.
+The same popup keeps whole-row paging, the separate Radar extension and the
+existing global token/cache/fee summaries. On short screens the per-model cards
+may be omitted to retain a usable table without adding scrollbars; full filtered
+model summaries remain in the speed tooltip.
+
+The primary view also summarizes matching complete output-producing turns,
+grouped by configured model, effort and service tier. Average speed is
 summed output divided by summed whole-turn duration; the maximum is the highest
 individual turn average, not instantaneous decoding speed. Running, interrupted,
 stale, partial and invalid-duration turns are excluded. Up to six most recently
@@ -310,3 +323,39 @@ task-created extraction files after verifying the installed ledger. NAS cleanup
 must use the storage provider's release-space operation, never package deletion.
 Neither import tool is called during ordinary app refresh. Missing source data
 cannot be reconstructed from a cumulative total alone.
+
+
+## Observed conversation export
+
+The CSV action exports every matching observed row, including older retained
+rows beyond the visible page. UTF-8 CSV includes full identities, configured
+model, recorded response/routing evidence, known metrics and completeness flags;
+missing measurements remain empty, metadata formula prefixes are neutralized,
+and costs remain API equivalents rather than subscription bills. Unknown
+coverage and incomplete counters are never converted to measured zeros.
+
+The fixed CLI command reads the active desktop cache without changing the
+popup, rescanning logs or writing user settings:
+
+```powershell
+ZGSTokenBar.Cli codex-usage export --output C:/Temp/observed-turns.csv --range 7d --project POB --sort output --json
+```
+
+`--range` accepts `retained|today|7d|30d`; `--model`, `--project`, `--search`,
+`--sort recent|name|state|started|input|output|cache|cache-hit|cost|speed|first`
+and `--ascending` use the shared UI query semantics. Project names are recorded
+metadata, not canonical workspace selectors. The destination must be new; CLI
+never replaces an existing file. The desktop-only read API returns 4 KiB binary
+CSV chunks with a SHA-256 snapshot identity, staying inside the 64 KiB pipe
+frame limit. A changed snapshot aborts before destination creation. The CLI
+checks the assembled body digest (excluding the output UTF-8 BOM); the existing
+plugin-detail projection remains bounded to recent turns. Export construction
+has a four-million-character budget and reports an explicit error rather than
+truncating rows. No export opens an Editor operation or contacts a provider.
+
+Focused synthetic query, aggregation, CSV, transport-budget and native-window
+checks plus renderer captures:
+
+```powershell
+dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj -c Release -- --conversation-history-panel C:/Temp/history-panel-captures
+```

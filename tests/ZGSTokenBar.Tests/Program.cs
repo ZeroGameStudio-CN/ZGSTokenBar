@@ -18,6 +18,14 @@ using ZGSTokenBar.Plugin.AiGatewayObserver;
 
 if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJobExitCode;
 
+if (args.Length > 0 && args[0] == "--conversation-history-panel")
+{
+    ConversationQueryTests.Run();
+    if (args.Length == 2) ConversationQueryTests.Capture(args[1]);
+    Console.WriteLine("PASS retained history filters, summaries, sorting, CSV and native presentation");
+    return 0;
+}
+
 if (args.Length == 3 && args[0] == "--history-refresh-memory-probe")
 {
     ConversationHistoryRefreshTests.Probe(args[1], args[2]);
@@ -362,6 +370,7 @@ var tests = new (string Name, Action Run)[]
     ("Token ledger serialized writers", PersistenceRegressionTests.LedgerTransactions),
     ("Token ledger failed-save retry", PersistenceRegressionTests.LedgerSaveRetry),
     ("Conversation history persistence", PersistenceRegressionTests.ConversationHistoryPersistence),
+    ("Retained conversation query and export", ConversationQueryTests.Run),
     ("Unchanged conversation refresh allocation and persistence", ConversationHistoryRefreshTests.Run),
     ("Built-in plugin host data-root isolation", PersistenceRegressionTests.BuiltinDataRootIsolation),
     ("Plugin refresh and disable lifecycle", PluginLifecycleRegressionTests.Run),

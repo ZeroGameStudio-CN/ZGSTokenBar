@@ -62,6 +62,7 @@ internal static partial class CliApplication
             "mini" => await MiniCommandAsync(commandArgs, commandLine),
             "window" => await WindowCommandAsync(commandArgs, commandLine),
             "router" => await RouterCommandAsync(commandArgs, commandLine),
+            "codex-usage" => await CodexHistoryCommandAsync(commandArgs, commandLine),
             "watch" => await WatchCommandAsync(commandArgs, commandLine),
             "acceptance" => await AcceptanceCommandAsync(commandArgs, commandLine),
             _ => await PluginNamespaceCommandAsync(commandLine),
