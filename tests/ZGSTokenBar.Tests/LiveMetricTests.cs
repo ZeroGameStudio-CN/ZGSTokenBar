@@ -39,6 +39,37 @@ internal static class LiveMetricTests
         var snapshot = new SystemUsageSnapshot(1, 2, 3, 5, 1, null, 0, 4, at.AddMinutes(-1))
         { NetworkReceiveBytesPerSecond = 100, ObservedOutputTokensPerSecond = 30, OutputRateCapturedAt = at.AddMinutes(-1) };
         Check(snapshot.CurrentOutputRate is null && snapshot.CurrentNetworkReceive is null, "Stale display values expire.");
+        HoverSurfaces(snapshot with
+        {
+            TopProcesses = [new("worker", 1, 5, 1234, 0)],
+            LiveRate = new LiveOutputRate(at, 12, 10, 2, 1, 0, 1, 0),
+            ObservedOutputTokensPerSecond = 12,
+            OutputRateCapturedAt = at,
+        });
+    }
+
+    private static void HoverSurfaces(SystemUsageSnapshot snapshot)
+    {
+        using var popover = new SystemUsagePopoverForm();
+        var text = NativeText.For("zh-CN");
+        popover.UpdateContent(new SystemUsagePopoverContent(snapshot, false), text);
+        Check(!popover.LiveRatesContentForAcceptance, "CPU hover keeps the system surface mode.");
+        Check(popover.MetricLabelsForAcceptance.Contains("CPU")
+            && !popover.MetricLabelsForAcceptance.Contains("合计输出")
+            && popover.ProcessRowCountForAcceptance == 1,
+            "CPU hover contains CPU metrics and process rows only.");
+
+        popover.UpdateContent(new SystemUsagePopoverContent(snapshot, false, true), text);
+        Check(popover.LiveRatesContentForAcceptance, "Rate hover switches to the live surface mode.");
+        Check(popover.MetricLabelsForAcceptance.Contains("合计输出")
+            && popover.MetricLabelsForAcceptance.Contains("网络接收")
+            && !popover.MetricLabelsForAcceptance.Contains("CPU")
+            && popover.ProcessRowCountForAcceptance == 0,
+            "Rate hover contains output/network metrics without CPU or process rows.");
+
+        popover.UpdateContent(new SystemUsagePopoverContent(snapshot, true), text);
+        Check(!popover.LiveRatesContentForAcceptance && popover.ProcessRowCountForAcceptance == 1,
+            "Switching back to a pinned CPU hover restores only CPU details.");
     }
     internal static void Render(string directory)
     {

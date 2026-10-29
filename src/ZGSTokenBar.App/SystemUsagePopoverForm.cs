@@ -92,17 +92,6 @@ internal sealed class SystemUsagePopoverForm : Form
         _text = text;
         Text = content.LiveRates ? (_text.IsChinese ? "实时速率" : "Live rates") : _text.SystemUsageTitle;
         var snapshot = content.Snapshot;
-        _metrics =
-        [
-            Metric(_text.SystemUsageCpu, snapshot.CpuPercent,
-                _text.SystemUsageCpuDetail(snapshot.LogicalProcessorCount)),
-            Metric(_text.SystemUsageMemory, snapshot.MemoryPercent,
-                _text.SystemUsageMemoryDetail(snapshot.MemoryUsedBytes, snapshot.MemoryTotalBytes, snapshot.MemoryAvailableBytes)),
-            Metric(_text.SystemUsageDisk, snapshot.DiskActivePercent,
-                _text.SystemUsageDiskDetail(snapshot.DiskActivePercent, snapshot.DiskReadBytesPerSecond, snapshot.DiskWriteBytesPerSecond)),
-            Metric(_text.SystemUsageGpu, snapshot.GpuPercent,
-                _text.SystemUsageGpuDetail(snapshot.GpuPercent, snapshot.GpuEngine, snapshot.GpuProcessCount)),
-        ];
         if (content.LiveRates)
         {
             var live = snapshot.LiveRate;
@@ -124,16 +113,43 @@ internal sealed class SystemUsagePopoverForm : Form
                 new(zh ? "采集范围" : "Coverage", null, live is null ? "—" : $"{live.Sessions} Codex",
                     zh ? $"本机已接入日志 · {live?.Pending ?? 0} 条待追平 · 非服务端解码速率" : $"Local connected logs · {live?.Pending ?? 0} catching up · not decode rate", true)
             ];
+
+            // Live-rate hover is a separate surface. Do not retain the CPU
+            // process rows from a previous system hover while this surface is
+            // being reused, even though the renderer currently returns before
+            // drawing process details for live rates.
+            _processes = [];
         }
-        _processes = snapshot.TopProcesses.Take(5).Select(process => new ProcessRow(
-            process.Name,
-            process.ProcessCount > 1 ? $"×{process.ProcessCount}" : string.Empty,
-            FormatUsage(process.CpuPercent),
-            FormatProcessMemory(process.PrivateWorkingSetBytes),
-            FormatUsage(process.GpuPercent))).ToArray();
+        else
+        {
+            _metrics =
+            [
+                Metric(_text.SystemUsageCpu, snapshot.CpuPercent,
+                    _text.SystemUsageCpuDetail(snapshot.LogicalProcessorCount)),
+                Metric(_text.SystemUsageMemory, snapshot.MemoryPercent,
+                    _text.SystemUsageMemoryDetail(snapshot.MemoryUsedBytes, snapshot.MemoryTotalBytes, snapshot.MemoryAvailableBytes)),
+                Metric(_text.SystemUsageDisk, snapshot.DiskActivePercent,
+                    _text.SystemUsageDiskDetail(snapshot.DiskActivePercent, snapshot.DiskReadBytesPerSecond, snapshot.DiskWriteBytesPerSecond)),
+                Metric(_text.SystemUsageGpu, snapshot.GpuPercent,
+                    _text.SystemUsageGpuDetail(snapshot.GpuPercent, snapshot.GpuEngine, snapshot.GpuProcessCount)),
+            ];
+            _processes = snapshot.TopProcesses.Take(5).Select(process => new ProcessRow(
+                process.Name,
+                process.ProcessCount > 1 ? $"×{process.ProcessCount}" : string.Empty,
+                FormatUsage(process.CpuPercent),
+                FormatProcessMemory(process.PrivateWorkingSetBytes),
+                FormatUsage(process.GpuPercent))).ToArray();
+        }
         _capturedAt = _text.SystemUsageCapturedAt(snapshot.CapturedAt);
         Invalidate();
     }
+
+    internal bool LiveRatesContentForAcceptance => _content?.LiveRates == true;
+
+    internal IReadOnlyList<string> MetricLabelsForAcceptance =>
+        _metrics.Select(metric => metric.Label).ToArray();
+
+    internal int ProcessRowCountForAcceptance => _processes.Length;
 
     private static MetricRow Metric(string label, double? value, string detail) =>
         new(label, value, FormatUsage(value), detail);
