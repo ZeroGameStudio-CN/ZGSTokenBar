@@ -455,7 +455,7 @@ internal sealed class NativeText
 
     public string QuotaDetailsTitle => T("ZGSTokenBar 配额详情", "ZGSTokenBar quota details");
     public string LiveQuota => T("实时配额", "Live quota");
-    public string SystemUsageTitle => T("系统占用", "System usage");
+    public string SystemUsageTitle => T("系统与实时读数", "System and live metrics");
     public string SystemUsageCpu => "CPU";
     public string SystemUsageMemory => T("内存", "Memory");
     public string SystemUsageDisk => T("磁盘", "Disk");

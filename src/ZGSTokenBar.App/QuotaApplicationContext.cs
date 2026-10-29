@@ -53,6 +53,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     private readonly CodexTokenUsageLedger _codexTokenUsageLedger;
     private bool _radarRestorePending;
     private readonly SystemUsageSampler _systemUsageSampler = new();
+    private readonly ObservedOutputRate _observedOutput = new();
     private readonly ReleaseUpdateChecker _updateChecker = new();
     private readonly BarForm _bar;
     private readonly NotifyIcon _tray;
@@ -278,7 +279,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         _providerActivityTimer.Tick += (_, _) =>
         {
             UpdateProviderActivity(requestRefresh: true);
-            if ((_bar.RadarVisible || _cachedCodexTokenUsage?.PendingConversationCount > 0)
+            if ((_settings.IsPluginEnabled("zgstokenbar.metrics.system", true) || _bar.RadarVisible || _cachedCodexTokenUsage?.PendingConversationCount > 0)
                 && _activeProviders.Contains(ProviderKind.Codex))
                 _ = RefreshCodexConversationsAsync();
         };
@@ -1118,6 +1119,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             if (_shutdown.IsCancellationRequested || _bar.IsDisposed || summary is null
                 || !_activeProviders.Contains(ProviderKind.Codex)) return;
             _cachedCodexTokenUsage = summary;
+            _bar.SetObservedOutputRate(_observedOutput.Observe(summary.RecentTurns, DateTimeOffset.UtcNow), DateTimeOffset.UtcNow);
             _bar.SetCodexTokenUsage(summary);
             _pluginHost.Publish(CorePluginProjection.CodexUsage(
                 "zgstokenbar.usage.codex-local", summary, DateTimeOffset.UtcNow));
@@ -2020,6 +2022,13 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                 AppModuleId = typeof(QuotaApplicationContext).Module.ModuleVersionId.ToString(),
                 CoreModuleId = typeof(CodexTokenUsageReader).Module.ModuleVersionId.ToString(),
                 DataDirectory = _store.DataDirectory,
+                TaskbarDocked = _bar.IsTaskbarDocked,
+                ObservedOutputTokensPerSecond = _bar.LiveMetrics.CurrentOutputRate,
+                OutputRateCapturedAt = _bar.LiveMetrics.OutputRateCapturedAt,
+                NetworkReceiveBytesPerSecond = _bar.LiveMetrics.CurrentNetworkReceive,
+                NetworkSendBytesPerSecond = _bar.LiveMetrics.CurrentNetworkSend,
+                NetworkCapturedAt = _bar.LiveMetrics.CapturedAt,
+                NetworkInterfaceCount = _bar.LiveMetrics.NetworkInterfaces,
                 DisplayedTokenTotal = _bar.DisplayedTokenTotal,
                 RouterVisible = _routerModule.Visible,
                 RouterProjectKey = _routerModule.Snapshot?.ProjectKey,

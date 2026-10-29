@@ -23,6 +23,14 @@ internal sealed record SystemUsageSnapshot(
     DateTimeOffset CapturedAt)
 {
     public double? MemoryPercent => SystemUsageMath.Percent(MemoryUsedBytes, MemoryTotalBytes);
+    public double? NetworkReceiveBytesPerSecond { get; init; }
+    public double? NetworkSendBytesPerSecond { get; init; }
+    public int NetworkInterfaces { get; init; }
+    public double? ObservedOutputTokensPerSecond { get; init; }
+    public DateTimeOffset? OutputRateCapturedAt { get; init; }
+    public double? CurrentOutputRate => OutputRateCapturedAt is { } at && DateTimeOffset.UtcNow >= at && DateTimeOffset.UtcNow - at <= TimeSpan.FromSeconds(15) ? ObservedOutputTokensPerSecond : null;
+    public double? CurrentNetworkReceive => DateTimeOffset.UtcNow >= CapturedAt && DateTimeOffset.UtcNow - CapturedAt <= TimeSpan.FromSeconds(5) ? NetworkReceiveBytesPerSecond : null;
+    public double? CurrentNetworkSend => DateTimeOffset.UtcNow >= CapturedAt && DateTimeOffset.UtcNow - CapturedAt <= TimeSpan.FromSeconds(5) ? NetworkSendBytesPerSecond : null;
     public double? DiskActivePercent { get; init; }
     public double? DiskReadBytesPerSecond { get; init; }
     public double? DiskWriteBytesPerSecond { get; init; }
@@ -408,8 +416,11 @@ internal sealed class SystemUsageSampler : IDisposable
         _ = InitializeGpuCounterAsync();
     }
 
+    private readonly NetworkUsageSampler _network = new();
+
     public SystemUsageSnapshot Sample(bool includeProcesses = false)
     {
+        var network = _network.Sample();
         var cpuTimes = ReadCpuTimes();
         var cpuPercent = cpuTimes is { } current && _previousCpu is { } previous
             ? SystemUsageMath.CpuPercent(previous, current)
@@ -434,6 +445,9 @@ internal sealed class SystemUsageSampler : IDisposable
             Environment.ProcessorCount,
             DateTimeOffset.UtcNow)
         {
+            NetworkReceiveBytesPerSecond = network.Received,
+            NetworkSendBytesPerSecond = network.Sent,
+            NetworkInterfaces = network.Interfaces,
             DiskActivePercent = disk.ActivePercent,
             DiskReadBytesPerSecond = disk.ReadBytesPerSecond,
             DiskWriteBytesPerSecond = disk.WriteBytesPerSecond,
