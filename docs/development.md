@@ -359,3 +359,25 @@ checks plus renderer captures:
 ```powershell
 dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj -c Release -- --conversation-history-panel C:/Temp/history-panel-captures
 ```
+
+
+## Live taskbar readouts
+
+The expanded system area includes a summed Codex observed-output rate and
+receive/send byte rates for up, non-loopback/non-tunnel interfaces with default
+gateways. Wider areas retain the CPU/RAM/disk/GPU tracks beside these values;
+user-saved narrow areas use compact text rather than discarding the live values.
+Hover details state the scope and units. K/M/G use powers of 1024, per second.
+Interface discovery is cached for thirty seconds; counter-read failure expires
+that cache immediately. This reads counters, never intercepts packets or changes
+network configuration, and does not attribute traffic to a model/process.
+
+Output is a roughly five-second difference of observed complete local turn
+counters, summed across the connected Codex session window. It is neither server
+decode speed nor guaranteed coverage of every request/client. Initial samples,
+resets, long gaps, stale/incomplete logs and expired observations show unavailable;
+unchanged measured counters show zero. No original provider accounting is changed.
+The existing taskbar placement supports dragging to snap near the taskbar and
+dragging away to float, with saved monitor/position profiles. General settings now
+explain that entry. `window inspect --json` reports dock state and fresh live
+readouts as well as the existing module/data checks.

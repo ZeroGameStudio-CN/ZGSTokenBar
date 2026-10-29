@@ -1,4 +1,4 @@
-using System.Drawing.Drawing2D;
+﻿using System.Drawing.Drawing2D;
 using ZGSTokenBar.Core;
 
 namespace ZGSTokenBar.App;
@@ -8,7 +8,7 @@ internal sealed record SystemUsagePopoverContent(SystemUsageSnapshot Snapshot, b
 internal sealed class SystemUsagePopoverForm : Form
 {
     internal const int LogicalBodyWidth = 300;
-    internal const int LogicalBodyHeight = 352;
+    internal const int LogicalBodyHeight = 472;
     private const int LogicalTailSize = 8;
     private const int LogicalGap = 3;
     private const int ToolWindowStyle = 0x00000080;
@@ -103,6 +103,14 @@ internal sealed class SystemUsagePopoverForm : Form
             Metric(_text.SystemUsageGpu, snapshot.GpuPercent,
                 _text.SystemUsageGpuDetail(snapshot.GpuPercent, snapshot.GpuEngine, snapshot.GpuProcessCount)),
         ];
+        _metrics = [.. _metrics,
+            new MetricRow(_text.IsChinese ? "合计观测输出" : "Observed output total", null,
+                snapshot.CurrentOutputRate is { } rate ? $"{rate:0.#} tok/s" : "—",
+                _text.IsChinese ? "Codex 已接入会话 · 约5秒增量 · 非解码速率" : "Connected Codex chats · ~5s deltas · not decode rate", true),
+            new MetricRow(_text.IsChinese ? "网络接收" : "Network receive", null, NetworkUsageSampler.Compact(snapshot.CurrentNetworkReceive) + "/s",
+                _text.IsChinese ? $"{snapshot.NetworkInterfaces} 个默认联网接口 · K/M/G 按1024换算" : $"{snapshot.NetworkInterfaces} default-gateway interfaces · K/M/G use 1024", true),
+            new MetricRow(_text.IsChinese ? "网络发送" : "Network send", null, NetworkUsageSampler.Compact(snapshot.CurrentNetworkSend) + "/s",
+                _text.IsChinese ? "非特定模型或进程的流量；不含无默认网关接口" : "Not attributed to a model or process; no-gateway interfaces excluded", true)];
         _processes = snapshot.TopProcesses.Take(5).Select(process => new ProcessRow(
             process.Name,
             process.ProcessCount > 1 ? $"×{process.ProcessCount}" : string.Empty,
@@ -116,7 +124,7 @@ internal sealed class SystemUsagePopoverForm : Form
     private static MetricRow Metric(string label, double? value, string detail) =>
         new(label, value, FormatUsage(value), detail);
 
-    private sealed record MetricRow(string Label, double? Percent, string Value, string Detail);
+    private sealed record MetricRow(string Label, double? Percent, string Value, string Detail, bool IsReadout = false);
     private sealed record ProcessRow(string Name, string Count, string Cpu, string Memory, string Gpu);
 
     public void ShowFor(
@@ -272,22 +280,22 @@ internal sealed class SystemUsagePopoverForm : Form
                 _metrics[index], primary, muted);
         }
 
-        graphics.DrawLine(divider, body.X + 16, body.Y + 204, body.Right - 16, body.Y + 204);
+        graphics.DrawLine(divider, body.X + 16, body.Y + 324, body.Right - 16, body.Y + 324);
         DrawString(graphics, _text.SystemUsageTopProcesses, _subtitleFont, muted,
-            new RectangleF(body.X + 16, body.Y + 216, 124, 14), StringAlignment.Near);
-        DrawProcessValues(graphics, body, body.Y + 216, _subtitleFont, muted,
+            new RectangleF(body.X + 16, body.Y + 336, 124, 14), StringAlignment.Near);
+        DrawProcessValues(graphics, body, body.Y + 336, _subtitleFont, muted,
             _text.SystemUsageCpu, _text.SystemUsageMemory, _text.SystemUsageGpu);
 
         if (_processes.Length == 0)
         {
             DrawString(graphics, _text.SystemUsageTopProcessesUnavailable, _detailFont, muted,
-                new RectangleF(body.X + 16, body.Y + 238, body.Width - 32, 16), StringAlignment.Near);
+                new RectangleF(body.X + 16, body.Y + 358, body.Width - 32, 16), StringAlignment.Near);
         }
         else
         {
             for (var index = 0; index < _processes.Length; index++)
             {
-                DrawProcessRow(graphics, body, body.Y + 236 + index * 18, _processes[index], primary, muted);
+                DrawProcessRow(graphics, body, body.Y + 356 + index * 18, _processes[index], primary, muted);
             }
         }
 
@@ -302,6 +310,16 @@ internal sealed class SystemUsagePopoverForm : Form
         Brush primary,
         Brush muted)
     {
+        if (metric.IsReadout)
+        {
+            DrawString(graphics, metric.Label, _metricLabelFont, primary,
+                new RectangleF(bounds.X, bounds.Y, bounds.Width - 100, 14), StringAlignment.Near);
+            DrawString(graphics, metric.Value, _metricValueFont, primary,
+                new RectangleF(bounds.Right - 100, bounds.Y - 1, 100, 16), StringAlignment.Far);
+            DrawString(graphics, metric.Detail, _subtitleFont, muted,
+                new RectangleF(bounds.X, bounds.Y + 18, bounds.Width, 14), StringAlignment.Near);
+            return;
+        }
         var color = metric.Percent is { } percent ? UsageColor(percent) : Color.FromArgb(100, 116, 139);
         using var valueBrush = new SolidBrush(color);
         DrawString(graphics, metric.Label, _metricLabelFont, primary,

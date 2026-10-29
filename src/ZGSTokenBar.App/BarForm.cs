@@ -205,6 +205,7 @@ internal sealed partial class BarForm : Form
     public event EventHandler? RadarModelGroupsChanged;
     private Dictionary<string, bool> _radarModelGroups = new(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyDictionary<string, bool> RadarModelGroups => _radarModelGroups;
+    internal SystemUsageSnapshot LiveMetrics => _systemUsage;
     internal long? DisplayedTokenTotal => _codexTokenUsage?.LocalTokens;
     internal bool RadarVisible => _radarPopover?.RadarContentVisible == true;
     internal string[]? DisplayedRadarModelGroups => _radarPopover?.DisplayedModelGroups;
@@ -631,8 +632,15 @@ internal sealed partial class BarForm : Form
         }
     }
 
+    public void SetObservedOutputRate(double? rate, DateTimeOffset at)
+    {
+        _systemUsage = _systemUsage with { ObservedOutputTokensPerSecond = rate, OutputRateCapturedAt = at };
+        Invalidate();
+    }
+
     public void SetSystemUsage(SystemUsageSnapshot snapshot)
     {
+        snapshot = snapshot with { ObservedOutputTokensPerSecond = _systemUsage.ObservedOutputTokensPerSecond, OutputRateCapturedAt = _systemUsage.OutputRateCapturedAt };
         _systemUsage = snapshot;
         if (_systemUsagePopover?.Visible == true)
         {
@@ -1595,10 +1603,36 @@ internal sealed partial class BarForm : Form
 
     private void DrawSystemUsageRows(Graphics graphics, RectangleF bounds)
     {
-        DrawSystemUsageRow(graphics, bounds, 0, "CPU", _systemUsage.CpuPercent);
-        DrawSystemUsageRow(graphics, bounds, 1, "RAM", _systemUsage.MemoryPercent);
-        DrawSystemUsageRow(graphics, bounds, 2, "I/O", _systemUsage.DiskActivePercent);
-        DrawSystemUsageRow(graphics, bounds, 3, "GPU", _systemUsage.GpuPercent);
+        var wide = bounds.Width >= 144;
+        var fullBounds = bounds;
+        if (wide) bounds = bounds with { Width = 82 };
+        if (wide)
+        {
+            DrawSystemUsageRow(graphics, bounds, 0, "CPU", _systemUsage.CpuPercent);
+            DrawSystemUsageRow(graphics, bounds, 1, "RAM", _systemUsage.MemoryPercent);
+            DrawSystemUsageRow(graphics, bounds, 2, "I/O", _systemUsage.DiskActivePercent);
+            DrawSystemUsageRow(graphics, bounds, 3, "GPU", _systemUsage.GpuPercent);
+        }
+        bounds = fullBounds;
+        using var brush = new SolidBrush(Color.FromArgb(169, 211, 239));
+        void Row(int index, string value) => DrawString(graphics, value, _accountOrdinalFont, brush,
+            new RectangleF(wide ? bounds.Left + 88 : bounds.Left + 4, bounds.Top + 3 + index * 8.2f,
+                wide ? bounds.Width - 92 : bounds.Width - 8, 7), StringAlignment.Near);
+        var rate = _systemUsage.CurrentOutputRate is { } output ? $"{output:0.#}" : "—";
+        if (wide)
+        {
+            Row(0, $"Σ {rate} tok/s");
+            Row(1, "↓ " + NetworkUsageSampler.Compact(_systemUsage.CurrentNetworkReceive) + "/s");
+            Row(2, "↑ " + NetworkUsageSampler.Compact(_systemUsage.CurrentNetworkSend) + "/s");
+            Row(3, _text.IsChinese ? "观测输出 · 默认网络" : "Observed · default NICs");
+        }
+        else
+        {
+            Row(0, $"CPU {CompactUsage(_systemUsage.CpuPercent)} RAM {CompactUsage(_systemUsage.MemoryPercent)}");
+            Row(1, $"GPU {CompactUsage(_systemUsage.GpuPercent)} I/O {CompactUsage(_systemUsage.DiskActivePercent)}");
+            Row(2, $"Σ {rate} tok/s");
+            Row(3, "↓" + NetworkUsageSampler.Compact(_systemUsage.CurrentNetworkReceive) + " ↑" + NetworkUsageSampler.Compact(_systemUsage.CurrentNetworkSend));
+        }
     }
 
     private void DrawSystemUsageRow(

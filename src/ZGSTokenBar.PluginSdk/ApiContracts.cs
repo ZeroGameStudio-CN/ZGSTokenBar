@@ -94,6 +94,13 @@ public sealed record WindowInspection(
     public string? AppModuleId { get; init; }
     public string? CoreModuleId { get; init; }
     public string? DataDirectory { get; init; }
+    public bool TaskbarDocked { get; init; }
+    public double? ObservedOutputTokensPerSecond { get; init; }
+    public DateTimeOffset? OutputRateCapturedAt { get; init; }
+    public double? NetworkReceiveBytesPerSecond { get; init; }
+    public double? NetworkSendBytesPerSecond { get; init; }
+    public DateTimeOffset? NetworkCapturedAt { get; init; }
+    public int NetworkInterfaceCount { get; init; }
     public long? DisplayedTokenTotal { get; init; }
     public bool RadarVisible { get; init; }
     public bool RouterVisible { get; init; }

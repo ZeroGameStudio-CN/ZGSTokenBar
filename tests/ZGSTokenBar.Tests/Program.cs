@@ -18,6 +18,13 @@ using ZGSTokenBar.Plugin.AiGatewayObserver;
 
 if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJobExitCode;
 
+if (args.Length == 1 && args[0] == "--live-metrics")
+{
+    LiveMetricTests.Run();
+    Console.WriteLine("PASS observed output and network delta sampling");
+    return 0;
+}
+
 if (args.Length > 0 && args[0] == "--conversation-history-panel")
 {
     ConversationQueryTests.Run();
@@ -370,6 +377,7 @@ var tests = new (string Name, Action Run)[]
     ("Token ledger serialized writers", PersistenceRegressionTests.LedgerTransactions),
     ("Token ledger failed-save retry", PersistenceRegressionTests.LedgerSaveRetry),
     ("Conversation history persistence", PersistenceRegressionTests.ConversationHistoryPersistence),
+    ("Observed live output and network rates", LiveMetricTests.Run),
     ("Retained conversation query and export", ConversationQueryTests.Run),
     ("Unchanged conversation refresh allocation and persistence", ConversationHistoryRefreshTests.Run),
     ("Built-in plugin host data-root isolation", PersistenceRegressionTests.BuiltinDataRootIsolation),
@@ -14564,6 +14572,12 @@ static void RenderSystemUsagePolishCaptures(string outputDirectory)
     Directory.CreateDirectory(outputDirectory);
     var populated = SystemUsagePresentationFixture() with
     {
+        CapturedAt = DateTimeOffset.UtcNow,
+        NetworkReceiveBytesPerSecond = 12.5 * 1024 * 1024,
+        NetworkSendBytesPerSecond = 128 * 1024,
+        NetworkInterfaces = 1,
+        ObservedOutputTokensPerSecond = 53.2,
+        OutputRateCapturedAt = DateTimeOffset.UtcNow,
         TopProcesses =
         [
             new("Memory Compression", 1, 0, 15_800_000_000, 0),
