@@ -21,6 +21,7 @@ internal static class RouterModuleTests
         WheelPaging();
         RefusalTiming();
         ExpandedSummary();
+        QueueBadgeDigits();
         using var handler = new Fixture();
         using var client = new RouterMonitorClient(handler);
         var snapshot = client.SnapshotAsync().GetAwaiter().GetResult();
@@ -434,6 +435,25 @@ internal static class RouterModuleTests
         Check(!popup.Visible, "Presentation hide never sends Router controls");
     }
 
+    private static void QueueBadgeDigits()
+    {
+        foreach (var dpi in new[] { 96, 144, 192 })
+        {
+            byte[] Render(long count)
+            {
+                var scale = dpi / 96f;
+                using var bitmap = new Bitmap((int)(34 * scale), (int)(36 * scale));
+                using var graphics = Graphics.FromImage(bitmap);
+                graphics.Clear(Color.FromArgb(17, 21, 29)); graphics.ScaleTransform(scale, scale);
+                using var font = new Font("Cascadia Mono", 8.5f, FontStyle.Bold, GraphicsUnit.Pixel);
+                RouterCardRenderer.Draw(graphics, new RectangleF(0, 0, 34, 36), Card("running", count), font);
+                using var stream = new MemoryStream(); bitmap.Save(stream, ImageFormat.Png); return stream.ToArray();
+            }
+            Check(!Render(10).SequenceEqual(Render(11)), $"Two-digit queue counts retain their final digit at {dpi} DPI");
+            Check(Render(100).SequenceEqual(Render(101)), $"Queue badge overflow remains capped at 99+ at {dpi} DPI");
+        }
+    }
+
     private static void CaptureIcons(string directory)
     {
         var states = new[] { "idle", "running", "cleanup", "waiting", "attention", "offline", "unknown" };
@@ -444,13 +464,13 @@ internal static class RouterModuleTests
             using var graphics = Graphics.FromImage(bitmap);
             graphics.Clear(Color.FromArgb(17, 21, 29));
             graphics.ScaleTransform(scale, scale);
-            using var font = new Font("Segoe UI", 8, FontStyle.Regular, GraphicsUnit.Pixel);
+            using var font = new Font("Cascadia Mono", 8.5f, FontStyle.Bold, GraphicsUnit.Pixel);
             using var cardFill = new SolidBrush(Color.FromArgb(30, 41, 59));
             for (var i = 0; i < states.Length; i++)
             {
                 var bounds = new RectangleF(i * 76 + 4, 4, 48, 36);
                 graphics.FillRoundedRectangle(cardFill, bounds, 7);
-                RouterCardRenderer.Draw(graphics, bounds, Card(states[i], i % 2 == 0 ? 0 : 3), font);
+                RouterCardRenderer.Draw(graphics, bounds, Card(states[i], new[] { 0, 1, 9, 10, 11, 99, 100 }[i]), font);
                 graphics.DrawString(states[i], font, Brushes.LightSlateGray, i * 76 + 4, 48);
             }
             bitmap.Save(Path.Combine(directory, $"router-bar-icons-{dpi}.png"), ImageFormat.Png);

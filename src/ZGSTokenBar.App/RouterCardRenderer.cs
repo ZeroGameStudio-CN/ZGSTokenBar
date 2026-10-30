@@ -48,10 +48,11 @@ internal static class RouterCardRenderer
         if (queued > 0)
         {
             var text = queued > 99 ? "99+" : queued.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var badge = new RectangleF(iconArea.Right - (text.Length > 2 ? 19 : 14), bounds.Top + 3, text.Length > 2 ? 18 : 13, 12);
+            var badgeWidth = Math.Max(13, graphics.MeasureString(text, badgeFont).Width + 4);
+            var badge = new RectangleF(iconArea.Right - badgeWidth - 1, bounds.Top + 3, badgeWidth, 12);
             using var background = new SolidBrush(RouterVisualPalette.Mix(Color.FromArgb(22, 28, 37), color, .14f));
             graphics.FillRoundedRectangle(background, badge, 5);
-            using var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+            using var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center, FormatFlags = StringFormatFlags.NoWrap };
             graphics.DrawString(text, badgeFont, fill, badge, format);
         }
         if (!collapsed)
