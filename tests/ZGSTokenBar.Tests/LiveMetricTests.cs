@@ -37,6 +37,12 @@ internal static class LiveMetricTests
         Check(network.Observe([new("b", 1, 1)], 5).Sent is null, "Network reset is unavailable.");
         Check(network.Observe(null, 6).Received is null, "Failed network reads clear the baseline.");
         Check(NetworkUsageSampler.Compact(1024) == "1K" && NetworkUsageSampler.Compact(null) == "—", "Compact units retain unavailable state.");
+        Check(BarForm.CompactOutputRate(null) == "—" && BarForm.CompactOutputRate(double.NaN) == "—"
+            && BarForm.CompactOutputRate(0) == "0" && BarForm.CompactOutputRate(1200) == "1.2K"
+            && BarForm.CompactOutputRate(1200000) == "1.2M", "Narrow output rates distinguish idle, unknown and compact magnitudes.");
+        Check(TaskbarMiniLayoutMath.AreaWidth(104, true, MiniAreaIds.LiveMetrics)
+                < TaskbarMiniLayoutMath.AreaWidth(104, false, MiniAreaIds.LiveMetrics) * .6,
+            "Collapsing rates saves meaningful width even when the expanded module is already compact.");
         var snapshot = new SystemUsageSnapshot(1, 2, 3, 5, 1, null, 0, 4, at.AddMinutes(-1))
         { NetworkReceiveBytesPerSecond = 100, ObservedOutputTokensPerSecond = 30, OutputRateCapturedAt = at.AddMinutes(-1) };
         Check(snapshot.CurrentOutputRate is null && snapshot.CurrentNetworkReceive is null, "Stale display values expire.");
@@ -109,6 +115,17 @@ internal static class LiveMetricTests
                 form.DrawToBitmap(bitmap, new System.Drawing.Rectangle(System.Drawing.Point.Empty, bitmap.Size));
                 bitmap.Save(Path.Combine(directory, $"live-rates-{(collapsed ? "collapsed" : "expanded")}-{dpi}dpi.png"), System.Drawing.Imaging.ImageFormat.Png);
             }
+            var expandedWidth = form.ClientSize.Width;
+            foreach (var value in new double?[] { 0, 999.9, 1200, 1234567, null })
+            {
+                form.SetLiveOutputRate(new(at, value, 0, value ?? 0, 0, 0, 4, 0));
+                form.SetMiniAreaFromCommand(MiniAreaIds.LiveMetrics, true, null);
+                using var bitmap = new System.Drawing.Bitmap(form.ClientSize.Width, form.ClientSize.Height);
+                form.DrawToBitmap(bitmap, new System.Drawing.Rectangle(System.Drawing.Point.Empty, bitmap.Size));
+                Check(form.ClientSize.Width < expandedWidth, "Output magnitude cannot expand the collapsed slot.");
+                bitmap.Save(Path.Combine(directory, $"live-rates-narrow-{(value?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown")}-{dpi}dpi.png"), System.Drawing.Imaging.ImageFormat.Png);
+            }
+            form.SetLiveOutputRate(new(at, 53.2, 33.2, 20, 2, 1, 4, 0));
             foreach (var locale in new[] { "zh-CN", "en" })
             {
                 foreach (var isLive in new[] { true, false })

@@ -1574,13 +1574,18 @@ internal sealed partial class BarForm : Form
         using var estimated = new SolidBrush(Color.FromArgb(251, 191, 36));
         using var receive = new SolidBrush(Color.FromArgb(125, 211, 252));
         using var send = new SolidBrush(Color.FromArgb(196, 181, 253));
-        var isEstimated = _systemUsage.LiveRate?.HasEstimate == true;
+        var currentRate = _systemUsage.CurrentOutputRate;
+        var isEstimated = currentRate is not null && _systemUsage.LiveRate?.HasEstimate == true;
         var prefix = isEstimated ? "~" : "Σ";
-        var rate = _systemUsage.CurrentOutputRate is { } output ? $"{output:0.#}" : "—";
+        var rate = currentRate is { } output ? $"{output:0.#}" : "—";
         if (collapsed)
         {
-            DrawString(graphics, $"{prefix} {rate} tok/s", _cardTitleFont, isEstimated ? estimated : observed,
-                new RectangleF(bounds.X + 3, bounds.Y + 10, bounds.Width - 6, 14), StringAlignment.Center);
+            var compact = CompactOutputRate(currentRate);
+            DrawString(graphics, isEstimated ? "~" + compact : compact, _cardTitleFont,
+                currentRate is null ? muted : isEstimated ? estimated : observed,
+                new RectangleF(bounds.X + 3, bounds.Y + 5, bounds.Width - 6, 15), StringAlignment.Center);
+            DrawString(graphics, "tok/s", _resetFont, muted,
+                new RectangleF(bounds.X + 3, bounds.Y + 23, bounds.Width - 6, 10), StringAlignment.Center);
             return;
         }
         using var accent = new SolidBrush(isEstimated ? estimated.Color : observed.Color);
@@ -1600,6 +1605,22 @@ internal sealed partial class BarForm : Form
             new RectangleF(bounds.X + 5, bounds.Y + 27, halfWidth, 10), StringAlignment.Near);
         DrawString(graphics, sendText, _subtitleFont, send,
             new RectangleF(bounds.X + 11 + halfWidth, bounds.Y + 27, halfWidth, 10), StringAlignment.Near);
+    }
+
+    internal static string CompactOutputRate(double? value)
+    {
+        if (value is not { } number || !double.IsFinite(number) || number < 0) return "—";
+        var (divisor, suffix) = number switch
+        {
+            >= 1e18 => (1e18, "E"),
+            >= 1e15 => (1e15, "P"),
+            >= 1e12 => (1e12, "T"),
+            >= 1e9 => (1e9, "G"),
+            >= 1e6 => (1e6, "M"),
+            >= 1e3 => (1e3, "K"),
+            _ => (1d, ""),
+        };
+        return $"{number / divisor:0.#}{suffix}";
     }
 
     private void DrawSystemUsageCard(Graphics graphics, RectangleF bounds, bool collapsed)

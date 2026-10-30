@@ -364,8 +364,11 @@ dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj -c Release
 ## Live taskbar readouts
 
 The system area's CPU/RAM/disk/GPU tracks and resource/process hover are preserved.
-The separate live-rates area defaults to collapsed and keeps a readable one-line
-summed output tok/s. Expand it for activity counts and network RX/TX. Its hover
+The separate live-rates area defaults to collapsed and shows only summed output:
+the compact value above a `tok/s` caption in a stable 50-logical-pixel content slot.
+K/M/G use powers of 1000 for token rates; rate changes never resize the collapsed
+slot. Expanded widths and other modules retain their saved layouts.
+Expand it for activity counts and network RX/TX. Its hover
 groups the headline rate and recorded/estimated split, chat activity, and system
 network in three compact sections; coverage and sample time share the footer.
 It reuses module ordering, resizing, pin/dismiss and anchor geometry;
