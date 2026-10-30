@@ -80,6 +80,9 @@ public sealed class NetworkTrafficLedger
             var saved = CredentialSupport.AtomicUpdate(_path, contents =>
             {
                 var current = contents is null ? null : Parse(contents);
+                if (_history is not null && (current is null || current.Since != _history.Since
+                    || current.ReceivedBytes < _history.ReceivedBytes || current.SentBytes < _history.SentBytes))
+                    throw new IOException("Network history disappeared or regressed.");
                 if (_savedOnce && current?.Writer != _writer)
                     throw new IOException("Network history changed in another writer.");
                 var sameWriter = current?.Writer == _writer;

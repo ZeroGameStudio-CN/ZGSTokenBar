@@ -160,6 +160,10 @@ internal static class LiveMetricTests
             first.Observe(1, 1, at.AddSeconds(40));
             Check(first.SaveFailed && new NetworkTrafficLedger(directory).Observe(null, null, at.AddSeconds(41))!.TotalBytes == 4200,
                 "An obsolete writer cannot replace a newer checkpoint.");
+            var pending = new NetworkTrafficLedger(directory);
+            File.Delete(path);
+            Check(pending.Observe(1, 1, at.AddSeconds(42))!.TotalBytes == 4202 && pending.SaveFailed && !File.Exists(path),
+                "A missing checkpoint cannot silently reset previously loaded totals.");
             File.WriteAllText(path, "{broken}");
             var broken = new NetworkTrafficLedger(directory);
             Check(broken.Observe(100, 200, at.AddSeconds(42)) is null && broken.SaveFailed && File.ReadAllText(path) == "{broken}",
