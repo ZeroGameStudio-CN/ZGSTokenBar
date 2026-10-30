@@ -365,8 +365,10 @@ dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj -c Release
 
 The system area's CPU/RAM/disk/GPU tracks and resource/process hover are preserved.
 The separate live-rates area defaults to collapsed and keeps a readable one-line
-summed output tok/s. Expand it for activity counts, estimate share and network
-RX/TX. It reuses module ordering, resizing, pin/dismiss and anchor geometry;
+summed output tok/s. Expand it for activity counts and network RX/TX. Its hover
+groups the headline rate and recorded/estimated split, chat activity, and system
+network in three compact sections; coverage and sample time share the footer.
+It reuses module ordering, resizing, pin/dismiss and anchor geometry;
 its hover has independent rate content without CPU/process rows. No extra system
 process collection runs for the rates hover.
 

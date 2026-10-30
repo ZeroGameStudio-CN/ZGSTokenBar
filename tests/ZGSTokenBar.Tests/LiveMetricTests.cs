@@ -39,6 +39,49 @@ internal static class LiveMetricTests
         var snapshot = new SystemUsageSnapshot(1, 2, 3, 5, 1, null, 0, 4, at.AddMinutes(-1))
         { NetworkReceiveBytesPerSecond = 100, ObservedOutputTokensPerSecond = 30, OutputRateCapturedAt = at.AddMinutes(-1) };
         Check(snapshot.CurrentOutputRate is null && snapshot.CurrentNetworkReceive is null, "Stale display values expire.");
+        var context = SynchronizationContext.Current;
+        HoverSurfaces(snapshot with
+        {
+            TopProcesses = [new("worker", 1, 5, 1234, 0)],
+            LiveRate = new LiveOutputRate(at, 12, 10, 2, 1, 0, 1, 0),
+            ObservedOutputTokensPerSecond = 12,
+            OutputRateCapturedAt = at,
+        });
+        Check(ReferenceEquals(context, SynchronizationContext.Current),
+            "Native hover checks cannot leak a UI synchronization context into later async checks.");
+    }
+
+    private static void HoverSurfaces(SystemUsageSnapshot snapshot)
+    {
+        var context = SynchronizationContext.Current;
+        try { CheckHoverSurfaces(snapshot); }
+        finally { SynchronizationContext.SetSynchronizationContext(context); }
+    }
+
+    private static void CheckHoverSurfaces(SystemUsageSnapshot snapshot)
+    {
+        using var popover = new SystemUsagePopoverForm();
+        var text = NativeText.For("zh-CN");
+        popover.UpdateContent(new SystemUsagePopoverContent(snapshot, false), text);
+        Check(!popover.LiveRatesContentForAcceptance, "CPU hover keeps the system surface mode.");
+        Check(popover.MetricLabelsForAcceptance.Contains("CPU")
+            && !popover.MetricLabelsForAcceptance.Contains("合计输出")
+            && popover.ProcessRowCountForAcceptance == 1,
+            "CPU hover contains CPU metrics and process rows only.");
+
+        popover.UpdateContent(new SystemUsagePopoverContent(snapshot, false, true), text);
+        Check(popover.LiveRatesContentForAcceptance, "Rate hover switches to the live surface mode.");
+        Check(popover.CurrentLogicalBodyHeight < SystemUsagePopoverForm.LogicalBodyHeight,
+            "Rate hover uses the compact live layout height.");
+        Check(popover.MetricLabelsForAcceptance.Contains("合计输出")
+            && popover.MetricLabelsForAcceptance.Contains("网络接收")
+            && !popover.MetricLabelsForAcceptance.Contains("CPU")
+            && popover.ProcessRowCountForAcceptance == 0,
+            "Rate hover contains output/network metrics without CPU or process rows.");
+
+        popover.UpdateContent(new SystemUsagePopoverContent(snapshot, true), text);
+        Check(!popover.LiveRatesContentForAcceptance && popover.ProcessRowCountForAcceptance == 1,
+            "Switching back to a pinned CPU hover restores only CPU details.");
     }
     internal static void Render(string directory)
     {
@@ -64,12 +107,28 @@ internal static class LiveMetricTests
                 form.DrawToBitmap(bitmap, new System.Drawing.Rectangle(System.Drawing.Point.Empty, bitmap.Size));
                 bitmap.Save(Path.Combine(directory, $"live-rates-{(collapsed ? "collapsed" : "expanded")}-{dpi}dpi.png"), System.Drawing.Imaging.ImageFormat.Png);
             }
-            foreach (var live in new[] { true, false })
+            foreach (var locale in new[] { "zh-CN", "en" })
             {
-                using var popover = new SystemUsagePopoverForm();
-                using var bitmap = popover.RenderForTest(new SystemUsagePopoverContent(form.LiveMetrics, false, live),
-                    NativeText.For("zh-CN"), QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), dpi);
-                bitmap.Save(Path.Combine(directory, $"hover-{(live ? "rates" : "cpu")}-{dpi}dpi.png"), System.Drawing.Imaging.ImageFormat.Png);
+                foreach (var isLive in new[] { true, false })
+                {
+                    using var popover = new SystemUsagePopoverForm();
+                    using var bitmap = popover.RenderForTest(new SystemUsagePopoverContent(form.LiveMetrics, false, isLive),
+                        NativeText.For(locale), QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), dpi);
+                    bitmap.Save(Path.Combine(directory, $"hover-{(isLive ? "rates" : "cpu")}-{locale}-{dpi}dpi.png"), System.Drawing.Imaging.ImageFormat.Png);
+                }
+                var samples = new[]
+                {
+                    ("estimated", form.LiveMetrics with { LiveRate = new(at, 44.2, 0, 44.2, 2, 3, 12, 0), ObservedOutputTokensPerSecond = 44.2 }),
+                    ("unavailable", form.LiveMetrics with { LiveRate = null, ObservedOutputTokensPerSecond = null, NetworkReceiveBytesPerSecond = null, NetworkSendBytesPerSecond = null }),
+                    ("large", form.LiveMetrics with { LiveRate = new(at, 12345.6, 12000, 345.6, 12, 9, 12, 3), ObservedOutputTokensPerSecond = 12345.6 })
+                };
+                foreach (var (name, sample) in samples)
+                {
+                    using var popover = new SystemUsagePopoverForm();
+                    using var bitmap = popover.RenderForTest(new SystemUsagePopoverContent(sample, true, true),
+                        NativeText.For(locale), QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), dpi);
+                    bitmap.Save(Path.Combine(directory, $"hover-rates-{name}-{locale}-{dpi}dpi.png"), System.Drawing.Imaging.ImageFormat.Png);
+                }
             }
             Check(form.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.SystemMetrics) == original,
                 "Collapsing rates preserves CPU state.");
