@@ -9,6 +9,7 @@ internal sealed class SystemUsagePopoverForm : Form
 {
     internal const int LogicalBodyWidth = 300;
     internal const int LogicalBodyHeight = 352;
+    private const int LiveRateBodyHeight = 340;
     private const int LogicalTailSize = 8;
     private const int LogicalGap = 3;
     private const int ToolWindowStyle = 0x00000080;
@@ -148,7 +149,7 @@ internal sealed class SystemUsagePopoverForm : Form
                 FormatUsage(process.GpuPercent))).ToArray();
         }
         _logicalBodyHeight = content.LiveRates
-            ? LogicalBodyHeight
+            ? LiveRateBodyHeight
             : Math.Clamp(282 + Math.Max(0, _processes.Length - 1) * 18, 282, LogicalBodyHeight);
         _capturedAt = _text.SystemUsageCapturedAt(snapshot.CapturedAt);
         Invalidate();
@@ -310,8 +311,20 @@ internal sealed class SystemUsagePopoverForm : Form
         using var muted = new SolidBrush(Color.FromArgb(148, 163, 184));
         using var divider = new Pen(Color.FromArgb(36, 100, 116, 139), 1);
 
-        DrawString(graphics, Text, _titleFont, primary,
-            new RectangleF(body.X + 16, body.Y + 12, 120, 18), StringAlignment.Near);
+        if (content.LiveRates)
+        {
+            using var stateBrush = new SolidBrush(content.Snapshot.LiveRate?.HasEstimate == true
+                ? EstimateAccent
+                : RecordedAccent);
+            graphics.FillEllipse(stateBrush, body.X + 16, body.Y + 18, 5, 5);
+            DrawString(graphics, Text, _titleFont, primary,
+                new RectangleF(body.X + 26, body.Y + 12, 110, 18), StringAlignment.Near);
+        }
+        else
+        {
+            DrawString(graphics, Text, _titleFont, primary,
+                new RectangleF(body.X + 16, body.Y + 12, 120, 18), StringAlignment.Near);
+        }
         DrawString(graphics, _text.SystemUsagePopoverSubtitle(content.Pinned), _subtitleFont, muted,
             new RectangleF(body.X + 142, body.Y + 15, body.Width - 158, 14), StringAlignment.Far);
 
@@ -324,7 +337,9 @@ internal sealed class SystemUsagePopoverForm : Form
 
         if (content.LiveRates)
         {
-            graphics.DrawLine(divider, body.X + 16, body.Y + 196, body.Right - 16, body.Y + 196);
+            DrawLiveRateDivider(graphics, body, 156, EstimateAccent);
+            DrawLiveRateDivider(graphics, body, 196, ActivityAccent);
+            DrawLiveRateDivider(graphics, body, 276, ReceiveAccent);
             DrawString(graphics, _capturedAt, _subtitleFont, muted,
                 new RectangleF(body.X + 16, body.Bottom - 18, body.Width - 32, 12), StringAlignment.Near);
             return;
@@ -360,6 +375,21 @@ internal sealed class SystemUsagePopoverForm : Form
 
         DrawString(graphics, _capturedAt, _subtitleFont, muted,
             new RectangleF(body.X + 16, body.Bottom - 18, body.Width - 32, 12), StringAlignment.Near);
+    }
+
+    private static void DrawLiveRateDivider(
+        Graphics graphics,
+        RectangleF body,
+        float offset,
+        Color accent)
+    {
+        using var divider = new Pen(Color.FromArgb(42, 100, 116, 139), 1);
+        using var accentBrush = new SolidBrush(accent);
+        graphics.DrawLine(divider, body.X + 16, body.Y + offset, body.Right - 16, body.Y + offset);
+        graphics.FillRoundedRectangle(
+            accentBrush,
+            new RectangleF(body.X + 16, body.Y + offset - 1, 18, 2),
+            1);
     }
 
     private void DrawMetricRow(
