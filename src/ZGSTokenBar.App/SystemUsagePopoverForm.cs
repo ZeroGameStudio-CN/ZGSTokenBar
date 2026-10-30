@@ -1,4 +1,4 @@
-﻿using System.Drawing.Drawing2D;
+using System.Drawing.Drawing2D;
 using ZGSTokenBar.Core;
 
 namespace ZGSTokenBar.App;
@@ -9,7 +9,7 @@ internal sealed class SystemUsagePopoverForm : Form
 {
     internal const int LogicalBodyWidth = 300;
     internal const int LogicalBodyHeight = 352;
-    private const int LiveRateBodyHeight = 340;
+    private const int LiveRateBodyHeight = 312;
     private const int LogicalTailSize = 8;
     private const int LogicalGap = 3;
     private const int ToolWindowStyle = 0x00000080;
@@ -23,12 +23,12 @@ internal sealed class SystemUsagePopoverForm : Form
     private readonly Font _metricLabelFont = new("Segoe UI Semibold", 9.5f, FontStyle.Regular, GraphicsUnit.Pixel);
     private readonly Font _detailFont = new("Segoe UI", 9.5f, FontStyle.Regular, GraphicsUnit.Pixel);
     private readonly Font _metricValueFont = new("Cascadia Mono", 10.5f, FontStyle.Regular, GraphicsUnit.Pixel);
+    private readonly Font _liveValueFont = new("Cascadia Mono", 22f, FontStyle.Bold, GraphicsUnit.Pixel);
     private readonly Font _tableValueFont = new("Cascadia Mono", 9f, FontStyle.Regular, GraphicsUnit.Pixel);
     private static readonly Color RecordedAccent = Color.FromArgb(110, 231, 183);
     private static readonly Color EstimateAccent = Color.FromArgb(251, 191, 36);
     private static readonly Color ReceiveAccent = Color.FromArgb(125, 211, 252);
     private static readonly Color SendAccent = Color.FromArgb(196, 181, 253);
-    private static readonly Color ActivityAccent = Color.FromArgb(167, 243, 208);
     private readonly AlignedStringFormats _textFormats = new();
     private readonly System.Windows.Forms.Timer _entranceTimer = new() { Interval = 16 };
     private readonly System.Windows.Forms.Timer _exitTimer = new() { Interval = 16 };
@@ -101,31 +101,16 @@ internal sealed class SystemUsagePopoverForm : Form
         var snapshot = content.Snapshot;
         if (content.LiveRates)
         {
-            var live = snapshot.LiveRate;
+            var live = snapshot.CurrentOutputRate is not null ? snapshot.LiveRate : null;
             var zh = _text.IsChinese;
             _metrics =
             [
-                new(zh ? "合计输出" : "Output total", null, snapshot.CurrentOutputRate is { } rate ? $"{(live?.HasEstimate == true ? "≈" : "")}{rate:0.#} tok/s" : "—",
-                    zh ? "最近3秒响应区间重叠 · 含单列估算" : "3s response overlap · estimates separated below", true,
-                    live?.HasEstimate == true ? EstimateAccent : RecordedAccent),
-                new(zh ? "已记录" : "Recorded", null, live is null ? "—" : $"{live.Measured:0.#} tok/s",
-                    zh ? "按响应起止分摊，不按日志读取间隔除算" : "Response intervals, not polling-time bursts", true, RecordedAccent),
-                new(zh ? "生成中估算" : "In-flight estimate", null, live is null ? "—" : $"{live.Estimated:0.#} tok/s",
-                    zh ? $"占比 {live?.EstimatedShare:P0} · 近期响应加权参考" : $"{live?.EstimatedShare:P0} share · recent weighted responses", true, EstimateAccent),
-                new(zh ? "会话状态" : "Chat activity", null, live is null ? "—" : $"{live.Generating} / {live.Tools}",
-                    zh ? "生成中 / 工具中 · 工具阶段不补估算" : "Generating / tools · no tool-time extrapolation", true, ActivityAccent),
-                new(zh ? "网络接收" : "Network receive", null, NetworkUsageSampler.Compact(snapshot.CurrentNetworkReceive) + "/s",
-                    zh ? $"{snapshot.NetworkInterfaces} 个默认联网接口 · 非模型专属流量" : $"{snapshot.NetworkInterfaces} default NICs · not model traffic", true, ReceiveAccent),
-                new(zh ? "网络发送" : "Network send", null, NetworkUsageSampler.Compact(snapshot.CurrentNetworkSend) + "/s",
-                    zh ? "K/M/G 按1024换算 · 系统网卡计数" : "K/M/G use 1024 · system adapter counters", true, SendAccent),
-                new(zh ? "采集范围" : "Coverage", null, live is null ? "—" : $"{live.Sessions} Codex",
-                    zh ? $"本机已接入日志 · {live?.Pending ?? 0} 条待追平 · 非服务端解码速率" : $"Local connected logs · {live?.Pending ?? 0} catching up · not decode rate", true, ActivityAccent)
+                new(zh ? "合计输出" : "Output total", null, snapshot.CurrentOutputRate is { } rate ? $"{(live?.HasEstimate == true ? "≈" : "")}{rate:0.#} tok/s" : "—"),
+                new(zh ? "已记录" : "Recorded", null, live is null ? "—" : $"{live.Measured:0.#} tok/s"),
+                new(zh ? "生成中估算" : "In-flight estimate", null, live is null ? "—" : $"{live.Estimated:0.#} tok/s"),
+                new(zh ? "网络接收" : "Network receive", null, NetworkUsageSampler.Compact(snapshot.CurrentNetworkReceive) + "/s"),
+                new(zh ? "网络发送" : "Network send", null, NetworkUsageSampler.Compact(snapshot.CurrentNetworkSend) + "/s")
             ];
-
-            // Live-rate hover is a separate surface. Do not retain the CPU
-            // process rows from a previous system hover while this surface is
-            // being reused, even though the renderer currently returns before
-            // drawing process details for live rates.
             _processes = [];
         }
         else
@@ -167,7 +152,7 @@ internal sealed class SystemUsagePopoverForm : Form
     private static MetricRow Metric(string label, double? value, string detail) =>
         new(label, value, FormatUsage(value), detail);
 
-    private sealed record MetricRow(string Label, double? Percent, string Value, string Detail, bool IsReadout = false, Color? Accent = null);
+    private sealed record MetricRow(string Label, double? Percent, string Value, string Detail = "");
     private sealed record ProcessRow(string Name, string Count, string Cpu, string Memory, string Gpu);
 
     public void ShowFor(
@@ -313,9 +298,8 @@ internal sealed class SystemUsagePopoverForm : Form
 
         if (content.LiveRates)
         {
-            using var stateBrush = new SolidBrush(content.Snapshot.LiveRate?.HasEstimate == true
-                ? EstimateAccent
-                : RecordedAccent);
+            using var stateBrush = new SolidBrush(content.Snapshot.CurrentOutputRate is null ? muted.Color
+                : content.Snapshot.LiveRate?.HasEstimate == true ? EstimateAccent : RecordedAccent);
             graphics.FillEllipse(stateBrush, body.X + 16, body.Y + 18, 5, 5);
             DrawString(graphics, Text, _titleFont, primary,
                 new RectangleF(body.X + 26, body.Y + 12, 110, 18), StringAlignment.Near);
@@ -328,6 +312,12 @@ internal sealed class SystemUsagePopoverForm : Form
         DrawString(graphics, _text.SystemUsagePopoverSubtitle(content.Pinned), _subtitleFont, muted,
             new RectangleF(body.X + 142, body.Y + 15, body.Width - 158, 14), StringAlignment.Far);
 
+        if (content.LiveRates)
+        {
+            DrawLiveRates(graphics, body, content.Snapshot, primary, muted);
+            return;
+        }
+
         for (var index = 0; index < _metrics.Length; index++)
         {
             DrawMetricRow(graphics,
@@ -335,15 +325,6 @@ internal sealed class SystemUsagePopoverForm : Form
                 _metrics[index], primary, muted);
         }
 
-        if (content.LiveRates)
-        {
-            DrawLiveRateDivider(graphics, body, 156, EstimateAccent);
-            DrawLiveRateDivider(graphics, body, 196, ActivityAccent);
-            DrawLiveRateDivider(graphics, body, 276, ReceiveAccent);
-            DrawString(graphics, _capturedAt, _subtitleFont, muted,
-                new RectangleF(body.X + 16, body.Bottom - 18, body.Width - 32, 12), StringAlignment.Near);
-            return;
-        }
         graphics.DrawLine(divider, body.X + 16, body.Y + 204, body.Right - 16, body.Y + 204);
         DrawString(graphics, _text.SystemUsageTopProcesses, _subtitleFont, muted,
             new RectangleF(body.X + 16, body.Y + 216, 124, 14), StringAlignment.Near);
@@ -377,19 +358,76 @@ internal sealed class SystemUsagePopoverForm : Form
             new RectangleF(body.X + 16, body.Bottom - 18, body.Width - 32, 12), StringAlignment.Near);
     }
 
-    private static void DrawLiveRateDivider(
+    private void DrawLiveRates(
         Graphics graphics,
         RectangleF body,
-        float offset,
-        Color accent)
+        SystemUsageSnapshot snapshot,
+        Brush primary,
+        Brush muted)
     {
+        var zh = _text.IsChinese;
+        var live = snapshot.CurrentOutputRate is not null ? snapshot.LiveRate : null;
+        using var recorded = new SolidBrush(RecordedAccent);
+        using var estimated = new SolidBrush(EstimateAccent);
+        using var receive = new SolidBrush(ReceiveAccent);
+        using var send = new SolidBrush(SendAccent);
         using var divider = new Pen(Color.FromArgb(42, 100, 116, 139), 1);
-        using var accentBrush = new SolidBrush(accent);
-        graphics.DrawLine(divider, body.X + 16, body.Y + offset, body.Right - 16, body.Y + offset);
-        graphics.FillRoundedRectangle(
-            accentBrush,
-            new RectangleF(body.X + 16, body.Y + offset - 1, 18, 2),
-            1);
+        RectangleF At(float x, float y, float width, float height) => new(body.X + x, body.Y + y, width, height);
+        void TextAt(string value, Font font, Brush brush, float x, float y, float width, float height,
+            StringAlignment align = StringAlignment.Near) => DrawString(graphics, value, font, brush, At(x, y, width, height), align);
+        void Panel(float y, float height)
+        {
+            using var path = RoundedRectangle(At(12, y, body.Width - 24, height), 8);
+            using var fill = new SolidBrush(_backgroundTheme.ProviderGroup);
+            graphics.FillPath(fill, path);
+            graphics.DrawPath(divider, path);
+        }
+
+        Panel(38, 112);
+        TextAt(_metrics[0].Label, _metricLabelFont, muted, 24, 49, 136, 13);
+        TextAt(zh ? "3 秒窗口" : "3s window", _subtitleFont, muted, 176, 49, 100, 13, StringAlignment.Far);
+        TextAt(_metrics[0].Value, _liveValueFont, primary, 24, 67, 252, 29);
+        var rail = At(24, 105, 252, 3);
+        using var railBrush = new SolidBrush(Color.FromArgb(48, 100, 116, 139));
+        graphics.FillRoundedRectangle(railBrush, rail, 1.5f);
+        if (live?.Total is > 0)
+        {
+            var estimatedWidth = rail.Width * (float)Math.Clamp(live.EstimatedShare, 0, 1);
+            var recordedWidth = rail.Width - estimatedWidth;
+            if (recordedWidth > 0) graphics.FillRectangle(recorded, rail.X, rail.Y, recordedWidth, rail.Height);
+            if (estimatedWidth > 0) graphics.FillRectangle(estimated, rail.X + recordedWidth, rail.Y, estimatedWidth, rail.Height);
+        }
+        TextAt(_metrics[1].Label, _subtitleFont, muted, 24, 115, 118, 12);
+        TextAt(live is null ? (zh ? "估算" : "Estimated")
+                : zh ? $"估算 · {live.EstimatedShare:P0}" : $"Estimated · {live.EstimatedShare:P0}",
+            _subtitleFont, muted, 166, 115, 110, 12);
+        TextAt(_metrics[1].Value, _metricValueFont, live is null ? muted : recorded, 24, 131, 118, 14);
+        TextAt(_metrics[2].Value, _metricValueFont, live is null ? muted : estimated, 166, 131, 110, 14);
+
+        Panel(158, 40);
+        graphics.FillEllipse(recorded, body.X + 24, body.Y + 174, 5, 5);
+        graphics.FillEllipse(send, body.X + 166, body.Y + 174, 5, 5);
+        TextAt(zh ? "生成中" : "Generating", _detailFont, primary, 35, 170, 80, 14);
+        TextAt(zh ? "工具中" : "Tools", _detailFont, primary, 177, 170, 68, 14);
+        TextAt(live?.Generating.ToString() ?? "—", _metricValueFont, primary, 114, 170, 28, 14, StringAlignment.Far);
+        TextAt(live?.Tools.ToString() ?? "—", _metricValueFont, primary, 248, 170, 28, 14, StringAlignment.Far);
+
+        Panel(206, 58);
+        TextAt(zh ? "本机网络" : "System network", _metricLabelFont, muted, 24, 215, 130, 13);
+        TextAt(zh ? $"默认接口 · {snapshot.NetworkInterfaces}" : $"Default NICs · {snapshot.NetworkInterfaces}",
+            _subtitleFont, muted, 160, 215, 116, 13, StringAlignment.Far);
+        TextAt("↓ " + _metrics[3].Value, _metricValueFont, receive, 24, 238, 118, 15);
+        TextAt("↑ " + _metrics[4].Value, _metricValueFont, send, 166, 238, 110, 15);
+
+        var coverage = live is null ? (zh ? "等待会话读数" : "Waiting for chat data")
+            : (zh ? $"{live.Sessions} 个 Codex 会话" : $"{live.Sessions} Codex chats");
+        var pending = snapshot.LiveRate?.Pending ?? 0;
+        TextAt(coverage, _subtitleFont, muted, 16, 274, 174, 12);
+        TextAt(pending > 0 ? (zh ? $"{pending} 条待追平" : $"{pending} catching up")
+                : live is null ? (zh ? "待读取" : "Waiting") : (zh ? "已追平" : "Caught up"),
+            _subtitleFont, muted, 190, 274, 94, 12, StringAlignment.Far);
+        TextAt(zh ? "含响应估算 · 非解码速度" : "Response estimates · not decode speed", _subtitleFont, muted, 16, 291, 210, 12);
+        TextAt(snapshot.CapturedAt.ToLocalTime().ToString("HH:mm:ss"), _subtitleFont, muted, 230, 291, 54, 12, StringAlignment.Far);
     }
 
     private void DrawMetricRow(
@@ -399,26 +437,6 @@ internal sealed class SystemUsagePopoverForm : Form
         Brush primary,
         Brush muted)
     {
-        if (metric.IsReadout)
-        {
-            using var readoutBrush = new SolidBrush(metric.Accent ?? Color.FromArgb(241, 245, 249));
-            if (metric.Accent is { } accent)
-            {
-                using var accentBrush = new SolidBrush(accent);
-                graphics.FillRoundedRectangle(
-                    accentBrush,
-                    new RectangleF(bounds.X, bounds.Y + 3, 3, 27),
-                    1.5f);
-            }
-            var contentX = bounds.X + (metric.Accent is not null ? 8 : 0);
-            DrawString(graphics, metric.Label, _metricLabelFont, primary,
-                new RectangleF(contentX, bounds.Y, bounds.Width - 100 - (contentX - bounds.X), 14), StringAlignment.Near);
-            DrawString(graphics, metric.Value, _metricValueFont, readoutBrush,
-                new RectangleF(bounds.Right - 100, bounds.Y - 1, 100, 16), StringAlignment.Far);
-            DrawString(graphics, metric.Detail, _subtitleFont, muted,
-                new RectangleF(contentX, bounds.Y + 18, bounds.Width - (contentX - bounds.X), 14), StringAlignment.Near);
-            return;
-        }
         var color = metric.Percent is { } percent ? UsageColor(percent) : Color.FromArgb(100, 116, 139);
         using var valueBrush = new SolidBrush(color);
         DrawString(graphics, metric.Label, _metricLabelFont, primary,
@@ -600,6 +618,7 @@ internal sealed class SystemUsagePopoverForm : Form
             _metricLabelFont.Dispose();
             _detailFont.Dispose();
             _metricValueFont.Dispose();
+            _liveValueFont.Dispose();
             _tableValueFont.Dispose();
             _textFormats.Dispose();
         }

@@ -39,6 +39,7 @@ internal static class LiveMetricTests
         var snapshot = new SystemUsageSnapshot(1, 2, 3, 5, 1, null, 0, 4, at.AddMinutes(-1))
         { NetworkReceiveBytesPerSecond = 100, ObservedOutputTokensPerSecond = 30, OutputRateCapturedAt = at.AddMinutes(-1) };
         Check(snapshot.CurrentOutputRate is null && snapshot.CurrentNetworkReceive is null, "Stale display values expire.");
+        var context = SynchronizationContext.Current;
         HoverSurfaces(snapshot with
         {
             TopProcesses = [new("worker", 1, 5, 1234, 0)],
@@ -46,9 +47,18 @@ internal static class LiveMetricTests
             ObservedOutputTokensPerSecond = 12,
             OutputRateCapturedAt = at,
         });
+        Check(ReferenceEquals(context, SynchronizationContext.Current),
+            "Native hover checks cannot leak a UI synchronization context into later async checks.");
     }
 
     private static void HoverSurfaces(SystemUsageSnapshot snapshot)
+    {
+        var context = SynchronizationContext.Current;
+        try { CheckHoverSurfaces(snapshot); }
+        finally { SynchronizationContext.SetSynchronizationContext(context); }
+    }
+
+    private static void CheckHoverSurfaces(SystemUsageSnapshot snapshot)
     {
         using var popover = new SystemUsagePopoverForm();
         var text = NativeText.For("zh-CN");
@@ -97,12 +107,28 @@ internal static class LiveMetricTests
                 form.DrawToBitmap(bitmap, new System.Drawing.Rectangle(System.Drawing.Point.Empty, bitmap.Size));
                 bitmap.Save(Path.Combine(directory, $"live-rates-{(collapsed ? "collapsed" : "expanded")}-{dpi}dpi.png"), System.Drawing.Imaging.ImageFormat.Png);
             }
-            foreach (var live in new[] { true, false })
+            foreach (var locale in new[] { "zh-CN", "en" })
             {
-                using var popover = new SystemUsagePopoverForm();
-                using var bitmap = popover.RenderForTest(new SystemUsagePopoverContent(form.LiveMetrics, false, live),
-                    NativeText.For("zh-CN"), QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), dpi);
-                bitmap.Save(Path.Combine(directory, $"hover-{(live ? "rates" : "cpu")}-{dpi}dpi.png"), System.Drawing.Imaging.ImageFormat.Png);
+                foreach (var isLive in new[] { true, false })
+                {
+                    using var popover = new SystemUsagePopoverForm();
+                    using var bitmap = popover.RenderForTest(new SystemUsagePopoverContent(form.LiveMetrics, false, isLive),
+                        NativeText.For(locale), QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), dpi);
+                    bitmap.Save(Path.Combine(directory, $"hover-{(isLive ? "rates" : "cpu")}-{locale}-{dpi}dpi.png"), System.Drawing.Imaging.ImageFormat.Png);
+                }
+                var samples = new[]
+                {
+                    ("estimated", form.LiveMetrics with { LiveRate = new(at, 44.2, 0, 44.2, 2, 3, 12, 0), ObservedOutputTokensPerSecond = 44.2 }),
+                    ("unavailable", form.LiveMetrics with { LiveRate = null, ObservedOutputTokensPerSecond = null, NetworkReceiveBytesPerSecond = null, NetworkSendBytesPerSecond = null }),
+                    ("large", form.LiveMetrics with { LiveRate = new(at, 12345.6, 12000, 345.6, 12, 9, 12, 3), ObservedOutputTokensPerSecond = 12345.6 })
+                };
+                foreach (var (name, sample) in samples)
+                {
+                    using var popover = new SystemUsagePopoverForm();
+                    using var bitmap = popover.RenderForTest(new SystemUsagePopoverContent(sample, true, true),
+                        NativeText.For(locale), QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), dpi);
+                    bitmap.Save(Path.Combine(directory, $"hover-rates-{name}-{locale}-{dpi}dpi.png"), System.Drawing.Imaging.ImageFormat.Png);
+                }
             }
             Check(form.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.SystemMetrics) == original,
                 "Collapsing rates preserves CPU state.");

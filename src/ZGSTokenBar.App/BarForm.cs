@@ -1587,18 +1587,18 @@ internal sealed partial class BarForm : Form
         DrawString(graphics, $"{prefix} {rate} tok/s", _cardTitleFont, isEstimated ? estimated : observed,
             new RectangleF(bounds.X + 10, bounds.Y + 2, bounds.Width - 14, 14), StringAlignment.Near);
         var detail = _systemUsage.LiveRate is { } live
-            ? (_text.IsChinese ? $"生{live.Generating} · 工{live.Tools} · 估{live.EstimatedShare:P0}" : $"G{live.Generating} · T{live.Tools} · E{live.EstimatedShare:P0}") : "—";
+            ? (_text.IsChinese ? $"生成 {live.Generating} · 工具 {live.Tools}" : $"Gen {live.Generating} · Tools {live.Tools}") : "—";
         DrawString(graphics, detail, _subtitleFont, muted,
             new RectangleF(bounds.X + 5, bounds.Y + 16, bounds.Width - 9, 10), StringAlignment.Near);
         using var divider = new Pen(Color.FromArgb(38, 100, 116, 139), 1);
         graphics.DrawLine(divider, bounds.X + 5, bounds.Y + 26, bounds.Right - 5, bounds.Y + 26);
         var receiveText = "↓" + NetworkUsageSampler.Compact(_systemUsage.CurrentNetworkReceive) + "/s";
         var sendText = "↑" + NetworkUsageSampler.Compact(_systemUsage.CurrentNetworkSend) + "/s";
-        var halfWidth = (bounds.Width - 9) / 2;
+        var halfWidth = (bounds.Width - 15) / 2;
         DrawString(graphics, receiveText, _subtitleFont, receive,
-            new RectangleF(bounds.X + 5, bounds.Y + 27, halfWidth, 10), StringAlignment.Far);
+            new RectangleF(bounds.X + 5, bounds.Y + 27, halfWidth, 10), StringAlignment.Near);
         DrawString(graphics, sendText, _subtitleFont, send,
-            new RectangleF(bounds.X + 5 + halfWidth, bounds.Y + 27, halfWidth, 10), StringAlignment.Near);
+            new RectangleF(bounds.X + 11 + halfWidth, bounds.Y + 27, halfWidth, 10), StringAlignment.Near);
     }
 
     private void DrawSystemUsageCard(Graphics graphics, RectangleF bounds, bool collapsed)
