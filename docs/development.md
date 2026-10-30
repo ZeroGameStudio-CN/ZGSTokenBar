@@ -398,3 +398,20 @@ configuration changes occur. Existing taskbar drag-to-snap/float placement and
 user settings remain intact. `window inspect --json` includes the three-second
 window, recorded/estimated rates, generating/tools counts and existing module and
 data identity checks.
+
+The rate hover's Totals block shows cumulative receive/send/combined bytes beside
+the existing Token total. Network totals start with the first valid observed
+adapter delta and retain that start time across Bar restarts; no pre-existing
+traffic is inferred from Token accounting or counters accumulated before startup.
+Closed-Bar, reset, unavailable and over-ten-second sampling gaps are excluded.
+This remains system-adapter traffic and is independent of the Token ledger.
+
+`network-traffic-history.json` in the resolved user data root uses the existing
+locked atomic-write primitive. Checkpoints run in the existing background sample
+path every thirty seconds and on normal exit; an abrupt stop can lose the last
+unsaved interval. Session checkpoints make retry/normal restart idempotent; an old
+writer cannot overwrite a newer session. Invalid or unreadable history is retained
+and reported as unavailable rather than replaced by zero. No settings, credentials
+or Token data are rewritten. Cumulative byte units use powers of 1024; live rates
+keep `/s`. `window inspect --json` exposes cumulative byte values, start/checkpoint
+times and save-failure status for read-only verification.

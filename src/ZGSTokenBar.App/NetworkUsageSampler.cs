@@ -5,7 +5,8 @@ using System.Net.NetworkInformation;
 namespace ZGSTokenBar.App;
 
 internal readonly record struct NetworkCounter(string Id, long Received, long Sent);
-internal readonly record struct NetworkUsage(double? Received, double? Sent, int Interfaces);
+internal readonly record struct NetworkUsage(double? Received, double? Sent, int Interfaces,
+    long? ReceivedDelta = null, long? SentDelta = null);
 internal sealed class NetworkUsageSampler
 {
     private Dictionary<string, NetworkCounter> _previous = [];
@@ -17,7 +18,7 @@ internal sealed class NetworkUsageSampler
         if (counters is null) { _previous.Clear(); _at = null; return new(null, null, 0); }
         var elapsed = _at is { } at ? seconds - at : 0;
         var valid = elapsed is > 0 and <= 10 && counters.Count > 0;
-        double receive = 0, send = 0;
+        long receive = 0, send = 0;
         foreach (var row in counters)
         {
             if (!_previous.TryGetValue(row.Id, out var old) || row.Received < old.Received || row.Sent < old.Sent)
@@ -26,7 +27,8 @@ internal sealed class NetworkUsageSampler
         }
         _previous = counters.ToDictionary(row => row.Id);
         _at = seconds;
-        return new(valid ? receive / elapsed : null, valid ? send / elapsed : null, counters.Count);
+        return new(valid ? receive / elapsed : null, valid ? send / elapsed : null, counters.Count,
+            valid ? receive : null, valid ? send : null);
     }
     internal NetworkUsage Sample()
     {
@@ -56,4 +58,14 @@ internal sealed class NetworkUsageSampler
         : number >= 1024 * 1024 * 1024 ? $"{number / (1024 * 1024 * 1024):0.#}G"
         : number >= 1024 * 1024 ? $"{number / (1024 * 1024):0.#}M"
         : number >= 1024 ? $"{number / 1024:0.#}K" : $"{number:0}B";
+
+    internal static string Total(long? bytes)
+    {
+        if (bytes is not >= 0) return "—";
+        double value = bytes.Value;
+        string[] units = ["B", "KB", "MB", "GB", "TB", "PB", "EB"];
+        var index = 0;
+        while (value >= 1024 && index < units.Length - 1) { value /= 1024; index++; }
+        return $"{value:0.##} {units[index]}";
+    }
 }

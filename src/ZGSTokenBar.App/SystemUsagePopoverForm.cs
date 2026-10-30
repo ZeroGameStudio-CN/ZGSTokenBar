@@ -9,7 +9,7 @@ internal sealed class SystemUsagePopoverForm : Form
 {
     internal const int LogicalBodyWidth = 300;
     internal const int LogicalBodyHeight = 352;
-    private const int LiveRateBodyHeight = 312;
+    private const int LiveRateBodyHeight = 410;
     private const int LogicalTailSize = 8;
     private const int LogicalGap = 3;
     private const int ToolWindowStyle = 0x00000080;
@@ -419,15 +419,30 @@ internal sealed class SystemUsagePopoverForm : Form
         TextAt("↓ " + _metrics[3].Value, _metricValueFont, receive, 24, 238, 118, 15);
         TextAt("↑ " + _metrics[4].Value, _metricValueFont, send, 166, 238, 110, 15);
 
+        Panel(272, 90);
+        var history = snapshot.NetworkHistory;
+        TextAt(zh ? "累计" : "Totals", _metricLabelFont, muted, 24, 281, 50, 13);
+        var since = history is null ? (zh ? "等待计数" : "Waiting for counters")
+            : (zh ? $"始于 {history.Since.ToLocalTime():yyyy-MM-dd HH:mm}" : $"Since {history.Since.ToLocalTime():yyyy-MM-dd HH:mm}");
+        if (snapshot.NetworkHistorySaveFailed) since = zh ? "记录待保存/恢复" : "Checkpoint unavailable";
+        TextAt(since, _subtitleFont, muted, 86, 281, 190, 13, StringAlignment.Far);
+        TextAt(zh ? "总流量" : "Network total", _detailFont, primary, 24, 300, 118, 15);
+        TextAt(NetworkUsageSampler.Total(history?.TotalBytes), _metricValueFont, primary, 166, 300, 110, 15, StringAlignment.Far);
+        TextAt("↓ " + NetworkUsageSampler.Total(history?.ReceivedBytes), _subtitleFont, receive, 24, 319, 118, 12);
+        TextAt("↑ " + NetworkUsageSampler.Total(history?.SentBytes), _subtitleFont, send, 166, 319, 110, 12);
+        TextAt(zh ? "总 Token" : "Token total", _detailFont, primary, 24, 342, 118, 14);
+        TextAt(snapshot.CumulativeTokens is { } tokens ? NativeText.FormatTokenCount(tokens) : "—",
+            _metricValueFont, primary, 166, 342, 110, 14, StringAlignment.Far);
+
         var coverage = live is null ? (zh ? "等待会话读数" : "Waiting for chat data")
             : (zh ? $"{live.Sessions} 个 Codex 会话" : $"{live.Sessions} Codex chats");
         var pending = snapshot.LiveRate?.Pending ?? 0;
-        TextAt(coverage, _subtitleFont, muted, 16, 274, 174, 12);
+        TextAt(coverage, _subtitleFont, muted, 16, 372, 174, 12);
         TextAt(pending > 0 ? (zh ? $"{pending} 条待追平" : $"{pending} catching up")
                 : live is null ? (zh ? "待读取" : "Waiting") : (zh ? "已追平" : "Caught up"),
-            _subtitleFont, muted, 190, 274, 94, 12, StringAlignment.Far);
-        TextAt(zh ? "含响应估算 · 非解码速度" : "Response estimates · not decode speed", _subtitleFont, muted, 16, 291, 210, 12);
-        TextAt(snapshot.CapturedAt.ToLocalTime().ToString("HH:mm:ss"), _subtitleFont, muted, 230, 291, 54, 12, StringAlignment.Far);
+            _subtitleFont, muted, 190, 372, 94, 12, StringAlignment.Far);
+        TextAt(zh ? "流量仅统计 Bar 运行时 · 与 Token 独立" : "Traffic while Bar runs · independent of tokens", _subtitleFont, muted, 16, 389, 210, 12);
+        TextAt(snapshot.CapturedAt.ToLocalTime().ToString("HH:mm:ss"), _subtitleFont, muted, 230, 389, 54, 12, StringAlignment.Far);
     }
 
     private void DrawMetricRow(

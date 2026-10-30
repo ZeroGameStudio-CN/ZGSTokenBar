@@ -26,6 +26,11 @@ internal sealed record SystemUsageSnapshot(
     public double? NetworkReceiveBytesPerSecond { get; init; }
     public double? NetworkSendBytesPerSecond { get; init; }
     public int NetworkInterfaces { get; init; }
+    public long? NetworkReceiveDeltaBytes { get; init; }
+    public long? NetworkSendDeltaBytes { get; init; }
+    public ZGSTokenBar.Core.NetworkTrafficTotals? NetworkHistory { get; init; }
+    public bool NetworkHistorySaveFailed { get; init; }
+    public long? CumulativeTokens { get; init; }
     public double? ObservedOutputTokensPerSecond { get; init; }
     public ZGSTokenBar.Core.LiveOutputRate? LiveRate { get; init; }
     public DateTimeOffset? OutputRateCapturedAt { get; init; }
@@ -449,6 +454,8 @@ internal sealed class SystemUsageSampler : IDisposable
             NetworkReceiveBytesPerSecond = network.Received,
             NetworkSendBytesPerSecond = network.Sent,
             NetworkInterfaces = network.Interfaces,
+            NetworkReceiveDeltaBytes = network.ReceivedDelta,
+            NetworkSendDeltaBytes = network.SentDelta,
             DiskActivePercent = disk.ActivePercent,
             DiskReadBytesPerSecond = disk.ReadBytesPerSecond,
             DiskWriteBytesPerSecond = disk.WriteBytesPerSecond,
