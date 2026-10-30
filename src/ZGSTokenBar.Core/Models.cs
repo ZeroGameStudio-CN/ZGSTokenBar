@@ -436,7 +436,7 @@ public static class TaskbarMiniLayoutMath
     public static int AreaWidth(int contentWidth, bool collapsed, string? areaId) =>
         ProviderCollapseHandleWidth
         + (collapsed
-            ? areaId == MiniAreaIds.LiveMetrics ? 88 : CollapsedCardWidth
+            ? areaId == MiniAreaIds.LiveMetrics ? 50 : CollapsedCardWidth
             : NormalizeAreaContentWidth(contentWidth, areaId));
 
     public static IReadOnlyList<QuotaWindow> VisibleWindows(IReadOnlyList<QuotaWindow> windows)
