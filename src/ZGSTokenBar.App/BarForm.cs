@@ -390,6 +390,7 @@ internal sealed partial class BarForm : Form
     public void SetCodexTokenUsage(CodexTokenUsageSummary? summary)
     {
         _codexTokenUsage = summary;
+        _systemUsage = _systemUsage with { CumulativeTokens = summary?.LocalTokens };
         if (_radarPopover?.Visible == true
             && _hoverRadarTarget is { SourceProvider: ProviderKind.Codex, DeepSeekOnly: false } target)
         {
@@ -645,7 +646,7 @@ internal sealed partial class BarForm : Form
 
     public void SetSystemUsage(SystemUsageSnapshot snapshot)
     {
-        snapshot = snapshot with { ObservedOutputTokensPerSecond = _systemUsage.ObservedOutputTokensPerSecond, OutputRateCapturedAt = _systemUsage.OutputRateCapturedAt, LiveRate = _systemUsage.LiveRate };
+        snapshot = snapshot with { ObservedOutputTokensPerSecond = _systemUsage.ObservedOutputTokensPerSecond, OutputRateCapturedAt = _systemUsage.OutputRateCapturedAt, LiveRate = _systemUsage.LiveRate, CumulativeTokens = _codexTokenUsage?.LocalTokens };
         _systemUsage = snapshot;
         if (_systemUsagePopover?.Visible == true)
         {

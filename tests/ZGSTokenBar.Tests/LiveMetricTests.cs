@@ -28,10 +28,11 @@ internal static class LiveMetricTests
         Check(tracker.Observe(Feed([]), at).Total is null, "No readable session is unavailable, not a measured zero.");
         Check(tracker.Observe(Feed([], [active with { Phase = "idle" }]), at).Total == 0, "An observed idle session has zero current output.");
         ReaderIntervals(at);
+        NetworkHistory(at);
         var network = new NetworkUsageSampler();
         Check(network.Observe([new("a", 1000, 2000)], 1).Received is null, "Network needs a baseline.");
         var rate = network.Observe([new("a", 3000, 3000)], 3);
-        Check(rate.Received == 1000 && rate.Sent == 500, "Network uses monotonic elapsed time and byte counter deltas.");
+        Check(rate.Received == 1000 && rate.Sent == 500 && rate.ReceivedDelta == 2000 && rate.SentDelta == 1000, "Network uses monotonic elapsed time and byte counter deltas.");
         Check(network.Observe([new("b", 900000, 900000)], 4).Received is null, "A new interface does not produce a phantom spike.");
         Check(network.Observe([new("b", 1, 1)], 5).Sent is null, "Network reset is unavailable.");
         Check(network.Observe(null, 6).Received is null, "Failed network reads clear the baseline.");
@@ -71,8 +72,8 @@ internal static class LiveMetricTests
 
         popover.UpdateContent(new SystemUsagePopoverContent(snapshot, false, true), text);
         Check(popover.LiveRatesContentForAcceptance, "Rate hover switches to the live surface mode.");
-        Check(popover.CurrentLogicalBodyHeight < SystemUsagePopoverForm.LogicalBodyHeight,
-            "Rate hover uses the compact live layout height.");
+        Check(popover.CurrentLogicalBodyHeight <= 420,
+            "Rate and cumulative history fit in a single unscrolled page.");
         Check(popover.MetricLabelsForAcceptance.Contains("合计输出")
             && popover.MetricLabelsForAcceptance.Contains("网络接收")
             && !popover.MetricLabelsForAcceptance.Contains("CPU")
@@ -92,8 +93,9 @@ internal static class LiveMetricTests
             using var form = new BarForm(new AppSettings { Locale = "zh-CN", EnableAnimations = false, EnableRadar = false },
                 new QuotaSnapshot([], [], at), renderOnly: true, renderDpi: dpi);
             var original = form.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.SystemMetrics);
+            form.SetCodexTokenUsage(new CodexTokenUsageSummary(1000, 642203161989, 12, at));
             form.SetSystemUsage(new SystemUsageSnapshot(34, 32UL << 30, 32UL << 30, 64UL << 30, 12, "3D", 2, 16, at)
-            { DiskActivePercent = 22, NetworkReceiveBytesPerSecond = 12.5 * 1024 * 1024, NetworkSendBytesPerSecond = 128 * 1024, NetworkInterfaces = 1 });
+            { DiskActivePercent = 22, NetworkReceiveBytesPerSecond = 12.5 * 1024 * 1024, NetworkSendBytesPerSecond = 128 * 1024, NetworkInterfaces = 1, NetworkHistory = new(at.AddDays(-2), 32_000_000_000, 12_000_000_000, at, false) });
             form.SetLiveOutputRate(new(at, 53.2, 33.2, 20, 2, 1, 4, 0));
             Check(form.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.SystemMetrics) == original,
                 "Live readouts cannot change the CPU area's saved layout.");
@@ -134,6 +136,40 @@ internal static class LiveMetricTests
                 "Collapsing rates preserves CPU state.");
         }
     }
+    private static void NetworkHistory(DateTimeOffset at)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "tokenbar-network-history-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, NetworkTrafficLedger.FileName);
+            var sentinel = Path.Combine(directory, "settings.json");
+            File.WriteAllText(sentinel, "preserve original settings");
+            var first = new NetworkTrafficLedger(directory);
+            Check(first.Observe(null, null, at) is null && !File.Exists(path),
+                "Missing observations cannot invent historical traffic.");
+            var initial = first.Observe(1000, 2000, at)!;
+            Check(initial.TotalBytes == 3000 && initial.Since == at, "Traffic starts at the first observed delta.");
+            Check(first.Observe(100, 200, at.AddSeconds(1))!.TotalBytes == 3300, "Unsaved observed bytes remain in the live total.");
+            first.Flush(at.AddSeconds(2));
+            first.Flush(at.AddSeconds(2));
+            var resumed = new NetworkTrafficLedger(directory);
+            Check(resumed.Observe(null, null, at.AddSeconds(3))!.TotalBytes == 3300, "A repeated checkpoint cannot duplicate bytes.");
+            var next = resumed.Observe(400, 500, at.AddSeconds(4))!;
+            Check(next.TotalBytes == 4200 && next.Since == at, "Restart preserves totals and their original start time.");
+            first.Observe(1, 1, at.AddSeconds(40));
+            Check(first.SaveFailed && new NetworkTrafficLedger(directory).Observe(null, null, at.AddSeconds(41))!.TotalBytes == 4200,
+                "An obsolete writer cannot replace a newer checkpoint.");
+            File.WriteAllText(path, "{broken}");
+            var broken = new NetworkTrafficLedger(directory);
+            Check(broken.Observe(100, 200, at.AddSeconds(42)) is null && broken.SaveFailed && File.ReadAllText(path) == "{broken}",
+                "Malformed history is preserved, never replaced by zero totals.");
+            Check(File.ReadAllText(sentinel) == "preserve original settings", "Network history never rewrites settings.");
+            Check(NetworkUsageSampler.Total(1024L * 1024 * 1024) == "1 GB", "Cumulative traffic keeps byte units separate from per-second rates.");
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
     private static void ReaderIntervals(DateTimeOffset at)
     {
         var directory = Path.Combine(Path.GetTempPath(), "tokenbar-response-fixture-" + Guid.NewGuid().ToString("N"));

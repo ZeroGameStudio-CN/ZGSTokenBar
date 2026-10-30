@@ -106,6 +106,12 @@ public sealed record WindowInspection(
     public double? NetworkSendBytesPerSecond { get; init; }
     public DateTimeOffset? NetworkCapturedAt { get; init; }
     public int NetworkInterfaceCount { get; init; }
+    public long? NetworkReceivedTotalBytes { get; init; }
+    public long? NetworkSentTotalBytes { get; init; }
+    public long? NetworkTotalBytes { get; init; }
+    public DateTimeOffset? NetworkHistorySince { get; init; }
+    public DateTimeOffset? NetworkHistorySavedAt { get; init; }
+    public bool NetworkHistorySaveFailed { get; init; }
     public long? DisplayedTokenTotal { get; init; }
     public bool RadarVisible { get; init; }
     public bool RouterVisible { get; init; }

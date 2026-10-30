@@ -53,6 +53,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     private readonly CodexTokenUsageLedger _codexTokenUsageLedger;
     private bool _radarRestorePending;
     private readonly SystemUsageSampler _systemUsageSampler = new();
+    private readonly NetworkTrafficLedger _networkTraffic;
     private readonly ObservedOutputRate _observedOutput = new();
     private readonly ReleaseUpdateChecker _updateChecker = new();
     private readonly BarForm _bar;
@@ -108,6 +109,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     {
         _allowGlobalStartupRegistration = allowGlobalStartupRegistration;
         _store = store ?? new AppSettingsStore();
+        _networkTraffic = new(_store.DataDirectory);
         var now = DateTimeOffset.UtcNow;
         _settings = _store.Load();
         _text = NativeText.For(_settings.Locale);
@@ -1361,6 +1363,13 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         _clockTimer.Interval = _bar.IsTaskbarMode ? 1_000 : 30_000;
     }
 
+    private SystemUsageSnapshot SampleSystemUsage(bool includeProcesses)
+    {
+        var snapshot = _systemUsageSampler.Sample(includeProcesses);
+        var totals = _networkTraffic.Observe(snapshot.NetworkReceiveDeltaBytes, snapshot.NetworkSendDeltaBytes, snapshot.CapturedAt);
+        return snapshot with { NetworkHistory = totals, NetworkHistorySaveFailed = _networkTraffic.SaveFailed };
+    }
+
     private async Task RefreshSystemUsageOverviewAsync()
     {
         if (_quitting
@@ -1371,7 +1380,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         {
             var snapshot = await SystemUsageSampling.TrySampleAsync(
                 _systemUsageGate,
-                includeProcesses => _systemUsageSampler.Sample(includeProcesses),
+                includeProcesses => SampleSystemUsage(includeProcesses),
                 includeProcesses: false,
                 _shutdown.Token);
             if (snapshot is not null
@@ -1398,7 +1407,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         {
             var snapshot = await SystemUsageSampling.TrySampleAsync(
                 _systemUsageGate,
-                includeProcesses => _systemUsageSampler.Sample(includeProcesses),
+                includeProcesses => SampleSystemUsage(includeProcesses),
                 includeProcesses: true,
                 _shutdown.Token);
             if (snapshot is not null
@@ -2036,6 +2045,12 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                 NetworkSendBytesPerSecond = _bar.LiveMetrics.CurrentNetworkSend,
                 NetworkCapturedAt = _bar.LiveMetrics.CapturedAt,
                 NetworkInterfaceCount = _bar.LiveMetrics.NetworkInterfaces,
+                NetworkReceivedTotalBytes = _bar.LiveMetrics.NetworkHistory?.ReceivedBytes,
+                NetworkSentTotalBytes = _bar.LiveMetrics.NetworkHistory?.SentBytes,
+                NetworkTotalBytes = _bar.LiveMetrics.NetworkHistory?.TotalBytes,
+                NetworkHistorySince = _bar.LiveMetrics.NetworkHistory?.Since,
+                NetworkHistorySavedAt = _bar.LiveMetrics.NetworkHistory?.SavedAt,
+                NetworkHistorySaveFailed = _bar.LiveMetrics.NetworkHistorySaveFailed,
                 DisplayedTokenTotal = _bar.DisplayedTokenTotal,
                 RouterVisible = _routerModule.Visible,
                 RouterProjectKey = _routerModule.Snapshot?.ProjectKey,
@@ -2168,6 +2183,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             _codexTokenUsageGate.Release();
             await _systemUsageGate.WaitAsync();
             _systemUsageGate.Release();
+            _networkTraffic.Flush(DateTimeOffset.UtcNow);
             await _updateGate.WaitAsync();
             _updateGate.Release();
         }
