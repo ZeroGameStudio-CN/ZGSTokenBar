@@ -48,6 +48,14 @@ public sealed class RouterPlugin : BuiltinPluginBase, IDataSource
                 elapsed = RouterJson.Text(snapshot.View, "elapsed");
             if (waiting > 0) state += $" · 等待 {waiting}";
         }
+        catch (RouterMonitorHttpException error) when (error.IsLocalDataUnavailable)
+        {
+            _seen = true;
+            state = "队列暂不可用";
+            detail = error.UserMessage;
+            iconState = "unknown";
+            phaseLabel = "状态未确认";
+        }
         catch (RouterCompatibilityException error) { _seen = true; state = "接口待更新"; detail = error.Message; }
         catch (Exception error) when (error is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException or InvalidDataException)
         { state = "连接中断"; detail = "状态未确认，原任务继续运行。"; }

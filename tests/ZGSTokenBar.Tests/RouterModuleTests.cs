@@ -21,6 +21,7 @@ internal static class RouterModuleTests
         WheelPaging();
         RefusalTiming();
         ExpandedSummary();
+        LocalQueueUnavailable();
         QueueBadgeDigits();
         using var handler = new Fixture();
         using var client = new RouterMonitorClient(handler);
@@ -105,6 +106,28 @@ internal static class RouterModuleTests
             Check(Value("router.phase") == "状态未确认" && Value("router.elapsed") == "", "Stale expanded data is explicitly unconfirmed");
             Check(handler.Posts == 0 && handler.Routes.All(uri => uri.AbsolutePath is "/health" or "/api/projects" or "/api/view"),
                 "Expanded presentation needs no additional endpoints or execution controls");
+        }
+        finally { plugin.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+    }
+
+    private static void LocalQueueUnavailable()
+    {
+        using var handler = new Fixture { LocalQueueUnavailable = true };
+        var plugin = new RouterPlugin(new RouterMonitorClient(handler));
+        try
+        {
+            var first = plugin.RefreshAsync(new PluginRefreshContext(DateTimeOffset.UtcNow, "test", 0), default).AsTask().GetAwaiter().GetResult();
+            Check(first.MiniCards.Single().Summary.Single(item => item.LabelKey == "router.state").Value.Text == "队列暂不可用",
+                "A monitor-online local queue outage remains visible in the Router card");
+            handler.LocalQueueUnavailable = false;
+            plugin.RefreshAsync(new PluginRefreshContext(DateTimeOffset.UtcNow, "test", 0), default).AsTask().GetAwaiter().GetResult();
+            handler.LocalQueueUnavailable = true;
+            var snapshot = plugin.RefreshAsync(new PluginRefreshContext(DateTimeOffset.UtcNow, "test", 0), default).AsTask().GetAwaiter().GetResult();
+            var state = snapshot.MiniCards.Single().Summary.Single(item => item.LabelKey == "router.state");
+            Check(state.Value.Text == "队列暂不可用" && state.Status == "unknown" && snapshot.Health.Code == PluginHealthCode.Unavailable,
+                "HTTP 503 local queue failures are distinct from transport disconnects");
+            Check(snapshot.MiniCards.Single().Summary.Single(item => item.LabelKey == "router.task").Value.Text!.Contains("监视进程在线"),
+                "Local queue outage keeps the monitor-online explanation");
         }
         finally { plugin.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
     }
@@ -500,7 +523,7 @@ internal static class RouterModuleTests
         internal int Posts, ReadsCanceled, HistoryTotal = 76;
         internal TaskCompletionSource? HoldHistory, HoldQueue, HoldHealth;
         internal JsonElement? LastControl;
-        internal bool LoseControlReply, OldApi, WrongProject, Stale, Oversized, Empty, NativeError, PreflightRefusal;
+        internal bool LoseControlReply, OldApi, WrongProject, Stale, Oversized, Empty, NativeError, PreflightRefusal, LocalQueueUnavailable;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Routes.Add(request.RequestUri!);
@@ -524,6 +547,9 @@ internal static class RouterModuleTests
                 if (Oversized) return new(HttpStatusCode.OK) { Content = new StringContent(new string('x', 1024 * 1024 + 1)) };
                 return Json(new { apiVersion = OldApi ? 0 : 1, instanceId = new string('d', 32) });
             }
+            if (LocalQueueUnavailable && route is "/api/projects" or "/api/view")
+                return new(HttpStatusCode.ServiceUnavailable)
+                { Content = new StringContent(JsonSerializer.Serialize(new { error = route == "/api/projects" ? "Local projects unavailable" : "Local queue unavailable" }), Encoding.UTF8, "application/json") };
             if (route == "/api/projects") return Json(new[] { new { key = Project, name = "POB", pending = 41, recorded = 1000 }, new { key = new string('a', 64), name = "Temporary_Long_Project_Name", pending = 0, recorded = 1 }, new { key = new string('f', 64), name = "POB_Manual", pending = 0, recorded = 10 }, new { key = new string('e', 64), name = "ZGSProject_5", pending = 2, recorded = 100 } });
             var selectedProject = request.RequestUri.Query.Split('&').FirstOrDefault(part => part.TrimStart('?').StartsWith("project="))?.Split('=', 2)[1] ?? Project;
             if (route == "/api/view") return Json(new

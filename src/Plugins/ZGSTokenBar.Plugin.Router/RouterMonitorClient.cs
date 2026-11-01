@@ -26,7 +26,8 @@ public sealed class RouterMonitorClient : IDisposable
         using var request = new HttpRequestMessage(HttpMethod.Get, route);
         using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         var bytes = await ReadBodyAsync(response, 1024 * 1024, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+            throw RouterMonitorHttpException.From(response.StatusCode, bytes);
         using var json = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 32 });
         return json.RootElement.Clone();
     }
@@ -121,6 +122,40 @@ public sealed class RouterMonitorClient : IDisposable
 public sealed class RouterCompatibilityException : Exception
 {
     public RouterCompatibilityException() : base("Router 监视接口需要更新，原任务继续运行。") { }
+}
+
+public sealed class RouterMonitorHttpException : HttpRequestException
+{
+    private RouterMonitorHttpException(HttpStatusCode statusCode, string error)
+        : base($"Router monitor returned {(int)statusCode}: {error}")
+    {
+        HttpStatus = statusCode;
+        Error = error;
+    }
+
+    public HttpStatusCode HttpStatus { get; }
+    public string Error { get; }
+    public bool IsLocalDataUnavailable => HttpStatus == HttpStatusCode.ServiceUnavailable
+        && (Error is "Local projects unavailable" or "Local queue unavailable");
+    public string UserMessage => IsLocalDataUnavailable
+        ? "Router 监视进程在线，但本地队列数据暂不可用；原任务继续运行。"
+        : Message;
+
+    public static RouterMonitorHttpException From(HttpStatusCode statusCode, byte[] body)
+    {
+        var error = "监视接口暂不可用";
+        try
+        {
+            using var json = JsonDocument.Parse(body, new JsonDocumentOptions { MaxDepth = 8 });
+            if (json.RootElement.ValueKind == JsonValueKind.Object
+                && json.RootElement.TryGetProperty("error", out var value)
+                && value.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(value.GetString()))
+                error = value.GetString()!;
+        }
+        catch (JsonException) { }
+        return new(statusCode, error);
+    }
 }
 
 public sealed record RouterSnapshot(string InstanceId, string ProjectKey, JsonElement Projects, JsonElement View, DateTimeOffset ReceivedAt)

@@ -454,7 +454,9 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     internal void ApplyUnavailable(string message)
     {
         _available = false;
-        _freshness.Text = "连接中断 · 状态未确认"; _freshness.ForeColor = Color.Salmon;
+        var localQueueUnavailable = message.StartsWith("Router 监视进程在线", StringComparison.Ordinal);
+        _freshness.Text = localQueueUnavailable ? "队列暂不可用 · 状态未确认" : "连接中断 · 状态未确认";
+        _freshness.ForeColor = localQueueUnavailable ? Color.Goldenrod : Color.Salmon;
         _headline.Text = "状态未确认"; _headline.Accent = RouterVisualPalette.State("warning"); _headline.Invalidate();
         _notice.Text = message;
         UpdateControls();
@@ -474,7 +476,8 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
             if (!InteractionOpen && _historyOffset == 0 && (DateTimeOffset.UtcNow - _historyReadAt).TotalSeconds >= 10)
                 await HistoryAsync(forceRefresh: true);
         }
-        catch (Exception e) when (Expected(e)) { if (!IsDisposed && !_stop.IsCancellationRequested && generation == _generation) ApplyUnavailable(e.Message); }
+        catch (Exception e) when (Expected(e))
+        { if (!IsDisposed && !_stop.IsCancellationRequested && generation == _generation) ApplyUnavailable(e is RouterMonitorHttpException monitor ? monitor.UserMessage : e.Message); }
         finally
         {
             _refreshing = false;
@@ -538,7 +541,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch (Exception e) when (Expected(e))
-        { if (!IsDisposed && generation == _generation && queueGeneration == _queueGeneration) ApplyUnavailable(e.Message); }
+        { if (!IsDisposed && generation == _generation && queueGeneration == _queueGeneration) ApplyUnavailable(e is RouterMonitorHttpException monitor ? monitor.UserMessage : e.Message); }
         finally { if (queueGeneration == _queueGeneration) { _queueLoading = false; if (!IsDisposed) UpdateControls(); } }
     }
 
