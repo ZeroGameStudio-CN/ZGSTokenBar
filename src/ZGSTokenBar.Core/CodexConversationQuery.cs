@@ -24,7 +24,7 @@ public sealed record CodexConversationView(CodexConversationQuery Query,
         DateTimeOffset now, TimeZoneInfo? timeZone = null)
     {
         timeZone ??= TimeZoneInfo.Local;
-        var all = CodexConversationDisplay.Select(usage);
+        var all = CodexConversationDisplay.Select(usage, now);
         var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(now, timeZone).DateTime);
         var start = query.Period switch
         {
@@ -67,7 +67,7 @@ public sealed record CodexConversationView(CodexConversationQuery Query,
             4 => turn.UsageComplete || turn.OutputTokens > 0 ? turn.OutputTokens : null,
             5 => turn.CachedInputTokens, 6 => Finite(turn.CacheHitPercent),
             7 => turn.ApiEquivalentUsd, 8 => Finite(turn.OutputTokensPerSecond),
-            9 => Finite(turn.FirstTokenSeconds), _ => turn.ObservedAt,
+            9 => Finite(turn.FirstTokenSeconds), 10 => Finite(turn.LiveRate?.Total), _ => turn.ObservedAt,
         };
         var a = Key(left); var b = Key(right);
         if (a is null || b is null) return a is null ? b is null ? Tie(left, right) : 1 : -1;

@@ -1091,6 +1091,13 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                 && !_bar.IsDisposed
                 && _activeProviders.Contains(ProviderKind.Codex))
             {
+                if (summary is not null)
+                {
+                    var rate = _observedOutput.Observe(summary.LiveRateFeed, DateTimeOffset.UtcNow);
+                    summary = summary with { LiveOutputRate = rate };
+                    _cachedCodexTokenUsage = summary;
+                    _bar.SetLiveOutputRate(rate);
+                }
                 _bar.SetCodexTokenUsage(summary);
                 _pluginHost.Publish(CorePluginProjection.CodexUsage(
                     "zgstokenbar.usage.codex-local",
@@ -1122,8 +1129,10 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                 _shutdown.Token);
             if (_shutdown.IsCancellationRequested || _bar.IsDisposed || summary is null
                 || !_activeProviders.Contains(ProviderKind.Codex)) return;
+            var rate = _observedOutput.Observe(summary.LiveRateFeed, DateTimeOffset.UtcNow);
+            summary = summary with { LiveOutputRate = rate };
             _cachedCodexTokenUsage = summary;
-            _bar.SetLiveOutputRate(_observedOutput.Observe(summary.LiveRateFeed, DateTimeOffset.UtcNow));
+            _bar.SetLiveOutputRate(rate);
             _bar.SetCodexTokenUsage(summary);
             _pluginHost.Publish(CorePluginProjection.CodexUsage(
                 "zgstokenbar.usage.codex-local", summary, DateTimeOffset.UtcNow));
@@ -2043,6 +2052,9 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                 RecentConversationCount = _cachedCodexTokenUsage?.RecentTurns.Count ?? 0,
                 PendingConversationCount = _cachedCodexTokenUsage?.PendingConversationCount ?? 0,
                 LatestTurnOutputTokensPerSecond = _cachedCodexTokenUsage?.RecentTurns.FirstOrDefault()?.OutputTokensPerSecond,
+                ConversationLiveRateTotal = _bar.LiveMetrics.CurrentOutputRate is null ? null
+                    : CodexConversationDisplay.Select(_cachedCodexTokenUsage).Sum(turn => turn.LiveRate?.Total ?? 0),
+                ConversationLiveRateCount = CodexConversationDisplay.Select(_cachedCodexTokenUsage).Count(turn => turn.LiveRate is not null),
                 RadarTrialObservedAt = _radarViewState.Snapshot?.TrialFeed?.ObservedAt,
                 RadarVisible = _bar.RadarVisible,
                 RadarModelGroups = _bar.DisplayedRadarModelGroups,

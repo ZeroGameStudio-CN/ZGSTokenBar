@@ -1,12 +1,17 @@
 namespace ZGSTokenBar.Core;
 
-public sealed record CodexResponseSample(string SessionId, string? Model, DateTimeOffset Start, DateTimeOffset End, long Output);
-public sealed record CodexLiveSession(string SessionId, string? Model, string Phase, DateTimeOffset? InFlightStart, DateTimeOffset LastActivity);
+public sealed record CodexResponseSample(string SessionId, string? Model, DateTimeOffset Start, DateTimeOffset End, long Output)
+{ public string? TurnId { get; init; } }
+public sealed record CodexLiveSession(string SessionId, string? Model, string Phase, DateTimeOffset? InFlightStart, DateTimeOffset LastActivity)
+{ public string? TurnId { get; init; } }
+public sealed record ConversationOutputRate(string SessionId, string? TurnId, double Measured, double Estimated)
+{ public double Total => Measured + Estimated; }
 public sealed record CodexLiveRateFeed(DateTimeOffset CapturedAt, IReadOnlyList<CodexResponseSample> Responses,
     IReadOnlyList<CodexLiveSession> Sessions, int Pending);
 public sealed record LiveOutputRate(DateTimeOffset CapturedAt, double? Total, double Measured, double Estimated,
     int Generating, int Tools, int Sessions, int Pending)
 {
+    public IReadOnlyList<ConversationOutputRate> Conversations { get; init; } = [];
     public bool HasEstimate => Estimated > 0;
     public double EstimatedShare => Total is > 0 ? Estimated / Total.Value : 0;
 }
@@ -25,8 +30,10 @@ public sealed class ObservedOutputRate
             .OrderByDescending(r => r.End).ToArray();
         var sessions = feed.Sessions.GroupBy(s => s.SessionId).Select(g => g.OrderByDescending(s => s.LastActivity).First()).ToArray();
         var window = now.AddSeconds(-3);
-        var measured = responses.Sum(r => r.Output * Overlap(window, now, r.Start, r.End) / (r.End - r.Start).TotalSeconds) / 3;
-        double estimated = 0;
+        // A dialogue's live window belongs to its latest turn row, including output just before a turn boundary.
+        var measured = responses.GroupBy(r => (r.SessionId, TurnId: sessions.FirstOrDefault(s => s.SessionId == r.SessionId)?.TurnId ?? r.TurnId)).ToDictionary(g => g.Key,
+            g => g.Sum(r => r.Output * Overlap(window, now, r.Start, r.End) / (r.End - r.Start).TotalSeconds) / 3);
+        var estimated = new Dictionary<(string SessionId, string? TurnId), double>();
         var generating = sessions.Where(s => s.Phase == "generating" && s.LastActivity <= now
             && now - s.LastActivity <= TimeSpan.FromMinutes(5) && s.InFlightStart is not null).ToArray();
         foreach (var session in generating)
@@ -39,11 +46,16 @@ public sealed class ObservedOutputRate
             var speed = reference.Sum(r => (double)r.Output) / reference.Sum(r => (r.End - r.Start).TotalSeconds);
             var end = responses.Where(r => r.SessionId == session.SessionId).Select(r => r.End).DefaultIfEmpty(session.InFlightStart!.Value).Max();
             var start = session.InFlightStart!.Value > end ? session.InFlightStart.Value : end;
-            estimated += speed * Overlap(window, now, start, now) / 3;
+            estimated[(session.SessionId, session.TurnId)] = speed * Overlap(window, now, start, now) / 3;
         }
+        var rates = sessions.Select(s => (s.SessionId, s.TurnId))
+            .Concat(measured.Where(pair => pair.Value > 0).Select(pair => pair.Key)).Distinct()
+            .Select(key => new ConversationOutputRate(key.SessionId, key.TurnId,
+                measured.GetValueOrDefault(key), estimated.GetValueOrDefault(key))).ToArray();
         var known = sessions.Length > 0 || responses.Length > 0;
-        return new(now, known ? measured + estimated : null, measured, estimated, generating.Length,
-            sessions.Count(s => s.Phase == "tools" && s.LastActivity <= now && now - s.LastActivity <= TimeSpan.FromMinutes(5)), sessions.Length, feed.Pending);
+        return new(now, known ? rates.Sum(r => r.Total) : null, rates.Sum(r => r.Measured), rates.Sum(r => r.Estimated), generating.Length,
+            sessions.Count(s => s.Phase == "tools" && s.LastActivity <= now && now - s.LastActivity <= TimeSpan.FromMinutes(5)), sessions.Length, feed.Pending)
+            { Conversations = rates };
     }
     private static double Overlap(DateTimeOffset a, DateTimeOffset b, DateTimeOffset start, DateTimeOffset end) =>
         Math.Max(0, ((b < end ? b : end) - (a > start ? a : start)).TotalSeconds);

@@ -11,6 +11,8 @@ public sealed record CodexConversationTurn(
     DateTimeOffset StartedAt, DateTimeOffset ObservedAt, long OutputTokens,
     double ElapsedSeconds, bool Completed, bool UsageComplete)
 {
+    [JsonIgnore]
+    public ConversationOutputRate? LiveRate { get; init; }
     public string? ProjectName { get; init; }
     [JsonIgnore]
     public string? Title { get; init; }
@@ -189,7 +191,7 @@ public sealed class CodexConversationUsageReader
         private bool _streaming;
         private string _phase = "idle";
         public CodexLiveSession? LiveSession => Active is null ? null : new(sessionId, Active.Model, _phase,
-            _phase == "generating" ? _responseStart : null, _lastActivity);
+            _phase == "generating" ? _responseStart : null, _lastActivity) { TurnId = Active.Id };
         private void OnInput(DateTimeOffset at)
         {
             if (!_streaming) { _responseStart = at; _phase = "generating"; }
@@ -306,7 +308,7 @@ public sealed class CodexConversationUsageReader
                             if (delta is >= 0 && _responseStart is { } responseStart && at >= responseStart
                                 && (_previousUsage is null || usage.TotalTokens != _previousUsage.TotalTokens))
                             {
-                                Responses.Add(new(sessionId, current.Model, responseStart, at, delta.Value));
+                                Responses.Add(new(sessionId, current.Model, responseStart, at, delta.Value) { TurnId = current.Id });
                                 if (Responses.Count > 256) Responses.RemoveRange(0, Responses.Count - 256);
                             }
                             if (_previousUsage is null || usage.TotalTokens != _previousUsage.TotalTokens)

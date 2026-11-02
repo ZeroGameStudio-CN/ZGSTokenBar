@@ -388,7 +388,17 @@ not server decode speed or a guarantee that every client/request is captured.
 
 The existing bounded twelve-session incremental reader publishes a separate
 in-memory rate feed; it does not change durable token accounting/history. The
-existing one-second clock refreshes this feed under the existing non-overlap gate.
+conversation table's Live tok/s column and the bar total use the same sampled
+per-session values; the total is their unrounded sum. Only each session's latest
+turn row displays that session's live window, including a window spanning a turn
+boundary. Older rows remain unavailable rather than repeating that contribution.
+Filtering and paging do not change the global total. Recorded/estimated shares
+remain separate, and an estimate is marked with ≈. The distinct whole-turn
+average column and CSV whole-turn fields keep their original meaning; transient
+live values are not persisted or exported. Both live surfaces expire with the
+same 15-second sample limit. `window inspect` exposes `conversationLiveRateTotal`
+and `conversationLiveRateCount` for comparison with the bar's common sample.
+The existing one-second clock refreshes this feed under the existing non-overlap gate.
 No second watcher/timer or ledger is added. Unavailable/expired feeds remain
 unavailable; pending catch-up and observed session coverage are shown. Historical
 records are positioned on their original timestamps, so discovery cannot produce

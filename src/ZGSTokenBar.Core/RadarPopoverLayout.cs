@@ -152,7 +152,7 @@ public sealed class RadarPopoverLayout
             int Scale(int value) => (int)Math.Round(value * Dpi / 96d);
             if (ConversationPrimary)
             {
-                var fixedWidths = new[] { 76, 72, 52, 48, 48, 56, 64, 70, 40 }
+                var fixedWidths = new[] { 76, 72, 52, 48, 48, 56, 64, 70, 40, 76 }
                     .Select((width, index) => (ConversationColumnMask & (1 << (index + 1))) == 0 ? 0 : Scale(width)).ToArray();
                 var gapWidth = Scale(5);
                 var nameWidth = RecentTurnsBounds.Width - fixedWidths.Sum() - fixedWidths.Count(width => width > 0) * gapWidth;
@@ -515,9 +515,9 @@ public sealed class RadarPopoverLayout
         var pageSize = (int)maximumRows;
         var visibleRows = Math.Min(pageSize, Math.Max(3, recentTurnCount));
         var height = 178 + extra + visibleRows * PrimaryConversationRowHeight + speedHeight;
-        var fixedWidths = new[] { 76, 72, 52, 48, 48, 56, 64, 70, 40 };
+        var fixedWidths = new[] { 76, 72, 52, 48, 48, 56, 64, 70, 40, 76 };
         var hiddenWidth = fixedWidths.Select((value, index) => (columnMask & (1 << (index + 1))) == 0 ? value + 5 : 0).Sum();
-        var width = Math.Max(480, LogicalConversationWidth - hiddenWidth);
+        var width = Math.Max(480, LogicalConversationWidth + 81 - hiddenWidth);
         var contentWidth = width - 28;
         return new RadarPopoverLayout(dpi, true, false, new Size(Scale(width), Scale(height)),
             Scale(LogicalTail), Scale(LogicalGap), Rect(14, 12, 26, 26),

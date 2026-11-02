@@ -718,7 +718,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
                     columns[column].Width, Scale(layout.Dpi, 14)),
                 CellTextFlags | RecentColumnAlignment(column, layout.ConversationPrimary));
         }
-        if (conversationView?.Query.SortColumn is >= 0 and < 10 && columns[conversationView.Query.SortColumn].Width > 0)
+        if (conversationView?.Query.SortColumn is >= 0 and < 11 && columns[conversationView.Query.SortColumn].Width > 0)
         {
             var column = columns[conversationView.Query.SortColumn];
             DrawText(graphics, conversationView.Query.Descending ? "▾" : "▴", fonts.Meta, Color.FromArgb(139, 187, 255),
@@ -843,12 +843,13 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             NativeText.FormatCacheHitPercent(turn.CacheHitPercent), text.CodexTurnCost(turn),
             turn.OutputTokensPerSecond is { } speed ? $"≈{speed:0.#}" : "—",
             turn.FirstTokenSeconds is { } first ? $"{first:0.#}" : "—",
+            text.CodexTurnLiveSpeed(turn),
         };
         for (var column = 3; column < columns.Count; column++)
         {
             if (columns[column].Width <= 0 || values[column - 3] == "—") continue;
             DrawText(graphics, values[column - 3], column == 7 ? fonts.EmphasizedNumber : fonts.Number,
-                column == 8 ? Color.FromArgb(52, 211, 153) : valueColor,
+                column == 10 ? turn.LiveRate?.Estimated > 0 ? Color.FromArgb(251, 191, 36) : Color.FromArgb(52, 211, 153) : valueColor,
                 new Rectangle(x + columns[column].Left, y, columns[column].Width, rowHeight),
                 CellTextFlags | RecentColumnAlignment(column, true));
         }

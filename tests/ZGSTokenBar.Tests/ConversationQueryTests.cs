@@ -169,13 +169,18 @@ internal static class ConversationQueryTests
         {
             var query = mode == "filtered" ? new CodexConversationQuery(CodexHistoryPeriod.Days7, Project: "POB", SortColumn: 4)
                 : mode == "empty" ? new(Search: "no matching chat") : new CodexConversationQuery();
-            var data = Usage(rows);
+            var live = rows.Take(3).Select((row, index) => new ConversationOutputRate(row.SessionId, row.TurnId, index * 10, index == 0 ? 12 : 0)).ToArray();
+            var data = Usage(rows) with { LiveOutputRate = new(Now, 42, 30, 12, 1, 2, 3, 0) { Conversations = live } };
             var view = CodexConversationView.Create(data, query, Now);
             var speeds = CodexConversationSpeeds.BuildRows(view.Rows, Now);
             var groups = CodexConversationSpeeds.GroupModels(speeds);
             var layout = RadarPopoverLayout.CreateConversationUsage(dpi, view.Rows.Count, true,
                 mode == "short" ? 480 * dpi / 96 : 900 * dpi / 96, groups.Count, 2,
                 CodexConversationDisplay.ColumnMask(view.Rows), historyTools: true);
+            Check(layout.RecentColumns.Count == NativeText.For(locale).CodexPrimaryConversationHeaders.Length,
+                "Separate live and whole-turn headings match the production column layout.");
+            Check(layout.RecentColumns.Where(column => column.Width > 0).Zip(layout.RecentColumns.Where(column => column.Width > 0).Skip(1))
+                .All(pair => pair.First.Right <= pair.Second.Left), "Live/average columns do not overlap at any supported DPI.");
             using var bitmap = new Bitmap(layout.BodySize.Width, layout.BodySize.Height + layout.TailSize);
             bitmap.SetResolution(dpi, dpi);
             using var graphics = Graphics.FromImage(bitmap);

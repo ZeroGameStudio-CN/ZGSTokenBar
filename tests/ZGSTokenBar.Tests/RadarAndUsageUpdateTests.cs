@@ -612,7 +612,7 @@ internal static class RadarAndUsageUpdateTests
         foreach (var dpi in new[] { 96, 144, 192 })
         {
             var layout = RadarPopoverLayout.CreateConversationUsage(dpi, 500, true, dpi * 5, 6);
-            Check(layout.ConversationPrimary && layout.RecentColumns.Count == 10 && !layout.RadarToggleBounds.IsEmpty,
+            Check(layout.ConversationPrimary && layout.RecentColumns.Count == 11 && layout.RecentColumns[10].Width == 0 && !layout.RadarToggleBounds.IsEmpty,
                 "the primary view has independent state, cache percentage and expansion controls");
             Check(layout.RecentColumns[0].Width >= 180 * dpi / 96 && layout.RecentColumns[0].Width <= 220 * dpi / 96
                 && layout.RecentTurnsBounds.Bottom < layout.ModelSpeedBounds.Top

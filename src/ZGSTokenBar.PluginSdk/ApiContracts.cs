@@ -126,6 +126,8 @@ public sealed record WindowInspection(
     public int RecentConversationCount { get; init; }
     public int PendingConversationCount { get; init; }
     public double? LatestTurnOutputTokensPerSecond { get; init; }
+    public double? ConversationLiveRateTotal { get; init; }
+    public int ConversationLiveRateCount { get; init; }
 }
 
 public sealed record SnapshotSummary(

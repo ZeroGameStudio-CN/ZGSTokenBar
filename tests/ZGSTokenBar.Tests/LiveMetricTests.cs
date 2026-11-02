@@ -28,6 +28,7 @@ internal static class LiveMetricTests
         Check(tracker.Observe(Feed([]), at).Total is null, "No readable session is unavailable, not a measured zero.");
         Check(tracker.Observe(Feed([], [active with { Phase = "idle" }]), at).Total == 0, "An observed idle session has zero current output.");
         ReaderIntervals(at);
+        SharedConversationRates(at);
         NetworkHistory(at);
         var network = new NetworkUsageSampler();
         Check(network.Observe([new("a", 1000, 2000)], 1).Received is null, "Network needs a baseline.");
@@ -191,6 +192,44 @@ internal static class LiveMetricTests
         finally { Directory.Delete(directory, true); }
     }
 
+    private static void SharedConversationRates(DateTimeOffset at)
+    {
+        var feed = new CodexLiveRateFeed(at,
+            [new("a", "model", at.AddSeconds(-3), at.AddSeconds(-1), 60) { TurnId = "old" },
+             new("b", "model", at.AddSeconds(-9), at.AddSeconds(-6), 90) { TurnId = "b" }],
+            [new("a", "model", "tools", null, at) { TurnId = "new" },
+             new("b", "model", "generating", at.AddSeconds(-2), at) { TurnId = "b" }], 0);
+        var rate = new ObservedOutputRate().Observe(feed, at);
+        CodexConversationTurn Turn(string session, string turn) => new(session, turn, "model", "high",
+            at.AddSeconds(-10), at, 100, 10, false, true);
+        var usage = new CodexTokenUsageSummary(100, 100, 2, at)
+        { RecentTurns = [Turn("a", "old"), Turn("a", "new"), Turn("b", "b")], LiveOutputRate = rate };
+        var view = CodexConversationView.Create(usage, new(), at);
+        Check(rate.Total == 40 && view.Rows.Sum(row => row.LiveRate?.Total ?? 0) == rate.Total,
+            "Total is the exact sum of conversation live values from one shared sample.");
+        Check(view.Rows.Single(row => row.TurnId == "old").LiveRate is null
+            && view.Rows.Single(row => row.TurnId == "new").LiveRate?.Measured == 20,
+            "A dialogue window crossing a turn boundary is shown once on its latest row.");
+        Check(view.Rows.Single(row => row.TurnId == "b").LiveRate?.Estimated == 20,
+            "The per-conversation value exposes its estimated contribution.");
+        Check(view.Rows.All(row => row.OutputTokensPerSecond == 10), "Adding live speed preserves whole-turn averages.");
+        Check(CodexConversationView.Create(usage, new(Search: "missing"), at).Rows.Count == 0 && usage.LiveOutputRate.Total == 40,
+            "Filtering does not change the global live sample or its sum.");
+        Check(CodexConversationView.Create(usage, new(), at.AddSeconds(16)).Rows.All(row => row.LiveRate is null),
+            "Expired per-conversation live values become unavailable with the global sample.");
+        var stopped = new ObservedOutputRate().Observe(feed with
+        { CapturedAt = at.AddSeconds(4), Sessions = feed.Sessions.Select(s => s with { Phase = "idle" }).ToArray() }, at.AddSeconds(4));
+        Check(stopped.Total == 0 && stopped.Conversations.All(row => row.Total == 0),
+            "Ended dialogues have zero live output after the common window, without discarding their average.");
+        var sorted = CodexConversationView.Create(usage, new(SortColumn: 10), at).Rows;
+        Check(sorted[^1].TurnId == "old", "Live sorting leaves unavailable historical values last.");
+        var text = NativeText.For("zh-CN");
+        Check(text.CodexTurnLiveSpeed(view.Rows.Single(row => row.TurnId == "b")) == "≈20",
+            "Estimated per-conversation speed stays visibly marked.");
+        Check(!System.Text.Json.JsonSerializer.Serialize(view.Rows[0]).Contains("LiveRate", StringComparison.OrdinalIgnoreCase),
+            "Transient live speeds are never serialized into retained history.");
+    }
+
     private static void ReaderIntervals(DateTimeOffset at)
     {
         var directory = Path.Combine(Path.GetTempPath(), "tokenbar-response-fixture-" + Guid.NewGuid().ToString("N"));
@@ -212,6 +251,8 @@ internal static class LiveMetricTests
             var sample = reader.LiveRateFeed!.Responses.Single();
             Check(sample.Output == 90 && sample.Start == at.AddSeconds(-10) && sample.End == at.AddSeconds(-1),
                 "The reader emits per-response counter deltas and log timestamps.");
+            Check(sample.TurnId == "turn" && reader.LiveRateFeed.Sessions.Single().TurnId == "turn",
+                "Response samples and live sessions bind to the same exact turn identity.");
             Check(reader.LiveRateFeed.Sessions.Single().Phase == "tools", "Completed response enters the tools phase.");
             File.AppendAllText(path, Line(0, "response_item", new { type = "function_call_output" }) + Environment.NewLine);
             reader.Refresh([path], at);
