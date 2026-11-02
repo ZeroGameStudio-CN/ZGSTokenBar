@@ -12,6 +12,8 @@ public sealed record CodexConversationTurn(
     double ElapsedSeconds, bool Completed, bool UsageComplete)
 {
     [JsonIgnore]
+    public bool HasRecordedUsage { get; init; } = true;
+    [JsonIgnore]
     public ConversationOutputRate? LiveRate { get; init; }
     public string? ProjectName { get; init; }
     [JsonIgnore]
@@ -437,12 +439,16 @@ public sealed class CodexConversationUsageReader
 
         public CodexConversationTurn? ToTurn(DateTimeOffset now)
         {
-            if (Active is not { } turn || turn.Output == 0 && turn.Input == 0 || turn.ObservedAt < turn.StartedAt) return null;
+            if (Active is not { } turn || turn.ObservedAt < turn.StartedAt) return null;
+            var hasUsage = turn.Output != 0 || turn.Input != 0;
+            // A new turn can already contribute a live estimate before its first usage record.
+            // Keep its identity available for that projection without manufacturing measured zeros.
             return new(sessionId, turn.Id, turn.MixedModel ? null : turn.Model, turn.MixedModel ? null : turn.Effort,
                 turn.StartedAt, turn.ObservedAt, turn.Output,
                 Math.Max(0, ((turn.EndedAt ?? now) - turn.StartedAt).TotalSeconds),
-                turn.EndedAt is not null && !turn.Interrupted, turn.UsageComplete)
+                turn.EndedAt is not null && !turn.Interrupted, hasUsage && turn.UsageComplete)
             {
+                HasRecordedUsage = hasUsage,
                 ProjectName = _projectName,
                 ResponseModels = turn.ResponseModels.Count == 0 ? null : string.Join(" | ", turn.ResponseModels.Order(StringComparer.Ordinal)),
                 RoutedFromModel = turn.RoutedFromModel,
@@ -452,11 +458,11 @@ public sealed class CodexConversationUsageReader
                 Interrupted = turn.Interrupted,
                 Stale = turn.EndedAt is null && now - turn.ObservedAt > TimeSpan.FromMinutes(2),
                 FirstTokenSeconds = turn.FirstTokenSeconds,
-                InputTokens = turn.InputComplete ? turn.Input : null,
-                CachedInputTokens = turn.InputComplete ? turn.Cached : null,
-                CacheWriteInputTokens = turn.InputComplete && turn.CacheWriteComplete ? turn.CacheWrite : null,
+                InputTokens = hasUsage && turn.InputComplete ? turn.Input : null,
+                CachedInputTokens = hasUsage && turn.InputComplete ? turn.Cached : null,
+                CacheWriteInputTokens = hasUsage && turn.InputComplete && turn.CacheWriteComplete ? turn.CacheWrite : null,
                 ApiEquivalentUsd = turn.HasPrice ? turn.Cost : null,
-                CostIsPartial = turn.CostIsPartial,
+                CostIsPartial = !hasUsage || turn.CostIsPartial,
             };
         }
     }

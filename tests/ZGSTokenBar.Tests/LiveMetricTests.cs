@@ -261,6 +261,38 @@ internal static class LiveMetricTests
             reader.Refresh([path], at.AddSeconds(1));
             Check(reader.LiveRateFeed!.Sessions.Single().Phase == "generating", "Duplicate counters cannot end active generation.");
             Check(reader.LiveRateFeed!.Responses.Count == 1, "Unchanged polling never duplicates responses.");
+            File.AppendAllText(path, Line(1, "event_msg", new { type = "task_started", turn_id = "pending-first-usage" }) + Environment.NewLine);
+            var pending = reader.Refresh([path], at.AddSeconds(3));
+            var live = new ObservedOutputRate().Observe(reader.LiveRateFeed, at.AddSeconds(3));
+            var projected = CodexConversationView.Create(new CodexTokenUsageSummary(0, 0, 1, at.AddSeconds(3))
+                { RecentTurns = pending, LiveOutputRate = live }, new(), at.AddSeconds(3));
+            Check(pending.Count == 1 && pending[0].TurnId == "pending-first-usage"
+                && pending[0].OutputTokensPerSecond is null && pending[0].NewInputTokens is null,
+                "A generating turn before its first usage record remains available without inventing measured metrics.");
+            Check(live.Total > 0 && Math.Abs(projected.Rows.Sum(row => row.LiveRate?.Total ?? 0) - live.Total!.Value) < .000001,
+                "First-response estimates appear on the latest conversation row and cannot disappear from the summed values.");
+            File.AppendAllText(path, Line(4, "event_msg", Usage(280, 400)) + Environment.NewLine);
+            var measured = reader.Refresh([path], at.AddSeconds(4)).Single();
+            Check(measured.TurnId == "pending-first-usage" && measured.OutputTokens == 90
+                && measured.NewInputTokens == 10 && measured.OutputTokensPerSecond == 30,
+                "The first usage replaces unknown metrics on the same turn without duplicating or losing its output.");
+            File.AppendAllText(path, Line(5, "event_msg", new { type = "task_started", turn_id = "empty-terminal" }) + Environment.NewLine
+                + Line(6, "event_msg", new { type = "task_complete", turn_id = "empty-terminal" }) + Environment.NewLine);
+            var empty = reader.Refresh([path], at.AddSeconds(6)).Single();
+            Check(!empty.HasRecordedUsage && empty.OutputTokensPerSecond is null && empty.NewInputTokens is null,
+                "A terminal turn with no usage cannot manufacture measured metrics.");
+            live = new ObservedOutputRate().Observe(reader.LiveRateFeed, at.AddSeconds(6));
+            projected = CodexConversationView.Create(new CodexTokenUsageSummary(0, 0, 1, at.AddSeconds(6))
+                { RecentTurns = [empty], LiveOutputRate = live }, new(), at.AddSeconds(6));
+            Check(live.Total > 0 && Math.Abs(projected.Rows.Sum(row => row.LiveRate?.Total ?? 0) - live.Total!.Value) < .000001,
+                "A usage-free terminal turn still displays the dialogue's remaining three-second output tail exactly once.");
+            var home = Path.Combine(directory, "home");
+            Directory.CreateDirectory(Path.Combine(home, "sessions"));
+            File.Copy(path, Path.Combine(home, "sessions", "fixture.jsonl"));
+            var ledger = new CodexTokenUsageLedger(new AppSettingsStore(Path.Combine(directory, "data")), () => [home]);
+            var saved = ledger.Refresh(at.AddSeconds(6))!;
+            Check(saved.RecentTurns.Single().HasRecordedUsage == false && saved.ConversationHistory.Count == 0,
+                "Usage-free identity rows remain transient and are never added to durable measured history.");
         }
         finally { Directory.Delete(directory, true); }
     }

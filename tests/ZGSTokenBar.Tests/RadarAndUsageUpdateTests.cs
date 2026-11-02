@@ -146,7 +146,8 @@ internal static class RadarAndUsageUpdateTests
             Check(turn.OutputTokens == 40, "an unfinished JSONL line is ignored");
             File.WriteAllText(path, Event(Now, new { type = "task_started", turn_id = "unknown" })
                 + Tokens(Now.AddSeconds(10), 5000, null));
-            Check(reader.Refresh([path], Now.AddSeconds(20)).Count == 0,
+            var unknown = reader.Refresh([path], Now.AddSeconds(20)).Single();
+            Check(!unknown.UsageComplete && unknown.OutputTokensPerSecond is null && unknown.NewInputTokens is null,
                 "a missing initial counter cannot fabricate speed");
             File.WriteAllText(path, new string(' ', 3 * 1024 * 1024) + "\n" + Tokens(Now, 5000, 50));
             Check(reader.Refresh([path], Now).Count == 0, "a bounded tail without turn start has no inferred timing");

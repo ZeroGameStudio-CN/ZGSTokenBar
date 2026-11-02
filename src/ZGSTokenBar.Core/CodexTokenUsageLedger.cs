@@ -142,7 +142,7 @@ public sealed class CodexTokenUsageLedger
         CodexTokenUsageSummary summary,
         DateTimeOffset now)
     {
-        var completed = summary.RecentTurns.Where(turn => turn.IsTerminal).ToArray();
+        var completed = summary.RecentTurns.Where(turn => turn.IsTerminal && turn.HasRecordedUsage).ToArray();
         if (completed.Length == 0) return summary;
 
         // Unchanged local history needs no full-ledger transaction. New turns,
