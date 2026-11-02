@@ -115,6 +115,8 @@ public sealed record WindowInspection(
     public long? DisplayedTokenTotal { get; init; }
     public bool RadarVisible { get; init; }
     public bool RouterVisible { get; init; }
+    public long? DisplayedRouterQueuedCount { get; init; }
+    public string? DisplayedRouterState { get; init; }
     public string? RouterProjectKey { get; init; }
     public string? RouterRequestId { get; init; }
     public DateTimeOffset? RouterObservedAt { get; init; }

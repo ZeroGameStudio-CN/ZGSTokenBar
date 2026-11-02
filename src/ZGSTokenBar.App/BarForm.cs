@@ -445,6 +445,11 @@ internal sealed partial class BarForm : Form
         Invalidate();
     }
 
+    internal long? DisplayedRouterQueuedCount => _pluginMiniCards.FirstOrDefault(card => card.PluginId == MiniAreaIds.Router)
+        ?.Card.Summary.FirstOrDefault(item => item.LabelKey == "router.queued")?.Value.Integer;
+    internal string? DisplayedRouterState => _pluginMiniCards.FirstOrDefault(card => card.PluginId == MiniAreaIds.Router)
+        ?.Card.Summary.FirstOrDefault(item => item.LabelKey == "router.state")?.Status;
+
     public void SetAiGatewayUsage(AiGatewayUsageSummary? summary)
     {
         _aiGatewayUsage = summary;

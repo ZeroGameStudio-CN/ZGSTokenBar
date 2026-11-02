@@ -1636,28 +1636,10 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         }
     }
 
-    private async Task WatchPluginEventsAsync()
-    {
-        try
-        {
-            await foreach (var hostEvent in _pluginSubscription.Events.ReadAllAsync(_shutdown.Token))
-            {
-                if (_bar.IsDisposed) return;
-                if (!IsGenericPluginEvent(hostEvent)) continue;
-                if (!QueueGenericPluginCardsUpdate()) return;
-            }
-        }
-        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
-        {
-        }
-        catch (HostCommandException exception) when (exception.Code == "event_backpressure")
-        {
-            if (!_bar.IsDisposed)
-            {
-                QueueGenericPluginCardsUpdate();
-            }
-        }
-    }
+    private Task WatchPluginEventsAsync() => PluginCardEventWatcher.RunAsync(
+        _pluginHost, _pluginSubscription,
+        hostEvent => !_bar.IsDisposed && (hostEvent is not null && !IsGenericPluginEvent(hostEvent)
+            || QueueGenericPluginCardsUpdate()), _shutdown.Token);
 
     private bool QueueGenericPluginCardsUpdate()
     {
@@ -2053,6 +2035,8 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                 NetworkHistorySaveFailed = _bar.LiveMetrics.NetworkHistorySaveFailed,
                 DisplayedTokenTotal = _bar.DisplayedTokenTotal,
                 RouterVisible = _routerModule.Visible,
+                DisplayedRouterQueuedCount = _bar.DisplayedRouterQueuedCount,
+                DisplayedRouterState = _bar.DisplayedRouterState,
                 RouterProjectKey = _routerModule.Snapshot?.ProjectKey,
                 RouterRequestId = _routerModule.Snapshot is { } router ? ZGSTokenBar.Plugin.Router.RouterJson.Text(router.View, "requestId") : null,
                 RouterObservedAt = _routerModule.Snapshot?.ReceivedAt,

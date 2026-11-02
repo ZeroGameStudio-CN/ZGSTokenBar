@@ -8,6 +8,7 @@ using ZGSTokenBar.App;
 using ZGSTokenBar.Plugin.Router;
 using ZGSTokenBar.PluginSdk;
 using ZGSTokenBar.Core;
+using ZGSTokenBar.Host;
 
 internal static class RouterModuleTests
 {
@@ -23,6 +24,7 @@ internal static class RouterModuleTests
         ExpandedSummary();
         LocalQueueUnavailable();
         QueueBadgeDigits();
+        QueueRefreshRecovery();
         using var handler = new Fixture();
         using var client = new RouterMonitorClient(handler);
         var snapshot = client.SnapshotAsync().GetAwaiter().GetResult();
@@ -456,6 +458,64 @@ internal static class RouterModuleTests
         Check(popup.Visible && popup.Pinned, "Data-only refresh preserves a pinned popup");
         bar.HidePluginPopover();
         Check(!popup.Visible, "Presentation hide never sends Router controls");
+    }
+
+    private static void QueueRefreshRecovery()
+    {
+        using var handler = new Fixture();
+        var plugin = new RouterPlugin(new RouterMonitorClient(handler));
+        var root = Path.Combine(Path.GetTempPath(), "router-card-events-" + Guid.NewGuid().ToString("N"));
+        var host = new ZgsTokenBarHost([plugin], new EffectiveProfile(1, "test", [],
+            [new ProfilePlugin(RouterPlugin.Id, "1.0.0", true, 0, new Dictionary<string, JsonElement>())]),
+            "test", root, persistProfileState: false);
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var bar = new BarForm(new AppSettings(), QuotaSnapshot.Empty(DateTimeOffset.UtcNow), renderOnly: true);
+        bar.Show();
+        Task? watching = null;
+        try
+        {
+            host.StartAsync(stop.Token).AsTask().GetAwaiter().GetResult();
+            var subscription = host.Subscribe(includeValues: true);
+            void Publish(long count) => host.Publish(new(RouterPlugin.Id, DateTimeOffset.UtcNow,
+                new(PluginHealthCode.Current, true, true, DateTimeOffset.UtcNow, "router.current"), [Card("running", count)], [], []));
+            // Overflow the real bounded Host channel before the consumer starts.
+            for (var i = 0; i < 100; i++) Publish(i);
+            var recoveries = 0;
+            watching = PluginCardEventWatcher.RunAsync(host, subscription, item =>
+            {
+                if (item is null) Interlocked.Increment(ref recoveries);
+                bar.BeginInvoke(() => bar.SetPluginMiniCards(host.Snapshot(true).Plugins.Single().Cards!
+                    .Select(card => new PluginMiniCardView(RouterPlugin.Id, "Router", card,
+                        new Dictionary<string, string>(), null)).ToArray()));
+                return true;
+            }, stop.Token);
+            void Until(Func<bool> condition)
+            {
+                while (!condition())
+                {
+                    stop.Token.ThrowIfCancellationRequested();
+                    System.Windows.Forms.Application.DoEvents();
+                    Thread.Sleep(1);
+                }
+            }
+            Until(() => Volatile.Read(ref recoveries) == 1 && bar.DisplayedRouterQueuedCount == 99);
+            foreach (var count in new long[] { 1, 11, 0, 3 })
+            {
+                Publish(count);
+                Until(() => bar.DisplayedRouterQueuedCount == count);
+                Check(!watching.IsCompleted, "Queue card continues refreshing after subscriber recovery");
+            }
+            stop.Cancel();
+            Pump(watching);
+            Check(watching.IsCompletedSuccessfully, "Recovered card watcher shuts down without a dangling subscription");
+        }
+        finally
+        {
+            stop.Cancel();
+            if (watching is not null) Pump(watching);
+            host.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
     }
 
     private static void QueueBadgeDigits()
