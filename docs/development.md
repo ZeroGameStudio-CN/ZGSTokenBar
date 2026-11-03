@@ -154,7 +154,7 @@ entire turn's wall time, including tools and waiting, not server decode throughp
 Run the synthetic Radar/current-pricing/conversation cases and render their
 production UI with `dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj
 -c Release -- --radar-usage-update <temporary-capture-directory>`.
-Conversation measurement incrementally scans at most twelve recent sessions,
+Conversation measurement incrementally scans all discovered sessions,
 with an 8 MiB per-file budget per refresh. A complete turn in the last 2 MiB
 bootstraps immediately; longer turns catch up across refreshes. Only complete
 catch-up is published. Subsequent refreshes parse new
@@ -386,7 +386,7 @@ no extrapolation. A tilde denotes estimated output; hover exposes recorded and
 estimated values/share. These are response-window observations and estimates,
 not server decode speed or a guarantee that every client/request is captured.
 
-The existing bounded twelve-session incremental reader publishes a separate
+The existing incremental reader publishes a separate
 in-memory rate feed; it does not change durable token accounting/history. The
 conversation table's Live tok/s column and the bar total use the same sampled
 per-session values; the total is their unrounded sum. Only each session's latest
@@ -399,6 +399,9 @@ live values are not persisted or exported. Both live surfaces expire with the
 same 15-second sample limit. `window inspect` exposes `conversationLiveRateTotal`
 and `conversationLiveRateCount` for comparison with the bar's common sample.
 The existing one-second clock refreshes this feed under the existing non-overlap gate.
+Discovery includes every registered home's session date folders, including resumed
+older chats, without a conversation-count cap. Session copies are deduplicated
+before reading; unchanged logs retain their incremental checkpoints.
 No second watcher/timer or ledger is added. Unavailable/expired feeds remain
 unavailable; pending catch-up and observed session coverage are shown. Historical
 records are positioned on their original timestamps, so discovery cannot produce

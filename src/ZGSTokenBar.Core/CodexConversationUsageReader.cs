@@ -45,7 +45,6 @@ public sealed record CodexConversationTurn(
 
 public sealed class CodexConversationUsageReader
 {
-    internal const int MaximumSessions = 12;
     internal const int ScanBudgetBytes = 8 * 1024 * 1024;
     private const int BootstrapBytes = 2 * 1024 * 1024;
     private readonly Dictionary<string, FileState> _cache = new(StringComparer.OrdinalIgnoreCase);
@@ -60,7 +59,7 @@ public sealed class CodexConversationUsageReader
         var turns = new List<CodexConversationTurn>();
         var retained = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         PendingSessions = 0;
-        foreach (var path in paths.Distinct(StringComparer.OrdinalIgnoreCase).Take(MaximumSessions))
+        foreach (var path in paths.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             cancellationToken.ThrowIfCancellationRequested();
             retained.Add(path);
@@ -123,7 +122,7 @@ public sealed class CodexConversationUsageReader
             readable.Select(state => state.LiveSession).Where(s => s is not null).Cast<CodexLiveSession>().ToArray(), PendingSessions);
         return turns.GroupBy(turn => turn.SessionId, StringComparer.Ordinal)
             .Select(group => group.OrderByDescending(turn => turn.ObservedAt).First())
-            .OrderByDescending(turn => turn.ObservedAt).Take(MaximumSessions).ToArray();
+            .OrderByDescending(turn => turn.ObservedAt).ToArray();
     }
 
     private static int Scan(FileStream stream, long length, FileState state, DateTimeOffset now,

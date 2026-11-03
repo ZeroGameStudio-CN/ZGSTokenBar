@@ -64,12 +64,12 @@ public sealed class CodexTokenUsageLedger
             }
             if (_summary is not null && observed is not null)
             {
-                _recentSessionPaths = observed.RecentSessionPaths;
+                _recentSessionPaths = ConversationPaths(observed.RecentSessionPaths, cancellationToken);
                 _summary = _summary with
                 {
-                    RecentTurns = _conversations.Refresh(observed.RecentSessionPaths, now, cancellationToken),
+                    RecentTurns = _conversations.Refresh(_recentSessionPaths, now, cancellationToken),
                     PendingConversationCount = _conversations.PendingSessions,
-                LiveRateFeed = _conversations.LiveRateFeed,
+                    LiveRateFeed = _conversations.LiveRateFeed,
                 };
                 _summary = PersistConversationHistory(_summary, now);
             }
@@ -82,35 +82,43 @@ public sealed class CodexTokenUsageLedger
         lock (_sync)
         {
             if (_summary is null) return null;
-            var paths = new HashSet<string>(_recentSessionPaths, StringComparer.OrdinalIgnoreCase);
-            // Discover only today's append-only session folders for the fast visible-popover refresh.
-            foreach (var codexHome in _homes())
-            foreach (var date in new[] { now.ToLocalTime(), now.ToUniversalTime() })
-            {
-                var directory = Path.Combine(codexHome, "sessions", date.ToString("yyyy/MM/dd", System.Globalization.CultureInfo.InvariantCulture));
-                try
-                {
-                    if (Directory.Exists(directory))
-                        foreach (var path in Directory.EnumerateFiles(directory, "*.jsonl")) paths.Add(path);
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
-            }
-            var recent = paths.Select(path => new FileInfo(path))
-                .Where(file => file.Exists)
-                .GroupBy(file => file.Name, StringComparer.Ordinal)
-                .Select(group => group.OrderByDescending(file => file.Length).ThenByDescending(file => file.LastWriteTimeUtc).First())
-                .OrderByDescending(file => file.LastWriteTimeUtc)
-                .Take(CodexConversationUsageReader.MaximumSessions).Select(file => file.FullName).ToArray();
-            _recentSessionPaths = recent;
+            _recentSessionPaths = ConversationPaths(_recentSessionPaths, cancellationToken);
             _summary = _summary with
             {
-                RecentTurns = _conversations.Refresh(recent, now, cancellationToken),
+                RecentTurns = _conversations.Refresh(_recentSessionPaths, now, cancellationToken),
                 PendingConversationCount = _conversations.PendingSessions,
                 LiveRateFeed = _conversations.LiveRateFeed,
             };
             _summary = PersistConversationHistory(_summary, now);
             return _titles.Apply(_summary, _homes(), cancellationToken);
         }
+    }
+
+    private string[] ConversationPaths(IReadOnlyList<string> known, CancellationToken cancellationToken)
+    {
+        var paths = new HashSet<string>(known, StringComparer.OrdinalIgnoreCase);
+        // Resumed turns keep their original date folder. Live discovery has no session-count cap
+        // and is independent of the token ledger's bounded historical accounting discovery.
+        foreach (var codexHome in _homes().Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var directory = Path.Combine(codexHome, "sessions");
+            try
+            {
+                if (Directory.Exists(directory))
+                    foreach (var path in Directory.EnumerateFiles(directory, "*.jsonl", SearchOption.AllDirectories))
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        paths.Add(path);
+                    }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        }
+        return paths.Select(path => new FileInfo(path))
+            .Where(file => file.Exists)
+            .GroupBy(file => file.Name, StringComparer.Ordinal)
+            .Select(group => group.OrderByDescending(file => file.Length).ThenByDescending(file => file.LastWriteTimeUtc).First())
+            .OrderByDescending(file => file.LastWriteTimeUtc)
+            .Select(file => file.FullName).ToArray();
     }
 
     private static CodexTokenUsageIndex MergePending(

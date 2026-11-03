@@ -1020,8 +1020,8 @@ internal sealed class NativeText
         [T("开始时间", "Started"), T("对话 / 模型", "Chat / Model"), T("新增输入", "Input"), T("输出", "Output"), T("缓存", "Cached"),
          T("估算 $", "Est. $"), T("整轮均速", "Turn avg"), T("首字 s", "First s")];
     public string CodexConversationHint => T(
-        "实时速度使用最近 3 秒窗口，≈含生成中估算；每个会话仅最新一行参与总 tok/s。总值覆盖最近最多 12 个会话，不随筛选或翻页变化。整轮均速单位也是 tok/s，包含思考、工具和等待。首字仅使用日志记录。",
-        "Live speed uses the last 3 seconds; ≈ includes in-flight estimates. Only the latest row per session contributes to total tok/s (up to 12 recent sessions), independent of filters/pages. Turn average is also tok/s and includes reasoning, tools and waits. First-token latency requires a recorded measurement.");
+        "实时速度使用最近 3 秒窗口，≈含生成中估算；每个会话仅最新一行参与总 tok/s。总值汇总所有已发现会话，不随筛选或翻页变化；生成和工具数按日志阶段统计。整轮均速单位也是 tok/s，包含思考、工具和等待。首字仅使用日志记录。",
+        "Live speed uses the last 3 seconds; ≈ includes in-flight estimates. Only the latest row per session contributes to total tok/s, across all discovered sessions and independent of filters/pages. Generating and tools counts follow recorded phases. Turn average is also tok/s and includes reasoning, tools and waits. First-token latency requires a recorded measurement.");
     public string CodexTurnTime(CodexConversationTurn turn) =>
         turn.StartedAt.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture);
     public string CodexTurnDate(CodexConversationTurn turn) =>
