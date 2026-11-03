@@ -1714,7 +1714,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                 ["Router"] = "Router",
                 ["router.state"] = _settings.Locale == "zh-CN" ? "状态" : "State",
                 ["router.task"] = _settings.Locale == "zh-CN" ? "任务" : "Task",
-                ["router.queued"] = _settings.Locale == "zh-CN" ? "排队" : "Queued",
+                ["router.queued"] = _settings.Locale == "zh-CN" ? "排队（全部项目）" : "Queued (all projects)",
                 ["router.project"] = _settings.Locale == "zh-CN" ? "项目" : "Project",
                 ["router.phase"] = _settings.Locale == "zh-CN" ? "阶段" : "Phase",
                 ["router.elapsed"] = _settings.Locale == "zh-CN" ? "已运行" : "Elapsed",
