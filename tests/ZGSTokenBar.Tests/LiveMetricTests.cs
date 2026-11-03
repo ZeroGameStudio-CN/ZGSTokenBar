@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text.Json;
 using ZGSTokenBar.Core;
 using ZGSTokenBar.App;
 
@@ -28,6 +30,7 @@ internal static class LiveMetricTests
         Check(tracker.Observe(Feed([]), at).Total is null, "No readable session is unavailable, not a measured zero.");
         Check(tracker.Observe(Feed([], [active with { Phase = "idle" }]), at).Total == 0, "An observed idle session has zero current output.");
         ReaderIntervals(at);
+        AllRunningConversations(at);
         SharedConversationRates(at);
         NetworkHistory(at);
         var network = new NetworkUsageSampler();
@@ -140,7 +143,7 @@ internal static class LiveMetricTests
                 {
                     ("estimated", form.LiveMetrics with { LiveRate = new(at, 44.2, 0, 44.2, 2, 3, 12, 0), ObservedOutputTokensPerSecond = 44.2 }),
                     ("unavailable", form.LiveMetrics with { LiveRate = null, ObservedOutputTokensPerSecond = null, NetworkReceiveBytesPerSecond = null, NetworkSendBytesPerSecond = null }),
-                    ("large", form.LiveMetrics with { LiveRate = new(at, 12345.6, 12000, 345.6, 12, 9, 12, 3), ObservedOutputTokensPerSecond = 12345.6 })
+                    ("large", form.LiveMetrics with { LiveRate = new(at, 12345.6, 12000, 345.6, 48, 24, 72, 3), ObservedOutputTokensPerSecond = 12345.6 })
                 };
                 foreach (var (name, sample) in samples)
                 {
@@ -228,6 +231,81 @@ internal static class LiveMetricTests
             "Estimated per-conversation speed stays visibly marked.");
         Check(!System.Text.Json.JsonSerializer.Serialize(view.Rows[0]).Contains("LiveRate", StringComparison.OrdinalIgnoreCase),
             "Transient live speeds are never serialized into retained history.");
+    }
+
+    private static void AllRunningConversations(DateTimeOffset at)
+    {
+        var root = Directory.CreateTempSubdirectory("tokenbar-all-conversations-").FullName;
+        try
+        {
+            var homes = new[] { Path.Combine(root, "home-a"), Path.Combine(root, "home-b") };
+            var store = new AppSettingsStore(Path.Combine(root, "data"));
+            Directory.CreateDirectory(store.DataDirectory);
+            var settings = Path.Combine(store.DataDirectory, "settings.json");
+            File.WriteAllText(settings, "preserve user settings");
+            string Line(int seconds, string type, object payload) => JsonSerializer.Serialize(new
+            { timestamp = at.AddSeconds(seconds).ToString("O"), type, payload }) + "\n";
+            object Usage(long output, long total) => new { type = "token_count", info = new
+            {
+                total_token_usage = new { output_tokens = output, total_tokens = total, input_tokens = total - output, cached_input_tokens = 0 },
+                last_token_usage = new { output_tokens = 90, total_tokens = 100, input_tokens = 10, cached_input_tokens = 0 },
+            } };
+            string Session(int index)
+            {
+                var date = index % 4 == 0 ? at.AddDays(-30) : at;
+                var directory = Path.Combine(homes[index % 2], "sessions", date.ToString("yyyy/MM/dd"));
+                Directory.CreateDirectory(directory);
+                var path = Path.Combine(directory, $"rollout-00000000-0000-0000-0000-{index + 1:000000000000}.jsonl");
+                var turn = $"turn-{index}";
+                File.WriteAllText(path, Line(-5, "event_msg", Usage(100, 200))
+                    + Line(-4, "event_msg", new { type = "task_started", turn_id = turn })
+                    + Line(-4, "turn_context", new { turn_id = turn, model = "gpt-6.1-sol", effort = "high", service_tier = "standard" })
+                    + Line(-3, "response_item", new { type = "reasoning" })
+                    + Line(-1, "event_msg", Usage(190, 300))
+                    + (index % 3 == 0 ? "" : Line(-1, "response_item", new { type = "function_call_output" })));
+                return path;
+            }
+            var paths = Enumerable.Range(0, 48).Select(Session).ToList();
+            var reader = new CodexConversationUsageReader();
+            var turns = reader.Refresh([.. paths, paths[0]], at);
+            var rate = new ObservedOutputRate().Observe(reader.LiveRateFeed, at);
+            Check(turns.Count == 48 && rate.Sessions == 48 && rate.Generating == 32 && rate.Tools == 16,
+                "Every generating and tool-running conversation is included beyond twelve, without duplicate paths.");
+            Check(Math.Abs(rate.Measured - 960) < .001 && Math.Abs(rate.Estimated - 320) < .001 && rate.Total == 1280,
+                "Output from all 48 conversations contributes exactly once to the measured and estimated totals.");
+            var scanned = reader.ScannedBytes;
+            reader.Refresh(paths, at.AddMilliseconds(500));
+            Check(reader.ScannedBytes == scanned, "Unchanged logs remain incremental with no session-count cap.");
+
+            var duplicate = Path.Combine(homes[1], "sessions", at.ToString("yyyy/MM/dd"), Path.GetFileName(paths[0]));
+            File.Copy(paths[0], duplicate);
+            var ledger = new CodexTokenUsageLedger(store, () => homes);
+            var initial = ledger.Refresh(at)!;
+            var initialRate = new ObservedOutputRate().Observe(initial.LiveRateFeed, at);
+            Check(initial.RecentTurns.Count == 48 && initialRate.Sessions == 48 && initialRate.Total == 1280,
+                "Full refresh discovers all homes and old date folders and deduplicates copied sessions before summing.");
+            var indexBefore = SHA256.HashData(File.ReadAllBytes(store.CodexTokenUsageIndexPath));
+            paths.AddRange(Enumerable.Range(48, 24).Select(Session));
+            var refreshed = ledger.RefreshConversations(at)!;
+            var live = new ObservedOutputRate().Observe(refreshed.LiveRateFeed, at);
+            var view = CodexConversationView.Create(refreshed with { LiveOutputRate = live }, new(), at);
+            Check(refreshed.RecentTurns.Count == 72 && live.Sessions == 72 && live.Generating == 48 && live.Tools == 24,
+                "Fast refresh discovers additional running conversations, including newly resumed old folders.");
+            Check(live.Total == 1920 && Math.Abs(view.Rows.Sum(row => row.LiveRate?.Total ?? 0) - live.Total.Value) < .001,
+                "All 72 conversation rows and the bar share the same complete output sum.");
+            Check(refreshed.LocalTokens == initial.LocalTokens
+                && indexBefore.SequenceEqual(SHA256.HashData(File.ReadAllBytes(store.CodexTokenUsageIndexPath)))
+                && File.ReadAllText(settings) == "preserve user settings",
+                "Fast live discovery leaves cumulative accounting and user settings unchanged.");
+            foreach (var index in Enumerable.Range(0, 6))
+                File.AppendAllText(paths[index], Line(1, "event_msg", new { type = "task_complete", turn_id = $"turn-{index}" }));
+            var ended = ledger.RefreshConversations(at.AddSeconds(5))!;
+            var endedRate = new ObservedOutputRate().Observe(ended.LiveRateFeed, at.AddSeconds(5));
+            Check(endedRate.Generating == 44 && endedRate.Tools == 22
+                && endedRate.Conversations.Where(row => Enumerable.Range(0, 6).Any(index => row.TurnId == $"turn-{index}")).All(row => row.Total == 0),
+                "Completed conversations leave concurrency and expire from the output window while other conversations remain counted.");
+        }
+        finally { Directory.Delete(root, recursive: true); }
     }
 
     private static void ReaderIntervals(DateTimeOffset at)

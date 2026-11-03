@@ -355,7 +355,6 @@ public sealed class CodexTokenUsageReader
         {
             RecentSessionPaths = candidates.Values
                 .OrderByDescending(file => file.LastWriteTimeUtc)
-                .Take(CodexConversationUsageReader.MaximumSessions)
                 .Select(file => file.FullName).ToArray(),
         };
     }
