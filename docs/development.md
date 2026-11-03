@@ -74,7 +74,11 @@ cleanup inspection, filtered/paged history, phase timings/P95 and original CSV
 export. Unavailable observations are never rendered as idle. Controls are
 instance/request/project bound and are never retried after a lost reply.
 The compact bar area contains a state glyph and optional queue-count badge, with
-full task information kept in the popup. Hover uses the existing bar's delayed, anchored popup;
+the badge summing waiting requests across all projects with pending work. Running
+and blocked requests are excluded using each project's public `queuedCount`; stale
+or failed contributing observations make the aggregate unavailable. The selected
+project still supplies the execution summary and popup contents.
+Full task information is kept in the popup. Hover uses the existing bar's delayed, anchored popup;
 clicking pins it. The popup has no taskbar entry or window chrome. The shared
 pointer timer provides the same leave grace, outside-click and Escape dismissal
 as Codex; dialogs/dropdowns retain interaction. Only a pinned view enables

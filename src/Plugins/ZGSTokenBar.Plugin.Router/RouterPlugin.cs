@@ -21,12 +21,12 @@ public sealed class RouterPlugin : BuiltinPluginBase, IDataSource
         var connected = false;
         try
         {
-            var snapshot = await _client.SnapshotAsync(cancellationToken: cancellationToken);
+            var snapshot = await _client.SnapshotAsync(cancellationToken: cancellationToken, aggregateQueuedCount: true);
             _seen = true;
             connected = snapshot.IsFresh(DateTimeOffset.UtcNow);
             state = connected ? RouterJson.Text(snapshot.View, "headline") : "数据过期";
             detail = RouterJson.Text(snapshot.View, "task");
-            waiting = RouterJson.Integer(snapshot.View, "queuedCount");
+            waiting = snapshot.QueuedCount;
             var phase = RouterJson.Text(RouterJson.Field(snapshot.View, "currentExecution"), "phase");
             project = snapshot.Projects.EnumerateArray().Where(row => RouterJson.Text(row, "key") == snapshot.ProjectKey)
                 .Select(row => RouterJson.Text(row, "name")).FirstOrDefault() ?? "Router";

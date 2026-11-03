@@ -22,6 +22,7 @@ internal static class RouterModuleTests
         WheelPaging();
         RefusalTiming();
         ExpandedSummary();
+        MultiProjectQueueSummary();
         LocalQueueUnavailable();
         QueueBadgeDigits();
         QueueRefreshRecovery();
@@ -108,6 +109,69 @@ internal static class RouterModuleTests
             Check(Value("router.phase") == "状态未确认" && Value("router.elapsed") == "", "Stale expanded data is explicitly unconfirmed");
             Check(handler.Posts == 0 && handler.Routes.All(uri => uri.AbsolutePath is "/health" or "/api/projects" or "/api/view"),
                 "Expanded presentation needs no additional endpoints or execution controls");
+        }
+        finally { plugin.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+    }
+
+    private static void MultiProjectQueueSummary()
+    {
+        var first = new string('a', 64);
+        var queued = Fixture.Project;
+        var blocked = new string('e', 64);
+        var idle = new string('f', 64);
+        using var handler = new Fixture
+        {
+            ProjectCatalog = JsonSerializer.SerializeToElement(new[]
+            {
+                new { key = first, name = "P5", pending = 1, running = true },
+                new { key = queued, name = "POB", pending = 9, running = false },
+                new { key = blocked, name = "Manual", pending = 4, running = false },
+                new { key = idle, name = "Idle", pending = 0, running = false },
+            }),
+        };
+        JsonElement View(string key, int count, string? phase = null, bool stale = false) => JsonSerializer.SerializeToElement(new
+        {
+            projectKey = key, queuedCount = count, headline = "运行中", task = "synthetic",
+            observedAt = DateTimeOffset.UtcNow.AddMinutes(stale ? -1 : 0).ToUnixTimeMilliseconds() / 1000d,
+            currentExecution = phase is null ? null : new { phase, kind = "test" },
+        });
+        handler.ProjectViews[first] = View(first, 0, "running");
+        handler.ProjectViews[queued] = View(queued, 9);
+        handler.ProjectViews[blocked] = View(blocked, 3, "blocked");
+        var plugin = new RouterPlugin(new RouterMonitorClient(handler));
+        try
+        {
+            PluginDataSnapshot Refresh() => plugin.RefreshAsync(new(DateTimeOffset.UtcNow, "test", 0), default).AsTask().GetAwaiter().GetResult();
+            long? Count(PluginDataSnapshot data) => data.MiniCards.Single().Summary.Single(item => item.LabelKey == "router.queued").Value.Integer;
+            var data = Refresh();
+            Check(Count(data) == 12, "An executing first project with no queue cannot hide other projects' waiting requests");
+            Check(data.MiniCards.Single().Summary.Single(item => item.LabelKey == "router.project").Value.Text == "P5"
+                && data.MiniCards.Single().Summary.Single(item => item.LabelKey == "router.state").Status == "running",
+                "The global queue badge preserves the selected project's execution metadata");
+            Check(handler.Routes.Count(route => route.AbsolutePath == "/api/view") == 3
+                && !handler.Routes.Any(route => route.Query.Contains(idle)) && handler.Posts == 0,
+                "Queue totals reuse the selected view, skip idle projects and send no controls");
+            handler.ProjectViews[queued] = View(queued, 4);
+            handler.ProjectViews[blocked] = View(blocked, 0, "blocked");
+            Check(Count(Refresh()) == 4, "A refresh replaces the global total without retaining old counts or counting blocked work");
+            handler.ProjectViews[queued] = View(queued, 0);
+            Check(Count(Refresh()) == 0, "Running and blocked requests do not keep a queue badge after every queue drains");
+            handler.ProjectViews[queued] = View(queued, 9, stale: true);
+            Check(Refresh().Health.Code == PluginHealthCode.Unavailable, "A stale secondary project cannot produce a current aggregate");
+            handler.ProjectViews[queued] = View(queued, 9);
+            handler.UnavailableProject = queued;
+            data = Refresh();
+            Check(data.Health.Code == PluginHealthCode.Unavailable && Count(data) == 0
+                && data.MiniCards.Single().Summary.Single(item => item.LabelKey == "router.state").Status == "unknown",
+                "A failed secondary project marks the aggregate unavailable instead of publishing a partial total");
+            handler.UnavailableProject = null;
+            handler.ProjectViews[queued] = View(first, 9);
+            Check(Refresh().Health.Code == PluginHealthCode.Unavailable, "Secondary observations retain exact project binding");
+            handler.Routes.Clear();
+            using var client = new RouterMonitorClient(handler);
+            var selected = client.SnapshotAsync(first).GetAwaiter().GetResult();
+            Check(selected.ProjectKey == first && handler.Routes.Count(route => route.AbsolutePath == "/api/view") == 1,
+                "Popup snapshots stay scoped to the selected project without aggregate reads");
         }
         finally { plugin.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
     }
@@ -583,6 +647,9 @@ internal static class RouterModuleTests
         internal int Posts, ReadsCanceled, HistoryTotal = 76;
         internal TaskCompletionSource? HoldHistory, HoldQueue, HoldHealth;
         internal JsonElement? LastControl;
+        internal JsonElement? ProjectCatalog;
+        internal readonly Dictionary<string, JsonElement> ProjectViews = new(StringComparer.Ordinal);
+        internal string? UnavailableProject;
         internal bool LoseControlReply, OldApi, WrongProject, Stale, Oversized, Empty, NativeError, PreflightRefusal, LocalQueueUnavailable;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -610,8 +677,12 @@ internal static class RouterModuleTests
             if (LocalQueueUnavailable && route is "/api/projects" or "/api/view")
                 return new(HttpStatusCode.ServiceUnavailable)
                 { Content = new StringContent(JsonSerializer.Serialize(new { error = route == "/api/projects" ? "Local projects unavailable" : "Local queue unavailable" }), Encoding.UTF8, "application/json") };
+            if (route == "/api/projects" && ProjectCatalog is { } catalog) return Json(catalog);
             if (route == "/api/projects") return Json(new[] { new { key = Project, name = "POB", pending = 41, recorded = 1000 }, new { key = new string('a', 64), name = "Temporary_Long_Project_Name", pending = 0, recorded = 1 }, new { key = new string('f', 64), name = "POB_Manual", pending = 0, recorded = 10 }, new { key = new string('e', 64), name = "ZGSProject_5", pending = 2, recorded = 100 } });
             var selectedProject = request.RequestUri.Query.Split('&').FirstOrDefault(part => part.TrimStart('?').StartsWith("project="))?.Split('=', 2)[1] ?? Project;
+            if (route == "/api/view" && selectedProject == UnavailableProject)
+                return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{\"error\":\"Local queue unavailable\"}", Encoding.UTF8, "application/json") };
+            if (route == "/api/view" && ProjectViews.TryGetValue(selectedProject, out var projectView)) return Json(projectView);
             if (route == "/api/view") return Json(new
             {
                 projectKey = WrongProject ? new string('d', 64) : selectedProject,

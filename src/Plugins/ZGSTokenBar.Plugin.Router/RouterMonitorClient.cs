@@ -32,7 +32,8 @@ public sealed class RouterMonitorClient : IDisposable
         return json.RootElement.Clone();
     }
 
-    public async Task<RouterSnapshot> SnapshotAsync(string? projectKey = null, CancellationToken cancellationToken = default)
+    public async Task<RouterSnapshot> SnapshotAsync(string? projectKey = null, CancellationToken cancellationToken = default,
+        bool aggregateQueuedCount = false)
     {
         var health = await ReadAsync("health", cancellationToken);
         if (RouterJson.Integer(health, "apiVersion") != 1 || RouterJson.Text(health, "instanceId").Length != 32)
@@ -46,12 +47,30 @@ public sealed class RouterMonitorClient : IDisposable
         if (selected.ValueKind == JsonValueKind.Undefined) selected = projects.EnumerateArray().FirstOrDefault();
         if (selected.ValueKind == JsonValueKind.Undefined) throw new InvalidDataException("No registered projects.");
         var key = RouterJson.Text(selected, "key");
+        var view = await ProjectViewAsync(key, cancellationToken);
+        var snapshot = new RouterSnapshot(RouterJson.Text(health, "instanceId"), key, projects, view, DateTimeOffset.UtcNow);
+        if (!aggregateQueuedCount) return snapshot;
+        // Pending includes running/blocked work; only each public view's queuedCount is a queue total.
+        var otherViews = await Task.WhenAll(projects.EnumerateArray()
+            .Where(row => RouterJson.Integer(row, "pending") > 0)
+            .Select(row => RouterJson.Text(row, "key")).Where(other => other != key).Distinct(StringComparer.Ordinal)
+            .Select(other => ProjectViewAsync(other, cancellationToken)));
+        return snapshot with
+        {
+            QueuedCount = snapshot.QueuedCount + otherViews.Sum(other => RouterJson.Integer(other, "queuedCount")),
+            QueueObservedAt = otherViews.Select(other => RouterJson.Number(other, "observedAt"))
+                .Append(RouterJson.Number(view, "observedAt")).Min(),
+        };
+    }
+
+    private async Task<JsonElement> ProjectViewAsync(string key, CancellationToken cancellationToken)
+    {
         if (!RouterJson.IsHex(key, 64)) throw new InvalidDataException("Invalid project identity.");
         var view = await ReadAsync("api/view?project=" + key, cancellationToken);
         if (RouterJson.Text(view, "projectKey") != key || RouterJson.Number(view, "observedAt") is not { } observed
             || observed > DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 5)
             throw new InvalidDataException("Invalid observation binding.");
-        return new(RouterJson.Text(health, "instanceId"), key, projects, view, DateTimeOffset.UtcNow);
+        return view;
     }
 
     public Task<JsonElement> QueueAsync(string project, int offset, CancellationToken cancellationToken = default, int limit = 20) =>
@@ -160,8 +179,11 @@ public sealed class RouterMonitorHttpException : HttpRequestException
 
 public sealed record RouterSnapshot(string InstanceId, string ProjectKey, JsonElement Projects, JsonElement View, DateTimeOffset ReceivedAt)
 {
+    public int QueuedCount { get; init; } = RouterJson.Integer(View, "queuedCount");
+    public double? QueueObservedAt { get; init; }
     public bool IsFresh(DateTimeOffset now) => now >= ReceivedAt && now - ReceivedAt < TimeSpan.FromSeconds(10)
-        && RouterJson.Number(View, "observedAt") is { } observed && now.ToUnixTimeMilliseconds() / 1000d - observed is >= -5 and < 10;
+        && (QueueObservedAt ?? RouterJson.Number(View, "observedAt")) is { } observed
+        && now.ToUnixTimeMilliseconds() / 1000d - observed is >= -5 and < 10;
 }
 
 public static class RouterJson
