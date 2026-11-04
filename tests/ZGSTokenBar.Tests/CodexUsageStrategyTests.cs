@@ -1,4 +1,6 @@
 using System.Drawing;
+using System.Reflection;
+using System.Windows.Forms;
 using ZGSTokenBar.App;
 using ZGSTokenBar.Core;
 
@@ -60,6 +62,19 @@ internal static class CodexUsageStrategyTests
         Check(bitmap.Width == 640 && bitmap.Height > 280
             && Enumerable.Range(0, bitmap.Width).Select(x => bitmap.GetPixel(x, 15)).Distinct().Count() > 1,
             $"The production strategy panel renders the concurrent account sections ({bitmap.Size}).");
+        Check(bitmap.GetPixel(0, 0).A == 0 && bitmap.GetPixel(bitmap.Width / 2, bitmap.Height - 3).A > 0,
+            "The complete strategy view has rounded transparent corners and an anchor tail.");
+        using var scaled = form.RenderForTest(strategy, NativeText.For("zh-CN"),
+            QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), 192);
+        Check(scaled.Size == new Size(bitmap.Width * 2, bitmap.Height * 2),
+            "The complete hover page scales its frame and content together.");
+        using var side = form.RenderForTest(strategy, NativeText.For("en"),
+            QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), 96, PopoverTailSide.Left);
+        Check(side.Width == bitmap.Width + 8 && side.Height == bitmap.Height - 8
+            && side.GetPixel(2, side.Height / 2).A > 0,
+            "The anchored strategy page also renders beside a vertical taskbar.");
+        if (capture is not null)
+            scaled.Save(Path.ChangeExtension(capture, ".192dpi.png"), System.Drawing.Imaging.ImageFormat.Png);
 
         var card = new QuotaCard("plan", ProviderKind.Codex, "Codex", "pro", "#10a37f", true, quotas[0].Windows);
         var snapshot = new QuotaSnapshot([card], [], now) { CodexAccounts = quotas };
@@ -71,6 +86,36 @@ internal static class CodexUsageStrategyTests
         Check(!bar.CodexStrategyBoundsForAcceptance.IsEmpty
             && bar.CodexStrategyBoundsForAcceptance.Right <= barBitmap.Width,
             "The strategy button is reachable inside the Codex bar module.");
+        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var strategyBounds = bar.CodexStrategyBoundsForAcceptance;
+        typeof(BarForm).GetMethod("OnMouseMove", flags)!.Invoke(bar,
+            [new MouseEventArgs(MouseButtons.None, 0, (int)(strategyBounds.Left + 8), (int)(strategyBounds.Top + 8), 0)]);
+        var hoverTimer = (System.Windows.Forms.Timer)typeof(BarForm).GetField("_popoverHoverTimer", flags)!.GetValue(bar)!;
+        Check((bool)typeof(BarForm).GetField("_hoverCodexStrategy", flags)!.GetValue(bar)!
+            && hoverTimer.Enabled
+            && typeof(BarForm).GetField("_hoverHintTarget", flags)!.GetValue(bar)!.ToString() == "None",
+            "Hovering the button schedules the full strategy page without the single-line hint.");
+        if (capture is not null)
+        {
+            bar.DrawToBitmap(barBitmap, bar.ClientRectangle);
+            barBitmap.Save(Path.ChangeExtension(capture, ".bar.png"), System.Drawing.Imaging.ImageFormat.Png);
+        }
+        typeof(BarForm).GetMethod("OnMouseLeave", flags)!.Invoke(bar, [EventArgs.Empty]);
+        Check(!hoverTimer.Enabled, "Leaving before the hover delay cancels the pending page.");
+        var withStrategy = bar.Width;
+        bar.SetCodexAccounts([]);
+        Check(bar.Width == withStrategy - (int)strategyBounds.Width,
+            "The strategy button owns additional width instead of shrinking the quota content.");
+        bar.SetCodexAccounts(accounts);
+        Check(bar.Width == withStrategy, "Refreshing the directory restores the independent button space.");
+        Check(!BarForm.ShouldDismissPopover(false, true, false, false, TimeSpan.FromSeconds(1))
+            && !BarForm.ShouldDismissPopover(false, false, false, false, TimeSpan.FromMilliseconds(100))
+            && BarForm.ShouldDismissPopover(false, false, false, false, TimeSpan.FromMilliseconds(200)),
+            "Hover stays open inside the page and tolerates crossing the gap.");
+        Check(!BarForm.ShouldDismissPopover(true, false, false, false, TimeSpan.FromSeconds(2))
+            && BarForm.ShouldDismissPopover(true, false, true, false, null)
+            && BarForm.ShouldDismissPopover(true, true, false, true, null),
+            "Pinned pages survive pointer leave and close on outside click or Escape.");
     }
 
     private static void Check(bool value, string message)

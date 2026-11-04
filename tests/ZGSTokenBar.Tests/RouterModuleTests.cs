@@ -483,12 +483,12 @@ internal static class RouterModuleTests
 
     private static void PopoverInteraction()
     {
-        Check(!BarForm.ShouldDismissPluginPopover(false, true, false, false, TimeSpan.FromSeconds(1)), "Anchor/popup pointer remains visible");
-        Check(!BarForm.ShouldDismissPluginPopover(false, false, false, false, TimeSpan.FromMilliseconds(149)), "Shared hover grace period");
-        Check(BarForm.ShouldDismissPluginPopover(false, false, false, false, TimeSpan.FromMilliseconds(150)), "Hover leaves both surfaces");
-        Check(!BarForm.ShouldDismissPluginPopover(true, false, false, false, TimeSpan.FromSeconds(5)), "Pin survives pointer leave");
-        Check(BarForm.ShouldDismissPluginPopover(true, false, true, false, null), "Outside click dismisses pin");
-        Check(BarForm.ShouldDismissPluginPopover(true, true, false, true, null), "Escape dismisses pin");
+        Check(!BarForm.ShouldDismissPopover(false, true, false, false, TimeSpan.FromSeconds(1)), "Anchor/popup pointer remains visible");
+        Check(!BarForm.ShouldDismissPopover(false, false, false, false, TimeSpan.FromMilliseconds(149)), "Shared hover grace period");
+        Check(BarForm.ShouldDismissPopover(false, false, false, false, TimeSpan.FromMilliseconds(150)), "Hover leaves both surfaces");
+        Check(!BarForm.ShouldDismissPopover(true, false, false, false, TimeSpan.FromSeconds(5)), "Pin survives pointer leave");
+        Check(BarForm.ShouldDismissPopover(true, false, true, false, null), "Outside click dismisses pin");
+        Check(BarForm.ShouldDismissPopover(true, true, false, true, null), "Escape dismisses pin");
         Check(TaskbarMiniLayoutMath.MinimumAreaContentWidthFor(MiniAreaIds.Router) == 112, "Expanded Router summary has enough readable content width");
         Check(TaskbarMiniLayoutMath.AreaWidth(RouterCardRenderer.Width, true, MiniAreaIds.Router) < TaskbarMiniLayoutMath.ServiceCardWidth, "Collapsed Router remains an icon module");
 

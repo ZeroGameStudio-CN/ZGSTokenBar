@@ -128,7 +128,7 @@ test('Codex pool segments remain first-class quota hover and pin targets', () =>
   assert.match(barForm, /private void RefreshQuotaPopover\(\)[\s\S]*?ResolveQuotaTarget\(_popoverTargetId\)/);
   assert.match(
     barForm,
-    /SetCodexAccounts\([\s\S]*?CodexMiniDisplayModes\.Pool\)[\s\S]*?ApplySnapshotLayout\(\);\s+RefreshQuotaPopover\(\);/);
+    /SetCodexAccounts\([\s\S]*?ApplySnapshotLayout\(\);[\s\S]*?CodexMiniDisplayModes\.Pool\)[\s\S]*?RefreshQuotaPopover\(\);/);
 });
 
 test('Radar logo hover does not dismiss a pinned quota bubble', () => {

@@ -80,10 +80,10 @@ internal sealed partial class BarForm
             if (inside) _popoverLeaveStarted = null;
             else _popoverLeaveStarted ??= DateTime.UtcNow;
         }
-        if (ShouldDismissPluginPopover(_popoverPinned, inside, newClick, newEscape,
+        if (ShouldDismissPopover(_popoverPinned, inside, newClick, newEscape,
             _popoverLeaveStarted is { } left ? DateTime.UtcNow - left : null)) HidePluginPopover();
     }
 
-    internal static bool ShouldDismissPluginPopover(bool pinned, bool inside, bool newClick, bool newEscape, TimeSpan? outsideFor) =>
+    internal static bool ShouldDismissPopover(bool pinned, bool inside, bool newClick, bool newEscape, TimeSpan? outsideFor) =>
         pinned ? newEscape || newClick && !inside : !inside && outsideFor >= TimeSpan.FromMilliseconds(150);
 }

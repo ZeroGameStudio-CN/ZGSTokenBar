@@ -378,7 +378,7 @@ test('Codex pool grouping replaces only the Codex area and keeps the Mini height
   assert.match(barForm, /group\.IsCodexPool \? "Codex" : group\.Cards\[0\]\.DisplayLabel/);
   assert.match(applyLayout, /CodexPoolCardProjection\.Create\([\s\S]*?_codexAccounts,[\s\S]*?_snapshot\.CodexAccounts/);
   assert.match(applyLayout, /TaskbarMiniGrouping\.Create\(layoutCards, _codexMiniDisplayMode\)/);
-  assert.match(barForm, /SetCodexAccounts\([\s\S]*?_codexMiniDisplayMode == CodexMiniDisplayModes\.Pool\)[\s\S]*?ApplySnapshotLayout\(\)/);
+  assert.match(barForm, /SetCodexAccounts\([\s\S]*?_codexAccounts = accounts\.ToArray\(\);[\s\S]*?ApplySnapshotLayout\(\)/);
   assert.match(codexPoolProjection, /GroupBy\(account => account\.AccountId, StringComparer\.Ordinal\)/);
   assert.match(codexPoolProjection, /quotaByAccount\.TryGetValue\(account\.AccountId, out var quota\)/);
   assert.match(codexPoolProjection, /TakeExactSourceCard\([\s\S]*?TakeFallbackSourceCard\(/);
