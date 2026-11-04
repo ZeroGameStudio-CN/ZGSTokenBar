@@ -86,7 +86,11 @@ execution controls. Data-only card refreshes do not reset window placement or
 dismiss a pinned popup. Screen placement, palette and DPI geometry reuse the bar.
 Current execution, queue and recent history share one page with no tab navigation
 or scrollbars. Queue pages request the visible row count and bypass background
-snapshot polling. History reads one bounded 100-record window and slices visible
+snapshot polling. History requests only finished requests (successful, failed or
+cancelled), excluding queued, running and cleanup-pending work before totals,
+date groups, statistics and paging are calculated. Its result filter uses the
+monitor's `finished` outcome rather than the full request journal's `all` scope.
+History reads one bounded 100-record window and slices visible
 pages locally, keyed by server instance, project and filters. Obsolete read requests
 are cancelled; matching in-flight history reads are shared. The first history page
 refreshes every ten seconds, while older pages retain their snapshot until explicit
