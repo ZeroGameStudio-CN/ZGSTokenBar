@@ -779,6 +779,7 @@ public sealed class CodexQuotaService
                     ResetCreditsAvailable = account.ResetCreditsAvailable,
                     NextResetCreditExpiry = account.NextResetCreditExpiry,
                     NextResetCreditCoversMainQuota = account.NextResetCreditCoversMainQuota,
+                    ResetCreditBatches = account.ResetCreditBatches,
                 };
             })
             .ToArray();

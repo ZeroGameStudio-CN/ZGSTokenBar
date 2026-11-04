@@ -18,6 +18,7 @@ internal sealed record CockpitCodexQuotaAccount(
     public int? ResetCreditsAvailable { get; init; }
     public DateTimeOffset? NextResetCreditExpiry { get; init; }
     public bool NextResetCreditCoversMainQuota { get; init; }
+    public IReadOnlyList<CodexResetCreditBatch> ResetCreditBatches { get; init; } = [];
     public bool IsApiService => string.Equals(Plan, "api_key", StringComparison.Ordinal);
 }
 
@@ -226,8 +227,14 @@ internal static class CockpitCodexQuotaReader
             }
             if (usage is null && string.IsNullOrWhiteSpace(accessToken)) return null;
 
-            var creditCount = quota?.NumberProperty("reset_credits_available");
-            var (creditExpiry, coversMainQuota) = ReadResetCreditExpiry(quota, now);
+            var rawCreditCount = quota?.NumberProperty("reset_credits_available");
+            int? creditCount = rawCreditCount is >= 0 and <= int.MaxValue
+                && rawCreditCount == Math.Truncate(rawCreditCount.Value) ? (int)rawCreditCount : null;
+            var creditBatches = ReadResetCreditBatches(quota, now, creditCount);
+            var creditExpiry = UnixTime(quota?.NumberProperty("reset_credits_next_expires_at"));
+            if (creditExpiry <= now || creditCount == 0) creditExpiry = null;
+            if (creditBatches.FirstOrDefault() is { } first && (creditExpiry is null || first.ExpiresAt < creditExpiry))
+                creditExpiry = first.ExpiresAt;
             return new CockpitCodexQuotaAccount(
                 $"cockpit:{id}",
                 accountId,
@@ -242,12 +249,11 @@ internal static class CockpitCodexQuotaReader
                     && subscription is { } detailed && indexed < detailed
                         ? indexed
                         : subscription,
-                ResetCreditsAvailable = creditCount is >= 0 and <= int.MaxValue
-                    && creditCount == Math.Truncate(creditCount.Value)
-                        ? (int)creditCount
-                        : null,
-                NextResetCreditExpiry = creditCount == 0 ? null : creditExpiry,
-                NextResetCreditCoversMainQuota = coversMainQuota,
+                ResetCreditsAvailable = creditCount,
+                NextResetCreditExpiry = creditExpiry,
+                NextResetCreditCoversMainQuota = creditBatches.Any(batch =>
+                    batch.ExpiresAt == creditExpiry && batch.CoversMainQuota),
+                ResetCreditBatches = creditBatches,
             };
         }
         catch
@@ -273,34 +279,43 @@ internal static class CockpitCodexQuotaReader
         return null;
     }
 
-    private static (DateTimeOffset? Expiry, bool CoversMainQuota) ReadResetCreditExpiry(
+    internal static IReadOnlyList<CodexResetCreditBatch> ReadResetCreditBatches(
         JsonElement? quota,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        int? availableCount)
     {
-        var next = UnixTime(quota?.NumberProperty("reset_credits_next_expires_at"));
-        if (next <= now) next = null;
-        var full = false;
-        if (quota?.ArrayProperty("reset_credits") is not { } credits) return (next, full);
-
-        foreach (var credit in credits.EnumerateArray())
+        if (availableCount == 0 || quota?.ArrayProperty("reset_credits") is not { } credits) return [];
+        var parsed = credits.EnumerateArray().Take(256).Select((credit, index) =>
         {
             var status = (credit.StringProperty("status") ?? credit.StringProperty("raw_status"))?
                 .Trim().ToLowerInvariant();
-            if (status is "redeemed" or "used" or "consumed" or "expired"
-                || credit.NumberProperty("redeemed_at") is > 0
-                || UnixTime(credit.NumberProperty("expires_at")) is not { } expiry
-                || expiry <= now
-                || expiry > next)
-            {
-                continue;
-            }
+            var expiry = CreditTime(credit, "expires_at");
+            var usable = status is not ("redeemed" or "used" or "consumed" or "expired" or "revoked" or "cancelled" or "canceled")
+                && CreditTime(credit, "redeemed_at") is null && expiry > now;
+            var identity = credit.StringProperty("id") is { } id ? $"id:{id}" : $"row:{index}";
+            return (Identity: identity, Expiry: expiry, Usable: usable,
+                CoversMain: string.Equals(credit.StringProperty("reset_type"), "full", StringComparison.OrdinalIgnoreCase));
+        });
+        var batches = parsed.GroupBy(credit => credit.Identity, StringComparer.Ordinal)
+            .Where(group => group.All(credit => credit.Usable)
+                && group.Select(credit => (credit.Expiry, credit.CoversMain)).Distinct().Count() == 1)
+            .Select(group => group.First())
+            .GroupBy(credit => credit.Expiry!.Value)
+            .OrderBy(group => group.Key)
+            .Select(group => new CodexResetCreditBatch(group.Key, group.Count(), group.All(credit => credit.CoversMain)))
+            .ToArray();
+        return availableCount is { } total && batches.Sum(batch => batch.Count) > total ? [] : batches;
+    }
 
-            var coversMain = string.Equals(
-                credit.StringProperty("reset_type"), "full", StringComparison.OrdinalIgnoreCase);
-            full = expiry == next ? full || coversMain : coversMain;
-            next = expiry;
-        }
-        return (next, full);
+    private static DateTimeOffset? CreditTime(JsonElement credit, string name)
+    {
+        if (credit.NumberProperty(name) is { } number) return UnixTime(number);
+        var text = credit.StringProperty(name);
+        if (double.TryParse(text, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out number))
+            return UnixTime(number);
+        return DateTimeOffset.TryParse(text, System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AssumeUniversal, out var time) ? time : null;
     }
 
     private static JsonDocument? ReadDocument(string path)

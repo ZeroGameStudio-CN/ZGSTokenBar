@@ -193,6 +193,8 @@ public sealed record QuotaCard(
         : Label;
 }
 
+public sealed record CodexResetCreditBatch(DateTimeOffset ExpiresAt, int Count, bool CoversMainQuota);
+
 public sealed record CodexAccountQuota(
     string AccountId,
     IReadOnlyList<QuotaWindow> Windows,
@@ -205,6 +207,7 @@ public sealed record CodexAccountQuota(
     public int? ResetCreditsAvailable { get; init; }
     public DateTimeOffset? NextResetCreditExpiry { get; init; }
     public bool NextResetCreditCoversMainQuota { get; init; }
+    public IReadOnlyList<CodexResetCreditBatch> ResetCreditBatches { get; init; } = [];
 }
 
 public sealed record CodexQuotaTokenCounter(
