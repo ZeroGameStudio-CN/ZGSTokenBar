@@ -14,6 +14,10 @@ internal sealed record CockpitCodexQuotaAccount(
     DateTimeOffset? CapturedAt)
 {
     public string? ApiProviderName { get; init; }
+    public DateTimeOffset? SubscriptionActiveUntil { get; init; }
+    public int? ResetCreditsAvailable { get; init; }
+    public DateTimeOffset? NextResetCreditExpiry { get; init; }
+    public bool NextResetCreditCoversMainQuota { get; init; }
     public bool IsApiService => string.Equals(Plan, "api_key", StringComparison.Ordinal);
 }
 
@@ -160,7 +164,8 @@ internal static class CockpitCodexQuotaReader
 
             var plan = CodexPlanNormalization.Normalize(account.StringProperty("plan_type"));
             if (plan is null || !string.Equals(plan, selected.Plan, StringComparison.Ordinal)) return null;
-            if (!SubscriptionIsUsable(plan, SubscriptionActiveUntil(account), now)) return null;
+            var subscription = SubscriptionActiveUntil(account);
+            if (!SubscriptionIsUsable(plan, subscription, now)) return null;
             if (IsInactive(account)) return null;
 
             var active = activeAccountIds is null
@@ -196,13 +201,14 @@ internal static class CockpitCodexQuotaReader
             }
 
             var capturedAt = UnixTime(account.NumberProperty("usage_updated_at"));
+            var quota = account.ObjectProperty("quota");
             CodexUsageData? usage = null;
             JsonElement? rawData = null;
             if (capturedAt is { } snapshotAt
                 && snapshotAt >= now - MaxSnapshotAge
                 && snapshotAt <= now + FutureClockTolerance)
             {
-                rawData = account.ObjectProperty("quota")?.ObjectProperty("raw_data");
+                rawData = quota?.ObjectProperty("raw_data");
                 if (rawData?.ValueKind == JsonValueKind.Object)
                 {
                     var parsed = CodexUsageParser.Parse(rawData.Value.GetRawText());
@@ -220,6 +226,8 @@ internal static class CockpitCodexQuotaReader
             }
             if (usage is null && string.IsNullOrWhiteSpace(accessToken)) return null;
 
+            var creditCount = quota?.NumberProperty("reset_credits_available");
+            var (creditExpiry, coversMainQuota) = ReadResetCreditExpiry(quota, now);
             return new CockpitCodexQuotaAccount(
                 $"cockpit:{id}",
                 accountId,
@@ -228,7 +236,19 @@ internal static class CockpitCodexQuotaReader
                 active,
                 accessToken,
                 usage,
-                usage is null ? null : capturedAt);
+                usage is null ? null : capturedAt)
+            {
+                SubscriptionActiveUntil = selected.SubscriptionActiveUntil is { } indexed
+                    && subscription is { } detailed && indexed < detailed
+                        ? indexed
+                        : subscription,
+                ResetCreditsAvailable = creditCount is >= 0 and <= int.MaxValue
+                    && creditCount == Math.Truncate(creditCount.Value)
+                        ? (int)creditCount
+                        : null,
+                NextResetCreditExpiry = creditCount == 0 ? null : creditExpiry,
+                NextResetCreditCoversMainQuota = coversMainQuota,
+            };
         }
         catch
         {
@@ -251,6 +271,36 @@ internal static class CockpitCodexQuotaReader
         if (key.Length == 32) return key;
         CryptographicOperations.ZeroMemory(key);
         return null;
+    }
+
+    private static (DateTimeOffset? Expiry, bool CoversMainQuota) ReadResetCreditExpiry(
+        JsonElement? quota,
+        DateTimeOffset now)
+    {
+        var next = UnixTime(quota?.NumberProperty("reset_credits_next_expires_at"));
+        if (next <= now) next = null;
+        var full = false;
+        if (quota?.ArrayProperty("reset_credits") is not { } credits) return (next, full);
+
+        foreach (var credit in credits.EnumerateArray())
+        {
+            var status = (credit.StringProperty("status") ?? credit.StringProperty("raw_status"))?
+                .Trim().ToLowerInvariant();
+            if (status is "redeemed" or "used" or "consumed" or "expired"
+                || credit.NumberProperty("redeemed_at") is > 0
+                || UnixTime(credit.NumberProperty("expires_at")) is not { } expiry
+                || expiry <= now
+                || expiry > next)
+            {
+                continue;
+            }
+
+            var coversMain = string.Equals(
+                credit.StringProperty("reset_type"), "full", StringComparison.OrdinalIgnoreCase);
+            full = expiry == next ? full || coversMain : coversMain;
+            next = expiry;
+        }
+        return (next, full);
     }
 
     private static JsonDocument? ReadDocument(string path)
@@ -295,7 +345,7 @@ internal static class CockpitCodexQuotaReader
             ? true
             : subscription is { } value && value > now;
 
-    private static DateTimeOffset? SubscriptionActiveUntil(JsonElement element)
+    internal static DateTimeOffset? SubscriptionActiveUntil(JsonElement element)
     {
         if (element.ValueKind != JsonValueKind.Object
             || !element.TryGetProperty("subscription_active_until", out var value))

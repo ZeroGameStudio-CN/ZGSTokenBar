@@ -8,7 +8,10 @@ public sealed record CodexAccountInfo(
     string? Email,
     string? Plan,
     bool Active,
-    int AccountCount = 1);
+    int AccountCount = 1)
+{
+    public DateTimeOffset? SubscriptionActiveUntil { get; init; }
+}
 
 public static class CockpitCodexAccountDirectory
 {
@@ -48,7 +51,10 @@ public static class CockpitCodexAccountDirectory
                         item.StringProperty("plan_type"),
                         activeAccountIds is null
                             ? string.Equals(accountId, currentId, StringComparison.Ordinal)
-                            : activeAccountIds.Contains(accountId)),
+                            : activeAccountIds.Contains(accountId))
+                    {
+                        SubscriptionActiveUntil = CockpitCodexQuotaReader.SubscriptionActiveUntil(item),
+                    },
                     index,
                     item.TryGetProperty("last_used", out var lastUsed)
                         ? ParseTime(lastUsed)

@@ -200,6 +200,11 @@ public sealed record CodexAccountQuota(
     string? Error = null)
 {
     public string? CardKey { get; init; }
+    public string? QuotaIdentity { get; init; }
+    public DateTimeOffset? SubscriptionActiveUntil { get; init; }
+    public int? ResetCreditsAvailable { get; init; }
+    public DateTimeOffset? NextResetCreditExpiry { get; init; }
+    public bool NextResetCreditCoversMainQuota { get; init; }
 }
 
 public sealed record CodexQuotaTokenCounter(

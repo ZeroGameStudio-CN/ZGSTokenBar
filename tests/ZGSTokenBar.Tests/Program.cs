@@ -18,6 +18,12 @@ using ZGSTokenBar.Plugin.AiGatewayObserver;
 
 if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJobExitCode;
 
+if (args.Length > 0 && args[0] == "--codex-usage-strategy")
+{
+    CodexUsageStrategyTests.Run(args.Length == 2 ? args[1] : null);
+    return 0;
+}
+
 if (args.Length > 0 && args[0] == "--usage-clarity-review")
 {
     LiveMetricTests.Run();
@@ -448,6 +454,7 @@ var tests = new (string Name, Action Run)[]
     ("Radar persistent reset Mini", TestRadarPersistentResetMini),
     ("Quota pace popover presentation", TestQuotaPacePopoverPresentation),
     ("Codex account popover presentation", TestCodexAccountPopoverPresentation),
+    ("Codex account usage strategy", () => CodexUsageStrategyTests.Run()),
     ("Taskbar hint popover presentation", TestTaskbarHintPopoverPresentation),
     ("Taskbar popover motion geometry", TestTaskbarPopoverMotionGeometry),
     ("Codex Radar stable ranking", TestRadarStableRanking),
