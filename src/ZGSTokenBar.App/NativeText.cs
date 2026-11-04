@@ -598,73 +598,27 @@ internal sealed class NativeText
         return "≈" + amount + (period.HasUnpricedUsage ? "+" : string.Empty);
     }
     public string CodexAccountsHeading => T("Codex 账号", "Codex accounts");
-    public string CodexQuotaCapacityTitle => T("Token", "Tokens");
-    public string[] CodexQuotaCapacityMetrics(
-        CodexQuotaTokenSummary? summary,
-        double? currentUsedPercent = null) =>
-    [
-        CodexQuotaUsedMetric(summary, currentUsedPercent),
-        T(
-            $"容量 {EstimatedTokenValue(summary?.CurrentCapacityTokens, collecting: true)}",
-            $"Capacity {EstimatedTokenValue(summary?.CurrentCapacityTokens, collecting: true)}"),
-        T(
-            $"均值 {EstimatedTokenValue(summary?.AverageCapacityTokens)}",
-            $"Avg {EstimatedTokenValue(summary?.AverageCapacityTokens)}"),
-        T(
-            $"峰值 {EstimatedTokenValue(summary?.MaxCapacityTokens)}",
-            $"Peak {EstimatedTokenValue(summary?.MaxCapacityTokens)}"),
-    ];
-
-    internal string CodexQuotaObservationEvidence(CodexQuotaTokenSummary? summary)
+    public (string Label, string Value, string Detail)? CodexQuotaTokenUsage(CodexQuotaTokenSummary? summary)
     {
-        if (summary?.HasCurrentObservation != true
-            || summary.CurrentObservedTokens is null)
+        if (summary is not { HasCurrentObservation: true, CurrentObservedTokens: { } tokens }
+            || tokens < 0)
         {
-            return string.Empty;
+            return null;
         }
 
+        var value = FormatTokenCount(tokens);
         if (summary.IsCurrentLocalFallback)
         {
-            return T("本机下限", "Local floor");
+            return (T("本机 Token", "Local tokens"), value,
+                summary.CoversCycleStart
+                    ? T("本周期记录 · 仅本机", "This cycle · this device only")
+                    : T("部分周期记录 · 仅本机", "Partial cycle · this device only"));
         }
 
         return summary.CoversCycleStart
-            ? T("账号实录", "Account seen")
-            : T("账号估算", "Account est.");
+            ? (T("已用 Token", "Used tokens"), value, T("本周期完整记录", "Full cycle · account usage"))
+            : (T("已记录 Token", "Recorded tokens"), value, T("本周期部分用量", "Partial cycle · account usage"));
     }
-
-    private string CodexQuotaUsedMetric(
-        CodexQuotaTokenSummary? summary,
-        double? currentUsedPercent)
-    {
-        var percent = FormatUsagePercent(
-            currentUsedPercent
-            ?? (summary?.CoversCycleStart == true
-                ? summary.CurrentObservedSpanPercent
-                : null));
-        var observedTokens = summary?.HasCurrentObservation == true
-            ? summary.CurrentObservedTokens
-            : null;
-        var estimatedTokens = summary?.HasCurrentObservation == true
-            ? summary.EstimateUsedTokens(currentUsedPercent)
-            : null;
-        var (tokens, approximation) = summary?.IsCurrentLocalFallback == true
-            ? (CapacityTokenValue(observedTokens, collecting: true), observedTokens is not null ? "≥" : string.Empty)
-            : summary?.CoversCycleStart == true
-                ? (CapacityTokenValue(observedTokens, collecting: true), string.Empty)
-                : (CapacityTokenValue(estimatedTokens, collecting: true), estimatedTokens is not null ? "≈" : string.Empty);
-        return T(
-            $"已用{percent} {approximation}{tokens}",
-            $"Used {percent} {approximation}{tokens}");
-    }
-
-    private string EstimatedTokenValue(double? tokens, bool collecting = false) =>
-        tokens is not null
-            ? "≈" + CapacityTokenValue(tokens)
-            : CapacityTokenValue(null, collecting);
-    private string CapacityTokenValue(double? tokens, bool collecting = false) => tokens is { } value
-        ? FormatTokenCount((long)Math.Round(Math.Max(0, value), MidpointRounding.AwayFromZero))
-        : collecting ? T("记录中", "collecting") : "—";
 
     internal static string FormatTokenCount(long tokens)
     {
@@ -703,10 +657,6 @@ internal sealed class NativeText
         var value = bytes / 1_073_741_824d;
         return value.ToString(value >= 100 ? "0" : "0.0", CultureInfo.InvariantCulture);
     }
-
-    private static string FormatUsagePercent(double? percent) => percent is { } value
-        ? $"{Math.Clamp(value, 0, 100).ToString("0.#", CultureInfo.InvariantCulture)}%"
-        : "--";
 
     private static string FormatBytesPerSecond(double? bytesPerSecond)
     {
@@ -785,70 +735,6 @@ internal sealed class NativeText
                     rate, resetsAt));
         }
         return (T("趋势样本收集中", "Building trend"), string.Empty);
-    }
-
-    public (string Left, string Right) QuotaCycle(QuotaPaceEstimate? estimate)
-    {
-        if (estimate?.Status == QuotaPaceStatus.WeeklyBlocked)
-        {
-            return (T("周重置后恢复", "Returns after weekly reset"), string.Empty);
-        }
-        if (estimate?.Cycle is not { } cycle)
-        {
-            return (T("周期不可用", "No cycle"), string.Empty);
-        }
-
-        var absoluteDelta = Math.Abs(cycle.DeltaPercent);
-        var delta = absoluteDelta.ToString(absoluteDelta < 10 ? "0.0" : "0", CultureInfo.InvariantCulture);
-        var left = absoluteDelta < 2
-            ? T("周期正常", "Cycle OK")
-            : cycle.DeltaPercent > 0
-                ? T($"周期超额 {delta}%", $"Cycle {delta}% over")
-                : T($"周期余量 {delta}%", $"Cycle {delta}% spare");
-        if (estimate.Recent is { ResetsBeforeExhaustion: false })
-        {
-            return (left, T("近期过快", "Recent too fast"));
-        }
-        var actualUsed = cycle.ExpectedUsedPercent + cycle.DeltaPercent;
-        if (actualUsed <= .001)
-        {
-            return (left, T("可维持", "Can maintain"));
-        }
-        if (cycle.SafeSpeedMultiplier is { } multiplier
-            && multiplier < 1
-            && !cycle.ResetsBeforeExhaustion)
-        {
-            var safe = Math.Clamp(multiplier, .1, 9.9)
-                .ToString("0.0", CultureInfo.InvariantCulture);
-            return (left, T($"需≤{safe}×", $"Need ≤{safe}×"));
-        }
-        return cycle.PercentPerHour is null
-            ? (left, string.Empty)
-            : (left, T("可维持", "Pace OK"));
-    }
-
-    public (string Left, string Right) QuotaCurrentGoal(
-        double targetRemaining,
-        double actualRemaining,
-        bool recentTooFast = false)
-    {
-        var target = CompactPercent(targetRemaining);
-        var left = T($"当前目标 {target}", $"Current goal {target}");
-        if (recentTooFast)
-        {
-            return (left, T("近期过快", "Recent too fast"));
-        }
-
-        var difference = actualRemaining - targetRemaining;
-        if (Math.Abs(difference) < .05)
-        {
-            return (left, T("已达标", "On target"));
-        }
-
-        var gap = CompactPercent(Math.Abs(difference));
-        return difference > 0
-            ? (left, T($"余量 {gap}", $"{gap} spare"))
-            : (left, T($"超额 {gap}", $"{gap} over"));
     }
 
     private string PaceRate(string prefix, double rate)

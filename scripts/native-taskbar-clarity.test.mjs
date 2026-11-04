@@ -402,28 +402,17 @@ test('Codex pool grouping replaces only the Codex area and keeps the Mini height
   assert.match(applyLayout, /ClientSize = new Size\([\s\S]*?TaskbarMiniLayoutMath\.Height\)/);
 });
 
-test('quota pace rows use concise labels, readable type, and distinct icons', () => {
+test('quota popover keeps the pace forecast without the redundant budget row', () => {
   assert.match(popoverForm, /LogicalBodyWidth = 240/);
-  assert.match(popoverForm, /LogicalBodyHeight = 144/);
   assert.match(popoverForm, /new\("Segoe UI Semibold", 10f, FontStyle\.Regular, GraphicsUnit\.Pixel\)/);
   assert.match(popoverForm, /DrawTrendPaceIcon/);
-  assert.match(popoverForm, /DrawCyclePaceIcon/);
-  assert.match(popoverForm, /DrawBudgetMarker/);
-  assert.match(popoverForm, /QuotaDisplayFormatting\.BudgetMarkerRemaining\(/);
+  assert.doesNotMatch(popoverForm, /DrawCyclePaceIcon|DrawBudgetMarker|QuotaCurrentGoal|QuotaCycle/);
   assert.match(popoverForm, /var currentPace = content\.Pace\?\.ForDisplay\(now\)/);
-  assert.match(popoverForm, /var recentTooFast = currentPace\?\.Recent/);
-  assert.match(popoverForm, /remaining!\.Value,[\s\S]*recentTooFast\)/);
   assert.match(popoverForm, /troughBrush = new SolidBrush\(Color\.FromArgb\(30, 41, 59\)\)/);
   assert.match(popoverForm, /trackBrush = new SolidBrush\(Color\.FromArgb\(71, 85, 105\)\)/);
-  assert.match(popoverForm, /Color\.FromArgb\(253, 230, 138\)/);
-  assert.match(popoverForm, /coreBrush = new SolidBrush\(Color\.FromArgb\(30, 41, 59\)\)/);
-  assert.match(popoverForm, /body\.Right - 104, y \+ 94, 92, 16/);
-  assert.match(popoverForm, /detailValueBrush = new SolidBrush\(Color\.FromArgb\(203, 213, 225\)\)/);
   assert.match(nativeText, /"1h"/);
   assert.match(nativeText, /15m初步/);
-  assert.match(nativeText, /Cycle OK/);
-  assert.match(nativeText, /当前目标/);
-  assert.match(nativeText, /Current goal/);
+  assert.match(nativeText, /重置约剩/);
   assert.match(nativeText, /compact\.Replace\(" ", string\.Empty, StringComparison\.Ordinal\)/);
 });
 

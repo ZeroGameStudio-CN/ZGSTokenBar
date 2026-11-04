@@ -240,7 +240,7 @@ test('Codex logo hover owns local token totals and cache hit rate without coupli
   assert.match(applicationContext, /ApplyCodexUsageActivityTransition\([\s\S]*?_cachedCodexTokenUsage/);
   assert.match(applicationContext, /setUsage\(cachedSummary\);[\s\S]*?publishUsage\(cachedSummary,[\s\S]*?requestRefreshAction\(\)/);
   assert.match(applicationContext, /&& _activeProviders\.Contains\(ProviderKind\.Codex\)[\s\S]*?_bar\.SetCodexTokenUsage\(summary\)/);
-  assert.doesNotMatch(popover, /TokenUsage|LogicalTokenBodyHeight/);
+  assert.doesNotMatch(popover, /CodexTokenUsageSummary|LogicalTokenBodyHeight/);
   assert.match(radarLayout, /CreateTokenUsage/);
   assert.match(radarRenderer, /DrawTokenOverview/);
   assert.match(radarRenderer, /CodexTodayCacheHitRate/);
@@ -266,24 +266,18 @@ test('Codex logo hover owns local token totals and cache hit rate without coupli
   assert.match(tokenUsageReader, /TotalCacheHitPercent/);
 });
 
-test('Codex quota hover separates source-qualified raw-token references', () => {
-  assert.match(popover, /LogicalCodexTokenBodyHeight = 187/);
-  assert.match(popover, /DrawQuotaTokenCapacity/);
-  assert.match(popover, /const int columnCount = 2/);
-  assert.match(popover, /row \* 16/);
+test('Codex quota hover shows one recorded token amount with its coverage', () => {
+  assert.match(popover, /DrawQuotaTokenUsage/);
+  assert.match(popover, /QuotaTokenUsage is not null/);
   assert.match(popover, /content\.Card\.Provider == ProviderKind\.Codex && !content\.Card\.IsService/);
-  assert.doesNotMatch(popover, /CodexQuotaTokens\?\.HasData/);
-  assert.match(nativeText, /CodexQuotaCapacityTitle => T\("Token", "Tokens"\)/);
-  assert.match(nativeText, /已用\{percent\}/);
-  assert.match(nativeText, /容量/);
-  assert.match(nativeText, /均值/);
-  assert.match(nativeText, /峰值/);
-  assert.match(nativeText, /本机下限/);
-  assert.match(nativeText, /IsCurrentLocalFallback/);
-  assert.match(nativeText, /"≥"/);
-  assert.match(nativeText, /EstimateUsedTokens/);
-  assert.match(popover, /CodexQuotaObservationEvidence/);
-  assert.doesNotMatch(nativeText, /Token · 本机估算/);
+  const tokenUsage = boundedSlice(nativeText,
+    'public (string Label, string Value, string Detail)? CodexQuotaTokenUsage',
+    'internal static string FormatTokenCount');
+  assert.match(tokenUsage, /HasCurrentObservation: true, CurrentObservedTokens/);
+  assert.match(tokenUsage, /IsCurrentLocalFallback/);
+  assert.match(tokenUsage, /本周期部分用量/);
+  assert.match(tokenUsage, /this device only/);
+  assert.doesNotMatch(tokenUsage, /EstimateUsedTokens|CapacityTokens|AverageCapacityTokens|MaxCapacityTokens/);
   assert.match(barForm, /SetCodexQuotaTokenSummaries/);
   assert.match(applicationContext, /CodexQuotaTokenObservations\(next, observedAt\)/);
   assert.match(applicationContext, /recentWeeklyByCard/);

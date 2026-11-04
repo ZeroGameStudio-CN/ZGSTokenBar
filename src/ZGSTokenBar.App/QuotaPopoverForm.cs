@@ -17,7 +17,8 @@ internal sealed class QuotaPopoverForm : Form
 {
     internal const int LogicalBodyWidth = 240;
     internal const int LogicalBodyHeight = 144;
-    internal const int LogicalCodexTokenBodyHeight = 187;
+    internal const int LogicalQuotaBodyHeight = 124;
+    internal const int LogicalCodexTokenBodyHeight = 156;
     internal const int LogicalSub2ApiQuotaBodyHeight = 164;
     internal const int LogicalSub2ApiAccountAvailabilityBodyHeight = 164;
     private const int AccountAvailabilityFirstRowY = 76;
@@ -57,14 +58,19 @@ internal sealed class QuotaPopoverForm : Form
     private bool _animateMotion;
     private DateTimeOffset? _renderNow;
 
+    private (string Label, string Value, string Detail)? QuotaTokenUsage =>
+        _content is { Card: { Provider: ProviderKind.Codex, IsService: false } } content
+            ? _text.CodexQuotaTokenUsage(content.CodexQuotaTokens)
+            : null;
+
     private int ContentBodyHeight
     {
         get
         {
-            if (_content is not { } content) return LogicalBodyHeight;
+            if (_content is not { } content) return LogicalQuotaBodyHeight;
             if (content.Card.Provider == ProviderKind.Codex && !content.Card.IsService)
             {
-                return LogicalCodexTokenBodyHeight;
+                return QuotaTokenUsage is not null ? LogicalCodexTokenBodyHeight : LogicalQuotaBodyHeight;
             }
             if (Sub2ApiServicePresentation.IsSub2ApiService(content.Card))
             {
@@ -91,7 +97,7 @@ internal sealed class QuotaPopoverForm : Form
                     : content.Card.Sub2ApiQuota is { } quota
                     && Sub2ApiQuotaFormatting.PreferredWindow(quota) is not null
                         ? LogicalSub2ApiQuotaBodyHeight
-                        : LogicalBodyHeight;
+                        : content.Card.IsService ? LogicalBodyHeight : LogicalQuotaBodyHeight;
         }
     }
 
@@ -364,7 +370,6 @@ internal sealed class QuotaPopoverForm : Form
                 : Color.FromArgb(226, 232, 240));
         using var paceValueBrush = new SolidBrush(Color.FromArgb(94, 234, 212));
         using var detailValueBrush = new SolidBrush(Color.FromArgb(203, 213, 225));
-        using var warningValueBrush = new SolidBrush(Color.FromArgb(251, 191, 36));
         DrawString(
             graphics,
             $"{content.Card.Label} · {QuotaDisplayFormatting.FormatWindowShort(content.Window)}",
@@ -424,19 +429,6 @@ internal sealed class QuotaPopoverForm : Form
                 2);
         }
         var currentPace = content.Pace?.ForDisplay(now);
-        double? budgetMarkerRemaining = null;
-        if (content.WeeklyBlockResetAt is null
-            && used is not null
-            && QuotaDisplayFormatting.BudgetMarkerRemaining(
-                content.Window,
-                currentPace?.Cycle,
-                now) is { } markerRemaining)
-        {
-            budgetMarkerRemaining = markerRemaining;
-            var markerX = track.X + track.Width * (float)(budgetMarkerRemaining.Value / 100);
-            DrawBudgetMarker(graphics, track, markerX);
-        }
-
         var pace = _text.QuotaPace(currentPace, now, content.Window.ResetsAt);
         var paceColor = pace.Right.Length == 0
             ? Color.FromArgb(148, 163, 184)
@@ -463,63 +455,19 @@ internal sealed class QuotaPopoverForm : Form
                 StringAlignment.Far);
         }
 
-        var showCurrentGoal = remaining is not null
-            && budgetMarkerRemaining is not null
-            && QuotaDisplayFormatting.UsesLongWindowGoal(content.Window);
-        var recentTooFast = currentPace?.Recent is { ResetsBeforeExhaustion: false };
-        var cyclePace = showCurrentGoal
-            ? _text.QuotaCurrentGoal(
-                budgetMarkerRemaining!.Value,
-                remaining!.Value,
-                recentTooFast)
-            : _text.QuotaCycle(currentPace);
-        var cycleColor = showCurrentGoal
-            ? Color.FromArgb(253, 230, 138)
-            : currentPace?.Cycle is null || currentPace.Status == QuotaPaceStatus.WeeklyBlocked
-                ? Color.FromArgb(148, 163, 184)
-                : Color.FromArgb(203, 213, 225);
-        DrawCyclePaceIcon(
-            graphics,
-            new RectangleF(x + 12, y + 97, 10, 10),
-            cycleColor);
-        DrawString(
-            graphics,
-            cyclePace.Left,
-            _detailFont,
-            showCurrentGoal ? warningValueBrush
-                : currentPace?.Cycle is null ? mutedBrush : detailValueBrush,
-            new RectangleF(x + 30, y + 94, cyclePace.Right.Length == 0 ? body.Width - 42 : 102, 16),
-            StringAlignment.Near);
-        if (cyclePace.Right.Length > 0)
+        var tokenUsage = QuotaTokenUsage;
+        var quotaTokenOffset = tokenUsage is not null ? LogicalCodexTokenBodyHeight - LogicalQuotaBodyHeight : 0;
+        if (tokenUsage is { } usage)
         {
-            DrawString(
+            DrawQuotaTokenUsage(
                 graphics,
-                cyclePace.Right,
-                _detailFont,
-                showCurrentGoal
-                    ? recentTooFast || remaining!.Value < budgetMarkerRemaining!.Value
-                        ? warningValueBrush
-                        : paceValueBrush
-                    : recentTooFast ? warningValueBrush : paceValueBrush,
-                new RectangleF(body.Right - 104, y + 94, 92, 16),
-                StringAlignment.Far);
-        }
-
-        var quotaTokenOffset = content.Card.Provider == ProviderKind.Codex && !content.Card.IsService
-            ? 43
-            : 0;
-        if (quotaTokenOffset > 0)
-        {
-            DrawQuotaTokenCapacity(
-                graphics,
-                new RectangleF(x + 12, y + 113, body.Width - 24, 43),
-                content.CodexQuotaTokens,
-                content.Window.UsedPercent,
+                new RectangleF(x + 12, y + 93, body.Width - 24, quotaTokenOffset),
+                usage,
                 mutedBrush,
                 detailValueBrush);
         }
 
-        graphics.DrawImage(_resetClockIcon, new RectangleF(x + 12, y + 117 + quotaTokenOffset, 10, 10));
+        graphics.DrawImage(_resetClockIcon, new RectangleF(x + 12, y + 97 + quotaTokenOffset, 10, 10));
         DrawString(
             graphics,
             content.WeeklyBlockResetAt is not null
@@ -529,7 +477,7 @@ internal sealed class QuotaPopoverForm : Form
                 : _text.ResetUnavailable,
             _detailFont,
             mutedBrush,
-            new RectangleF(x + 28, y + 114 + quotaTokenOffset, 126, 16),
+            new RectangleF(x + 28, y + 94 + quotaTokenOffset, 126, 16),
             StringAlignment.Near);
         DrawString(
             graphics,
@@ -540,76 +488,52 @@ internal sealed class QuotaPopoverForm : Form
                 : string.Empty,
             _detailFont,
             resetValueBrush,
-            new RectangleF(body.Right - 82, y + 114 + quotaTokenOffset, 70, 16),
+            new RectangleF(body.Right - 82, y + 94 + quotaTokenOffset, 70, 16),
             StringAlignment.Far);
         DrawString(
             graphics,
             _text.Freshness(content.CapturedAt, now),
             _subtitleFont,
             mutedBrush,
-            new RectangleF(x + 12, y + 132 + quotaTokenOffset, 100, 10),
+            new RectangleF(x + 12, y + 112 + quotaTokenOffset, 100, 10),
             StringAlignment.Near);
         DrawString(
             graphics,
             content.Pinned ? _text.ClosePinnedHint : _text.PinHint,
             _subtitleFont,
             mutedBrush,
-            new RectangleF(body.Right - 112, y + 132 + quotaTokenOffset, 100, 10),
+            new RectangleF(body.Right - 112, y + 112 + quotaTokenOffset, 100, 10),
             StringAlignment.Far);
     }
 
-    private void DrawQuotaTokenCapacity(
+    private void DrawQuotaTokenUsage(
         Graphics graphics,
         RectangleF bounds,
-        CodexQuotaTokenSummary? summary,
-        double? currentUsedPercent,
+        (string Label, string Value, string Detail) usage,
         Brush mutedBrush,
         Brush valueBrush)
     {
-        var evidence = _text.CodexQuotaObservationEvidence(summary);
-        var titleWidth = string.IsNullOrEmpty(evidence)
-            ? bounds.Width
-            : bounds.Width * .52f;
         DrawString(
             graphics,
-            _text.CodexQuotaCapacityTitle,
-            _subtitleFont,
+            usage.Label,
+            _detailFont,
             mutedBrush,
-            new RectangleF(bounds.X, bounds.Y, titleWidth, 10),
+            new RectangleF(bounds.X, bounds.Y, bounds.Width - 70, 16),
             StringAlignment.Near);
-        if (!string.IsNullOrEmpty(evidence))
-        {
-            DrawString(
-                graphics,
-                evidence,
-                _subtitleFont,
-                mutedBrush,
-                new RectangleF(
-                    bounds.X + titleWidth,
-                    bounds.Y,
-                    bounds.Width - titleWidth,
-                    10),
-                StringAlignment.Far);
-        }
-        var metrics = _text.CodexQuotaCapacityMetrics(summary, currentUsedPercent);
-        const int columnCount = 2;
-        var columnWidth = bounds.Width / columnCount;
-        for (var index = 0; index < metrics.Length; index++)
-        {
-            var column = index % columnCount;
-            var row = index / columnCount;
-            DrawString(
-                graphics,
-                metrics[index],
-                _metricFont,
-                valueBrush,
-                new RectangleF(
-                    bounds.X + columnWidth * column,
-                    bounds.Y + 11 + row * 16,
-                    columnWidth,
-                    15),
-                column == 0 ? StringAlignment.Near : StringAlignment.Far);
-        }
+        DrawString(
+            graphics,
+            usage.Value,
+            _titleFont,
+            valueBrush,
+            new RectangleF(bounds.Right - 70, bounds.Y, 70, 16),
+            StringAlignment.Far);
+        DrawString(
+            graphics,
+            usage.Detail,
+            _detailFont,
+            mutedBrush,
+            new RectangleF(bounds.X, bounds.Y + 16, bounds.Width, 16),
+            StringAlignment.Near);
     }
 
     private void DrawServiceContent(
@@ -1517,30 +1441,6 @@ internal sealed class QuotaPopoverForm : Form
         !string.IsNullOrWhiteSpace(card.AccountHint)
         && !string.Equals(card.AccountHint, "Codex account", StringComparison.OrdinalIgnoreCase);
 
-    private static void DrawBudgetMarker(
-        Graphics graphics,
-        RectangleF track,
-        float markerX)
-    {
-        var markerY = track.Top + track.Height / 2;
-        using var brush = new SolidBrush(Color.FromArgb(253, 230, 138));
-        using var coreBrush = new SolidBrush(Color.FromArgb(30, 41, 59));
-        graphics.FillPolygon(brush,
-        [
-            new PointF(markerX, markerY - 2.5f),
-            new PointF(markerX + 2.5f, markerY),
-            new PointF(markerX, markerY + 2.5f),
-            new PointF(markerX - 2.5f, markerY),
-        ]);
-        graphics.FillPolygon(coreBrush,
-        [
-            new PointF(markerX, markerY - 1),
-            new PointF(markerX + 1, markerY),
-            new PointF(markerX, markerY + 1),
-            new PointF(markerX - 1, markerY),
-        ]);
-    }
-
     private static void DrawTrendPaceIcon(Graphics graphics, RectangleF bounds, Color color)
     {
         using var pen = new Pen(color, 1.25f)
@@ -1559,21 +1459,6 @@ internal sealed class QuotaPopoverForm : Form
         graphics.DrawLines(pen, points);
         using var dot = new SolidBrush(color);
         graphics.FillEllipse(dot, bounds.Right - 2.5f, bounds.Top + .5f, 2.5f, 2.5f);
-    }
-
-    private static void DrawCyclePaceIcon(Graphics graphics, RectangleF bounds, Color color)
-    {
-        using var pen = new Pen(color, 1.15f)
-        {
-            StartCap = LineCap.Round,
-            EndCap = LineCap.Round,
-        };
-        var ring = RectangleF.Inflate(bounds, -1.2f, -1.2f);
-        graphics.DrawEllipse(pen, ring);
-        var center = new PointF(ring.Left + ring.Width / 2, ring.Top + ring.Height / 2);
-        graphics.DrawLine(pen, center, new PointF(ring.Right - .7f, ring.Top + 2.2f));
-        using var dot = new SolidBrush(color);
-        graphics.FillEllipse(dot, center.X - 1, center.Y - 1, 2, 2);
     }
 
     private RectangleF BodyBounds() => TaskbarPopoverMath.BodyBounds(

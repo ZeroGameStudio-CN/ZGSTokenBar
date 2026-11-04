@@ -256,6 +256,11 @@ remain estimates conditional on continued consumption. `--quota-pace-review`
 runs the focused calculation, weighting, reset, freshness, history and UI cases.
 When reset precedes exhaustion, the existing pace row shows the estimated
 percentage left at reset, using the same trend or explicitly labeled cycle average.
+The quota popover keeps one pace row. Its Codex Token section shows one recorded
+current-cycle amount, with explicit partial-cycle or device-only coverage when
+applicable; without a current observation the section is hidden. Linear budget
+goals and extrapolated capacity/average/peak figures are omitted from this surface.
+The underlying token history and ledger collection retain their existing behavior.
 Future samples and exhausted prior windows cannot establish current exhaustion.
 Already-rendered forecasts expire at their window reset or maximum data age;
 known exhausted/weekly-blocked quota can remain blocked until its known reset

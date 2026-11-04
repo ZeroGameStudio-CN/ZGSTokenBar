@@ -9782,6 +9782,12 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
                 38,
                 false,
                 RecentWeeklyAverageTokens: 5_000_000_000))),
+        ("token-local", new QuotaPopoverContent(
+            midCycleCard, midCycleCard.Windows[0], null, now, midCyclePace, false,
+            CodexQuotaTokens: new CodexQuotaTokenSummary(
+                midCycleCard.Key, "7d", TimeSpan.FromDays(7).Ticks, null, null, null, 0,
+                HasCurrentObservation: true, CurrentObservedTokens: 976_685_526,
+                CoversCycleStart: false, IsCurrentLocalFallback: true))),
         ("no-reset", new QuotaPopoverContent(
             noResetCard,
             noResetCard.Windows[0],
@@ -10973,10 +10979,6 @@ static void TestQuotaPacePopoverPresentation()
         TimeSpan.FromHours(1),
         now.AddMinutes(15));
 
-    Equal((240, 144), (QuotaPopoverForm.LogicalBodyWidth, QuotaPopoverForm.LogicalBodyHeight), "two pace rows fit the relaxed popover");
-    Equal(187, QuotaPopoverForm.LogicalCodexTokenBodyHeight, "Codex token references fit four compact metrics in two rows");
-    Equal("Token", zh.CodexQuotaCapacityTitle, "Chinese token title stays compact");
-    Equal("Tokens", en.CodexQuotaCapacityTitle, "English token title stays compact");
     var capacity = new CodexQuotaTokenSummary(
         "codex.capacity",
         "7d",
@@ -10991,10 +10993,9 @@ static void TestQuotaPacePopoverPresentation()
         true,
         RecentWeeklyAverageTokens: 5_000_000_000);
     Equal(
-        "已用29% 3.60M|容量 ≈12.4M|均值 ≈13.1M|峰值 ≈15.8M",
-        string.Join('|', zh.CodexQuotaCapacityMetrics(capacity, 29)),
-        "Chinese token metrics keep current, recent, and historical references separate");
-    Equal("账号实录", zh.CodexQuotaObservationEvidence(capacity), "cycle-start Profile coverage is source-qualified");
+        ("已用 Token", "3.60M", "本周期完整记录"),
+        zh.CodexQuotaTokenUsage(capacity)!.Value,
+        "complete cycle displays one recorded usage amount with coverage");
     var screenshotRegression = capacity with
     {
         CurrentCapacityTokens = 4_311_063_479,
@@ -11006,21 +11007,13 @@ static void TestQuotaPacePopoverPresentation()
         CoversCycleStart = false,
     };
     Equal(
-        2_845_301_896L,
-        screenshotRegression.EstimateUsedTokens(66),
-        "mid-cycle current used tokens scale the normalized capacity to live utilization");
+        ("已记录 Token", "1.64B", "本周期部分用量"),
+        zh.CodexQuotaTokenUsage(screenshotRegression)!.Value,
+        "partial cycle displays the observed amount without extrapolating it to a whole-cycle total");
     Equal(
-        "已用66% ≈2.85B|容量 ≈4.31B|均值 —|峰值 —",
-        string.Join('|', zh.CodexQuotaCapacityMetrics(screenshotRegression, 66)),
-        "mid-cycle current estimate aligns with the live used percentage");
-    Equal(
-        "账号估算",
-        zh.CodexQuotaObservationEvidence(screenshotRegression),
-        "mid-cycle Profile observation is labeled as an account estimate");
-    Equal(
-        "Account est.",
-        en.CodexQuotaObservationEvidence(screenshotRegression),
-        "English mid-cycle Profile source quality is explicit");
+        ("Recorded tokens", "1.64B", "Partial cycle · account usage"),
+        en.CodexQuotaTokenUsage(screenshotRegression)!.Value,
+        "English partial account usage retains its coverage");
     var localFallback = screenshotRegression with
     {
         CurrentCapacityTokens = 1_575_299_235,
@@ -11030,28 +11023,34 @@ static void TestQuotaPacePopoverPresentation()
         IsCurrentLocalFallback = true,
     };
     Equal(
-        "已用62% ≥977M|容量 ≈1.58B|均值 —|峰值 —",
-        string.Join('|', zh.CodexQuotaCapacityMetrics(localFallback, 62)),
-        "fallback current value stays a local lower bound instead of a back-estimated account total");
-    Equal("本机下限", zh.CodexQuotaObservationEvidence(localFallback), "fallback source quality is explicit");
+        ("本机 Token", "977M", "本周期记录 · 仅本机"),
+        zh.CodexQuotaTokenUsage(localFallback)!.Value,
+        "local usage retains its device scope even with cycle-start coverage");
     Equal(
-        "Used 29% collecting|Capacity collecting|Avg —|Peak —",
-        string.Join('|', en.CodexQuotaCapacityMetrics(capacity with
+        ("Local tokens", "977M", "Partial cycle · this device only"),
+        en.CodexQuotaTokenUsage(localFallback with { CoversCycleStart = false })!.Value,
+        "partial local usage explains both coverage limits");
+    Equal<(string, string, string)?>(null, zh.CodexQuotaTokenUsage(null), "absent observations hide the unused token section");
+    Equal<(string, string, string)?>(null, zh.CodexQuotaTokenUsage(capacity with { CurrentObservedTokens = null }),
+        "historical capacity alone does not stand in for current usage");
+    Equal("0", zh.CodexQuotaTokenUsage(capacity with { CurrentObservedTokens = 0 })!.Value.Value,
+        "a measured zero remains distinct from missing observations");
+    using (var logo = new Bitmap(24, 24))
+    using (var clock = new Bitmap(10, 10))
+    using (var popover = new QuotaPopoverForm())
+    {
+        var card = PaceCard("codex.usage", "Codex", 29, now.AddDays(4), now);
+        var content = new QuotaPopoverContent(card, card.Windows[0], null, now, projected, false);
+        foreach (var dpi in new[] { 96, 144, 192 })
         {
-            CurrentCapacityTokens = null,
-            MaxCapacityTokens = null,
-            AverageCapacityTokens = null,
-            CompletedCycleCount = 0,
-            CurrentObservedTokens = null,
-            CurrentObservedSpanPercent = null,
-            CoversCycleStart = false,
-            RecentWeeklyAverageTokens = null,
-        }, 29)),
-        "missing capacity data is explicit without fabricating values");
-    Equal(
-        "已用29% 记录中|容量 记录中|均值 —|峰值 —",
-        string.Join('|', zh.CodexQuotaCapacityMetrics(null, 29)),
-        "Codex quota hover advertises collection before the first attributable observation");
+            using var missing = popover.RenderForTest(content, zh, logo, clock, dpi, now);
+            using var observed = popover.RenderForTest(content with { CodexQuotaTokens = capacity }, en, logo, clock, dpi, now);
+            Equal(new Size(240 * dpi / 96, 132 * dpi / 96), missing.Size,
+                $"{dpi} DPI quota without observations has no empty token area");
+            Equal(new Size(240 * dpi / 96, 164 * dpi / 96), observed.Size,
+                $"{dpi} DPI observed usage reserves its amount and coverage note");
+        }
+    }
     Equal("Click to pin", en.PinHint, "English pin hint stays concise");
     Equal("Esc / 点击外部", zh.ClosePinnedHint, "Chinese pinned hint stays concise");
     Equal(
@@ -11160,10 +11159,6 @@ static void TestQuotaPacePopoverPresentation()
         zh.QuotaPace(new QuotaPaceEstimate(QuotaPaceStatus.WeeklyBlocked), now),
         "weekly-blocked state");
     Equal(
-        ("Returns after weekly reset", string.Empty),
-        en.QuotaCycle(new QuotaPaceEstimate(QuotaPaceStatus.WeeklyBlocked)),
-        "weekly-blocked cycle guidance");
-    Equal(
         ("最近预估 · 8.4%/时", "约8时11分用完"),
         zh.QuotaPace(projected, now.AddMinutes(16)),
         "recent cached pace remains available with an explicit fallback label");
@@ -11248,30 +11243,6 @@ static void TestQuotaPacePopoverPresentation()
             ValidUntil = screenshotAt.AddMinutes(-1),
         }, screenshotAt),
         "an expired waiting state does not expose an old cycle ETA");
-    Equal(
-        ("周期超额 10%", "近期过快"),
-        zh.QuotaCycle(projected),
-        "Chinese cycle budget and recent warning");
-    Equal(
-        ("Cycle 10% over", "Recent too fast"),
-        en.QuotaCycle(projected),
-        "English cycle budget and recent warning");
-    Equal(
-        ("Cycle 10% over", "Need ≤0.6×"),
-        en.QuotaCycle(projected with { Recent = null }),
-        "cycle-only fallback keeps its throttle guidance");
-    Equal(
-        ("当前目标 54%", "余量 17%"),
-        zh.QuotaCurrentGoal(54, 71),
-        "Chinese daily goal explains the long-window marker");
-    Equal(
-        ("Current goal 54%", "8% over"),
-        en.QuotaCurrentGoal(54, 46),
-        "English daily goal reports an exceeded target");
-    Equal(
-        ("Current goal 54%", "Recent too fast"),
-        en.QuotaCurrentGoal(54, 71, recentTooFast: true),
-        "recent exhaustion warning overrides daily spare");
     Equal(
         ("15m early · 8.0%/h", "until reset"),
         en.QuotaPace(new QuotaPaceEstimate(
