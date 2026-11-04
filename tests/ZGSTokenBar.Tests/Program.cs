@@ -2961,7 +2961,14 @@ static void TestCockpitProCodexAccountMerge()
             "chatgpt_pro",
             0,
             staleSnapshotAt,
-            currentAccessToken);
+            currentAccessToken,
+            resetCreditsAvailable: 3,
+            resetCredits:
+            [
+                new { id = "credit-one", status = "available", reset_type = "full", expires_at = now.AddHours(2).ToUnixTimeSeconds() },
+                new { id = "credit-two", status = "available", reset_type = "full", expires_at = now.AddHours(2).ToUnixTimeSeconds() },
+                new { id = "credit-three", status = "available", reset_type = "full", expires_at = now.AddHours(8).ToUnixTimeSeconds() },
+            ]);
         WriteCockpitCodexAccount(
             Path.Combine(accountDirectory, "second.json"),
             key,
@@ -3031,6 +3038,9 @@ static void TestCockpitProCodexAccountMerge()
         Equal(1, result.Cards.Count(card => card.Badge == "pro"), "current Cockpit account retains Pro badge");
         Equal(1, result.Cards.Count(card => card.Badge == "plus"), "current native account retains Plus badge");
         Equal(3, result.CodexAccounts.Count, "all valid Cockpit accounts expose quota summaries");
+        Equal("2,1", string.Join(',', result.CodexAccounts.Single(account => account.AccountId == currentId)
+            .ResetCreditBatches.Select(batch => batch.Count)),
+            "encrypted Cockpit reset-credit batches reach the normal account snapshot");
         Equal(
             "6,11,17",
             string.Join(",", result.CodexAccounts
@@ -3511,7 +3521,9 @@ static void WriteCockpitCodexAccount(
     string? accessToken = null,
     string? idToken = null,
     string? refreshToken = null,
-    DateTimeOffset? subscriptionActiveUntil = null)
+    DateTimeOffset? subscriptionActiveUntil = null,
+    int? resetCreditsAvailable = null,
+    object[]? resetCredits = null)
 {
     var effectiveSubscription = subscriptionActiveUntil ?? capturedAt.AddDays(30);
     var effectiveAccessToken = accessToken ?? TestJwt(new Dictionary<string, object?>
@@ -3539,6 +3551,8 @@ static void WriteCockpitCodexAccount(
         usage_updated_at = capturedAt.ToUnixTimeSeconds(),
         quota = new
         {
+            reset_credits_available = resetCreditsAvailable,
+            reset_credits = resetCredits,
             raw_data = new
             {
                 account_id = $"acct-{id}",

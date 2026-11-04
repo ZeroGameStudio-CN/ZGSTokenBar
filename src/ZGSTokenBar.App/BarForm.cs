@@ -379,6 +379,7 @@ internal sealed partial class BarForm : Form
     public void SetQuotaPaceEstimates(IReadOnlyDictionary<string, QuotaPaceEstimate> estimates)
     {
         _quotaPaceEstimates = estimates;
+        RefreshCodexStrategy();
         RefreshQuotaPopover();
         Invalidate();
     }

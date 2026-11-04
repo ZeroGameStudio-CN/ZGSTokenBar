@@ -352,7 +352,10 @@ public sealed class QuotaPaceTracker
     }
 
     public static string SeriesKey(QuotaCard card, QuotaWindow window) =>
-        $"{card.Key}\0{NormalizeWindowLabel(window)}\0{window.Duration.Ticks}";
+        SeriesKey(card.Key, window);
+
+    public static string SeriesKey(string cardKey, QuotaWindow window) =>
+        $"{cardKey}\0{NormalizeWindowLabel(window)}\0{window.Duration.Ticks}";
 
     public static bool IsFreshCapture(
         DateTimeOffset capturedAt,

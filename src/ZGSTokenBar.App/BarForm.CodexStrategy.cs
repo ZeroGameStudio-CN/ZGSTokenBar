@@ -14,7 +14,7 @@ internal sealed partial class BarForm
         : throw new InvalidOperationException("Strategy hit testing is render-only.");
 
     private CodexUsageStrategy CodexStrategy => _codexStrategy ??=
-        CodexUsageStrategy.Create(_codexAccounts, _snapshot.CodexAccounts, _utcNow());
+        CodexUsageStrategy.Create(_codexAccounts, _snapshot.CodexAccounts, _utcNow(), _quotaPaceEstimates);
 
     private int CodexStrategyExtraWidth(string areaId, bool collapsed) =>
         !collapsed && areaId == MiniAreaIds.Codex && CodexStrategy.Accounts.Count > 0
