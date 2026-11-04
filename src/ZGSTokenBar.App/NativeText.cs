@@ -725,7 +725,8 @@ internal sealed class NativeText
 
     public (string Left, string Right) QuotaPace(
         QuotaPaceEstimate? estimate,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        DateTimeOffset? resetsAt = null)
     {
         estimate = estimate?.ForDisplay(now);
         if (estimate is null)
@@ -740,7 +741,8 @@ internal sealed class NativeText
                 PaceRate(
                     stale ? T("最近预估", "Recent estimate") : TrendPrefix(recent.ObservedSpan, recent.Confidence),
                     recent.PercentPerHour),
-                ProjectionText(recent.ProjectedExhaustedAt, recent.ResetsBeforeExhaustion, now));
+                ProjectionText(recent.ProjectedExhaustedAt, recent.ResetsBeforeExhaustion, now,
+                    recent.PercentPerHour, resetsAt));
         }
 
         if (estimate.Status == QuotaPaceStatus.NoMeaningfulConsumption)
@@ -761,7 +763,9 @@ internal sealed class NativeText
                     ProjectionText(
                         fallbackCycle.ProjectedExhaustedAt,
                         fallbackCycle.ResetsBeforeExhaustion,
-                        now));
+                        now,
+                        fallbackRate,
+                        resetsAt));
             }
             return (T("等待新数据", "Waiting for data"), string.Empty);
         }
@@ -777,7 +781,8 @@ internal sealed class NativeText
         {
             return (
                 PaceRate(T("周期均速", "Cycle avg"), rate),
-                ProjectionText(cycle.ProjectedExhaustedAt, cycle.ResetsBeforeExhaustion, now));
+                ProjectionText(cycle.ProjectedExhaustedAt, cycle.ResetsBeforeExhaustion, now,
+                    rate, resetsAt));
         }
         return (T("趋势样本收集中", "Building trend"), string.Empty);
     }
@@ -882,9 +887,25 @@ internal sealed class NativeText
     private string ProjectionText(
         DateTimeOffset? projectedAt,
         bool resetsBeforeExhaustion,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        double percentPerHour,
+        DateTimeOffset? resetsAt)
     {
-        if (resetsBeforeExhaustion) return T("可撑到重置", "until reset");
+        if (resetsBeforeExhaustion)
+        {
+            if (resetsAt is { } reset && reset > now
+                && projectedAt is { } projected && projected >= reset
+                && double.IsFinite(percentPerHour) && percentPerHour > 0)
+            {
+                var remaining = percentPerHour * (projected - reset).TotalHours;
+                if (double.IsFinite(remaining))
+                {
+                    var percent = CompactPercent(remaining);
+                    return T($"重置约剩 {percent}", $"~{percent} at reset");
+                }
+            }
+            return T("可撑到重置", "until reset");
+        }
         if (projectedAt is not { } exhaustedAt || exhaustedAt <= now) return string.Empty;
 
         var compact = FormatCompactReset(exhaustedAt, now);

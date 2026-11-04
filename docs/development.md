@@ -254,6 +254,8 @@ Quota depletion uses provider-reported percentage changes, independent of the
 conversation token-speed table. Cycle fallback and rolling trend projections
 remain estimates conditional on continued consumption. `--quota-pace-review`
 runs the focused calculation, weighting, reset, freshness, history and UI cases.
+When reset precedes exhaustion, the existing pace row shows the estimated
+percentage left at reset, using the same trend or explicitly labeled cycle average.
 Future samples and exhausted prior windows cannot establish current exhaustion.
 Already-rendered forecasts expire at their window reset or maximum data age;
 known exhausted/weekly-blocked quota can remain blocked until its known reset

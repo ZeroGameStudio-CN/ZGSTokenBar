@@ -437,7 +437,7 @@ internal sealed class QuotaPopoverForm : Form
             DrawBudgetMarker(graphics, track, markerX);
         }
 
-        var pace = _text.QuotaPace(currentPace, now);
+        var pace = _text.QuotaPace(currentPace, now, content.Window.ResetsAt);
         var paceColor = pace.Right.Length == 0
             ? Color.FromArgb(148, 163, 184)
             : Color.FromArgb(94, 234, 212);
