@@ -37,6 +37,15 @@ internal static class CodexUsageStrategyTests
         Check(strategy.Accounts.Select(row => row.Account.AccountId)
             .SequenceEqual(new[] { "plan", "tomorrow", "small", "blocked", "stale" }),
             "Prioritize usable quotas, group low quota separately, deduplicate shared quota and skip API keys.");
+        Check(strategy.Accounts.Select(row => row.Priority).SequenceEqual(new int?[] { 1, 2, 3, null, null }),
+            "Usable accounts have explicit contiguous priorities while waiting and stale accounts remain unranked.");
+        var cardFirst = CodexUsageStrategy.Create(accounts, quotas.Select(quota =>
+            quota.AccountId == "tomorrow" ? quota with { NextResetCreditExpiry = now.AddHours(1) } : quota).ToArray(), now);
+        Check(cardFirst.Accounts[0].Account.AccountId == "tomorrow"
+            && cardFirst.Accounts[0].Priority == 1
+            && cardFirst.Accounts[0].PriorityReason == CodexStrategyDeadline.ResetCredit
+            && cardFirst.Accounts[0].PriorityDeadline == now.AddHours(1),
+            "A known earlier reset-credit cutoff changes the actual account recommendation.");
         Check(strategy.Accounts[0].DeadlineKind == CodexStrategyDeadline.Subscription
             && strategy.Accounts[0].Deadline == now.AddHours(20)
             && strategy.Accounts[0].Cards == 3 && strategy.Accounts[0].CardExpiry is null,
@@ -58,6 +67,11 @@ internal static class CodexUsageStrategyTests
         using var form = new CodexStrategyPopoverForm();
         using var bitmap = form.RenderForTest(strategy, NativeText.For("zh-CN"),
             QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
+        Check(form.AccessibleDescription!.Contains("1. p***n@example.test")
+            && form.AccessibleDescription.Contains("先用 · 订阅有效期结束")
+            && form.AccessibleDescription.Contains("可并行 · 自然重置")
+            && form.AccessibleDescription.Contains("少量可用"),
+            "The displayed recommendation communicates order, reasons, parallel choices and low-quota limits.");
         if (capture is not null) bitmap.Save(capture, System.Drawing.Imaging.ImageFormat.Png);
         Check(bitmap.Width == 640 && bitmap.Height > 280
             && Enumerable.Range(0, bitmap.Width).Select(x => bitmap.GetPixel(x, 15)).Distinct().Count() > 1,
