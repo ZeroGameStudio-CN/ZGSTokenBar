@@ -20,6 +20,13 @@ internal sealed record CodexStrategyAccount(
     bool ResetBeforeCard)
 {
     public bool HasLittleQuota => Windows.Any(window => window.UsedPercent >= 95);
+    public int? Priority { get; init; }
+    public DateTimeOffset? PriorityDeadline =>
+        RedeemBy is { } redeem && (Deadline is null || redeem < Deadline) ? redeem : Deadline;
+    public CodexStrategyDeadline? PriorityReason =>
+        RedeemBy is { } redeem && (Deadline is null || redeem < Deadline)
+            ? CodexStrategyDeadline.ResetCredit
+            : DeadlineKind;
 }
 
 internal sealed record CodexUsageStrategy(
@@ -45,8 +52,12 @@ internal sealed record CodexUsageStrategy(
             .Select(item => Project(item.Account, item.Quota, now))
             .OrderBy(row => row.State)
             .ThenBy(row => row.State == CodexStrategyState.Ready && row.HasLittleQuota)
-            .ThenBy(row => row.Deadline ?? row.Recovery ?? DateTimeOffset.MaxValue)
+            .ThenBy(row => row.PriorityDeadline ?? row.Recovery ?? DateTimeOffset.MaxValue)
             .ThenByDescending(row => row.Account.Active)
+            .ThenBy(row => row.Account.AccountId, StringComparer.Ordinal)
+            .Select((row, index) => row.State == CodexStrategyState.Ready
+                ? row with { Priority = index + 1 }
+                : row)
             .ToArray();
         var urgent = rows.SelectMany(row => new[]
             {

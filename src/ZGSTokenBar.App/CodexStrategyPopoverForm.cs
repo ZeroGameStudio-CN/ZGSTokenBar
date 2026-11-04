@@ -14,10 +14,16 @@ internal sealed class CodexStrategyPopoverForm : Form
     private readonly System.Windows.Forms.Timer _entranceTimer = new() { Interval = 16 };
     private readonly System.Windows.Forms.Timer _exitTimer = new() { Interval = 16 };
     private readonly VScrollBar _scrollbar = new() { Visible = false, TabStop = false };
-    private readonly Font _headingFont = new("Segoe UI", 15, FontStyle.Bold, GraphicsUnit.Pixel);
+    private readonly Font _headingFont = new("Segoe UI", 18, FontStyle.Bold, GraphicsUnit.Pixel);
     private readonly Font _bodyFont = new("Segoe UI", 12, FontStyle.Regular, GraphicsUnit.Pixel);
-    private readonly Font _strongFont = new("Segoe UI", 12, FontStyle.Bold, GraphicsUnit.Pixel);
-    private readonly List<(string[] Values, Font Font, int Height)> _rows = [];
+    private readonly Font _strongFont = new("Segoe UI", 13, FontStyle.Bold, GraphicsUnit.Pixel);
+    private readonly Font _nameFont = new("Segoe UI", 14, FontStyle.Bold, GraphicsUnit.Pixel);
+    private readonly Font _rankFont = new("Segoe UI", 16, FontStyle.Bold, GraphicsUnit.Pixel);
+    private readonly List<DisplayRow> _rows = [];
+    private QuotaBackgroundTheme _theme = QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette);
+    private static readonly Color Accent = Color.FromArgb(147, 197, 253);
+    private static readonly Color Muted = Color.FromArgb(161, 174, 193);
+    private static readonly Color DeadlineColor = Color.FromArgb(251, 191, 108);
     private float _scale = 1;
     private int ContentHeight => 14 + _rows.Sum(row => row.Height);
     private NativeText _text = NativeText.For("zh-CN");
@@ -193,31 +199,99 @@ internal sealed class CodexStrategyPopoverForm : Form
         graphics.DrawLines(border, tail);
         graphics.SetClip(RectangleF.Inflate(body, -1, -1));
         graphics.TranslateTransform(body.Left, body.Top - _scrollbar.Value / _scale);
-        using var foreground = new SolidBrush(ForeColor);
-        using var muted = new SolidBrush(Color.FromArgb(160, 174, 192));
+        var contentWidth = Math.Max(1, body.Width - 32 - (_scrollbar.Maximum >= _scrollbar.LargeChange ? 16 : 0));
+        var y = 8f;
+        foreach (var row in _rows)
+        {
+            DrawRow(graphics, row, new RectangleF(16, y, contentWidth, row.Height));
+            y += row.Height;
+        }
+        graphics.Restore(state);
+    }
+
+    private void DrawRow(Graphics graphics, DisplayRow row, RectangleF bounds)
+    {
+        var values = row.Values;
+        if (row.Kind == RowKind.Title)
+        {
+            DrawText(graphics, values[0], _headingFont, ForeColor,
+                new RectangleF(bounds.X, bounds.Y, bounds.Width * .7f, bounds.Height));
+            DrawText(graphics, values[1], _bodyFont, row.Urgent ? DeadlineColor : Muted,
+                new RectangleF(bounds.X + bounds.Width * .7f, bounds.Y, bounds.Width * .3f, bounds.Height), StringAlignment.Far);
+            return;
+        }
+        if (row.Kind == RowKind.Note)
+        {
+            DrawText(graphics, values[0], _bodyFont, Muted, bounds);
+            return;
+        }
+        if (row.Kind == RowKind.Section)
+        {
+            using var line = new Pen(Color.FromArgb(52, 148, 163, 184));
+            graphics.DrawLine(line, bounds.Left, bounds.Top + 7, bounds.Right, bounds.Top + 7);
+            DrawText(graphics, values[0], _strongFont, ForeColor,
+                new RectangleF(bounds.X, bounds.Y + 12, bounds.Width * .6f, bounds.Height - 12));
+            if (values.Length > 1)
+                DrawText(graphics, values[1], _bodyFont, Muted,
+                    new RectangleF(bounds.X + bounds.Width * .6f, bounds.Y + 12, bounds.Width * .4f, bounds.Height - 12),
+                    StringAlignment.Far);
+            return;
+        }
+
+        var nameX = bounds.Left + 8;
+        var contentRight = bounds.Right - 8;
+        if (row.Kind == RowKind.Recommendation)
+        {
+            var first = row.Priority == 1 && !row.LowQuota;
+            if (first)
+            {
+                using var surface = new SolidBrush(_theme.QuotaGroup);
+                graphics.FillRoundedRectangle(surface, RectangleF.Inflate(bounds, 0, -2), 8);
+                using var tint = new SolidBrush(Color.FromArgb(19, Accent));
+                graphics.FillRoundedRectangle(tint, RectangleF.Inflate(bounds, 0, -2), 8);
+            }
+            var rankBounds = new RectangleF(bounds.Left + 10, bounds.Top + 13, 28, 28);
+            using var rankFill = new SolidBrush(first ? Color.FromArgb(45, Accent) : _theme.QuotaGroup);
+            graphics.FillRoundedRectangle(rankFill, rankBounds, 7);
+            DrawText(graphics, row.Priority!.Value.ToString(CultureInfo.InvariantCulture), _rankFont,
+                row.LowQuota ? Muted : Accent, rankBounds, StringAlignment.Center);
+            nameX = bounds.Left + 50;
+        }
+        else
+        {
+            using var line = new Pen(Color.FromArgb(28, 148, 163, 184));
+            graphics.DrawLine(line, bounds.Left + 8, bounds.Bottom - 1, bounds.Right - 8, bounds.Bottom - 1);
+        }
+        var detailY = bounds.Top + (row.Kind == RowKind.Recommendation ? 31 : 23);
+        var nameWidth = Math.Max(1, (contentRight - nameX) * .60f);
+        var rightX = nameX + nameWidth + 8;
+        var rightWidth = Math.Max(1, contentRight - rightX);
+        DrawText(graphics, values[0], row.Kind == RowKind.Recommendation ? _nameFont : _strongFont,
+            row.LowQuota ? Muted : ForeColor, new RectangleF(nameX, bounds.Top + 3, nameWidth, 24));
+        DrawText(graphics, values[1], _strongFont, row.LowQuota ? Muted : ForeColor,
+            new RectangleF(rightX, bounds.Top + 3, rightWidth, 24), StringAlignment.Far);
+        DrawText(graphics, values[2], _bodyFont,
+            row.Kind == RowKind.Recommendation && row.Priority == 1 && !row.LowQuota ? Accent : Muted,
+            new RectangleF(nameX, detailY, nameWidth, 20));
+        DrawText(graphics, values[3], _bodyFont, row.Urgent ? DeadlineColor : Muted,
+            new RectangleF(rightX, detailY, rightWidth, 20), StringAlignment.Far);
+        if (row.Footnote is { } footnote)
+            DrawText(graphics, footnote, _bodyFont, Muted,
+                new RectangleF(nameX, bounds.Top + 43, contentRight - nameX, 20));
+    }
+
+    private static void DrawText(Graphics graphics, string value, Font font, Color color,
+        RectangleF bounds, StringAlignment alignment = StringAlignment.Near)
+    {
+        using var brush = new SolidBrush(color);
         using var format = new StringFormat
         {
+            Alignment = alignment,
             LineAlignment = StringAlignment.Center,
             FormatFlags = StringFormatFlags.NoWrap,
             Trimming = StringTrimming.EllipsisCharacter,
         };
-        var contentWidth = Math.Max(1, body.Width - 24 - (_scrollbar.Maximum >= _scrollbar.LargeChange ? 16 : 0));
-        var columnWidths = new[] { .23f, .19f, .29f, .29f };
-        var y = 6f;
-        foreach (var (values, font, height) in _rows)
-        {
-            var x = 12f;
-            for (var column = 0; column < values.Length; column++)
-            {
-                var cellWidth = contentWidth * (values.Length == 1 ? 1 : columnWidths[column]);
-                graphics.DrawString(values[column], column == 0 ? font : _bodyFont,
-                    font == _bodyFont ? muted : foreground,
-                    new RectangleF(x, y, Math.Max(1, cellWidth - 5), height), format);
-                x += cellWidth;
-            }
-            y += height;
-        }
-        graphics.Restore(state);
+        graphics.DrawString(value, font, brush, bounds, format);
     }
 
     private bool VerticalTail => _tailSide is PopoverTailSide.Top or PopoverTailSide.Bottom;
@@ -314,17 +388,32 @@ internal sealed class CodexStrategyPopoverForm : Form
         _scale = scale;
         Text = TitleFor(text);
         BackColor = theme.Popover;
+        _theme = theme;
         ForeColor = Color.FromArgb(241, 245, 249);
         _rows.Clear();
 
-        Heading(TitleFor(text), _headingFont, extraHeight: 5);
-        Heading(T($"未来 24 小时有 {strategy.Urgent.Count} 项已知截止。按任务所需额度选择账号。",
-            $"{strategy.Urgent.Count} known deadlines in 24h. Choose accounts that fit each task."));
-        _rows.Add(([T("账号", "Account"), T("余量 / 复查", "Quota / review"),
-            T("事项", "Action"), T("截止 / 恢复", "Deadline / recovery")], _bodyFont, LogicalRowHeight));
+        _rows.Add(new([TitleFor(text), T($"24 小时内 {strategy.Urgent.Count} 项临期",
+            $"{strategy.Urgent.Count} due within 24h")], RowKind.Title, 36, Urgent: strategy.Urgent.Count > 0));
+        _rows.Add(new([T("编号为推荐顺序，多条合适任务可并行。", "Use the ranked order to assign work. Suitable tasks can run in parallel.")],
+            RowKind.Note, 24));
+        var urgentAccounts = strategy.Urgent.Select(item => item.Account.Account.AccountId).ToHashSet(StringComparer.Ordinal);
         var ready = strategy.Accounts.Where(row => row.State == CodexStrategyState.Ready).ToArray();
-        ReadyRows(T("现在可用", "Ready now"), ready.Where(row => !row.HasLittleQuota));
-        ReadyRows(T("余量较少 · 先核对任务", "Low quota · Check task fit"), ready.Where(row => row.HasLittleQuota));
+        if (ready.Length > 0) Section(T("推荐使用顺序", "Recommended order"), T("剩余额度 · 截止时间", "Remaining quota · Deadline"));
+        foreach (var account in ready)
+        {
+            var urgent = urgentAccounts.Contains(account.Account.AccountId);
+            var action = account.HasLittleQuota ? T("少量可用 · 先确认任务能跑完", "Low quota · Check task fit")
+                : account.Priority == 1 ? T("先用", "Use first")
+                : urgent ? T("可并行", "Can run in parallel")
+                : T("备用", "Use next");
+            var reason = account.PriorityReason is { } kind ? DeadlineText(kind, text) : T("暂无已知截止", "No known deadline");
+            var name = $"{CodexAccountFormatting.MaskEmail(account.Account.Email)} · {CodexAccountFormatting.PlanLabel(account.Account.Plan).ToUpperInvariant()}";
+            _rows.Add(new([name, Quotas(account.Windows),
+                $"{action} · {reason}", Time(account.PriorityDeadline)], RowKind.Recommendation, 58,
+                account.Priority, urgent, account.HasLittleQuota));
+        }
+        if (ready.Length == 0)
+            _rows.Add(new([T("当前可用额度待确认，先看下方恢复和刷新事项。", "No confirmed usable quota. Check recovery and refresh actions below.")], RowKind.Note, 28));
         Rows(T("等待恢复或刷新", "Waiting or needs refresh"),
             strategy.Accounts.Where(row => row.State != CodexStrategyState.Ready),
             row => row.State switch
@@ -343,47 +432,60 @@ internal sealed class CodexStrategyPopoverForm : Form
                 : T("核对兑换条件", "Check eligibility"),
             row => row.RedeemBy != row.CardExpiry
                 ? $"{Time(row.RedeemBy)} {T("订阅结束", "plan ends")}"
-                : Time(row.CardExpiry),
+                : row.CardExpiry is not null ? $"{Time(row.CardExpiry)} {T("到期", "expires")}" : "",
+            strategy.Urgent.Where(item => item.Kind == CodexStrategyDeadline.ResetCredit)
+                .Select(item => item.Account.Account.AccountId).ToHashSet(StringComparer.Ordinal),
             showCredits: true);
-        if (strategy.Accounts.Count == 0) Heading(T("暂无 Cockpit Tools 账号额度。", "No Cockpit Tools account quotas."));
 
-        AccessibleDescription = string.Join(Environment.NewLine, _rows.Select(row => string.Join(" · ", row.Values)));
+        AccessibleDescription = string.Join(Environment.NewLine, _rows.Select(row =>
+            (row.Priority is { } priority ? $"{priority}. " : "") + string.Join(" · ", row.Values)
+            + (row.Footnote is { } footnote ? $" · {footnote}" : "")));
         Invalidate();
     }
-
-    private void ReadyRows(string title, IEnumerable<CodexStrategyAccount> accounts) =>
-        Rows(title, accounts,
-            row => row.DeadlineKind is { } kind ? DeadlineText(kind, _text) : T("可分配任务", "Available"),
-            row => Time(row.Deadline));
 
     private void Rows(
         string title,
         IEnumerable<CodexStrategyAccount> accounts,
         Func<CodexStrategyAccount, string> action,
         Func<CodexStrategyAccount, string> time,
+        IReadOnlySet<string>? urgentAccounts = null,
         bool showCredits = false)
     {
         var rows = accounts.ToArray();
         if (rows.Length == 0) return;
-        Heading(title, _strongFont, extraHeight: 4);
+        Section(title);
         foreach (var row in rows)
         {
             var quota = showCredits
-                ? row.ReviewBy is { } review ? T($"{Time(review)} 前复查", $"Check by {Time(review)}")
-                    : row.CardExpiry is not null ? T("现在复查", "Check now")
-                    : row.Cards is { } count ? T($"{count} 张", $"{count} credits") : "—"
+                ? row.Cards is { } count ? T($"{count} 张重置卡", $"{count} reset credits") : T("张数待刷新", "Count unavailable")
                 : Quotas(row.Windows);
-            _rows.Add(([CodexAccountFormatting.MaskEmail(row.Account.Email), quota, action(row), time(row)],
-                _strongFont, LogicalRowHeight));
+            var review = showCredits && row.ReviewBy is { } at
+                ? T($"建议 {Time(at)} 前复查", $"Review by {Time(at)}")
+                : null;
+            _rows.Add(new([CodexAccountFormatting.MaskEmail(row.Account.Email), quota, action(row), time(row)],
+                RowKind.Detail, review is null ? 46 : 66,
+                Urgent: urgentAccounts?.Contains(row.Account.AccountId) == true, Footnote: review));
         }
     }
 
-    private void Heading(string value, Font? font = null, int extraHeight = 0) =>
-        _rows.Add(([value], font ?? _bodyFont, LogicalRowHeight + extraHeight));
+    private void Section(string value, string? detail = null) =>
+        _rows.Add(new(detail is null ? [value] : [value, detail], RowKind.Section, 36));
 
-    private static string Quotas(IReadOnlyList<QuotaWindow> windows) =>
+    private enum RowKind { Title, Note, Section, Recommendation, Detail }
+    private sealed record DisplayRow(string[] Values, RowKind Kind, int Height,
+        int? Priority = null, bool Urgent = false, bool LowQuota = false, string? Footnote = null);
+
+    private string Quotas(IReadOnlyList<QuotaWindow> windows) =>
         windows.Count == 0 ? "—" : string.Join(" · ", windows.Select(window =>
-            $"{QuotaDisplayFormatting.FormatWindowShort(window)} {Remaining(window.UsedPercent)}"));
+            $"{WindowLabel(window)} {Remaining(window.UsedPercent)}"));
+
+    private string WindowLabel(QuotaWindow window) => QuotaDisplayFormatting.FormatWindowShort(window) switch
+    {
+        "7d" => T("周", "7d"),
+        "5h" => T("5小时", "5h"),
+        "30d" => T("30天", "30d"),
+        var label => label,
+    };
 
     private static string Remaining(double? used) => used switch
     {
@@ -413,6 +515,8 @@ internal sealed class CodexStrategyPopoverForm : Form
             _headingFont.Dispose();
             _bodyFont.Dispose();
             _strongFont.Dispose();
+            _nameFont.Dispose();
+            _rankFont.Dispose();
         }
         base.Dispose(disposing);
     }
