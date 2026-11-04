@@ -607,17 +607,34 @@ internal sealed class NativeText
         }
 
         var value = FormatTokenCount(tokens);
+        var span = summary.CurrentObservedSpanPercent;
+        if (tokens > 0
+            && summary.CurrentCapacityTokens is { } capacity && capacity > 0
+            && span is { } samplePercent && double.IsFinite(samplePercent)
+            && samplePercent >= CodexQuotaTokenTracker.MinimumCurrentSpanPercent && samplePercent <= 100)
+        {
+            var sample = samplePercent.ToString("0.#", CultureInfo.InvariantCulture);
+            var source = summary.IsCurrentLocalFallback
+                ? T("本机", "Local")
+                : summary.CoversCycleStart ? T("已用", "Used") : T("部分记录", "Partial");
+            return (T("100%额度估算", "100% estimate"), "≈" + FormatTokenCount(capacity),
+                T($"{source} {value} Token · 样本 {sample}%", $"{source} {value} tokens · {sample}% sample"));
+        }
+
+        var pending = span is >= 0 and < CodexQuotaTokenTracker.MinimumCurrentSpanPercent
+            ? T("样本不足1%，待估算", "Estimate after a 1% sample")
+            : null;
         if (summary.IsCurrentLocalFallback)
         {
             return (T("本机 Token", "Local tokens"), value,
-                summary.CoversCycleStart
+                pending ?? (summary.CoversCycleStart
                     ? T("本周期记录 · 仅本机", "This cycle · this device only")
-                    : T("部分周期记录 · 仅本机", "Partial cycle · this device only"));
+                    : T("部分周期记录 · 仅本机", "Partial cycle · this device only")));
         }
 
         return summary.CoversCycleStart
-            ? (T("已用 Token", "Used tokens"), value, T("本周期完整记录", "Full cycle · account usage"))
-            : (T("已记录 Token", "Recorded tokens"), value, T("本周期部分用量", "Partial cycle · account usage"));
+            ? (T("已用 Token", "Used tokens"), value, pending ?? T("本周期完整记录", "Full cycle · account usage"))
+            : (T("已记录 Token", "Recorded tokens"), value, pending ?? T("本周期部分用量", "Partial cycle · account usage"));
     }
 
     internal static string FormatTokenCount(long tokens)

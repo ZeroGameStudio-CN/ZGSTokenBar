@@ -266,7 +266,7 @@ test('Codex logo hover owns local token totals and cache hit rate without coupli
   assert.match(tokenUsageReader, /TotalCacheHitPercent/);
 });
 
-test('Codex quota hover shows one recorded token amount with its coverage', () => {
+test('Codex quota hover combines the 100 percent estimate with its recorded sample', () => {
   assert.match(popover, /DrawQuotaTokenUsage/);
   assert.match(popover, /QuotaTokenUsage is not null/);
   assert.match(popover, /content\.Card\.Provider == ProviderKind\.Codex && !content\.Card\.IsService/);
@@ -277,7 +277,9 @@ test('Codex quota hover shows one recorded token amount with its coverage', () =
   assert.match(tokenUsage, /IsCurrentLocalFallback/);
   assert.match(tokenUsage, /本周期部分用量/);
   assert.match(tokenUsage, /this device only/);
-  assert.doesNotMatch(tokenUsage, /EstimateUsedTokens|CapacityTokens|AverageCapacityTokens|MaxCapacityTokens/);
+  assert.match(tokenUsage, /CurrentCapacityTokens/);
+  assert.match(tokenUsage, /MinimumCurrentSpanPercent/);
+  assert.doesNotMatch(tokenUsage, /EstimateUsedTokens|AverageCapacityTokens|MaxCapacityTokens/);
   assert.match(barForm, /SetCodexQuotaTokenSummaries/);
   assert.match(applicationContext, /CodexQuotaTokenObservations\(next, observedAt\)/);
   assert.match(applicationContext, /recentWeeklyByCard/);

@@ -9788,6 +9788,18 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
                 midCycleCard.Key, "7d", TimeSpan.FromDays(7).Ticks, null, null, null, 0,
                 HasCurrentObservation: true, CurrentObservedTokens: 976_685_526,
                 CoversCycleStart: false, IsCurrentLocalFallback: true))),
+        ("token-local-estimate", new QuotaPopoverContent(
+            midCycleCard, midCycleCard.Windows[0], null, now, midCyclePace, false,
+            CodexQuotaTokens: new CodexQuotaTokenSummary(
+                midCycleCard.Key, "7d", TimeSpan.FromDays(7).Ticks, 1_575_299_235, null, null, 0,
+                HasCurrentObservation: true, CurrentObservedTokens: 976_685_526,
+                CurrentObservedSpanPercent: 62, IsCurrentLocalFallback: true))),
+        ("token-early-sample", new QuotaPopoverContent(
+            midCycleCard, midCycleCard.Windows[0], null, now, midCyclePace, false,
+            CodexQuotaTokens: new CodexQuotaTokenSummary(
+                midCycleCard.Key, "7d", TimeSpan.FromDays(7).Ticks, null, null, null, 0,
+                HasCurrentObservation: true, CurrentObservedTokens: 500_000,
+                CurrentObservedSpanPercent: .5))),
         ("no-reset", new QuotaPopoverContent(
             noResetCard,
             noResetCard.Windows[0],
@@ -10993,9 +11005,9 @@ static void TestQuotaPacePopoverPresentation()
         true,
         RecentWeeklyAverageTokens: 5_000_000_000);
     Equal(
-        ("已用 Token", "3.60M", "本周期完整记录"),
+        ("100%额度估算", "≈12.4M", "已用 3.60M Token · 样本 29%"),
         zh.CodexQuotaTokenUsage(capacity)!.Value,
-        "complete cycle displays one recorded usage amount with coverage");
+        "100 percent capacity and its recorded cycle sample share one section");
     var screenshotRegression = capacity with
     {
         CurrentCapacityTokens = 4_311_063_479,
@@ -11007,13 +11019,13 @@ static void TestQuotaPacePopoverPresentation()
         CoversCycleStart = false,
     };
     Equal(
-        ("已记录 Token", "1.64B", "本周期部分用量"),
+        ("100%额度估算", "≈4.31B", "部分记录 1.64B Token · 样本 38%"),
         zh.CodexQuotaTokenUsage(screenshotRegression)!.Value,
-        "partial cycle displays the observed amount without extrapolating it to a whole-cycle total");
+        "partial cycle distinguishes recorded usage from extrapolated full-quota capacity");
     Equal(
-        ("Recorded tokens", "1.64B", "Partial cycle · account usage"),
+        ("100% estimate", "≈4.31B", "Partial 1.64B tokens · 38% sample"),
         en.CodexQuotaTokenUsage(screenshotRegression)!.Value,
-        "English partial account usage retains its coverage");
+        "English capacity estimate retains its partial sample");
     var localFallback = screenshotRegression with
     {
         CurrentCapacityTokens = 1_575_299_235,
@@ -11023,18 +11035,38 @@ static void TestQuotaPacePopoverPresentation()
         IsCurrentLocalFallback = true,
     };
     Equal(
-        ("本机 Token", "977M", "本周期记录 · 仅本机"),
+        ("100%额度估算", "≈1.58B", "本机 977M Token · 样本 62%"),
         zh.CodexQuotaTokenUsage(localFallback)!.Value,
-        "local usage retains its device scope even with cycle-start coverage");
+        "local capacity estimate retains its device-scoped sample");
     Equal(
-        ("Local tokens", "977M", "Partial cycle · this device only"),
+        ("100% estimate", "≈1.58B", "Local 977M tokens · 62% sample"),
         en.CodexQuotaTokenUsage(localFallback with { CoversCycleStart = false })!.Value,
-        "partial local usage explains both coverage limits");
+        "English local estimate identifies the observed source");
+    Equal(
+        ("已记录 Token", "1.64B", "本周期部分用量"),
+        zh.CodexQuotaTokenUsage(screenshotRegression with { CurrentCapacityTokens = null })!.Value,
+        "recorded usage remains available when capacity cannot be estimated");
     Equal<(string, string, string)?>(null, zh.CodexQuotaTokenUsage(null), "absent observations hide the unused token section");
     Equal<(string, string, string)?>(null, zh.CodexQuotaTokenUsage(capacity with { CurrentObservedTokens = null }),
         "historical capacity alone does not stand in for current usage");
     Equal("0", zh.CodexQuotaTokenUsage(capacity with { CurrentObservedTokens = 0 })!.Value.Value,
         "a measured zero remains distinct from missing observations");
+    var thresholdTracker = new CodexQuotaTokenTracker();
+    var thresholdReset = now.AddDays(4);
+    thresholdTracker.Observe(TokenObservation("codex.threshold", "7d", TimeSpan.FromDays(7),
+        now.AddMinutes(-2), 0, thresholdReset, CodexQuotaTokenTracker.ProfileLifetimeSourceKey, 1_000_000), now);
+    thresholdTracker.Observe(TokenObservation("codex.threshold", "7d", TimeSpan.FromDays(7),
+        now.AddMinutes(-1), .5, thresholdReset, CodexQuotaTokenTracker.ProfileLifetimeSourceKey, 1_500_000), now);
+    Equal(
+        ("已用 Token", "500K", "样本不足1%，待估算"),
+        zh.CodexQuotaTokenUsage(thresholdTracker.GetSummary("codex.threshold", "7d", TimeSpan.FromDays(7).Ticks))!.Value,
+        "sub-one-percent observations retain usage while explaining the pending estimate");
+    thresholdTracker.Observe(TokenObservation("codex.threshold", "7d", TimeSpan.FromDays(7),
+        now, 1, thresholdReset, CodexQuotaTokenTracker.ProfileLifetimeSourceKey, 2_000_000), now);
+    Equal(
+        ("100%额度估算", "≈100M", "已用 1.00M Token · 样本 1%"),
+        zh.CodexQuotaTokenUsage(thresholdTracker.GetSummary("codex.threshold", "7d", TimeSpan.FromDays(7).Ticks))!.Value,
+        "one observed percentage point produces the full-quota estimate from token deltas");
     using (var logo = new Bitmap(24, 24))
     using (var clock = new Bitmap(10, 10))
     using (var popover = new QuotaPopoverForm())
