@@ -3849,10 +3849,21 @@ static void TestQuotaPaceEstimate()
         [PaceCard("codex.slow", "Codex", 24, latestAt.AddHours(2), latestAt)]);
     slowTracker.Observe(slowBaseline, baselineAt);
     slowTracker.Observe(slowLatest, latestAt);
+    var slowCard = slowLatest.Cards.Single();
+    var slowEstimate = slowTracker.Estimate(slowCard, slowCard.Windows.Single(), latestAt, 5);
     Equal(
         QuotaPaceStatus.ResetsBeforeExhaustion,
-        slowTracker.Estimate(slowLatest.Cards.Single(), slowLatest.Cards.Single().Windows.Single(), latestAt, 5).Status,
+        slowEstimate.Status,
         "reset-first projection does not claim exhaustion");
+    Equal(
+        "重置约剩 68%",
+        NativeText.For("zh-CN").QuotaPace(slowEstimate, latestAt, slowCard.Windows.Single().ResetsAt).Right,
+        "recent observed consumption projects the unused quota at reset");
+    var slowCycleEstimate = new QuotaPaceTracker().Estimate(slowCard, slowCard.Windows.Single(), latestAt, 5);
+    Equal(
+        ("Cycle avg · 8.0%/h", "~60% at reset"),
+        NativeText.For("en").QuotaPace(slowCycleEstimate, latestAt, slowCard.Windows.Single().ResetsAt),
+        "cycle fallback reports its own rate and remaining quota without borrowing the recent trend");
 
     var quietTracker = new QuotaPaceTracker();
     quietTracker.Observe(
@@ -9724,6 +9735,8 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
     var scenarios = new (string Name, QuotaPopoverContent Content)[]
     {
         ("stable-over", new QuotaPopoverContent(card, card.Windows[0], null, now, stablePace, false)),
+        ("reset-reserve", new QuotaPopoverContent(card, card.Windows[0], null, now,
+            new QuotaPaceTracker().Estimate(card, card.Windows[0], now, 5), false)),
         ("provisional-reserve", new QuotaPopoverContent(card, card.Windows[0], null, now, provisionalPace, false)),
         ("cycle-fallback", new QuotaPopoverContent(card, card.Windows[0], null, now, cyclePace, false)),
         ("quiet", new QuotaPopoverContent(card, card.Windows[0], null, now, quietPace, false)),
@@ -11079,6 +11092,51 @@ static void TestQuotaPacePopoverPresentation()
                 true,
                 QuotaTrendConfidence.Stable)), now),
         "double-digit pace and reset-first state");
+    var reserveReset = now.AddHours(6);
+    var reserve = projected with
+    {
+        Status = QuotaPaceStatus.ResetsBeforeExhaustion,
+        Recent = new QuotaRecentTrend(TimeSpan.FromHours(1), 8, now.AddHours(10), true,
+            QuotaTrendConfidence.Stable),
+        Cycle = new QuotaCyclePace(20, 0, 4, now.AddHours(13), true),
+        ForecastExpiresAt = reserveReset,
+    };
+    Equal(
+        ("1h · 8.0%/时", "重置约剩 32%"),
+        zh.QuotaPace(reserve, now, reserveReset),
+        "Chinese reset reserve uses the same recent rate as the pace label");
+    Equal(
+        ("1h · 8.0%/h", "~32% at reset"),
+        en.QuotaPace(reserve, now, reserveReset),
+        "English reset reserve stays in the existing pace row");
+    Equal(
+        "重置约剩 32%",
+        zh.QuotaPace(reserve, now.AddMinutes(5), reserveReset).Right,
+        "clock refresh does not count elapsed consumption twice");
+    Equal(
+        ("Cycle avg · 4.0%/h", "~28% at reset"),
+        en.QuotaPace(reserve with { Recent = null }, now, reserveReset),
+        "cycle-only reserve uses the cycle projection");
+    Equal(
+        "重置约剩 28%",
+        zh.QuotaPace(reserve with
+        {
+            Status = QuotaPaceStatus.WaitingForFreshData,
+            Recent = null,
+        }, now, reserveReset).Right,
+        "fresh waiting-state fallback retains its valid cycle reserve");
+    Equal(
+        "重置约剩 <1%",
+        zh.QuotaPace(reserve, now, now.AddHours(10).AddMinutes(-1)).Right,
+        "a small positive reserve is not rounded to zero");
+    Equal(
+        "重置约剩 0%",
+        zh.QuotaPace(reserve, now, now.AddHours(10)).Right,
+        "exhaustion exactly at reset has no unused quota");
+    Equal(
+        ("等待新数据", string.Empty),
+        zh.QuotaPace(reserve, reserveReset, reserveReset),
+        "reset expires the displayed reserve with the existing forecast");
     Equal(
         ("趋势样本收集中", string.Empty),
         zh.QuotaPace(new QuotaPaceEstimate(QuotaPaceStatus.Learning), now),
