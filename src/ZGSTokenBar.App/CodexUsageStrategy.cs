@@ -33,6 +33,7 @@ internal sealed record CodexUsageStrategy(
     IReadOnlyList<CodexStrategyAccount> Accounts,
     IReadOnlyList<(CodexStrategyAccount Account, CodexStrategyDeadline Kind, DateTimeOffset At)> Urgent)
 {
+    public DateTimeOffset EvaluatedAt { get; init; }
     private static readonly TimeSpan UrgencyWindow = TimeSpan.FromHours(24);
     private static readonly TimeSpan MaximumQuotaAge = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan RedeemLead = TimeSpan.FromMinutes(30);
@@ -68,7 +69,7 @@ internal sealed record CodexUsageStrategy(
             .OrderBy(item => item.At)
             .Select(item => (item.Account, item.Kind!.Value, item.At!.Value))
             .ToArray();
-        return new(rows, urgent);
+        return new(rows, urgent) { EvaluatedAt = now };
     }
 
     private static CodexStrategyAccount Project(

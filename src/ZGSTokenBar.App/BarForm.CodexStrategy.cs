@@ -14,7 +14,7 @@ internal sealed partial class BarForm
         : throw new InvalidOperationException("Strategy hit testing is render-only.");
 
     private CodexUsageStrategy CodexStrategy => _codexStrategy ??=
-        CodexUsageStrategy.Create(_codexAccounts, _snapshot.CodexAccounts, DateTimeOffset.UtcNow);
+        CodexUsageStrategy.Create(_codexAccounts, _snapshot.CodexAccounts, _utcNow());
 
     private int CodexStrategyExtraWidth(string areaId, bool collapsed) =>
         !collapsed && areaId == MiniAreaIds.Codex && CodexStrategy.Accounts.Count > 0
@@ -145,6 +145,8 @@ internal sealed partial class BarForm
 
     private void MonitorCodexStrategyPopover()
     {
+        RefreshCodexStrategyClock();
+        if (_codexStrategyPopover?.IsOpen != true) return;
         var cursor = Cursor.Position;
         var mouseDown = Control.MouseButtons != MouseButtons.None;
         var escapeDown = IsEscapeDown();
@@ -160,6 +162,15 @@ internal sealed partial class BarForm
         if (anchor.IsEmpty || ShouldDismissPopover(_popoverPinned, inside, newClick, escapePressed,
                 _popoverLeaveStarted is { } left ? DateTime.UtcNow - left : null))
             HideCodexStrategyPopover();
+    }
+
+    internal void RefreshCodexStrategyClock()
+    {
+        var now = _utcNow();
+        var observed = CodexStrategy.EvaluatedAt;
+        if (now >= observed && now - observed < TimeSpan.FromSeconds(1)) return;
+        RefreshCodexStrategy();
+        Invalidate();
     }
 
     private void HideCodexStrategyPopover()
