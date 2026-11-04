@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Drawing.Drawing2D;
 using ZGSTokenBar.Core;
 
 namespace ZGSTokenBar.App;
@@ -7,40 +8,60 @@ internal sealed class CodexStrategyPopoverForm : Form
 {
     private const int LogicalWidth = 640;
     private const int LogicalRowHeight = 24;
+    private const int LogicalTailSize = 8;
+    private const int ToolWindowStyle = 0x00000080;
+    private const int NoActivateStyle = 0x08000000;
+    private readonly System.Windows.Forms.Timer _entranceTimer = new() { Interval = 16 };
+    private readonly System.Windows.Forms.Timer _exitTimer = new() { Interval = 16 };
+    private readonly VScrollBar _scrollbar = new() { Visible = false, TabStop = false };
     private readonly Font _headingFont = new("Segoe UI", 15, FontStyle.Bold, GraphicsUnit.Pixel);
     private readonly Font _bodyFont = new("Segoe UI", 12, FontStyle.Regular, GraphicsUnit.Pixel);
     private readonly Font _strongFont = new("Segoe UI", 12, FontStyle.Bold, GraphicsUnit.Pixel);
     private readonly List<(string[] Values, Font Font, int Height)> _rows = [];
     private float _scale = 1;
-    private int ContentHeight => (int)Math.Ceiling((14 + _rows.Sum(row => row.Height)) * _scale);
+    private int ContentHeight => 14 + _rows.Sum(row => row.Height);
     private NativeText _text = NativeText.For("zh-CN");
+    private PopoverTailSide _tailSide = PopoverTailSide.Bottom;
+    private float _tailOffset = LogicalWidth / 2f;
+    private bool _animateMotion;
+    private Point _restingLocation;
+    private Point _entranceLocation;
+    private DateTime _entranceStarted;
+    private Point _exitStartLocation;
+    private Point _exitLocation;
+    private DateTime _exitStarted;
+    private double _exitStartOpacity;
+    internal bool IsOpen => Visible && !_exitTimer.Enabled;
 
     internal CodexStrategyPopoverForm()
     {
+        _entranceTimer.Tick += (_, _) => AdvanceEntrance();
+        _exitTimer.Tick += (_, _) => AdvanceExit();
+        _scrollbar.ValueChanged += (_, _) => Invalidate();
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual;
         ShowInTaskbar = false;
         TopMost = true;
         AutoScaleMode = AutoScaleMode.None;
-        AutoScroll = true;
         DoubleBuffered = true;
         Text = TitleFor(_text);
+        Controls.Add(_scrollbar);
     }
 
     protected override bool ShowWithoutActivation => true;
 
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            var parameters = base.CreateParams;
+            parameters.ExStyle |= ToolWindowStyle | NoActivateStyle;
+            return parameters;
+        }
+    }
+
     internal static string TitleFor(NativeText text) =>
         text.Locale == "zh-CN" ? "Codex 使用策略" : "Codex usage strategy";
-
-    internal static string UrgentText(
-        CodexUsageStrategy strategy,
-        NativeText text)
-    {
-        if (strategy.Urgent.Count == 0)
-            return text.Locale == "zh-CN" ? "未来 24 小时无已知截止 · 点击查看" : "No known deadlines in 24h · Click to view";
-        var next = strategy.Urgent[0];
-        return $"{CodexAccountFormatting.MaskEmail(next.Account.Account.Email)} · {DeadlineText(next.Kind, text)} {Time(next.At)}";
-    }
 
     internal void ShowFor(
         BarForm owner,
@@ -48,50 +69,130 @@ internal sealed class CodexStrategyPopoverForm : Form
         CodexUsageStrategy strategy,
         NativeText text,
         QuotaBackgroundTheme theme,
-        float scale)
+        float scale,
+        bool animateMotion)
     {
+        var wasVisible = Visible;
+        _exitTimer.Stop();
+        _animateMotion = animateMotion;
+        SetContent(strategy, text, theme, Math.Max(1, scale));
         var area = Screen.FromRectangle(anchor).WorkingArea;
-        var width = Math.Min(area.Width, (int)Math.Round(LogicalWidth * scale));
-        SetContent(strategy, text, theme, scale);
-        var height = Math.Min(area.Height, ContentHeight);
-        var placement = TaskbarMiniPopoverMath.Place(anchor, new Size(width, height), 0, 4, area);
-        if (!Visible)
+        var tail = Scale(LogicalTailSize);
+        var bodySize = new Size(
+            Math.Min(Math.Max(1, area.Width - tail), Scale(LogicalWidth)),
+            Math.Min(Math.Max(1, area.Height - tail), Scale(ContentHeight)));
+        var placement = TaskbarMiniPopoverMath.Place(anchor, bodySize, tail, Scale(3), area);
+        _tailSide = placement.TailSide;
+        _tailOffset = placement.TailOffset / _scale;
+        ClientSize = placement.WindowSize;
+        UpdateScrollBar();
+        _restingLocation = placement.Location;
+        UpdateWindowRegion();
+        Invalidate();
+        _entranceTimer.Stop();
+        if (!wasVisible && animateMotion)
         {
-            ClientSize = placement.WindowSize;
-            Location = placement.Location;
+            _entranceLocation = TaskbarPopoverMath.OffsetFromAnchor(_restingLocation, _tailSide, Scale(3));
+            _entranceStarted = DateTime.UtcNow;
+            Opacity = .01;
+            Location = _entranceLocation;
             Show(owner);
+            TaskbarPlacement.ShowAt(Handle, _entranceLocation, placement.WindowSize);
+            _entranceTimer.Start();
+            return;
         }
-        if (!TaskbarPlacement.ShowAt(Handle, placement.Location, placement.WindowSize))
-            Bounds = new Rectangle(placement.Location, placement.WindowSize);
+        Opacity = 1;
+        if (!wasVisible) Show(owner);
+        if (!TaskbarPlacement.ShowAt(Handle, _restingLocation, placement.WindowSize))
+            Bounds = new Rectangle(_restingLocation, placement.WindowSize);
     }
 
-    internal Bitmap RenderForTest(CodexUsageStrategy strategy, NativeText text, QuotaBackgroundTheme theme)
+    internal Bitmap RenderForTest(CodexUsageStrategy strategy, NativeText text, QuotaBackgroundTheme theme,
+        int dpi = 96, PopoverTailSide tailSide = PopoverTailSide.Bottom)
     {
-        SetContent(strategy, text, theme, 1);
-        var bitmap = new Bitmap(LogicalWidth, ContentHeight);
+        SetContent(strategy, text, theme, Math.Max(1, dpi / 96f));
+        _tailSide = tailSide;
+        _tailOffset = VerticalTail ? LogicalWidth / 2f : ContentHeight / 2f;
+        ClientSize = new Size(Scale(LogicalWidth + (VerticalTail ? 0 : LogicalTailSize)),
+            Scale(ContentHeight + (VerticalTail ? LogicalTailSize : 0)));
+        UpdateWindowRegion();
+        var bitmap = new Bitmap(ClientSize.Width, ClientSize.Height);
         using var graphics = Graphics.FromImage(bitmap);
-        DrawContent(graphics, LogicalWidth);
+        DrawContent(graphics);
         return bitmap;
     }
 
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
-        DrawContent(e.Graphics, ClientSize.Width);
+        DrawContent(e.Graphics);
     }
 
-    protected override void OnScroll(ScrollEventArgs se)
+    protected override void OnMouseWheel(MouseEventArgs e)
     {
-        base.OnScroll(se);
+        base.OnMouseWheel(e);
+        _scrollbar.Value = Math.Clamp(_scrollbar.Value - e.Delta * Scale(LogicalRowHeight) / 40,
+            0, Math.Max(0, _scrollbar.Maximum - _scrollbar.LargeChange + 1));
         Invalidate();
     }
 
-    private void DrawContent(Graphics graphics, int width)
+    protected override void OnResize(EventArgs e)
     {
-        graphics.Clear(BackColor);
+        base.OnResize(e);
+        UpdateScrollBar();
+        UpdateWindowRegion();
+    }
+
+    private void UpdateScrollBar()
+    {
+        var body = BodyBounds();
+        var viewportHeight = Math.Max(1, Scale((int)body.Height) - Scale(14));
+        var contentHeight = Scale(ContentHeight - 14);
+        _scrollbar.Maximum = Math.Max(0, contentHeight - 1);
+        _scrollbar.LargeChange = viewportHeight;
+        _scrollbar.SmallChange = Scale(LogicalRowHeight);
+        _scrollbar.Value = Math.Clamp(_scrollbar.Value, 0, Math.Max(0, contentHeight - viewportHeight));
+        _scrollbar.Bounds = new Rectangle(
+            Scale((int)body.Right) - Scale(20), Scale((int)body.Top) + Scale(8),
+            Scale(12), Math.Max(1, Scale((int)body.Height) - Scale(16)));
+        _scrollbar.Visible = contentHeight > viewportHeight;
+    }
+
+    protected override void WndProc(ref Message message)
+    {
+        if (message.Msg == 0x0021)
+        {
+            message.Result = 3;
+            return;
+        }
+        base.WndProc(ref message);
+    }
+
+    internal bool ContainsScreenPoint(Point point)
+    {
+        var local = PointToClient(point);
+        return ClientRectangle.Contains(local) && (Region?.IsVisible(local) ?? true);
+    }
+
+    private void DrawContent(Graphics graphics)
+    {
         var state = graphics.Save();
-        graphics.TranslateTransform(0, AutoScrollPosition.Y);
+        graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
         graphics.ScaleTransform(_scale, _scale);
+        var body = BodyBounds();
+        var tail = TaskbarPopoverMath.TailPoints(_tailSide, body, _tailOffset, LogicalTailSize);
+        using var bodyPath = RoundedRectangle(RectangleF.Inflate(body, -.5f, -.5f));
+        using var surface = new GraphicsPath { FillMode = FillMode.Winding };
+        surface.AddPath(bodyPath, false);
+        surface.AddPolygon(tail);
+        using var fill = new SolidBrush(BackColor);
+        using var border = new Pen(Color.FromArgb(86, 100, 116, 139), 1);
+        graphics.FillPath(fill, surface);
+        graphics.DrawPath(border, bodyPath);
+        graphics.DrawLines(border, tail);
+        graphics.SetClip(RectangleF.Inflate(body, -1, -1));
+        graphics.TranslateTransform(body.Left, body.Top - _scrollbar.Value / _scale);
         using var foreground = new SolidBrush(ForeColor);
         using var muted = new SolidBrush(Color.FromArgb(160, 174, 192));
         using var format = new StringFormat
@@ -100,7 +201,7 @@ internal sealed class CodexStrategyPopoverForm : Form
             FormatFlags = StringFormatFlags.NoWrap,
             Trimming = StringTrimming.EllipsisCharacter,
         };
-        var contentWidth = Math.Max(1, width / _scale - 24);
+        var contentWidth = Math.Max(1, body.Width - 24 - (_scrollbar.Maximum >= _scrollbar.LargeChange ? 16 : 0));
         var columnWidths = new[] { .23f, .19f, .29f, .29f };
         var y = 6f;
         foreach (var (values, font, height) in _rows)
@@ -118,6 +219,90 @@ internal sealed class CodexStrategyPopoverForm : Form
         }
         graphics.Restore(state);
     }
+
+    private bool VerticalTail => _tailSide is PopoverTailSide.Top or PopoverTailSide.Bottom;
+
+    private RectangleF BodyBounds() => TaskbarPopoverMath.BodyBounds(_tailSide,
+        Math.Max(1, ClientSize.Width / _scale - (VerticalTail ? 0 : LogicalTailSize)),
+        Math.Max(1, ClientSize.Height / _scale - (VerticalTail ? LogicalTailSize : 0)), LogicalTailSize);
+
+    private void UpdateWindowRegion()
+    {
+        if (ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
+        var body = BodyBounds();
+        using var path = RoundedRectangle(body);
+        using var tail = new GraphicsPath();
+        tail.AddPolygon(TaskbarPopoverMath.TailPoints(_tailSide, body, _tailOffset, LogicalTailSize));
+        using var matrix = new Matrix();
+        matrix.Scale(_scale, _scale);
+        path.Transform(matrix);
+        tail.Transform(matrix);
+        var region = new Region(path);
+        region.Union(tail);
+        Region?.Dispose();
+        Region = region;
+    }
+
+    private static GraphicsPath RoundedRectangle(RectangleF bounds)
+    {
+        var path = new GraphicsPath();
+        var diameter = Math.Min(20, Math.Min(bounds.Width, bounds.Height));
+        if (diameter <= 0) return path;
+        var arc = new RectangleF(bounds.X, bounds.Y, diameter, diameter);
+        path.AddArc(arc, 180, 90);
+        arc.X = bounds.Right - diameter;
+        path.AddArc(arc, 270, 90);
+        arc.Y = bounds.Bottom - diameter;
+        path.AddArc(arc, 0, 90);
+        arc.X = bounds.Left;
+        path.AddArc(arc, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
+
+    internal void HidePopover()
+    {
+        _entranceTimer.Stop();
+        if (!IsOpen) return;
+        if (!_animateMotion)
+        {
+            Opacity = 1;
+            Hide();
+            return;
+        }
+        _exitStartLocation = Location;
+        _exitLocation = TaskbarPopoverMath.OffsetFromAnchor(Location, _tailSide, Scale(2));
+        _exitStartOpacity = Opacity;
+        _exitStarted = DateTime.UtcNow;
+        _exitTimer.Start();
+    }
+
+    private void AdvanceEntrance()
+    {
+        var progress = Math.Clamp((DateTime.UtcNow - _entranceStarted).TotalMilliseconds / 130, 0, 1);
+        var eased = TaskbarPopoverMath.EntranceEase(progress);
+        var location = TaskbarPopoverMath.Interpolate(_entranceLocation, _restingLocation, eased);
+        Opacity = TaskbarPopoverMath.FadeIn(.01, eased);
+        if (!TaskbarPlacement.ShowAt(Handle, location, ClientSize)) Location = location;
+        if (progress < 1) return;
+        _entranceTimer.Stop();
+        Opacity = 1;
+    }
+
+    private void AdvanceExit()
+    {
+        var progress = Math.Clamp((DateTime.UtcNow - _exitStarted).TotalMilliseconds / 90, 0, 1);
+        var eased = TaskbarPopoverMath.ExitEase(progress);
+        var location = TaskbarPopoverMath.Interpolate(_exitStartLocation, _exitLocation, eased);
+        Opacity = TaskbarPopoverMath.FadeOut(_exitStartOpacity, eased);
+        if (!TaskbarPlacement.ShowAt(Handle, location, ClientSize)) Location = location;
+        if (progress < 1) return;
+        _exitTimer.Stop();
+        Opacity = 1;
+        Hide();
+    }
+
+    private int Scale(int value) => Math.Max(1, (int)Math.Round(value * _scale));
 
     private void SetContent(
         CodexUsageStrategy strategy,
@@ -163,7 +348,6 @@ internal sealed class CodexStrategyPopoverForm : Form
         if (strategy.Accounts.Count == 0) Heading(T("暂无 Cockpit Tools 账号额度。", "No Cockpit Tools account quotas."));
 
         AccessibleDescription = string.Join(Environment.NewLine, _rows.Select(row => string.Join(" · ", row.Values)));
-        AutoScrollMinSize = new Size(0, ContentHeight);
         Invalidate();
     }
 
@@ -222,10 +406,14 @@ internal sealed class CodexStrategyPopoverForm : Form
 
     protected override void Dispose(bool disposing)
     {
+        if (disposing)
+        {
+            _entranceTimer.Dispose();
+            _exitTimer.Dispose();
+            _headingFont.Dispose();
+            _bodyFont.Dispose();
+            _strongFont.Dispose();
+        }
         base.Dispose(disposing);
-        if (!disposing) return;
-        _headingFont.Dispose();
-        _bodyFont.Dispose();
-        _strongFont.Dispose();
     }
 }
