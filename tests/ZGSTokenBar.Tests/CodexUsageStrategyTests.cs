@@ -9,6 +9,20 @@ internal static class CodexUsageStrategyTests
     internal static void Run(string? capture = null)
     {
         var now = new DateTimeOffset(2026, 11, 4, 6, 9, 0, TimeSpan.Zero);
+        var zh = NativeText.For("zh-CN");
+        Check(CodexStrategyPopoverForm.Countdown(now.AddHours(3).AddMinutes(20), now, CodexStrategyDeadline.Reset, zh)
+                == "3小时20分后重置"
+            && CodexStrategyPopoverForm.Countdown(now.AddHours(18), now, CodexStrategyDeadline.Subscription, zh)
+                == "18小时后到期"
+            && CodexStrategyPopoverForm.Countdown(now.AddSeconds(45.2), now, CodexStrategyDeadline.ResetCredit, zh)
+                == "46秒内兑卡",
+            "Countdowns retain useful hour/minute precision and count individual seconds near a deadline.");
+        Check(CodexStrategyPopoverForm.Countdown(now, now, CodexStrategyDeadline.Reset, zh) == "已到点，等待刷新"
+            && CodexStrategyPopoverForm.Countdown(now.AddSeconds(-1), now, CodexStrategyDeadline.Subscription, zh) == "已到期"
+            && CodexStrategyPopoverForm.Countdown(null, now, CodexStrategyDeadline.Reset, zh) == "时间待刷新"
+            && CodexStrategyPopoverForm.Countdown(now.AddDays(2).AddHours(4), now, CodexStrategyDeadline.ResetCredit, NativeText.For("en"))
+                == "Redeem within 2d 4h",
+            "Unknown, elapsed and bilingual countdowns never imply a refreshed quota or display negative time.");
         var ids = new[] { "plan", "duplicate", "tomorrow", "small", "blocked", "stale", "api" };
         var accounts = ids.Select(id => new CodexAccountInfo(
             id, $"{id}@example.test", id == "api" ? "api_key" : "pro", id == "plan")).ToArray();
@@ -72,6 +86,11 @@ internal static class CodexUsageStrategyTests
             && form.AccessibleDescription.Contains("可并行 · 自然重置")
             && form.AccessibleDescription.Contains("少量可用"),
             "The displayed recommendation communicates order, reasons, parallel choices and low-quota limits.");
+        Check(form.AccessibleDescription.Contains("20小时后到期")
+            && form.AccessibleDescription.Contains("22小时后重置")
+            && form.AccessibleDescription.Contains("30分0秒后重置")
+            && form.AccessibleDescription.Contains("建议 22小时30分内复查"),
+            "Recommendations, recovery and reset-credit review use countdowns in the actual page.");
         if (capture is not null) bitmap.Save(capture, System.Drawing.Imaging.ImageFormat.Png);
         Check(bitmap.Width == 640 && bitmap.Height > 280
             && Enumerable.Range(0, bitmap.Width).Select(x => bitmap.GetPixel(x, 15)).Distinct().Count() > 1,
@@ -101,8 +120,9 @@ internal static class CodexUsageStrategyTests
 
         var card = new QuotaCard("plan", ProviderKind.Codex, "Codex", "pro", "#10a37f", true, quotas[0].Windows);
         var snapshot = new QuotaSnapshot([card], [], now) { CodexAccounts = quotas };
+        var clock = now;
         using var bar = new BarForm(new AppSettings { EnableAnimations = false }, snapshot,
-            renderOnly: true, renderDpi: 96, codexAccounts: accounts);
+            renderOnly: true, renderDpi: 96, codexAccounts: accounts, utcNow: () => clock);
         bar.CreateControl();
         using var barBitmap = new Bitmap(bar.ClientSize.Width, bar.ClientSize.Height);
         bar.DrawToBitmap(barBitmap, bar.ClientRectangle);
@@ -130,6 +150,21 @@ internal static class CodexUsageStrategyTests
             "The strategy button owns additional width instead of shrinking the quota content.");
         bar.SetCodexAccounts(accounts);
         Check(bar.Width == withStrategy, "Refreshing the directory restores the independent button space.");
+        var strategyProperty = typeof(BarForm).GetProperty("CodexStrategy", flags)!;
+        clock = now.AddSeconds(1);
+        bar.RefreshCodexStrategyClock();
+        var ticking = (CodexUsageStrategy)strategyProperty.GetValue(bar)!;
+        Check(ticking.EvaluatedAt == clock,
+            "The visible-page clock recomputes its strategy from the existing observation.");
+        using var tickedBitmap = form.RenderForTest(ticking, zh, QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
+        Check(form.AccessibleDescription!.Contains("29分59秒后重置"),
+            "The displayed countdown advances without a new quota response.");
+        clock = now.AddMinutes(30);
+        bar.RefreshCodexStrategyClock();
+        var due = (CodexUsageStrategy)strategyProperty.GetValue(bar)!;
+        Check(due.Accounts.Single(row => row.Account.AccountId == "small").State == CodexStrategyState.Refresh
+            && due.Accounts.Single(row => row.Account.AccountId == "small").Priority is null,
+            "A reset deadline removes the old recommendation until new quota is observed.");
         Check(!BarForm.ShouldDismissPopover(false, true, false, false, TimeSpan.FromSeconds(1))
             && !BarForm.ShouldDismissPopover(false, false, false, false, TimeSpan.FromMilliseconds(100))
             && BarForm.ShouldDismissPopover(false, false, false, false, TimeSpan.FromMilliseconds(200)),

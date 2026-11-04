@@ -24,6 +24,7 @@ internal sealed class CodexStrategyPopoverForm : Form
     private static readonly Color Accent = Color.FromArgb(147, 197, 253);
     private static readonly Color Muted = Color.FromArgb(161, 174, 193);
     private static readonly Color DeadlineColor = Color.FromArgb(251, 191, 108);
+    private static readonly Color CriticalColor = Color.FromArgb(251, 113, 133);
     private float _scale = 1;
     private int ContentHeight => 14 + _rows.Sum(row => row.Height);
     private NativeText _text = NativeText.For("zh-CN");
@@ -273,11 +274,14 @@ internal sealed class CodexStrategyPopoverForm : Form
         DrawText(graphics, values[2], _bodyFont,
             row.Kind == RowKind.Recommendation && row.Priority == 1 && !row.LowQuota ? Accent : Muted,
             new RectangleF(nameX, detailY, nameWidth, 20));
-        DrawText(graphics, values[3], _bodyFont, row.Urgent ? DeadlineColor : Muted,
+        DrawText(graphics, values[3], _strongFont, row.Critical ? CriticalColor : row.Urgent ? DeadlineColor : Muted,
             new RectangleF(rightX, detailY, rightWidth, 20), StringAlignment.Far);
+        if (row.ExactTime is { } exactTime)
+            DrawText(graphics, exactTime, _bodyFont, Muted,
+                new RectangleF(rightX, detailY + 18, rightWidth, 18), StringAlignment.Far);
         if (row.Footnote is { } footnote)
             DrawText(graphics, footnote, _bodyFont, Muted,
-                new RectangleF(nameX, bounds.Top + 43, contentRight - nameX, 20));
+                new RectangleF(nameX, bounds.Top + 43, nameWidth, 20));
     }
 
     private static void DrawText(Graphics graphics, string value, Font font, Color color,
@@ -391,6 +395,7 @@ internal sealed class CodexStrategyPopoverForm : Form
         _theme = theme;
         ForeColor = Color.FromArgb(241, 245, 249);
         _rows.Clear();
+        var now = strategy.EvaluatedAt;
 
         _rows.Add(new([TitleFor(text), T($"24 小时内 {strategy.Urgent.Count} 项临期",
             $"{strategy.Urgent.Count} due within 24h")], RowKind.Title, 36, Urgent: strategy.Urgent.Count > 0));
@@ -398,7 +403,7 @@ internal sealed class CodexStrategyPopoverForm : Form
             RowKind.Note, 24));
         var urgentAccounts = strategy.Urgent.Select(item => item.Account.Account.AccountId).ToHashSet(StringComparer.Ordinal);
         var ready = strategy.Accounts.Where(row => row.State == CodexStrategyState.Ready).ToArray();
-        if (ready.Length > 0) Section(T("推荐使用顺序", "Recommended order"), T("剩余额度 · 截止时间", "Remaining quota · Deadline"));
+        if (ready.Length > 0) Section(T("推荐使用顺序", "Recommended order"), T("剩余额度 · 倒计时", "Remaining quota · Countdown"));
         foreach (var account in ready)
         {
             var urgent = urgentAccounts.Contains(account.Account.AccountId);
@@ -408,9 +413,12 @@ internal sealed class CodexStrategyPopoverForm : Form
                 : T("备用", "Use next");
             var reason = account.PriorityReason is { } kind ? DeadlineText(kind, text) : T("暂无已知截止", "No known deadline");
             var name = $"{CodexAccountFormatting.MaskEmail(account.Account.Email)} · {CodexAccountFormatting.PlanLabel(account.Account.Plan).ToUpperInvariant()}";
+            var deadline = account.PriorityDeadline;
             _rows.Add(new([name, Quotas(account.Windows),
-                $"{action} · {reason}", Time(account.PriorityDeadline)], RowKind.Recommendation, 58,
-                account.Priority, urgent, account.HasLittleQuota));
+                $"{action} · {reason}", Countdown(deadline, now, account.PriorityReason ?? CodexStrategyDeadline.Reset, text)],
+                RowKind.Recommendation, deadline is null ? 58 : 76,
+                account.Priority, urgent, account.HasLittleQuota, ExactTime: deadline is null ? null : Time(deadline),
+                Critical: IsCritical(deadline, now)));
         }
         if (ready.Length == 0)
             _rows.Add(new([T("当前可用额度待确认，先看下方恢复和刷新事项。", "No confirmed usable quota. Check recovery and refresh actions below.")], RowKind.Note, 28));
@@ -422,7 +430,8 @@ internal sealed class CodexStrategyPopoverForm : Form
                 CodexStrategyState.Expired => T("订阅有效期结束", "Subscription ended"),
                 _ => T("额度待刷新", "Refresh quota"),
             },
-            row => Time(row.Recovery));
+            row => row.Recovery,
+            now);
         Rows(T("重置卡", "Reset credits"),
             strategy.Accounts.Where(row => row.State != CodexStrategyState.Expired && (row.CardExpiry is not null || row.Cards > 0))
                 .OrderBy(row => row.RedeemBy ?? DateTimeOffset.MaxValue),
@@ -430,16 +439,16 @@ internal sealed class CodexStrategyPopoverForm : Form
                 : row.ResetBeforeCard ? T("自然重置后复查", "Check after scheduled reset")
                 : row.CanRedeem ? T("可兑卡 · 手动确认", "Eligible · Confirm manually")
                 : T("核对兑换条件", "Check eligibility"),
-            row => row.RedeemBy != row.CardExpiry
-                ? $"{Time(row.RedeemBy)} {T("订阅结束", "plan ends")}"
-                : row.CardExpiry is not null ? $"{Time(row.CardExpiry)} {T("到期", "expires")}" : "",
+            row => row.RedeemBy,
+            now,
             strategy.Urgent.Where(item => item.Kind == CodexStrategyDeadline.ResetCredit)
                 .Select(item => item.Account.Account.AccountId).ToHashSet(StringComparer.Ordinal),
             showCredits: true);
 
         AccessibleDescription = string.Join(Environment.NewLine, _rows.Select(row =>
             (row.Priority is { } priority ? $"{priority}. " : "") + string.Join(" · ", row.Values)
-            + (row.Footnote is { } footnote ? $" · {footnote}" : "")));
+            + (row.Footnote is { } footnote ? $" · {footnote}" : "")
+            + (row.ExactTime is { } exact ? $" · {exact}" : "")));
         Invalidate();
     }
 
@@ -447,7 +456,8 @@ internal sealed class CodexStrategyPopoverForm : Form
         string title,
         IEnumerable<CodexStrategyAccount> accounts,
         Func<CodexStrategyAccount, string> action,
-        Func<CodexStrategyAccount, string> time,
+        Func<CodexStrategyAccount, DateTimeOffset?> deadlineFor,
+        DateTimeOffset now,
         IReadOnlySet<string>? urgentAccounts = null,
         bool showCredits = false)
     {
@@ -459,12 +469,23 @@ internal sealed class CodexStrategyPopoverForm : Form
             var quota = showCredits
                 ? row.Cards is { } count ? T($"{count} 张重置卡", $"{count} reset credits") : T("张数待刷新", "Count unavailable")
                 : Quotas(row.Windows);
-            var review = showCredits && row.ReviewBy is { } at
-                ? T($"建议 {Time(at)} 前复查", $"Review by {Time(at)}")
+            var deadline = deadlineFor(row);
+            var review = showCredits && deadline is not null
+                ? row.ReviewBy is { } at && at > now
+                    ? T($"建议 {CountdownDuration(at - now, _text)}内复查", $"Review within {CountdownDuration(at - now, _text)}")
+                    : T("现在复查兑换条件", "Review eligibility now")
                 : null;
-            _rows.Add(new([CodexAccountFormatting.MaskEmail(row.Account.Email), quota, action(row), time(row)],
-                RowKind.Detail, review is null ? 46 : 66,
-                Urgent: urgentAccounts?.Contains(row.Account.AccountId) == true, Footnote: review));
+            var countdown = !showCredits && row.State == CodexStrategyState.Expired
+                ? T("已到期", "Expired")
+                : showCredits && deadline is null ? ""
+                : Countdown(deadline, now, showCredits ? CodexStrategyDeadline.ResetCredit : CodexStrategyDeadline.Reset, _text);
+            var exact = deadline is null ? null : Time(deadline);
+            if (showCredits && deadline is not null && deadline != row.CardExpiry)
+                exact += T(" 订阅结束", " plan ends");
+            _rows.Add(new([CodexAccountFormatting.MaskEmail(row.Account.Email), quota, action(row), countdown],
+                RowKind.Detail, deadline is null && review is null ? 46 : 66,
+                Urgent: urgentAccounts?.Contains(row.Account.AccountId) == true, Footnote: review,
+                ExactTime: exact, Critical: showCredits && IsCritical(deadline, now)));
         }
     }
 
@@ -473,7 +494,54 @@ internal sealed class CodexStrategyPopoverForm : Form
 
     private enum RowKind { Title, Note, Section, Recommendation, Detail }
     private sealed record DisplayRow(string[] Values, RowKind Kind, int Height,
-        int? Priority = null, bool Urgent = false, bool LowQuota = false, string? Footnote = null);
+        int? Priority = null, bool Urgent = false, bool LowQuota = false, string? Footnote = null,
+        string? ExactTime = null, bool Critical = false);
+
+    internal static string Countdown(DateTimeOffset? deadline, DateTimeOffset now,
+        CodexStrategyDeadline kind, NativeText text)
+    {
+        var zh = text.IsChinese;
+        if (deadline is null) return zh ? "时间待刷新" : "Time unavailable";
+        if (deadline <= now)
+        {
+            if (kind == CodexStrategyDeadline.Reset)
+                return zh ? "已到点，等待刷新" : "Due now · Refresh pending";
+            return zh ? "已到期" : "Expired";
+        }
+        var duration = CountdownDuration(deadline.Value - now, text);
+        return kind switch
+        {
+            CodexStrategyDeadline.Reset => zh ? $"{duration}后重置" : $"Resets in {duration}",
+            CodexStrategyDeadline.Subscription => zh ? $"{duration}后到期" : $"Expires in {duration}",
+            _ => zh ? $"{duration}内兑卡" : $"Redeem within {duration}",
+        };
+    }
+
+    private static string CountdownDuration(TimeSpan remaining, NativeText text)
+    {
+        var seconds = Math.Max(1, (long)Math.Ceiling(remaining.TotalSeconds));
+        var days = seconds / 86_400;
+        var hours = seconds / 3_600;
+        var minutes = seconds % 3_600 / 60;
+        var zh = text.IsChinese;
+        if (days > 0)
+        {
+            var dayText = zh ? $"{days}天" : $"{days}d";
+            return hours % 24 == 0 ? dayText
+                : dayText + (zh ? $"{hours % 24}小时" : $" {hours % 24}h");
+        }
+        if (hours > 0)
+        {
+            var hourText = zh ? $"{hours}小时" : $"{hours}h";
+            return minutes == 0 ? hourText : hourText + (zh ? $"{minutes}分" : $" {minutes}m");
+        }
+        if (minutes > 0)
+            return zh ? $"{minutes}分{seconds % 60}秒" : $"{minutes}m {seconds % 60}s";
+        return zh ? $"{seconds}秒" : $"{seconds}s";
+    }
+
+    private static bool IsCritical(DateTimeOffset? deadline, DateTimeOffset now) =>
+        deadline is { } target && target - now <= TimeSpan.FromHours(1);
 
     private string Quotas(IReadOnlyList<QuotaWindow> windows) =>
         windows.Count == 0 ? "—" : string.Join(" · ", windows.Select(window =>
