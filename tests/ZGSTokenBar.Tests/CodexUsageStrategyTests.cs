@@ -85,16 +85,20 @@ internal static class CodexUsageStrategyTests
         using var form = new CodexStrategyPopoverForm();
         using var bitmap = form.RenderForTest(strategy, NativeText.For("zh-CN"),
             QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
-        Check(form.AccessibleDescription!.Contains("1. p***n@example.test")
-            && form.AccessibleDescription.Contains("先用 · 订阅有效期结束")
-            && form.AccessibleDescription.Contains("可并行 · 自然重置")
-            && form.AccessibleDescription.Contains("少量可用"),
+        Check(form.VisibleTextForAcceptance.Contains("1. p***n@example.test")
+            && form.VisibleTextForAcceptance.Contains("先用 · 订阅")
+            && form.VisibleTextForAcceptance.Contains("可并行")
+            && form.VisibleTextForAcceptance.Contains("少量 · 短任务")
+            && form.VisibleTextForAcceptance.Contains("预测待采样"),
             "The displayed recommendation communicates order, reasons, parallel choices and low-quota limits.");
-        Check(form.AccessibleDescription.Contains("20小时后到期")
-            && form.AccessibleDescription.Contains("22小时后重置")
-            && form.AccessibleDescription.Contains("30分0秒后重置")
-            && form.AccessibleDescription.Contains("建议 22小时30分内复查"),
-            "Recommendations, recovery and reset-credit review use countdowns in the actual page.");
+        var exactDeadline = now.AddHours(20).ToLocalTime().ToString("MM-dd HH:mm");
+        Check(Occurrences(form.VisibleTextForAcceptance, "22小时后重置") == 1
+            && form.VisibleTextForAcceptance.Contains("20小时后到期")
+            && form.VisibleTextForAcceptance.Contains("30分0秒后重置")
+            && !form.VisibleTextForAcceptance.Contains(exactDeadline)
+            && form.DetailAt(new Point(100, 80))?.Contains(exactDeadline) == true
+            && form.DetailAt(new Point(-1, -1)) is null,
+            "Primary countdowns appear once and exact dates remain accessible in row details.");
         if (capture is not null) bitmap.Save(capture, System.Drawing.Imaging.ImageFormat.Png);
         Check(bitmap.Width == 640 && bitmap.Height > 280
             && Enumerable.Range(0, bitmap.Width).Select(x => bitmap.GetPixel(x, 15)).Distinct().Count() > 1,
@@ -230,15 +234,30 @@ internal static class CodexUsageStrategyTests
         var legacy = JsonSerializer.Deserialize<CodexAccountQuota>(
             """{"AccountId":"legacy","Windows":[],"ResetCreditsAvailable":3}""")!;
         Check(legacy.ResetCreditBatches.Count == 0, "Older snapshots remain readable without a credit-batch field.");
+        var displayQuota = quota with { CardKey = "multiple" };
+        var displayPaces = new Dictionary<string, QuotaPaceEstimate>
+        {
+            [QuotaPaceTracker.SeriesKey("multiple", quota.Windows[0])] = new(QuotaPaceStatus.ResetsBeforeExhaustion,
+                Recent: new(TimeSpan.FromHours(1), 5, now.AddHours(16), true, QuotaTrendConfidence.Stable),
+                ValidUntil: now.AddMinutes(5)) { ForecastExpiresAt = now.AddMinutes(5) },
+            [QuotaPaceTracker.SeriesKey("multiple", quota.Windows[1])] = new(QuotaPaceStatus.ProjectedExhaustion,
+                Recent: new(TimeSpan.FromHours(1), 10, now.AddHours(5), false, QuotaTrendConfidence.Stable),
+                ValidUntil: now.AddMinutes(5)) { ForecastExpiresAt = now.AddMinutes(5) },
+        };
+        var displayStrategy = CodexUsageStrategy.Create([account], [displayQuota], now, displayPaces);
         using var panel = new CodexStrategyPopoverForm();
-        using var bitmap = panel.RenderForTest(strategy, NativeText.For("zh-CN"),
+        using var bitmap = panel.RenderForTest(displayStrategy, NativeText.For("zh-CN"),
             QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
-        Check(panel.AccessibleDescription!.Contains("重置卡 · 2 张")
-            && panel.AccessibleDescription.Contains("重置卡 · 1 张")
-            && panel.AccessibleDescription.Contains("18小时后到期")
-            && panel.AccessibleDescription.Contains("10小时内兑卡")
-            && panel.AccessibleDescription.Contains("15小时内兑卡"),
+        Check(panel.VisibleTextForAcceptance.Contains("2 张重置卡")
+            && panel.VisibleTextForAcceptance.Contains("1 张重置卡")
+            && panel.VisibleTextForAcceptance.Contains("18小时后到期")
+            && panel.VisibleTextForAcceptance.Contains("10小时内兑卡")
+            && panel.VisibleTextForAcceptance.Contains("15小时内兑卡")
+            && Occurrences(panel.VisibleTextForAcceptance, "2小时后重置") == 1,
             "The full page exposes simultaneous deadlines and their actual batch sizes.");
+        Check(quota.Windows.All(window => panel.VisibleTextForAcceptance.Contains(NativeText.For("zh-CN")
+                .QuotaPace(displayPaces[QuotaPaceTracker.SeriesKey("multiple", window)], now, window.ResetsAt).Right)),
+            "Each window keeps its own existing exhaustion or reset-first forecast.");
         if (capture is not null) bitmap.Save(Path.ChangeExtension(capture, ".multiple.png"), System.Drawing.Imaging.ImageFormat.Png);
         var needsCard = quota with
         {
@@ -249,10 +268,23 @@ internal static class CodexUsageStrategyTests
         };
         using var urgentBitmap = panel.RenderForTest(CodexUsageStrategy.Create([account], [needsCard], now),
             NativeText.For("zh-CN"), QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
-        Check(panel.AccessibleDescription!.IndexOf("现在先复查重置卡", StringComparison.Ordinal)
-                < panel.AccessibleDescription.IndexOf("等待恢复或刷新", StringComparison.Ordinal)
-            && panel.AccessibleDescription.Contains("可兑卡"),
+        var actionIndex = panel.VisibleTextForAcceptance.IndexOf("先处理", StringComparison.Ordinal);
+        Check(actionIndex >= 0 && actionIndex < panel.VisibleTextForAcceptance.IndexOf("暂不可用", StringComparison.Ordinal)
+            && panel.VisibleTextForAcceptance.Contains("可兑卡")
+            && panel.VisibleTextForAcceptance.Contains("m***e@example.test · 在用"),
             "A near-expiring reset for an exhausted account is an immediate review action, not a buried usage recommendation.");
+        var later = quota with
+        {
+            Windows = [new("7d", 50, now.AddDays(5), TimeSpan.FromDays(7))],
+            SubscriptionActiveUntil = null,
+            ResetCreditsAvailable = 2,
+            ResetCreditBatches = [new(now.AddDays(2), 1, true), new(now.AddDays(3), 1, true)],
+        };
+        using var laterBitmap = panel.RenderForTest(CodexUsageStrategy.Create([account], [later], now),
+            NativeText.For("zh-CN"), QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
+        Check(Occurrences(panel.VisibleTextForAcceptance, "2天内兑卡") == 1
+            && panel.VisibleTextForAcceptance.Contains("3天内兑卡"),
+            "A later primary credit deadline appears once without hiding subsequent batches.");
     }
 
     private static void TestConsumptionPressure(DateTimeOffset now, string? capture)
@@ -265,14 +297,18 @@ internal static class CodexUsageStrategyTests
         CodexAccountQuota Quota(string id, double used, double hours) => new(
             id, [new("7d", used, now.AddHours(hours), TimeSpan.FromDays(7))], now) { CardKey = id };
         var quotas = new[] { Quota("early", 80, 2), Quota("slow", 20, 12) };
-        QuotaPaceEstimate Pace(double rate, QuotaTrendConfidence confidence = QuotaTrendConfidence.Stable) =>
-            new(QuotaPaceStatus.ProjectedExhaustion,
-                Recent: new(TimeSpan.FromHours(1), rate, now.AddHours(1), false, confidence),
+        QuotaPaceEstimate Pace(double rate, QuotaWindow window, QuotaTrendConfidence confidence = QuotaTrendConfidence.Stable)
+        {
+            var exhaustedAt = now.AddHours((100 - window.UsedPercent!.Value) / rate);
+            var resetFirst = exhaustedAt >= window.ResetsAt;
+            return new(resetFirst ? QuotaPaceStatus.ResetsBeforeExhaustion : QuotaPaceStatus.ProjectedExhaustion,
+                Recent: new(TimeSpan.FromHours(1), rate, exhaustedAt, resetFirst, confidence),
                 ValidUntil: now.AddMinutes(5)) { ForecastExpiresAt = now.AddMinutes(5) };
+        }
         var estimates = new Dictionary<string, QuotaPaceEstimate>
         {
-            [QuotaPaceTracker.SeriesKey("early", quotas[0].Windows[0])] = Pace(20),
-            [QuotaPaceTracker.SeriesKey("slow", quotas[1].Windows[0])] = Pace(5),
+            [QuotaPaceTracker.SeriesKey("early", quotas[0].Windows[0])] = Pace(20, quotas[0].Windows[0]),
+            [QuotaPaceTracker.SeriesKey("slow", quotas[1].Windows[0])] = Pace(5, quotas[1].Windows[0]),
         };
         var chronological = CodexUsageStrategy.Create(accounts, quotas, now);
         var pressured = CodexUsageStrategy.Create(accounts, quotas, now, estimates);
@@ -286,12 +322,32 @@ internal static class CodexUsageStrategyTests
         {
             Check(panel.AccessibleDescription!.Contains("按近期节奏，建议现在使用"),
                 "A pace-based recommendation exposes its reason.");
+            var text = NativeText.For("zh-CN");
+            Check(pressured.Accounts.All(account => account.Progress.Count == account.Windows.Count)
+                && quotas.All(quota => panel.VisibleTextForAcceptance.Contains(text.QuotaPace(
+                    estimates[QuotaPaceTracker.SeriesKey(quota.CardKey!, quota.Windows[0])], now, quota.Windows[0].ResetsAt).Right))
+                && panel.VisibleTextForAcceptance.Contains("在用")
+                && panel.VisibleTextForAcceptance.Contains("周余量"),
+                "The strategy reuses each window's existing forecast and identifies active accounts and remaining quota.");
             if (capture is not null) bitmap.Save(Path.ChangeExtension(capture, ".pressure.png"), System.Drawing.Imaging.ImageFormat.Png);
+            var earlyKey = QuotaPaceTracker.SeriesKey("early", quotas[0].Windows[0]);
+            var cycle = new QuotaPaceEstimate(QuotaPaceStatus.ProjectedExhaustion,
+                Cycle: new(0, 0, 20, now.AddHours(1)), ValidUntil: now.AddMinutes(5))
+                { ForecastExpiresAt = now.AddMinutes(5) };
+            var cycleEstimates = new Dictionary<string, QuotaPaceEstimate>(estimates) { [earlyKey] = cycle };
+            using var cycleBitmap = panel.RenderForTest(CodexUsageStrategy.Create(accounts, quotas, now, cycleEstimates),
+                text, QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
+            Check(panel.VisibleTextForAcceptance.Contains(text.QuotaPace(cycle, now, quotas[0].Windows[0].ResetsAt).Right),
+                "Cycle-average forecasts use the same presentation as the existing quota popover.");
+            cycleEstimates[earlyKey] = cycle with { ForecastExpiresAt = now.AddSeconds(-1) };
+            using var staleBitmap = panel.RenderForTest(CodexUsageStrategy.Create(accounts, quotas, now, cycleEstimates),
+                text, QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
+            Check(panel.VisibleTextForAcceptance.Contains("预测待刷新"), "Expired forecasts are explicitly unavailable.");
         }
-        estimates[QuotaPaceTracker.SeriesKey("slow", quotas[1].Windows[0])] = Pace(80);
+        estimates[QuotaPaceTracker.SeriesKey("slow", quotas[1].Windows[0])] = Pace(80, quotas[1].Windows[0]);
         Check(CodexUsageStrategy.Create(accounts, quotas, now, estimates).Accounts[0].Account.AccountId == "early",
             "Recommendation order responds to a changed measured consumption rate.");
-        estimates[QuotaPaceTracker.SeriesKey("slow", quotas[1].Windows[0])] = Pace(5, QuotaTrendConfidence.Provisional);
+        estimates[QuotaPaceTracker.SeriesKey("slow", quotas[1].Windows[0])] = Pace(5, quotas[1].Windows[0], QuotaTrendConfidence.Provisional);
         Check(CodexUsageStrategy.Create(accounts, quotas, now, estimates).Accounts.Single(row =>
                 row.Account.AccountId == "slow").SuggestedStartAt is null,
             "Provisional consumption samples do not invent a start-time forecast.");
@@ -302,7 +358,7 @@ internal static class CodexUsageStrategyTests
             ResetCreditsAvailable = 3,
             ResetCreditBatches = [new(now.AddHours(10), 3, true)],
         };
-        estimates[QuotaPaceTracker.SeriesKey("slow", cards.Windows[0])] = Pace(10);
+        estimates[QuotaPaceTracker.SeriesKey("slow", cards.Windows[0])] = Pace(10, cards.Windows[0]);
         var stacked = CodexUsageStrategy.Create(accounts, [quotas[0], cards], now, estimates);
         Check(stacked.Accounts[0].Account.AccountId == "slow" && stacked.Accounts[0].SuggestedStartAt == now,
             "Several expiring full resets account for consumption between redemptions.");
@@ -315,7 +371,7 @@ internal static class CodexUsageStrategyTests
         var property = typeof(BarForm).GetProperty("CodexStrategy", BindingFlags.Instance | BindingFlags.NonPublic)!;
         Check(((CodexUsageStrategy)property.GetValue(bar)!).Accounts[0].Account.AccountId == "early",
             "The initial Bar strategy falls back to known deadlines.");
-        estimates[QuotaPaceTracker.SeriesKey("slow", quotas[1].Windows[0])] = Pace(5);
+        estimates[QuotaPaceTracker.SeriesKey("slow", quotas[1].Windows[0])] = Pace(5, quotas[1].Windows[0]);
         bar.SetQuotaPaceEstimates(estimates);
         Check(((CodexUsageStrategy)property.GetValue(bar)!).Accounts[0].Account.AccountId == "slow",
             "New pace observations refresh the strategy through the existing Bar entry point.");
@@ -325,4 +381,7 @@ internal static class CodexUsageStrategyTests
     {
         if (!value) throw new InvalidOperationException(message);
     }
+
+    private static int Occurrences(string text, string value) =>
+        text.Split(value, StringSplitOptions.None).Length - 1;
 }

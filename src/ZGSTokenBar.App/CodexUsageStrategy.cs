@@ -14,6 +14,8 @@ internal sealed record CodexStrategyEvent(
     DateTimeOffset? CardExpiresAt = null,
     bool CoversMainQuota = false);
 
+internal sealed record CodexStrategyProgress(QuotaWindow Window, QuotaPaceEstimate? Pace);
+
 internal sealed record CodexStrategyAccount(
     CodexAccountInfo Account,
     IReadOnlyList<QuotaWindow> Windows,
@@ -35,6 +37,7 @@ internal sealed record CodexStrategyAccount(
     public DateTimeOffset? SuggestedStartAt { get; init; }
     public double? ConsumptionPressure { get; init; }
     public int? UnresolvedCards { get; init; }
+    public IReadOnlyList<CodexStrategyProgress> Progress { get; init; } = [];
     public DateTimeOffset? PriorityDeadline =>
         RedeemBy is { } redeem && (Deadline is null || redeem < Deadline) ? redeem : Deadline;
     public CodexStrategyDeadline? PriorityReason =>
@@ -172,24 +175,26 @@ internal sealed record CodexUsageStrategy(
             UnresolvedCards = quota?.ResetCreditsAvailable is { } count
                 ? (int)Math.Max(0, count - ordered.Sum(item => (long)(item.CardCount ?? 0)))
                 : null,
+            Progress = windows.Select(window => new CodexStrategyProgress(window,
+                quota?.CardKey is { } key
+                    ? paceEstimates?.GetValueOrDefault(QuotaPaceTracker.SeriesKey(key, window))?.ForDisplay(now)
+                    : null)).ToArray(),
         };
-        return WithConsumptionPressure(row, quota?.CardKey, paceEstimates, now);
+        return WithConsumptionPressure(row, now);
     }
 
     private static CodexStrategyAccount WithConsumptionPressure(
         CodexStrategyAccount row,
-        string? cardKey,
-        IReadOnlyDictionary<string, QuotaPaceEstimate>? estimates,
         DateTimeOffset now)
     {
-        if (row.State != CodexStrategyState.Ready || cardKey is null || estimates is null) return row;
+        if (row.State != CodexStrategyState.Ready) return row;
         var currentHours = double.PositiveInfinity;
         var fullHours = double.PositiveInfinity;
-        foreach (var window in row.Windows)
+        foreach (var progress in row.Progress)
         {
-            if (!estimates.TryGetValue(QuotaPaceTracker.SeriesKey(cardKey, window), out var estimate)) return row;
-            estimate = estimate.ForDisplay(now);
-            if (estimate.Status is not (QuotaPaceStatus.ProjectedExhaustion or QuotaPaceStatus.ResetsBeforeExhaustion)
+            var window = progress.Window;
+            var estimate = progress.Pace;
+            if (estimate is null || estimate.Status is not (QuotaPaceStatus.ProjectedExhaustion or QuotaPaceStatus.ResetsBeforeExhaustion)
                 || estimate.ValidUntil is not { } validUntil || validUntil <= now
                 || estimate.Recent is not { Confidence: not QuotaTrendConfidence.Provisional } trend
                 || trend.ObservedSpan < TimeSpan.FromMinutes(5)
