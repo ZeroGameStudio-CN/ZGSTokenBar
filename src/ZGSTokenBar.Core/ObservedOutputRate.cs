@@ -34,15 +34,25 @@ public sealed class ObservedOutputRate
         var measured = responses.GroupBy(r => (r.SessionId, TurnId: sessions.FirstOrDefault(s => s.SessionId == r.SessionId)?.TurnId ?? r.TurnId)).ToDictionary(g => g.Key,
             g => g.Sum(r => r.Output * Overlap(window, now, r.Start, r.End) / (r.End - r.Start).TotalSeconds) / 3);
         var estimated = new Dictionary<(string SessionId, string? TurnId), double>();
+        var unavailable = new HashSet<(string SessionId, string? TurnId)>();
         var generating = sessions.Where(s => s.Phase == "generating" && s.LastActivity <= now
             && now - s.LastActivity <= TimeSpan.FromMinutes(5) && s.InFlightStart is not null).ToArray();
         foreach (var session in generating)
         {
-            var reference = responses.Where(r => r.SessionId == session.SessionId && r.End >= now.AddMinutes(-10)).Take(3).ToArray();
-            if (reference.Length == 0 && session.Model is not null)
-                reference = responses.Where(r => r.Model == session.Model).Take(10).ToArray();
-            if (reference.Length == 0) reference = responses.Take(10).ToArray();
-            if (reference.Length == 0) continue;
+            if (string.IsNullOrWhiteSpace(session.Model))
+            {
+                unavailable.Add((session.SessionId, session.TurnId));
+                continue;
+            }
+            var matchingModel = responses.Where(r => string.Equals(r.Model, session.Model, StringComparison.Ordinal));
+            var reference = matchingModel.Where(r => r.SessionId == session.SessionId
+                && r.End >= now.AddMinutes(-10)).Take(3).ToArray();
+            if (reference.Length == 0) reference = matchingModel.Take(10).ToArray();
+            if (reference.Length == 0)
+            {
+                unavailable.Add((session.SessionId, session.TurnId));
+                continue;
+            }
             var speed = reference.Sum(r => (double)r.Output) / reference.Sum(r => (r.End - r.Start).TotalSeconds);
             var end = responses.Where(r => r.SessionId == session.SessionId).Select(r => r.End).DefaultIfEmpty(session.InFlightStart!.Value).Max();
             var start = session.InFlightStart!.Value > end ? session.InFlightStart.Value : end;
@@ -50,9 +60,11 @@ public sealed class ObservedOutputRate
         }
         var rates = sessions.Select(s => (s.SessionId, s.TurnId))
             .Concat(measured.Where(pair => pair.Value > 0).Select(pair => pair.Key)).Distinct()
+            .Where(key => !unavailable.Contains(key) || measured.GetValueOrDefault(key) > 0)
             .Select(key => new ConversationOutputRate(key.SessionId, key.TurnId,
                 measured.GetValueOrDefault(key), estimated.GetValueOrDefault(key))).ToArray();
-        var known = sessions.Length > 0 || responses.Length > 0;
+        var known = (sessions.Length > 0 || responses.Length > 0)
+            && !(unavailable.Count > 0 && rates.All(rate => rate.Total == 0));
         return new(now, known ? rates.Sum(r => r.Total) : null, rates.Sum(r => r.Measured), rates.Sum(r => r.Estimated), generating.Length,
             sessions.Count(s => s.Phase == "tools" && s.LastActivity <= now && now - s.LastActivity <= TimeSpan.FromMinutes(5)), sessions.Length, feed.Pending)
             { Conversations = rates };

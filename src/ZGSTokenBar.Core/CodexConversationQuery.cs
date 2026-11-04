@@ -21,10 +21,13 @@ public sealed record CodexConversationView(CodexConversationQuery Query,
     public const int MaximumCsvCharacters = 4 * 1024 * 1024;
     public const int CsvChunkBytes = 4 * 1024;
     public static CodexConversationView Create(CodexTokenUsageSummary? usage, CodexConversationQuery query,
-        DateTimeOffset now, TimeZoneInfo? timeZone = null)
+        DateTimeOffset now, TimeZoneInfo? timeZone = null) =>
+        CreateFromRows(CodexConversationDisplay.Select(usage, now), query, now, timeZone);
+
+    public static CodexConversationView CreateFromRows(IReadOnlyList<CodexConversationTurn> all,
+        CodexConversationQuery query, DateTimeOffset now, TimeZoneInfo? timeZone = null)
     {
         timeZone ??= TimeZoneInfo.Local;
-        var all = CodexConversationDisplay.Select(usage, now);
         var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(now, timeZone).DateTime);
         var start = query.Period switch
         {

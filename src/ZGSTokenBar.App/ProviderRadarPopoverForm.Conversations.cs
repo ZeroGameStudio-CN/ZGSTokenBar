@@ -7,6 +7,8 @@ internal sealed partial class ProviderRadarPopoverForm
 {
     private CodexConversationQuery _conversationQuery = new();
     private CodexConversationView? _conversationView;
+    private readonly ConversationPresentationCache _conversationCache = new();
+    private IReadOnlyList<CodexModelSpeedGroup> _conversationSpeedGroups = [];
     private readonly TextBox _conversationSearch = new() { BorderStyle = BorderStyle.None, MaxLength = 160 };
     private readonly ContextMenuStrip _conversationMenu = new() { ShowImageMargin = false, ShowCheckMargin = true };
     private Font? _conversationSearchFont;
@@ -41,11 +43,11 @@ internal sealed partial class ProviderRadarPopoverForm
 
     private void RefreshConversationView()
     {
-        _conversationView = _usagePrimary
-            ? CodexConversationView.Create(_tokenUsage, _conversationQuery, DateTimeOffset.UtcNow) : null;
+        if (_usagePrimary) _conversationCache.Update(_tokenUsage, _conversationQuery, DateTimeOffset.UtcNow);
+        _conversationView = _usagePrimary ? _conversationCache.View : null;
         _displayTurns = _conversationView?.Rows ?? _tokenUsage?.ConversationTurns ?? [];
-        _modelSpeeds = _conversationView is null ? []
-            : CodexConversationSpeeds.BuildRows(_conversationView.Rows, DateTimeOffset.UtcNow);
+        _modelSpeeds = _usagePrimary ? _conversationCache.ModelSpeeds : [];
+        _conversationSpeedGroups = _usagePrimary ? _conversationCache.ModelGroups : [];
     }
 
     internal void SetConversationQuery(CodexConversationQuery query)

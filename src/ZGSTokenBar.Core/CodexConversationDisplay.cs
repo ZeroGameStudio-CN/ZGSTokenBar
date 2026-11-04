@@ -2,12 +2,26 @@ namespace ZGSTokenBar.Core;
 
 public static class CodexConversationDisplay
 {
-    public static IReadOnlyList<CodexConversationTurn> Select(CodexTokenUsageSummary? usage, DateTimeOffset? now = null) =>
-        usage?.ConversationTurns.Select(turn => turn with { LiveRate = usage.LiveOutputRate is { } live
-            && (now ?? DateTimeOffset.UtcNow) >= live.CapturedAt && (now ?? DateTimeOffset.UtcNow) - live.CapturedAt <= TimeSpan.FromSeconds(15)
-            ? live.Conversations
-            .FirstOrDefault(rate => rate.SessionId == turn.SessionId && rate.TurnId == turn.TurnId) : null })
-            .Where(HasMetrics).ToArray() ?? [];
+    public static IReadOnlyList<CodexConversationTurn> Select(CodexTokenUsageSummary? usage, DateTimeOffset? now = null)
+    {
+        if (usage is null) return [];
+        return Select(usage.ConversationTurns, usage.LiveOutputRate, now ?? DateTimeOffset.UtcNow);
+    }
+
+    public static IReadOnlyList<CodexConversationTurn> Select(IReadOnlyList<CodexConversationTurn> turns,
+        LiveOutputRate? liveRate, DateTimeOffset now)
+    {
+        var rates = liveRate is { } live && now >= live.CapturedAt
+            && now - live.CapturedAt <= TimeSpan.FromSeconds(15)
+                ? live.Conversations.GroupBy(rate => (rate.SessionId, rate.TurnId))
+                    .ToDictionary(group => group.Key, group => group.First())
+                : null;
+        return turns.Select(turn =>
+            {
+                var rate = rates?.GetValueOrDefault((turn.SessionId, (string?)turn.TurnId));
+                return ReferenceEquals(turn.LiveRate, rate) ? turn : turn with { LiveRate = rate };
+            }).Where(HasMetrics).ToArray();
+    }
 
     private static bool HasMetrics(CodexConversationTurn turn) => turn.LiveRate is not null || turn.NewInputTokens is not null
         || turn.UsageComplete || turn.OutputTokens > 0 || turn.CachedInputTokens is not null

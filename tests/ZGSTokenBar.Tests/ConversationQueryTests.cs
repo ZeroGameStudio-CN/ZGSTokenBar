@@ -19,6 +19,7 @@ internal static class ConversationQueryTests
 
     internal static void Run()
     {
+        ConversationPresentationCacheTests.Run();
         var zone = TimeZoneInfo.CreateCustomTimeZone("fixture +08", TimeSpan.FromHours(8), "fixture", "fixture");
         var today = Turn("today", new(2026, 10, 28, 16, 0, 0, TimeSpan.Zero), 100, 10);
         var yesterday = Turn("yesterday", today.StartedAt.AddSeconds(-1), 900, 30) with { Model = "model-b", ProjectName = "Beta" };
@@ -110,7 +111,8 @@ internal static class ConversationQueryTests
             var layout = RadarPopoverLayout.CreateConversationUsage(dpi, 500, true, height * dpi / 96, 6, 4, historyTools: true);
             Check(layout.ConversationToolbarBounds.Bottom < layout.ConversationSummaryBounds.Top
                 && layout.ConversationSummaryBounds.Bottom < layout.RecentTurnsBounds.Top
-                && layout.RecentTurnsBounds.Bottom <= layout.FooterCompactBounds.Top
+                && layout.RecentTurnsBounds.Bottom <= layout.FooterScopeBounds.Top
+                && layout.FooterScopeBounds.Bottom <= layout.FooterCompactBounds.Top
                 && layout.BodySize.Height <= height * dpi / 96, "Toolbar, summary and paged rows fit on short and tall desktops at each DPI.");
             Check(layout.ConversationSearchBounds.Width >= 88 * dpi / 96 && layout.ConversationSearchBounds.Right < layout.ConversationExportBounds.Left,
                 "Search retains an input target without covering the export action.");
@@ -135,6 +137,11 @@ internal static class ConversationQueryTests
                 var rows = Enumerable.Range(0, 30).Select(i => Turn(i.ToString(), Now.AddMinutes(-i - 1), i + 1, 10)
                     with { Model = i % 2 == 0 ? "model-a" : "model-b" }).ToArray();
                 form.ShowFor(owner, new Rectangle(20, 20, 24, 24), new(null, Now, false, null), NativeText.For("en"), logo, 1, false, true, false, Usage(rows));
+                var projectionBuilds = form.ConversationProjectionBuildCount;
+                var layoutBuilds = form.ConversationLayoutBuildCount;
+                form.ShowFor(owner, new Rectangle(20, 20, 24, 24), new(null, Now, false, null), NativeText.For("en"), logo, 1, false, true, false, Usage(rows));
+                Check(form.ConversationProjectionBuildCount == projectionBuilds && form.ConversationLayoutBuildCount == layoutBuilds,
+                    "Repeated native presentation reuses its history projection and geometry.");
                 form.ChangeConversationPage(1);
                 form.SetConversationQuery(new(Model: "model-b"));
                 Check(form.ConversationPageOffset == 0 && form.ConversationView!.Rows.Count == 15,

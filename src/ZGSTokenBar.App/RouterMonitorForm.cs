@@ -73,7 +73,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         SuspendLayout();
         Text = "Router";
         AutoScaleMode = AutoScaleMode.None;
-        Font = new Font("Microsoft YaHei UI", 12.5f, FontStyle.Regular, GraphicsUnit.Pixel);
+        Font = new Font("Microsoft YaHei UI", RouterVisualGeometry.LogicalFontPixels, FontStyle.Regular, GraphicsUnit.Pixel);
         BackColor = Color.FromArgb(17, 21, 29);
         ForeColor = Color.FromArgb(229, 234, 243);
         FormBorderStyle = FormBorderStyle.None;
@@ -93,7 +93,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _kind.Width = _outcome.Width = 92; _day.Width = 112; _query.Width = 160;
         _kind.AccessibleName = "任务类型"; _outcome.AccessibleName = "结果"; _day.AccessibleName = "日期"; _query.AccessibleName = "搜索任务或对话";
         _pin = IconButton(RouterButtonIcon.Pin, "固定弹层", () => { PinChanged?.Invoke(this, !_pinned); return Task.CompletedTask; });
-        var brand = Label("ROUTER", 70); brand.Font = new Font("Segoe UI Semibold", 12, FontStyle.Regular, GraphicsUnit.Pixel);
+        var brand = Label("ROUTER", 70); brand.Font = new Font("Segoe UI Semibold", 11, FontStyle.Regular, GraphicsUnit.Pixel);
         var header = Header(Flow(brand), Flow(_freshness, IconButton(RouterButtonIcon.Refresh, "刷新", async () => { await RefreshViewAsync(); await HistoryAsync(forceRefresh: true); }), _pin,
             IconButton(RouterButtonIcon.Close, "收起弹层", () => { CloseRequested?.Invoke(this, EventArgs.Empty); return Task.CompletedTask; })), 240);
         var navigation = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 1, RowCount = 2 };
@@ -107,10 +107,10 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         projectRow.Controls.Add(projectLabel, 0, 0); projectRow.Controls.Add(_projects, 1, 0);
         projectSurface.Controls.Add(projectRow); navigation.Controls.Add(projectSurface, 0, 1);
         _root.Controls.Add(navigation, 0, 0);
-        _headline.Font = new Font(Font.FontFamily, 11.5f, FontStyle.Bold, GraphicsUnit.Pixel);
-        _task.Font = new Font(Font.FontFamily, 14, FontStyle.Bold, GraphicsUnit.Pixel);
-        _metrics.Font = _detail.Font = _source.Font = _freshness.Font = _notice.Font = _historySummary.Font = new Font(Font.FontFamily, 11.5f, FontStyle.Regular, GraphicsUnit.Pixel);
-        _currentHeading.Font = _queueHeading.Font = _historyHeading.Font = new Font(Font.FontFamily, 13, FontStyle.Bold, GraphicsUnit.Pixel);
+        _headline.Font = new Font(Font.FontFamily, 10.5f, FontStyle.Bold, GraphicsUnit.Pixel);
+        _task.Font = new Font(Font.FontFamily, 12, FontStyle.Bold, GraphicsUnit.Pixel);
+        _metrics.Font = _detail.Font = _source.Font = _freshness.Font = _notice.Font = _historySummary.Font = new Font(Font.FontFamily, 10.5f, FontStyle.Regular, GraphicsUnit.Pixel);
+        _currentHeading.Font = _queueHeading.Font = _historyHeading.Font = new Font(Font.FontFamily, 11.5f, FontStyle.Bold, GraphicsUnit.Pixel);
         _currentHeading.Height = 24; _queueHeading.Height = _historyHeading.Height = _historySummary.Height = 30;
         _currentHeading.Margin = _queueHeading.Margin = _historyHeading.Margin = _historySummary.Margin = Padding.Empty;
         _metrics.TextAlign = ContentAlignment.MiddleRight;

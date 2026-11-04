@@ -2459,20 +2459,13 @@ internal sealed partial class BarForm : Form
 
         var railStart = target.Bounds.X + 4;
         var railWidth = Math.Max(1, target.Bounds.Width - 8);
-        var now = DateTimeOffset.UtcNow;
-        _quotaPaceEstimates.TryGetValue(target.PaceKey, out var pace);
-        var budgetMarkerRemaining = remaining is not null
-            && QuotaDisplayFormatting.WeeklyBlockReset(target.Card, target.Window, now) is null
-                ? QuotaDisplayFormatting.BudgetMarkerRemaining(target.Window, pace?.Cycle, now)
-                : null;
         DrawTaskbarQuotaRail(
             graphics,
             railStart,
             railWidth,
             target.Bounds.Bottom - 1.5f,
             remaining,
-            valueColor,
-            budgetMarkerRemaining);
+            valueColor);
 
         if (target.Bounds.Height < 9) return;
         using var valueBrush = new SolidBrush(valueColor);
@@ -2615,28 +2608,13 @@ internal sealed partial class BarForm : Form
         var railStart = target.Bounds.X + 4;
         var railWidth = target.Bounds.Width - 8;
         var railY = target.Bounds.Bottom - 2;
-        var now = DateTimeOffset.UtcNow;
-        double? budgetMarkerRemaining = null;
-        _quotaPaceEstimates.TryGetValue(target.PaceKey, out var pace);
-        if (QuotaDisplayFormatting.WeeklyBlockReset(
-                target.Card,
-                target.Window,
-                now) is null
-            && remaining is not null)
-        {
-            budgetMarkerRemaining = QuotaDisplayFormatting.BudgetMarkerRemaining(
-                target.Window,
-                pace?.Cycle,
-                now);
-        }
         DrawTaskbarQuotaRail(
             graphics,
             railStart,
             railWidth,
             railY,
             remaining,
-            valueColor,
-            budgetMarkerRemaining);
+            valueColor);
     }
 
     private void DrawTaskbarCapsule(Graphics graphics, MiniQuotaTarget target)
@@ -2688,11 +2666,7 @@ internal sealed partial class BarForm : Form
             EndCap = LineCap.Round,
         };
         graphics.DrawLine(accentPen, bounds.X + 3.5f, bounds.Y + 3.5f, bounds.X + 3.5f, bounds.Bottom - 3.5f);
-        _quotaPaceEstimates.TryGetValue(target.PaceKey, out var pace);
-        double? budgetMarkerRemaining = !blockedByWeekly && remaining is not null
-            ? QuotaDisplayFormatting.BudgetMarkerRemaining(window, pace?.Cycle, now)
-            : null;
-        DrawTaskbarProgressRail(graphics, bounds, remaining, valueColor, budgetMarkerRemaining);
+        DrawTaskbarProgressRail(graphics, bounds, remaining, valueColor);
 
         using var labelBrush = new SolidBrush(blockedByWeekly
             ? Color.FromArgb(100, 116, 139)
@@ -2789,8 +2763,7 @@ internal sealed partial class BarForm : Form
                 graphics,
                 bounds,
                 accountAvailabilityRemaining,
-                availabilityColor,
-                null);
+                availabilityColor);
             DrawTaskbarServiceCompactMetric(
                 graphics,
                 bounds,
@@ -2806,8 +2779,7 @@ internal sealed partial class BarForm : Form
                 graphics,
                 bounds,
                 quotaWindow.RemainingPercent,
-                quotaColor,
-                null);
+                quotaColor);
             DrawTaskbarServiceCompactMetric(
                 graphics,
                 bounds,
@@ -2882,7 +2854,7 @@ internal sealed partial class BarForm : Form
             case Sub2ApiServicePresentationKind.CompleteAvailability
                 when presentation.Availability is { } availability
                 && Sub2ApiAccountAvailabilityFormatting.MeanRemainingPercent(availability) is { } remaining:
-                DrawTaskbarProgressRail(graphics, bounds, remaining, valueColor, null);
+                DrawTaskbarProgressRail(graphics, bounds, remaining, valueColor);
                 DrawTaskbarServiceCompactMetric(
                     graphics,
                     bounds,
@@ -2902,7 +2874,7 @@ internal sealed partial class BarForm : Form
                 return;
             case Sub2ApiServicePresentationKind.LegacyAggregateQuota
                 when presentation.LegacyQuota is { } legacy:
-                DrawTaskbarProgressRail(graphics, bounds, legacy.RemainingPercent, valueColor, null);
+                DrawTaskbarProgressRail(graphics, bounds, legacy.RemainingPercent, valueColor);
                 DrawTaskbarServiceCompactMetric(
                     graphics,
                     bounds,
@@ -3008,8 +2980,7 @@ internal sealed partial class BarForm : Form
         Graphics graphics,
         RectangleF bounds,
         double? remaining,
-        Color valueColor,
-        double? budgetMarkerRemaining)
+        Color valueColor)
     {
         var railStart = bounds.X + 7;
         var railWidth = bounds.Width - 10;
@@ -3020,8 +2991,7 @@ internal sealed partial class BarForm : Form
             railWidth,
             railY,
             remaining,
-            valueColor,
-            budgetMarkerRemaining);
+            valueColor);
     }
 
     private static void DrawTaskbarQuotaRail(
@@ -3030,8 +3000,7 @@ internal sealed partial class BarForm : Form
         float railWidth,
         float railY,
         double? remaining,
-        Color valueColor,
-        double? budgetMarkerRemaining)
+        Color valueColor)
     {
         using var troughPen = new Pen(Color.FromArgb(30, 41, 59), 3)
         {
@@ -3064,37 +3033,6 @@ internal sealed partial class BarForm : Form
             }
         }
 
-        if (budgetMarkerRemaining is { } targetRemaining)
-        {
-            DrawBudgetMarkerPointer(graphics, railStart, railWidth, railY, targetRemaining);
-        }
-    }
-
-    private static void DrawBudgetMarkerPointer(
-        Graphics graphics,
-        float railStart,
-        float railWidth,
-        float railY,
-        double targetRemaining)
-    {
-        var markerX = railStart + railWidth * (float)(Math.Clamp(targetRemaining, 0, 100) / 100);
-        var markerY = railY - .5f;
-        using var markerBrush = new SolidBrush(Color.FromArgb(253, 230, 138));
-        using var markerCoreBrush = new SolidBrush(Color.FromArgb(30, 41, 59));
-        graphics.FillPolygon(markerBrush,
-        [
-            new PointF(markerX, markerY - 2),
-            new PointF(markerX + 2, markerY),
-            new PointF(markerX, markerY + 2),
-            new PointF(markerX - 2, markerY),
-        ]);
-        graphics.FillPolygon(markerCoreBrush,
-        [
-            new PointF(markerX, markerY - .8f),
-            new PointF(markerX + .8f, markerY),
-            new PointF(markerX, markerY + .8f),
-            new PointF(markerX - .8f, markerY),
-        ]);
     }
 
     private void DrawResetClockIcon(Graphics graphics, RectangleF bounds) =>

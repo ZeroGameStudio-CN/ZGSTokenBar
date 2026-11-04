@@ -131,6 +131,7 @@ public sealed class RadarPopoverLayout
     public Rectangle ConversationSearchBounds { get; private init; }
     public Rectangle ConversationExportBounds { get; private init; }
     public Rectangle ConversationSummaryBounds { get; private init; }
+    public Rectangle FooterScopeBounds { get; private init; }
     public int ConversationHeaderAt(Point point)
     {
         var top = RecentTurnsBounds.Top + (int)Math.Round(18 * Dpi / 96d);
@@ -509,12 +510,12 @@ public sealed class RadarPopoverLayout
         var speedHeight = speedGroupCount > 0
             ? 34 + (Math.Min(speedGroupCount, 6) + 2) / 3 * (24 + Math.Clamp(speedDetailRows, 1, 4) * 20) : 0;
         var extra = historyTools ? 96 : 0;
-        if (historyTools && 178 + extra + PrimaryConversationRowHeight + speedHeight > maximumBodyHeight * 96d / dpi)
+        if (historyTools && 194 + extra + PrimaryConversationRowHeight + speedHeight > maximumBodyHeight * 96d / dpi)
             speedHeight = 0;
-        var maximumRows = Math.Clamp((maximumBodyHeight * 96d / dpi - 178 - extra - speedHeight) / PrimaryConversationRowHeight, 1, 8);
+        var maximumRows = Math.Clamp((maximumBodyHeight * 96d / dpi - 194 - extra - speedHeight) / PrimaryConversationRowHeight, 1, 8);
         var pageSize = (int)maximumRows;
         var visibleRows = Math.Min(pageSize, Math.Max(3, recentTurnCount));
-        var height = 178 + extra + visibleRows * PrimaryConversationRowHeight + speedHeight;
+        var height = 194 + extra + visibleRows * PrimaryConversationRowHeight + speedHeight;
         var fixedWidths = new[] { 76, 72, 52, 48, 48, 56, 64, 70, 40, 76 };
         var hiddenWidth = fixedWidths.Select((value, index) => (columnMask & (1 << (index + 1))) == 0 ? value + 5 : 0).Sum();
         var width = Math.Max(480, LogicalConversationWidth + 81 - hiddenWidth);
@@ -539,6 +540,7 @@ public sealed class RadarPopoverLayout
             RecentTurnsBounds = Rect(14, 54 + extra, contentWidth, ConversationHeaderHeight + visibleRows * PrimaryConversationRowHeight),
             RecentPageSize = pageSize,
             FooterCompactBounds = Rect(14, height - 82, contentWidth, 68),
+            FooterScopeBounds = Rect(14, height - 98, contentWidth, 14),
             RadarToggleBounds = radarEnabled ? Rect(width - 94, 17, 80, 20) : Rectangle.Empty,
             ModelSpeedBounds = speedHeight == 0 ? Rectangle.Empty
                 : Rect(14, 96 + extra + visibleRows * PrimaryConversationRowHeight, contentWidth, speedHeight - 10),

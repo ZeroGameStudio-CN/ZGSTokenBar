@@ -100,7 +100,9 @@ The preferred popup body is 760 by 796 logical pixels, with equal queue/history
 height. Short desktops clamp it to their working area and retain whole-row pages.
 Current, queue and history each have a named rounded surface with consistent
 headings and spacing. The bar defaults to the compact icon; the existing expand
-control reveals project/phase/elapsed metadata, while full task details remain
+control reveals project/phase/elapsed metadata. Router text uses an 11-pixel
+logical body size, compact secondary labels and a 12-pixel task title, scaled
+with the existing DPI geometry. Full task details remain
 in the hover popup. Saved expanded preferences remain effective; old narrow
 expanded widths normalize to the readable minimum.
 History labels the retained dispatch-to-cleanup interval as resource occupancy.
@@ -232,9 +234,20 @@ API-equivalent cost (including partial coverage) and whole-turn average speed.
 They are not all-request totals; the current live window and retained terminal
 history remain bounded. Empty matches never fall back to unfiltered records.
 The same popup keeps whole-row paging, the separate Radar extension and the
-existing global token/cache/fee summaries. On short screens the per-model cards
+existing global token/cache/fee summaries under an explicit global-scope label.
+The header counts and upper summaries follow the current filters; the global
+footer does not. Retention limits remain in the history hover. On short screens
+the per-model cards
 may be omitted to retain a usable table without adding scrollbars; full filtered
 model summaries remain in the speed tooltip.
+
+Live-only refreshes reuse filtered ordering, summaries, model groups and unchanged
+window geometry. Recorded changes, filter changes, local midnight, sample
+eligibility/expiry and live-dependent sorting invalidate the relevant cache.
+Live cells and running durations still refresh from the current sample.
+`--usage-clarity-review <capture-directory>` checks these boundaries, strict model
+estimation and quota presentation, with synthetic renderer captures and a
+500-row projection benchmark.
 
 The primary view also summarizes matching complete output-producing turns,
 grouped by configured model, effort and service tier. Average speed is
@@ -262,6 +275,8 @@ has been observed. The same section retains the recorded amount, sample span
 and partial-cycle or local source; a smaller sample shows recorded usage while
 the estimate is pending. Without a current observation the section is hidden.
 Linear budget goals and separate historical average/peak figures are omitted.
+The taskbar quota rail has no obsolete goal marker. Quota cards show remaining
+percentage once; pinning uses a small icon and the existing interaction footer.
 The underlying token history and ledger collection retain their existing behavior.
 Future samples and exhausted prior windows cannot establish current exhaustion.
 Already-rendered forecasts expire at their window reset or maximum data age;
@@ -394,7 +409,10 @@ seconds and divide by three. Intervals under 500 ms use a 500 ms floor; missing,
 future, reversed or over-fifteen-minute intervals are excluded. During generating
 phases, estimate only the uncovered interval after the last response, using the
 same session's latest three responses within ten minutes, then up to ten matching
-model/source responses within thirty minutes as fallback. Tool/idle phases receive
+model responses within thirty minutes as fallback. Both steps require the
+current configured model. A missing model or matching reference leaves the
+in-flight estimate unavailable; recorded response output is retained across
+model changes. Tool/idle phases receive
 no extrapolation. A tilde denotes estimated output; hover exposes recorded and
 estimated values/share. These are response-window observations and estimates,
 not server decode speed or a guarantee that every client/request is captured.

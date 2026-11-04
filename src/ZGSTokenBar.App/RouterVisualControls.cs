@@ -39,8 +39,9 @@ internal static class RouterVisualGeometry
         path.CloseFigure();
         return path;
     }
+    internal const float LogicalFontPixels = 11f;
     internal static float Scale(Control control) => Math.Max(1, control.Font.Unit == GraphicsUnit.Pixel
-        ? control.Font.Size / 12.5f : control.Font.SizeInPoints * 96 / 72 / 12.5f);
+        ? control.Font.Size / LogicalFontPixels : control.Font.SizeInPoints * 96 / 72 / LogicalFontPixels);
 }
 
 internal enum RouterButtonKind { Quiet, Primary }

@@ -370,33 +370,22 @@ internal sealed class QuotaPopoverForm : Form
                 : Color.FromArgb(226, 232, 240));
         using var paceValueBrush = new SolidBrush(Color.FromArgb(94, 234, 212));
         using var detailValueBrush = new SolidBrush(Color.FromArgb(203, 213, 225));
+        var titleWidth = body.Width - 44 - (content.Pinned ? 34 : 12);
         DrawString(
             graphics,
             $"{content.Card.Label} · {QuotaDisplayFormatting.FormatWindowShort(content.Window)}",
             _titleFont,
             titleBrush,
-            new RectangleF(x + 44, y + 8, body.Width - 118, 14),
+            new RectangleF(x + 44, y + 8, titleWidth, 14),
             StringAlignment.Near);
         DrawAccountSubtitle(
             graphics,
             content.Card,
             _text,
             mutedBrush,
-            new RectangleF(x + 44, y + 22, body.Width - 118, 13));
-
-        var statusBounds = new RectangleF(body.Right - 62, y + 9, 50, 16);
-        using var statusFill = new SolidBrush(_backgroundTheme.QuotaGroup);
-        using var statusBorder = new Pen(Color.FromArgb(71, 85, 105), 1);
-        using var statusPath = RoundedRectangle(statusBounds, 5);
-        graphics.FillPath(statusFill, statusPath);
-        graphics.DrawPath(statusBorder, statusPath);
-        DrawString(
-            graphics,
-            content.Pinned ? _text.Pinned : _text.Preview,
-            _statusFont,
-            mutedBrush,
-            statusBounds,
-            StringAlignment.Center);
+            new RectangleF(x + 44, y + 22, titleWidth, 13));
+        if (content.Pinned)
+            DrawPinIcon(graphics, new RectangleF(body.Right - 25, y + 12, 12, 12));
 
         using var valueBrush = new SolidBrush(valueColor);
         DrawString(
@@ -404,15 +393,8 @@ internal sealed class QuotaPopoverForm : Form
             _text.Left(remaining is null ? "--" : FormatPercent(remaining.Value)),
             _valueFont,
             valueBrush,
-            new RectangleF(x + 12, y + 38, 150, 23),
+            new RectangleF(x + 12, y + 38, body.Width - 24, 23),
             StringAlignment.Near);
-        DrawString(
-            graphics,
-            _text.Used(used is null ? "--" : FormatPercent(used.Value)),
-            _metricFont,
-            mutedBrush,
-            new RectangleF(body.Right - 80, y + 42, 68, 16),
-            StringAlignment.Far);
 
         var trough = new RectangleF(x + 12, y + 65, body.Width - 24, 6);
         using var troughBrush = new SolidBrush(Color.FromArgb(30, 41, 59));
@@ -1440,6 +1422,24 @@ internal sealed class QuotaPopoverForm : Form
     private static bool HasAccountHint(QuotaCard card) =>
         !string.IsNullOrWhiteSpace(card.AccountHint)
         && !string.Equals(card.AccountHint, "Codex account", StringComparison.OrdinalIgnoreCase);
+
+    private static void DrawPinIcon(Graphics graphics, RectangleF bounds)
+    {
+        using var pen = new Pen(Color.FromArgb(148, 163, 184), 1.2f)
+        {
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round,
+            LineJoin = LineJoin.Round,
+        };
+        graphics.DrawLines(pen,
+        [
+            new PointF(bounds.Left + 4, bounds.Top + 1), new PointF(bounds.Right - 1, bounds.Top + 6),
+            new PointF(bounds.Right - 3, bounds.Top + 6), new PointF(bounds.Left + 5, bounds.Bottom - 2),
+            new PointF(bounds.Left + 2, bounds.Top + 7), new PointF(bounds.Left + 5, bounds.Top + 3),
+            new PointF(bounds.Left + 4, bounds.Top + 1),
+        ]);
+        graphics.DrawLine(pen, bounds.Left + 4, bounds.Top + 8, bounds.Left + 1, bounds.Bottom - 1);
+    }
 
     private static void DrawTrendPaceIcon(Graphics graphics, RectangleF bounds, Color color)
     {

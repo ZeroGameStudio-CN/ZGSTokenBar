@@ -128,6 +128,9 @@ internal sealed partial class ProviderRadarPopoverForm : Form
     {
         var wasVisible = Visible;
         var wasPinned = _pinned;
+        var previousLayout = _layout;
+        var previousTailSide = _tailSide;
+        var previousTailOffset = _tailOffset;
         _motionTimer.Stop();
         _exiting = false;
         _animateMotion = animateMotion;
@@ -185,8 +188,11 @@ internal sealed partial class ProviderRadarPopoverForm : Form
         var placement = CurrentPlacement();
         _tailSide = placement.TailSide;
         _tailOffset = placement.TailOffset;
-        ClientSize = placement.WindowSize;
-        UpdateWindowRegion();
+        var sizeChanged = ClientSize != placement.WindowSize;
+        if (sizeChanged) ClientSize = placement.WindowSize;
+        if (sizeChanged || !ReferenceEquals(previousLayout, _layout) || previousTailSide != _tailSide
+            || previousTailOffset != _tailOffset || wasPinned != _pinned)
+            UpdateWindowRegion();
         Invalidate();
 
         if (!wasVisible && animateMotion)
@@ -208,7 +214,8 @@ internal sealed partial class ProviderRadarPopoverForm : Form
         {
             Opacity = 1;
             if (!wasVisible) Show((Form?)_extensionOwner ?? owner);
-            if (!TaskbarPlacement.ShowAt(Handle, placement.Location, placement.WindowSize))
+            if ((!wasVisible || Location != placement.Location)
+                && !TaskbarPlacement.ShowAt(Handle, placement.Location, placement.WindowSize))
             {
                 Location = placement.Location;
             }
@@ -338,7 +345,8 @@ internal sealed partial class ProviderRadarPopoverForm : Form
             canSwitchBenchmark: CanSwitchBenchmark,
             radarExpanded: RadarExtensionVisible,
             modelSpeeds: _modelSpeeds,
-            radarExtension: _extensionOwner is not null, conversationView: _usagePrimary ? _conversationView : null);
+            radarExtension: _extensionOwner is not null, conversationView: _usagePrimary ? _conversationView : null,
+            conversationModelGroups: _usagePrimary ? _conversationSpeedGroups : null);
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
@@ -540,14 +548,25 @@ internal sealed partial class ProviderRadarPopoverForm : Form
         return layout;
     }
 
+    private RadarPopoverLayout? _conversationLayout;
+    private (int Dpi, int Rows, bool Radar, int MaximumHeight, int Groups, int Details, int Columns)? _conversationLayoutKey;
+    internal int ConversationLayoutBuildCount { get; private set; }
+    internal int ConversationProjectionBuildCount => _conversationCache.RebuildCount;
+
     private RadarPopoverLayout BuildUsageLayout(int dpi)
     {
-        var groups = CodexConversationSpeeds.GroupModels(_modelSpeeds);
-        return RadarPopoverLayout.CreateConversationUsage(dpi, ConversationRowCount, _radarEnabled,
-            Screen.FromRectangle(_anchorScreen).WorkingArea.Height
-                - (int)Math.Ceiling((RadarPopoverLayout.LogicalTail + RadarPopoverLayout.LogicalGap * 2) * dpi / 96d),
-            groups.Count, groups.Count == 0 ? 1 : groups.Take(6).Max(group => group.Rows.Count),
-            CodexConversationDisplay.ColumnMask(_displayTurns), historyTools: true);
+        var groups = _conversationSpeedGroups;
+        var maximumHeight = Screen.FromRectangle(_anchorScreen).WorkingArea.Height
+            - (int)Math.Ceiling((RadarPopoverLayout.LogicalTail + RadarPopoverLayout.LogicalGap * 2) * dpi / 96d);
+        var details = groups.Count == 0 ? 1 : groups.Take(6).Max(group => group.Rows.Count);
+        var columns = CodexConversationDisplay.ColumnMask(_displayTurns);
+        var key = (dpi, ConversationRowCount, _radarEnabled, maximumHeight, groups.Count, details, columns);
+        if (_conversationLayoutKey == key && _conversationLayout is not null) return _conversationLayout;
+        _conversationLayoutKey = key;
+        _conversationLayout = RadarPopoverLayout.CreateConversationUsage(dpi, ConversationRowCount, _radarEnabled,
+            maximumHeight, groups.Count, details, columns, historyTools: true);
+        ConversationLayoutBuildCount++;
+        return _conversationLayout;
     }
 
     internal void SetRadarExpanded(bool expanded)

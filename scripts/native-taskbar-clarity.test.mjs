@@ -147,15 +147,14 @@ test('taskbar Mini prefers real quota windows and keeps labels for a fully unava
   assert.doesNotMatch(barForm, /DrawQuotaRing/);
 });
 
-test('taskbar Mini rails keep current remaining primary and mark the daily budget goal', () => {
+test('taskbar Mini rails show remaining quota without the removed budget goal', () => {
   const capsuleStart = barForm.indexOf('    private void DrawTaskbarCapsule(');
   const capsuleEnd = barForm.indexOf('    private void DrawTaskbarProgressRail(', capsuleStart);
   const capsuleBody = barForm.slice(capsuleStart, capsuleEnd);
   assert.notEqual(capsuleStart, -1);
   assert.notEqual(capsuleEnd, -1);
-  assert.match(capsuleBody, /budgetMarkerRemaining = !blockedByWeekly/);
-  assert.match(capsuleBody, /QuotaDisplayFormatting\.BudgetMarkerRemaining\(window, pace\?\.Cycle, now\)/);
-  assert.match(capsuleBody, /DrawTaskbarProgressRail\(graphics, bounds, remaining, valueColor, budgetMarkerRemaining\)/);
+  assert.match(capsuleBody, /DrawTaskbarProgressRail\(graphics, bounds, remaining, valueColor\)/);
+  assert.doesNotMatch(barForm, /BudgetMarkerRemaining|DrawBudgetMarkerPointer|budgetMarkerRemaining/);
 
   const railEnd = barForm.indexOf('    private void DrawResetClockIcon(', capsuleEnd);
   const railBody = barForm.slice(capsuleEnd, railEnd);
@@ -165,19 +164,12 @@ test('taskbar Mini rails keep current remaining primary and mark the daily budge
   assert.match(railBody, /new Pen\(Color\.FromArgb\(71, 85, 105\), 2\)/);
   assert.match(railBody, /EndCap = clampedRemaining >= 100 \? LineCap\.Round : LineCap\.Flat/);
   assert.match(railBody, /StartCap = clampedRemaining <= 0 \? LineCap\.Round : LineCap\.Flat/);
-  assert.match(railBody, /DrawBudgetMarkerPointer/);
-  assert.match(railBody, /Color\.FromArgb\(253, 230, 138\)/);
-  assert.match(railBody, /markerCoreBrush = new SolidBrush\(Color\.FromArgb\(30, 41, 59\)\)/);
-  const pointerStart = railBody.indexOf('    private static void DrawBudgetMarkerPointer(');
-  assert.notEqual(pointerStart, -1);
-  assert.doesNotMatch(railBody.slice(pointerStart), /DrawLine/);
 
   const dualStart = barForm.indexOf('    private void DrawTaskbarDualMetric(');
   const dualEnd = barForm.indexOf('    private void DrawTaskbarCapsule(', dualStart);
   const dualBody = barForm.slice(dualStart, dualEnd);
   assert.notEqual(dualStart, -1);
   assert.notEqual(dualEnd, -1);
-  assert.match(dualBody, /QuotaDisplayFormatting\.BudgetMarkerRemaining\(/);
   assert.match(dualBody, /DrawTaskbarQuotaRail/);
 });
 
@@ -561,10 +553,10 @@ test('Cockpit API services are displayed as informational cards without network 
   const serviceMetric = barForm.slice(serviceMetricStart, serviceMetricEnd);
   assert.notEqual(serviceMetricStart, -1);
   assert.notEqual(serviceMetricEnd, -1);
-  assert.match(serviceMetric, /var quotaColor = Sub2ApiQuotaCompactStatusColor\(quota!\.Status\);[\s\S]*?DrawTaskbarProgressRail\([\s\S]*?quotaWindow\.RemainingPercent,[\s\S]*?quotaColor,[\s\S]*?null\);/);
+  assert.match(serviceMetric, /var quotaColor = Sub2ApiQuotaCompactStatusColor\(quota!\.Status\);[\s\S]*?DrawTaskbarProgressRail\([\s\S]*?quotaWindow\.RemainingPercent,[\s\S]*?quotaColor\);/);
   assert.match(serviceMetric, /DrawTaskbarServiceCompactMetric\([\s\S]*?target\.Card\.DisplayLabel,[\s\S]*?_text\.Sub2ApiQuotaCompact\(quota!\),[\s\S]*?quotaColor\);/);
   assert.match(serviceMetric, /var accountAvailabilityRemaining = Sub2ApiAccountAvailabilityFormatting\.MeanRemainingPercent\(accountAvailability\);/);
-  assert.match(serviceMetric, /var availabilityColor = Sub2ApiQuotaCompactStatusColor\(accountAvailability!\.Status\);[\s\S]*?DrawTaskbarProgressRail\([\s\S]*?accountAvailabilityRemaining,[\s\S]*?availabilityColor,[\s\S]*?null\);/);
+  assert.match(serviceMetric, /var availabilityColor = Sub2ApiQuotaCompactStatusColor\(accountAvailability!\.Status\);[\s\S]*?DrawTaskbarProgressRail\([\s\S]*?accountAvailabilityRemaining,[\s\S]*?availabilityColor\);/);
   assert.match(serviceMetric, /DrawTaskbarServiceCompactMetric\([\s\S]*?target\.Card\.DisplayLabel,[\s\S]*?_text\.Sub2ApiAccountAvailabilityCompact\(accountAvailability!\),[\s\S]*?availabilityColor\);/);
   assert.match(serviceMetric, /private void DrawTaskbarServiceCompactMetric\([\s\S]*?if \(bounds\.Width < 84f\)[\s\S]*?StringAlignment\.Near[\s\S]*?StringAlignment\.Far/);
   assert.doesNotMatch(serviceMetric, /bounds\.Y \+ 16/);

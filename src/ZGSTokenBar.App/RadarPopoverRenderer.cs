@@ -50,7 +50,8 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
         bool canSwitchBenchmark = false,
         bool radarExpanded = false,
         IReadOnlyList<CodexModelSpeed>? modelSpeeds = null,
-        bool radarExtension = false, CodexConversationView? conversationView = null)
+        bool radarExtension = false, CodexConversationView? conversationView = null,
+        IReadOnlyList<CodexModelSpeedGroup>? conversationModelGroups = null)
     {
         var fonts = Fonts(layout.Dpi, layout.ConversationPrimary);
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
@@ -62,7 +63,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
         if (layout.ConversationPrimary)
         {
             DrawConversationOverview(graphics, layout, body.Location, tokenUsage, logo, fonts, text,
-                pinned, recentTurnOffset, radarExpanded, modelSpeeds, conversationView);
+                pinned, recentTurnOffset, radarExpanded, modelSpeeds, conversationView, conversationModelGroups);
             return;
         }
         if (layout.HasRecentColumn)
@@ -603,12 +604,14 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
 
     private static void DrawConversationOverview(Graphics graphics, RadarPopoverLayout layout, Point origin,
         CodexTokenUsageSummary? usage, Image? logo, RadarPopoverFonts fonts, NativeText text,
-        bool pinned, int offset, bool radarExpanded, IReadOnlyList<CodexModelSpeed>? modelSpeeds, CodexConversationView? conversationView)
+        bool pinned, int offset, bool radarExpanded, IReadOnlyList<CodexModelSpeed>? modelSpeeds,
+        CodexConversationView? conversationView, IReadOnlyList<CodexModelSpeedGroup>? cachedModelGroups)
     {
         if (logo is not null) graphics.DrawImage(logo, Offset(layout.LogoBounds, origin));
         DrawText(graphics, text.CodexTokenTitle, fonts.Title, Color.FromArgb(226, 232, 240),
             Offset(layout.TitleBounds, origin), CellTextFlags);
-        DrawText(graphics, conversationView is null ? text.CodexTokenPopoverSubtitle(pinned) : text.CodexHistoryCoverage(conversationView.ObservedCount), fonts.Meta, Color.FromArgb(148, 163, 184),
+        DrawText(graphics, conversationView is null ? text.CodexTokenPopoverSubtitle(pinned)
+            : text.CodexHistoryCoverage(conversationView.Rows.Count, conversationView.ObservedCount), fonts.Meta, Color.FromArgb(148, 163, 184),
             Offset(layout.SubtitleBounds, origin), CellTextFlags);
         if (!layout.RadarToggleBounds.IsEmpty)
         {
@@ -632,7 +635,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
         {
             var speedBounds = Offset(layout.ModelSpeedBounds, origin);
             var rows = modelSpeeds ?? CodexConversationSpeeds.Build(usage, usage.CapturedAt);
-            var groups = CodexConversationSpeeds.GroupModels(rows);
+            var groups = cachedModelGroups ?? CodexConversationSpeeds.GroupModels(rows);
             DrawText(graphics, (conversationView is null ? text.CodexModelSpeedsTitle(groups.Count) : text.CodexFilteredModelSpeeds(groups.Count)) + " · tok/s", fonts.Badge, Color.FromArgb(148, 163, 184),
                 speedBounds with { Height = Scale(layout.Dpi, 14) }, CellTextFlags);
             var columns = Math.Min(3, Math.Max(1, groups.Count));
@@ -659,6 +662,8 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
                 }
             }
         }
+        DrawText(graphics, text.CodexGlobalStatistics, fonts.Meta, Color.FromArgb(148, 163, 184),
+            Offset(layout.FooterScopeBounds, origin), CellTextFlags);
         var footer = Offset(layout.FooterCompactBounds, origin);
         var gap = Scale(layout.Dpi, 8);
         var width = (footer.Width - gap * 2) / 3;

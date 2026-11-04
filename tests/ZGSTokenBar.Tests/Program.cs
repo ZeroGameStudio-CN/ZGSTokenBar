@@ -18,6 +18,21 @@ using ZGSTokenBar.Plugin.AiGatewayObserver;
 
 if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJobExitCode;
 
+if (args.Length > 0 && args[0] == "--usage-clarity-review")
+{
+    LiveMetricTests.Run();
+    ConversationQueryTests.Run();
+    TestQuotaPacePopoverPresentation();
+    if (args.Length == 2)
+    {
+        ConversationQueryTests.Capture(args[1]);
+        RenderTaskbarMiniCaptures(args[1]);
+        ConversationPresentationCacheTests.Benchmark(Path.Combine(args[1], "conversation-cache-benchmark.json"));
+    }
+    Console.WriteLine("PASS model-isolated rates, cached projections and scoped native presentation");
+    return 0;
+}
+
 if (args.Length > 0 && args[0] == "--live-metrics")
 {
     LiveMetricTests.Run();
@@ -491,7 +506,6 @@ var tests = new (string Name, Action Run)[]
     ("Native background palette contract", TestNativeBackgroundPaletteContract),
     ("Native settings panel contract", TestNativeSettingsPanelContract),
     ("Compact reset labels", TestCompactResetLabels),
-    ("Realtime quota budget marker", TestRealtimeQuotaBudgetMarker),
     ("Quota milestone alerts", TestQuotaMilestoneAlerts),
     ("Cockpit API service card", TestCockpitApiServiceCard),
     ("Build identity payload fixtures", TestBuildIdentityPayloadFixtures),
@@ -9735,6 +9749,7 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
     var scenarios = new (string Name, QuotaPopoverContent Content)[]
     {
         ("stable-over", new QuotaPopoverContent(card, card.Windows[0], null, now, stablePace, false)),
+        ("pinned", new QuotaPopoverContent(card, card.Windows[0], null, now, stablePace, true)),
         ("reset-reserve", new QuotaPopoverContent(card, card.Windows[0], null, now,
             new QuotaPaceTracker().Estimate(card, card.Windows[0], now, 5), false)),
         ("provisional-reserve", new QuotaPopoverContent(card, card.Windows[0], null, now, provisionalPace, false)),
@@ -11892,8 +11907,6 @@ static void TestRadarPopoverLayout()
     Equal("Total", en.CodexTotalMetricLabel, "English metric scope label");
     Equal("30 日", zh.CodexLast30DaysMetricLabel, "Chinese spend period label");
     Equal("API equivalent estimate", en.CodexSpendMetricTitle, "English spend card names the estimate");
-    Equal("估算", zh.CodexCompactSpendMetricTitle, "Chinese compact spend footer stays short");
-    Equal("Estimate", en.CodexCompactSpendMetricTitle, "English compact spend footer stays short");
     Equal("42 sessions", en.CodexSessionCount(42), "spend card keeps session scope secondary");
     Equal("Token", zh.CodexTokenRadarMetricTitle, "Chinese Radar token metric title");
     Equal("Cache", en.CodexCacheRadarMetricTitle, "English Radar cache metric title");
@@ -16338,62 +16351,6 @@ static void TestCompactResetLabels()
             blockedFiveHour with { ResetsAt = now.AddHours(3) },
             now),
         "five-hour window with its own reset remains active");
-}
-
-static void TestRealtimeQuotaBudgetMarker()
-{
-    var cycle = new QuotaCyclePace(40, -20);
-    var weekly = new QuotaWindow(
-        "7d",
-        20,
-        DateTimeOffset.Parse("2026-08-07T16:00:00Z"),
-        TimeSpan.FromDays(7));
-    var shanghaiMorning = DateTimeOffset.Parse("2026-08-01T02:00:00Z");
-    var shanghaiBeforeMidnight = DateTimeOffset.Parse("2026-08-01T15:59:00Z");
-    var shanghaiMidnight = DateTimeOffset.Parse("2026-08-01T16:00:00Z");
-
-    Equal(
-        94.048,
-        Math.Round(QuotaDisplayFormatting.BudgetMarkerRemaining(weekly, cycle, shanghaiMorning)!.Value, 3),
-        "weekly marker follows elapsed cycle time");
-    Equal(
-        85.724,
-        Math.Round(QuotaDisplayFormatting.BudgetMarkerRemaining(weekly, cycle, shanghaiBeforeMidnight)!.Value, 3),
-        "weekly marker advances within the same day");
-    Equal(
-        85.714,
-        Math.Round(QuotaDisplayFormatting.BudgetMarkerRemaining(weekly, cycle, shanghaiMidnight)!.Value, 3),
-        "weekly marker remains continuous across midnight");
-
-    var resetsBeforeMidnight = weekly with
-    {
-        ResetsAt = DateTimeOffset.Parse("2026-08-01T12:00:00Z"),
-    };
-    Equal(
-        5.952,
-        Math.Round(QuotaDisplayFormatting.BudgetMarkerRemaining(resetsBeforeMidnight, cycle, shanghaiMorning)!.Value, 3),
-        "marker uses time remaining until the real reset");
-    Equal<double?>(
-        null,
-        QuotaDisplayFormatting.BudgetMarkerRemaining(resetsBeforeMidnight, cycle, shanghaiMidnight),
-        "expired cycle hides its budget marker");
-
-    Equal(100d, QuotaDisplayFormatting.BudgetMarkerRemaining(weekly, null, weekly.ResetsAt!.Value.AddDays(-8)),
-        "time before the cycle clamps to full remaining");
-    Equal<double?>(null, QuotaDisplayFormatting.BudgetMarkerRemaining(weekly, cycle, weekly.ResetsAt!.Value),
-        "marker hides exactly at reset");
-    Equal(94.048, Math.Round(QuotaDisplayFormatting.BudgetMarkerRemaining(weekly, null, shanghaiMorning)!.Value, 3),
-        "known reset does not require learned pace");
-
-    var fiveHour = new QuotaWindow(
-        "5h",
-        40,
-        shanghaiMorning.AddHours(3),
-        TimeSpan.FromHours(5));
-    Equal(
-        60d,
-        QuotaDisplayFormatting.BudgetMarkerRemaining(fiveHour, cycle, shanghaiMorning),
-        "short windows keep the current cycle budget marker");
 }
 
 static void TestQuotaMilestoneAlerts()

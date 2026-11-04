@@ -579,8 +579,6 @@ public static class TaskbarMiniPopoverMath
 
 public static class QuotaDisplayFormatting
 {
-    private static readonly TimeSpan LongGoalMinimumWindow = TimeSpan.FromDays(7);
-
     public static DateTimeOffset? WeeklyBlockReset(
         QuotaCard card,
         QuotaWindow window,
@@ -631,27 +629,6 @@ public static class QuotaDisplayFormatting
         return $"{Math.Max(1, (int)Math.Round(remaining.TotalMinutes))}m";
     }
 
-    public static double? BudgetMarkerRemaining(
-        QuotaWindow window,
-        QuotaCyclePace? cycle,
-        DateTimeOffset now)
-    {
-        if (window.ResetsAt is not { } reset || window.Duration <= TimeSpan.Zero)
-        {
-            return cycle is null ? null : Math.Clamp(100 - cycle.ExpectedUsedPercent, 0, 100);
-        }
-        if (reset <= now) return null;
-
-        var cycleStart = reset - window.Duration;
-        var expectedUsed = Math.Clamp(
-            (now - cycleStart).TotalMilliseconds / window.Duration.TotalMilliseconds * 100,
-            0,
-            100);
-        return 100 - expectedUsed;
-    }
-
-    public static bool UsesLongWindowGoal(QuotaWindow window) =>
-        window.Duration >= LongGoalMinimumWindow;
 }
 
 public static class CodexDisplayFormatting

@@ -19,6 +19,19 @@ internal static class LiveMetricTests
         var estimated = tracker.Observe(Feed([Response("a", -7, -5, 200)], [active]), at);
         Check(Math.Abs(estimated.Estimated - 200d / 3) < .001 && estimated.HasEstimate,
             "Generating uses recent response-weighted speed and exposes the estimated share.");
+        var switched = active with { Model = "new-model" };
+        var missingModel = tracker.Observe(Feed([Response("a", -7, -5, 200)], [switched]), at);
+        Check(missingModel.Estimated == 0 && missingModel.Total is null && missingModel.Conversations.Count == 0,
+            "A model switch never borrows the previous model's speed or reports an unsupported zero.");
+        var matchingModel = tracker.Observe(Feed(
+            [Response("a", -7, -5, 200), Response("b", -7, -5, 300) with { Model = "new-model" }], [switched]), at);
+        Check(matchingModel.Estimated == 100,
+            "A new session/model may use recent samples from the same model in another session.");
+        Check(tracker.Observe(Feed([Response("b", -7, -5, 200)], [active with { Model = null }]), at).Total is null,
+            "An unknown model does not borrow arbitrary models' throughput.");
+        var measuredAfterSwitch = tracker.Observe(Feed([Response("a", -3, -1, 200)], [switched]), at);
+        Check(Math.Abs(measuredAfterSwitch.Measured - 200d / 3) < .001 && measuredAfterSwitch.Estimated == 0,
+            "Restricting estimates preserves real measured output across a model switch.");
         Check(tracker.Observe(Feed([Response("a", -7, -5, 200)], [active with { Phase = "tools" }]), at).Total == 0,
             "Tool time does not inherit generation estimates.");
         var overlap = tracker.Observe(Feed([Response("a", -3, -1, 200)], [active with { InFlightStart = at.AddSeconds(-4) }]), at);
@@ -322,6 +335,7 @@ internal static class LiveMetricTests
                 last_token_usage = new { output_tokens = 90, total_tokens = 100, input_tokens = 10, cached_input_tokens = 0 } } };
             File.WriteAllLines(path, [Line(-11, "event_msg", Usage(100, 200)),
                 Line(-10, "event_msg", new { type = "task_started", turn_id = "turn" }),
+                Line(-10, "turn_context", new { turn_id = "turn", model = "model" }),
                 Line(-9, "response_item", new { type = "reasoning" }),
                 Line(-1, "event_msg", Usage(190, 300))]);
             var reader = new CodexConversationUsageReader();
@@ -339,7 +353,8 @@ internal static class LiveMetricTests
             reader.Refresh([path], at.AddSeconds(1));
             Check(reader.LiveRateFeed!.Sessions.Single().Phase == "generating", "Duplicate counters cannot end active generation.");
             Check(reader.LiveRateFeed!.Responses.Count == 1, "Unchanged polling never duplicates responses.");
-            File.AppendAllText(path, Line(1, "event_msg", new { type = "task_started", turn_id = "pending-first-usage" }) + Environment.NewLine);
+            File.AppendAllText(path, Line(1, "event_msg", new { type = "task_started", turn_id = "pending-first-usage" }) + Environment.NewLine
+                + Line(1, "turn_context", new { turn_id = "pending-first-usage", model = "model" }) + Environment.NewLine);
             var pending = reader.Refresh([path], at.AddSeconds(3));
             var live = new ObservedOutputRate().Observe(reader.LiveRateFeed, at.AddSeconds(3));
             var projected = CodexConversationView.Create(new CodexTokenUsageSummary(0, 0, 1, at.AddSeconds(3))

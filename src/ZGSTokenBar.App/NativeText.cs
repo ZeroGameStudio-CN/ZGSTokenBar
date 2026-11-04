@@ -538,7 +538,8 @@ internal sealed class NativeText
     public string CodexLast7DaysMetricLabel => T("7 日", "7d");
     public string CodexLast30DaysMetricLabel => T("30 日", "30d");
     public string CodexSpendMetricTitle => T("API 等值估算", "API equivalent estimate");
-    public string CodexCompactSpendMetricTitle => T("估算", "Estimate");
+    public string CodexCompactSpendMetricTitle => T("API 等值", "API equivalent");
+    public string CodexGlobalStatistics => T("全局统计 · 不随筛选变化", "Global totals · unaffected by filters");
     public string CodexSpendHistoryTitle => T("消费历史", "Spend history");
     public string CodexSpendHistoryBack => T("‹ 返回", "‹ Back");
     public string CodexSpendHistoryAction => T("历史 ›", "History ›");
@@ -900,7 +901,9 @@ internal sealed class NativeText
     public string CodexRecentTurnsTitle => T("最近对话", "Recent chats");
     public string CodexConversationsIndexing(int count) => T($"读取 {count}", $"Reading {count}");
     public string CodexRadarExpansion(bool expanded) => expanded ? T("收起雷达 ‹", "Hide Radar ‹") : T("雷达 ›", "Radar ›");
-    public string CodexHistoryCoverage(int count) => T($"已观测 {count} 轮 · 历史策略 500 轮 / 90 天", $"{count} observed turns · history retention 500 / 90 days");
+    public string CodexHistoryCoverage(int selectedCount, int observedCount) => T(
+        $"当前筛选 {selectedCount} 轮 · 已观测 {observedCount} 轮",
+        $"Current filter: {selectedCount} turns · {observedCount} observed");
     public string CodexHistoryPeriod(CodexHistoryPeriod period) => period switch
     {
         ZGSTokenBar.Core.CodexHistoryPeriod.Today => T("今天", "Today"),
@@ -925,8 +928,8 @@ internal sealed class NativeText
         + (count > 6 ? T($" · 最近6/{count}组", $" · latest 6/{count} groups") : "");
     public string CodexFilteredSpeedHint => T("当前筛选中完整结束、有输出的轮次，按设置模型、强度与档位分组；未知强度或档位不进入卡片。\n均速=输出总量÷整轮总耗时；单轮最高包含思考、工具与等待。卡片显示最近6组、每组最多4种设置；下方列出全部分组。",
         "Complete output-producing selected turns, grouped by configured model, effort and tier; unknown effort/tier is omitted from cards.\nAverage = total output / total whole-turn time; best-turn speed includes reasoning, tools and waits. Cards show six recent models and four settings each; all groups are listed below.");
-    public string CodexHistoryHint => T("只查询已观测并留存的轮次，不代表全部 API 请求。日期按本机时区的开始日筛选；点击表头排序。\n实时速度与总 tok/s 使用同一 3 秒采样，≈含估算；总值不随筛选和翻页变化。整轮均速含思考、工具与等待。CSV 保留整轮指标，不保存实时值。",
-        "Observed retained turns only, not all API requests. Dates filter local turn starts; click a column to sort.\nLive speed and total tok/s share one 3-second sample; ≈ includes estimates. Filters/pages do not change the total. Whole-turn average includes reasoning, tools and waits. CSV retains whole-turn metrics, not transient live values.");
+    public string CodexHistoryHint => T("只查询已观测并留存的轮次，最多500轮、90天，不代表全部 API 请求。日期按本机时区的开始日筛选；点击表头排序。\n实时速度与总 tok/s 使用同一 3 秒采样，≈含估算；总值不随筛选和翻页变化。整轮均速含思考、工具与等待。CSV 保留整轮指标，不保存实时值。",
+        "Observed retained turns only, up to 500 turns within 90 days, not all API requests. Dates filter local turn starts; click a column to sort.\nLive speed and total tok/s share one 3-second sample; ≈ includes estimates. Filters/pages do not change the total. Whole-turn average includes reasoning, tools and waits. CSV retains whole-turn metrics, not transient live values.");
     public string CodexExportHistory => T("导出筛选记录 CSV", "Export matching rows as CSV");
     public string CodexHistoryCost(decimal? cost, bool partial)
     {
