@@ -340,6 +340,7 @@ internal sealed partial class BarForm : Form
         if (quotaPaceEstimates is not null) _quotaPaceEstimates = quotaPaceEstimates;
         StartSnapshotAnimation(previous, snapshot);
         ApplySnapshotLayout();
+        RefreshCodexStrategy();
         RefreshQuotaPopover();
         RefreshCodexAccountsPopover();
         RefreshHintPopover();
@@ -359,6 +360,7 @@ internal sealed partial class BarForm : Form
     public void SetCodexAccounts(IReadOnlyList<CodexAccountInfo> accounts)
     {
         _codexAccounts = accounts.ToArray();
+        RefreshCodexStrategy();
         if (_codexMiniDisplayMode == CodexMiniDisplayModes.Pool)
         {
             ApplySnapshotLayout();
@@ -1249,6 +1251,7 @@ internal sealed partial class BarForm : Form
         _taskbarRadarBounds.Clear();
         _taskbarPluginBounds.Clear();
         _taskbarCodexAccountBounds.Clear();
+        _codexStrategyBounds = RectangleF.Empty;
         _taskbarAreaBounds.Clear();
         var x = (float)TaskbarMiniLayoutMath.OuterPadding;
         _liveMetricsBounds = RectangleF.Empty;
@@ -1318,6 +1321,7 @@ internal sealed partial class BarForm : Form
         RectangleF bounds)
     {
         var hitTargetCounts = CaptureTaskbarHitTargetCounts();
+        var previousStrategyBounds = _codexStrategyBounds;
         var graphicsState = graphics.Save();
         var graphicsStateRestored = false;
         try
@@ -1326,6 +1330,8 @@ internal sealed partial class BarForm : Form
             DrawTaskbarModuleShell(graphics, target);
             if (area.Group is { } group)
             {
+                var fullBounds = bounds;
+                bounds = CodexQuotaBounds(area.AreaId, bounds, layout.Collapsed);
                 var primaryCard = PrimaryTaskbarCard(group);
                 if (layout.Collapsed)
                 {
@@ -1365,6 +1371,9 @@ internal sealed partial class BarForm : Form
                     DrawTaskbarCard(graphics, bounds, group.Cards[0]);
                     _cardBounds.Add((bounds, group.Cards[0]));
                 }
+                if (bounds.Width < fullBounds.Width)
+                    DrawCodexStrategyButton(graphics, RectangleF.FromLTRB(
+                        bounds.Right, bounds.Top, fullBounds.Right, bounds.Bottom));
             }
             else if (area.Plugin is { } pluginCard)
             {
@@ -1395,6 +1404,7 @@ internal sealed partial class BarForm : Form
             graphicsStateRestored = true;
             graphics.Restore(graphicsState);
             RestoreTaskbarHitTargetCounts(hitTargetCounts);
+            _codexStrategyBounds = previousStrategyBounds;
             if (string.Equals(area.AreaId, MiniAreaIds.SystemMetrics, StringComparison.Ordinal))
             {
                 _systemUsageBounds = RectangleF.Empty;
@@ -3822,7 +3832,9 @@ internal sealed partial class BarForm : Form
         UpdateRadarHover(radarTarget);
         UpdateCodexAccountsHover(codexAccountTarget);
         UpdateQuotaHover(quotaTarget);
-        var next = _refreshBounds.Contains(logical)
+        var next = _codexStrategyBounds.Contains(logical)
+            ? HoverTarget.CodexStrategy
+            : _refreshBounds.Contains(logical)
                 ? HoverTarget.Refresh
             : miniCollapseTarget
                 ? HoverTarget.MiniCollapse
@@ -3998,6 +4010,11 @@ internal sealed partial class BarForm : Form
         if (TaskbarCollapseTargetAt(logical) is { } miniArea)
         {
             ToggleMiniAreaCollapsed(miniArea.AreaId);
+            return;
+        }
+        if (_codexStrategyBounds.Contains(logical))
+        {
+            ToggleCodexStrategyPopover();
             return;
         }
         if (SystemUsageTargetAt(logical))
@@ -4367,7 +4384,8 @@ internal sealed partial class BarForm : Form
         if (_popoverPinned) return;
         if (target == HoverTarget.Plugin && _pluginPopover?.Visible == true
             && _hoverPluginTarget?.Card.PluginId == _pluginPopoverId) return;
-        var next = target is HoverTarget.Refresh or HoverTarget.MiniCollapse or HoverTarget.MiniReorder or HoverTarget.Settings or HoverTarget.Plugin
+        var next = target is HoverTarget.Refresh or HoverTarget.MiniCollapse or HoverTarget.MiniReorder
+            or HoverTarget.Settings or HoverTarget.Plugin or HoverTarget.CodexStrategy
             ? target
             : HoverTarget.None;
         if (_hoverHintTarget == next)
@@ -4396,6 +4414,8 @@ internal sealed partial class BarForm : Form
 
     private (string Title, string Detail)? HintFor(HoverTarget target)
     {
+        if (target == HoverTarget.CodexStrategy)
+            return (CodexStrategyPopoverForm.TitleFor(_text), CodexStrategyPopoverForm.UrgentText(CodexStrategy, _text));
         if (target == HoverTarget.MiniCollapse)
         {
             var area = HoveredMiniArea();
@@ -4700,13 +4720,15 @@ internal sealed partial class BarForm : Form
             ShowCodexAccountsPopover(codexAccountTarget);
             return;
         }
-        if (_hoverHintTarget is HoverTarget.Refresh or HoverTarget.MiniCollapse or HoverTarget.Settings or HoverTarget.Plugin)
+        if (_hoverHintTarget is HoverTarget.Refresh or HoverTarget.MiniCollapse or HoverTarget.Settings
+            or HoverTarget.Plugin or HoverTarget.CodexStrategy)
         {
             var hintTarget = _hoverHintTarget;
             _popoverHoverTimer.Stop();
             var hintBounds = hintTarget switch
             {
                 HoverTarget.Refresh => _refreshBounds,
+                HoverTarget.CodexStrategy => _codexStrategyBounds,
                 HoverTarget.MiniCollapse when HoveredMiniArea() is { } area => area.HandleBounds,
                 HoverTarget.Plugin when _hoverPluginTarget is { } plugin => plugin.Bounds,
                 _ => _settingsBounds,
@@ -4758,6 +4780,7 @@ internal sealed partial class BarForm : Form
         var anchor = target switch
         {
             HoverTarget.Refresh => _refreshBounds,
+            HoverTarget.CodexStrategy => _codexStrategyBounds,
             HoverTarget.MiniCollapse when HoveredMiniArea() is { } area => area.HandleBounds,
             HoverTarget.MiniReorder when HoveredReorderArea() is { } area => area.ReorderBounds,
             HoverTarget.Plugin when _hoverPluginTarget is { } plugin => plugin.Bounds,
@@ -4959,6 +4982,11 @@ internal sealed partial class BarForm : Form
 
     private void MonitorPopover()
     {
+        if (_codexStrategyPopover?.Visible == true)
+        {
+            MonitorCodexStrategyPopover();
+            return;
+        }
         if (_pluginPopover is { Visible: false } && _pluginPopoverId is not null) HidePluginPopover();
         if (_pluginPopover?.Visible == true)
         {
@@ -5041,12 +5069,14 @@ internal sealed partial class BarForm : Form
     private void RefreshHintPopover()
     {
         if (_hintPopover?.Visible != true) return;
-        if (_hoverHintTarget is not (HoverTarget.Refresh or HoverTarget.MiniCollapse or HoverTarget.Settings or HoverTarget.Plugin)) return;
+        if (_hoverHintTarget is not (HoverTarget.Refresh or HoverTarget.MiniCollapse or HoverTarget.Settings
+            or HoverTarget.Plugin or HoverTarget.CodexStrategy)) return;
         ShowHintPopover(_hoverHintTarget);
     }
 
     private void RepositionPopovers()
     {
+        if (_codexStrategyPopover?.Visible == true) ShowCodexStrategyPopover();
         if (_pluginPopover?.Visible == true && _pluginPopoverId is { } pluginId) OpenPluginPopover(pluginId, _popoverPinned);
         if (_systemUsagePopover?.Visible == true) ShowSystemUsagePopover(_popoverPinned);
         if (_quotaPopover?.Visible == true) RefreshQuotaPopover();
@@ -5073,7 +5103,8 @@ internal sealed partial class BarForm : Form
                 continue;
             }
             var layout = AreaLayout(area.AreaId);
-            var cardBounds = TaskbarAreaContentBounds(new RectangleF(x, 4, areaWidth, 36));
+            var cardBounds = CodexQuotaBounds(area.AreaId,
+                TaskbarAreaContentBounds(new RectangleF(x, 4, areaWidth, 36)), layout.Collapsed);
             if (layout.Collapsed)
             {
                 x += areaWidth + TaskbarMiniLayoutMath.ModuleGap;
@@ -5190,6 +5221,7 @@ internal sealed partial class BarForm : Form
 
     private void HidePopovers()
     {
+        HideCodexStrategyPopover();
         HidePluginPopover();
         HideSystemUsagePopover();
         HideQuotaPopover();
@@ -5405,6 +5437,7 @@ internal sealed partial class BarForm : Form
 
     private HoverTarget ControlTargetAt(PointF point)
     {
+        if (_codexStrategyBounds.Contains(point)) return HoverTarget.CodexStrategy;
         if (_refreshBounds.Contains(point)) return HoverTarget.Refresh;
         if (_settingsBounds.Contains(point)) return HoverTarget.Settings;
         if (TaskbarCollapseTargetAt(point) is not null) return HoverTarget.MiniCollapse;
@@ -5804,6 +5837,7 @@ internal sealed partial class BarForm : Form
             _shellSettleTimer.Dispose();
             _quotaPopover?.Dispose();
             _codexAccountsPopover?.Dispose();
+            _codexStrategyPopover?.Dispose();
             _hintPopover?.Dispose();
             _radarPopover?.Dispose();
             _systemUsagePopover?.Dispose();
@@ -5956,6 +5990,7 @@ internal sealed partial class BarForm : Form
         Plugin,
         QuotaWindow,
         CodexAccounts,
+        CodexStrategy,
         Radar,
         SystemUsage,
     }

@@ -774,6 +774,11 @@ public sealed class CodexQuotaService
                     CardKey = result is null
                         ? null
                         : StableCardKey(result.Credential.Key),
+                    QuotaIdentity = StableCardKey($"strategy:{account.AccountId}"),
+                    SubscriptionActiveUntil = account.SubscriptionActiveUntil,
+                    ResetCreditsAvailable = account.ResetCreditsAvailable,
+                    NextResetCreditExpiry = account.NextResetCreditExpiry,
+                    NextResetCreditCoversMainQuota = account.NextResetCreditCoversMainQuota,
                 };
             })
             .ToArray();
