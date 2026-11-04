@@ -75,6 +75,15 @@ internal static class CodexUsageStrategyTests
             "The anchored strategy page also renders beside a vertical taskbar.");
         if (capture is not null)
             scaled.Save(Path.ChangeExtension(capture, ".192dpi.png"), System.Drawing.Imaging.ImageFormat.Png);
+        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        form.ClientSize = new Size(640, 180);
+        var scrollbar = form.Controls.OfType<VScrollBar>().Single();
+        Check(form.Region!.IsVisible(scrollbar.Left + scrollbar.Width / 2, scrollbar.Top + 8)
+            && scrollbar.Maximum >= scrollbar.LargeChange,
+            "A height-limited page keeps its scrollbar inside the rounded surface.");
+        typeof(CodexStrategyPopoverForm).GetMethod("OnMouseWheel", flags)!.Invoke(form,
+            [new MouseEventArgs(MouseButtons.None, 0, 100, 100, -120)]);
+        Check(scrollbar.Value > 0, "The complete hover page can scroll through all account rows.");
 
         var card = new QuotaCard("plan", ProviderKind.Codex, "Codex", "pro", "#10a37f", true, quotas[0].Windows);
         var snapshot = new QuotaSnapshot([card], [], now) { CodexAccounts = quotas };
@@ -86,7 +95,6 @@ internal static class CodexUsageStrategyTests
         Check(!bar.CodexStrategyBoundsForAcceptance.IsEmpty
             && bar.CodexStrategyBoundsForAcceptance.Right <= barBitmap.Width,
             "The strategy button is reachable inside the Codex bar module.");
-        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
         var strategyBounds = bar.CodexStrategyBoundsForAcceptance;
         typeof(BarForm).GetMethod("OnMouseMove", flags)!.Invoke(bar,
             [new MouseEventArgs(MouseButtons.None, 0, (int)(strategyBounds.Left + 8), (int)(strategyBounds.Top + 8), 0)]);

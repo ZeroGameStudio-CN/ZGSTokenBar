@@ -13,6 +13,7 @@ internal sealed class CodexStrategyPopoverForm : Form
     private const int NoActivateStyle = 0x08000000;
     private readonly System.Windows.Forms.Timer _entranceTimer = new() { Interval = 16 };
     private readonly System.Windows.Forms.Timer _exitTimer = new() { Interval = 16 };
+    private readonly VScrollBar _scrollbar = new() { Visible = false, TabStop = false };
     private readonly Font _headingFont = new("Segoe UI", 15, FontStyle.Bold, GraphicsUnit.Pixel);
     private readonly Font _bodyFont = new("Segoe UI", 12, FontStyle.Regular, GraphicsUnit.Pixel);
     private readonly Font _strongFont = new("Segoe UI", 12, FontStyle.Bold, GraphicsUnit.Pixel);
@@ -36,14 +37,15 @@ internal sealed class CodexStrategyPopoverForm : Form
     {
         _entranceTimer.Tick += (_, _) => AdvanceEntrance();
         _exitTimer.Tick += (_, _) => AdvanceExit();
+        _scrollbar.ValueChanged += (_, _) => Invalidate();
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual;
         ShowInTaskbar = false;
         TopMost = true;
         AutoScaleMode = AutoScaleMode.None;
-        AutoScroll = true;
         DoubleBuffered = true;
         Text = TitleFor(_text);
+        Controls.Add(_scrollbar);
     }
 
     protected override bool ShowWithoutActivation => true;
@@ -83,7 +85,7 @@ internal sealed class CodexStrategyPopoverForm : Form
         _tailSide = placement.TailSide;
         _tailOffset = placement.TailOffset / _scale;
         ClientSize = placement.WindowSize;
-        AutoScrollMinSize = new Size(0, Scale(ContentHeight) + (VerticalTail ? tail : 0));
+        UpdateScrollBar();
         _restingLocation = placement.Location;
         UpdateWindowRegion();
         Invalidate();
@@ -111,7 +113,6 @@ internal sealed class CodexStrategyPopoverForm : Form
         SetContent(strategy, text, theme, Math.Max(1, dpi / 96f));
         _tailSide = tailSide;
         _tailOffset = VerticalTail ? LogicalWidth / 2f : ContentHeight / 2f;
-        AutoScrollMinSize = Size.Empty;
         ClientSize = new Size(Scale(LogicalWidth + (VerticalTail ? 0 : LogicalTailSize)),
             Scale(ContentHeight + (VerticalTail ? LogicalTailSize : 0)));
         UpdateWindowRegion();
@@ -127,16 +128,34 @@ internal sealed class CodexStrategyPopoverForm : Form
         DrawContent(e.Graphics);
     }
 
-    protected override void OnScroll(ScrollEventArgs se)
+    protected override void OnMouseWheel(MouseEventArgs e)
     {
-        base.OnScroll(se);
+        base.OnMouseWheel(e);
+        _scrollbar.Value = Math.Clamp(_scrollbar.Value - e.Delta * Scale(LogicalRowHeight) / 40,
+            0, Math.Max(0, _scrollbar.Maximum - _scrollbar.LargeChange + 1));
         Invalidate();
     }
 
     protected override void OnResize(EventArgs e)
     {
         base.OnResize(e);
+        UpdateScrollBar();
         UpdateWindowRegion();
+    }
+
+    private void UpdateScrollBar()
+    {
+        var body = BodyBounds();
+        var viewportHeight = Math.Max(1, Scale((int)body.Height) - Scale(14));
+        var contentHeight = Scale(ContentHeight - 14);
+        _scrollbar.Maximum = Math.Max(0, contentHeight - 1);
+        _scrollbar.LargeChange = viewportHeight;
+        _scrollbar.SmallChange = Scale(LogicalRowHeight);
+        _scrollbar.Value = Math.Clamp(_scrollbar.Value, 0, Math.Max(0, contentHeight - viewportHeight));
+        _scrollbar.Bounds = new Rectangle(
+            Scale((int)body.Right) - Scale(20), Scale((int)body.Top) + Scale(8),
+            Scale(12), Math.Max(1, Scale((int)body.Height) - Scale(16)));
+        _scrollbar.Visible = contentHeight > viewportHeight;
     }
 
     protected override void WndProc(ref Message message)
@@ -173,7 +192,7 @@ internal sealed class CodexStrategyPopoverForm : Form
         graphics.DrawPath(border, bodyPath);
         graphics.DrawLines(border, tail);
         graphics.SetClip(RectangleF.Inflate(body, -1, -1));
-        graphics.TranslateTransform(body.Left, body.Top + AutoScrollPosition.Y / _scale);
+        graphics.TranslateTransform(body.Left, body.Top - _scrollbar.Value / _scale);
         using var foreground = new SolidBrush(ForeColor);
         using var muted = new SolidBrush(Color.FromArgb(160, 174, 192));
         using var format = new StringFormat
@@ -182,7 +201,7 @@ internal sealed class CodexStrategyPopoverForm : Form
             FormatFlags = StringFormatFlags.NoWrap,
             Trimming = StringTrimming.EllipsisCharacter,
         };
-        var contentWidth = Math.Max(1, body.Width - 24);
+        var contentWidth = Math.Max(1, body.Width - 24 - (_scrollbar.Maximum >= _scrollbar.LargeChange ? 16 : 0));
         var columnWidths = new[] { .23f, .19f, .29f, .29f };
         var y = 6f;
         foreach (var (values, font, height) in _rows)
