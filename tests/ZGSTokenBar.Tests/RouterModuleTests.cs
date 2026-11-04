@@ -18,6 +18,7 @@ internal static class RouterModuleTests
         PopoverInteraction();
         TaskHeading();
         HistoryBuffer();
+        FinishedHistory();
         PagingReads();
         WheelPaging();
         RefusalTiming();
@@ -215,6 +216,57 @@ internal static class RouterModuleTests
         Throws<InvalidDataException>(() => buffer.Store("bad", Window(0, 206, 101)));
         Throws<InvalidDataException>(() => buffer.Store("short", Window(0, 206, 5)));
         buffer.Clear(); Check(!buffer.TryRead("empty", 0, 5, out _), "History reset removes prior bindings");
+    }
+
+    private static void FinishedHistory()
+    {
+        var phases = new[] { "queued", "running", "settling", "blocked", "recovering", "completed", "failed", "cancelled" };
+        var rows = Enumerable.Range(0, 56).Select(i => JsonSerializer.SerializeToElement(new
+        {
+            id = i.ToString("x32"), phase = phases[i % phases.Length],
+            outcome = i % phases.Length < 5 ? "pending" : phases[i % phases.Length],
+            task = "合成任务 " + i, source = "合成来源", createdLocal = "2026-11-04T10:00:00+08:00",
+            executionSeconds = 3, cleanupVerified = i % phases.Length >= 5,
+        })).ToArray();
+        using var handler = new Fixture { HistoryItems = rows };
+        using var form = new RouterMonitorForm(new RouterMonitorClient(handler), observe: false)
+        { ShowInTaskbar = false, StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
+        form.SetPinned(true); form.Show(); Pump(form.RefreshViewAsync());
+        var controls = AllControls(form).ToArray();
+        var history = controls.OfType<System.Windows.Forms.DataGridView>().Single(grid => grid.Columns.Count == 6);
+        var next = controls.OfType<System.Windows.Forms.Button>().Single(button => button.AccessibleName == "历史下一页");
+        var previous = controls.OfType<System.Windows.Forms.Button>().Single(button => button.AccessibleName == "历史上一页");
+        var outcome = controls.OfType<System.Windows.Forms.ComboBox>().Single(combo => combo.Items.Cast<object>().Any(item => item.ToString() == "全部结果"));
+        Check(outcome.Items.Count == 4 && !outcome.Items.Cast<object>().Any(item => item.ToString() == "未结束"),
+            "History offers only finished result filters");
+        Check(handler.Routes.Last(uri => uri.AbsolutePath == "/api/history").Query.Contains("outcome=finished"),
+            "Default history excludes unfinished requests before server pagination");
+        var summary = controls.OfType<System.Windows.Forms.Label>().Single(label => label.Text == "21 条  ·  7 失败");
+        Check(summary.AccessibleDescription!.Contains("成功 7 · 失败 7 · 取消 7") && !summary.AccessibleDescription.Contains("未结束"),
+            "History totals and statistics describe the same finished scope");
+        var ids = new List<string>(); var pages = 0;
+        do
+        {
+            Check(history.Rows.Count > 0 && ++pages < 20, "Finished history has no empty intermediate page");
+            ids.AddRange(history.Rows.Cast<System.Windows.Forms.DataGridViewRow>().Select(row => RouterJson.Text((JsonElement)row.Tag!, "id")));
+            if (!next.Enabled) break;
+            next.PerformClick();
+        } while (true);
+        var expected = rows.Where(row => RouterJson.Text(row, "outcome") != "pending").Select(row => RouterJson.Text(row, "id"));
+        Check(ids.SequenceEqual(expected) && ids.Distinct().Count() == ids.Count && previous.Enabled && !next.Enabled,
+            "Finished pages cover every ended request once and stop at the actual last page");
+        outcome.SelectedIndex = 2; Pump(form.HistoryAsync());
+        Check(handler.Routes.Last(uri => uri.AbsolutePath == "/api/history").Query.Contains("outcome=failed")
+            && history.Rows.Cast<System.Windows.Forms.DataGridViewRow>().All(row => RouterJson.Text((JsonElement)row.Tag!, "outcome") == "failed"),
+            "Individual result filters retain server-side totals and rows");
+        outcome.SelectedIndex = 0;
+        handler.HistoryItems = rows.Where(row => RouterJson.Text(row, "outcome") == "pending").ToArray();
+        Pump(form.HistoryAsync(forceRefresh: true));
+        Check(history.Rows.Count == 0 && !previous.Enabled && !next.Enabled
+            && controls.OfType<System.Windows.Forms.Label>().Any(label => label.Text == "0 条  ·  0 失败"),
+            "An active-only queue produces empty history with zero counts and no extra pages");
+        Check(handler.Posts == 0, "History filtering never controls live requests");
+        form.Close();
     }
 
     private static void PagingReads()
@@ -648,6 +700,7 @@ internal static class RouterModuleTests
         internal TaskCompletionSource? HoldHistory, HoldQueue, HoldHealth;
         internal JsonElement? LastControl;
         internal JsonElement? ProjectCatalog;
+        internal JsonElement[]? HistoryItems;
         internal readonly Dictionary<string, JsonElement> ProjectViews = new(StringComparer.Ordinal);
         internal string? UnavailableProject;
         internal bool LoseControlReply, OldApi, WrongProject, Stale, Oversized, Empty, NativeError, PreflightRefusal, LocalQueueUnavailable;
@@ -702,6 +755,23 @@ internal static class RouterModuleTests
                 offset, total = Empty ? 0 : 41,
                 items = Enumerable.Range(offset, Empty ? 0 : Math.Min(limit, Math.Max(0, 41 - offset))).Select(i => new { id = i.ToString("x32"), task = "合成测试 · " + i + " · " + new string('长', 28), source = "原对话 " + i, wait = "2:10", rank = i + 1, last = false, version = new string('b', 64) }),
             });
+            if (route == "/api/history" && HistoryItems is { } historyItems)
+            {
+                var outcome = parameters.GetValueOrDefault("outcome", "all");
+                var selected = historyItems.Where(row => outcome == "all" || RouterJson.Text(row, "outcome") == outcome
+                    || outcome == "finished" && RouterJson.Text(row, "outcome") is "completed" or "failed" or "cancelled").ToArray();
+                if (offset >= selected.Length) offset = Math.Max(0, (selected.Length - 1) / limit * limit);
+                return Json(new
+                {
+                    total = selected.Length, offset, items = selected.Skip(offset).Take(limit),
+                    counts = new { completed = selected.Count(row => RouterJson.Text(row, "outcome") == "completed"),
+                        failed = selected.Count(row => RouterJson.Text(row, "outcome") == "failed"),
+                        cancelled = selected.Count(row => RouterJson.Text(row, "outcome") == "cancelled"),
+                        pending = selected.Count(row => RouterJson.Text(row, "outcome") == "pending") },
+                    days = selected.Length == 0 ? Array.Empty<object>() : new object[] { new { date = "2026-11-04", total = selected.Length } },
+                    groups = Array.Empty<object>(),
+                });
+            }
             if (route == "/api/history") return Json(new
             {
                 total = HistoryTotal, offset,
