@@ -13,6 +13,7 @@ internal static class CodexUsageStrategyTests
         TestMultipleEvents(now, capture);
         TestConsumptionPressure(now, capture);
         TestResetCreditScheduling(now, capture);
+        TestCreditPriority(now, capture);
         TestRenewalAdvice(now, capture);
         var zh = NativeText.For("zh-CN");
         Check(CodexStrategyPopoverForm.Countdown(now.AddHours(3).AddMinutes(20), now, CodexStrategyDeadline.Reset, zh)
@@ -55,8 +56,8 @@ internal static class CodexUsageStrategyTests
         };
         var strategy = CodexUsageStrategy.Create(accounts, quotas, now);
         Check(strategy.Accounts.Select(row => row.Account.AccountId)
-            .SequenceEqual(new[] { "small", "plan", "tomorrow", "blocked", "stale" }),
-            "Prioritize expiring usable quotas including small balances, deduplicate shared quota and skip API keys.");
+            .SequenceEqual(new[] { "small", "tomorrow", "plan", "blocked", "stale" }),
+            "Keep the small imminent balance first, then account for a reset plus credit before the plain subscription cutoff.");
         Check(strategy.Accounts.Select(row => row.Priority).SequenceEqual(new int?[] { 1, 2, 3, null, null }),
             "Usable accounts have explicit contiguous priorities while waiting and stale accounts remain unranked.");
         var cardFirst = CodexUsageStrategy.Create(accounts, quotas.Select(quota =>
@@ -66,12 +67,14 @@ internal static class CodexUsageStrategyTests
             && cardFirst.Accounts[0].PriorityReason == CodexStrategyDeadline.ResetCredit
             && cardFirst.Accounts[0].PriorityDeadline == now.AddHours(.25),
             "A known earlier reset-credit cutoff changes the actual account recommendation.");
-        Check(strategy.Accounts[1].DeadlineKind == CodexStrategyDeadline.Subscription
-            && strategy.Accounts[1].Deadline == now.AddHours(20)
-            && strategy.Accounts[1].Cards == 3 && strategy.Accounts[1].CardExpiry is null,
+        var plan = strategy.Accounts.Single(row => row.Account.AccountId == "plan");
+        Check(plan.DeadlineKind == CodexStrategyDeadline.Subscription
+            && plan.Deadline == now.AddHours(20)
+            && plan.Cards == 3 && plan.CardExpiry is null,
             "Use the earlier subscription cutoff and preserve an unknown reset-credit date.");
-        Check(strategy.Accounts[2].ResetBeforeCard && strategy.Accounts[2].CanRedeem
-            && strategy.Accounts[2].ReviewBy == now.AddHours(22.5),
+        var tomorrow = strategy.Accounts.Single(row => row.Account.AccountId == "tomorrow");
+        Check(tomorrow.ResetBeforeCard && tomorrow.CanRedeem
+            && tomorrow.ReviewBy == now.AddHours(22.5),
             "Review eligibility after natural reset with time left before the card expires.");
         Check(strategy.Accounts[3].State == CodexStrategyState.Waiting
             && strategy.Accounts[3].Recovery == now.AddHours(0.75)
@@ -467,6 +470,121 @@ internal static class CodexUsageStrategyTests
             "A stale bottleneck forecast falls back to known deadlines instead of inventing consumption speed.");
         Check(CodexUsageStrategy.Create([accounts[1]], [overlap], now.AddHours(4), estimates).Accounts[0].State == CodexStrategyState.Refresh,
             "Forecasting a refill never makes pre-reset observations usable after the reset time.");
+    }
+
+    private static void TestCreditPriority(DateTimeOffset now, string? capture)
+    {
+        var balance = CodexUsageParser.Parse("""
+            {"rate_limit_reset_credits":{"available_count":3,"applicable_available_count":0}}
+            """);
+        Check(balance.ResetCreditsAvailable == 3 && balance.ApplicableResetCredits == 0,
+            "The observed usage response distinguishes total reset credits from credits redeemable now.");
+        var nested = CodexUsageParser.Parse("""
+            {"rate_limit_status":{"rate_limit_reset_credits":{"available_count":0,"applicable_available_count":0}}}
+            """);
+        Check(nested.ResetCreditsAvailable == 0 && nested.ApplicableResetCredits == 0
+            && CodexUsageParser.Parse("{}").ResetCreditsAvailable is null,
+            "An authoritative zero survives nested response parsing; an omitted balance remains unknown.");
+        foreach (var invalid in new[] { "-1", "1.5", "2147483648", "null" })
+            Check(CodexUsageParser.Parse($"{{\"rate_limit_reset_credits\":{{\"available_count\":{invalid}}}}}")
+                .ResetCreditsAvailable is null, "Invalid balances cannot create a credit count.");
+        Check(CodexUsageParser.Parse("""
+            {"rate_limit_reset_credits":{"available_count":1,"applicable_available_count":2}}
+            """).ApplicableResetCredits is null, "A contradictory applicable balance is not treated as eligibility.");
+
+        using var mixed = JsonDocument.Parse(JsonSerializer.Serialize(new
+        {
+            reset_credits = new[]
+            {
+                new { id = "full-a", reset_type = "codex_rate_limits", expires_at = now.AddHours(28).ToUnixTimeSeconds() },
+                new { id = "full-b", reset_type = "full", expires_at = now.AddHours(28).ToUnixTimeSeconds() },
+                new { id = "partial", reset_type = "other", expires_at = now.AddHours(28).ToUnixTimeSeconds() },
+            },
+        }));
+        var mixedBatches = CockpitCodexQuotaReader.ReadResetCreditBatches(mixed.RootElement, now, 3);
+        Check(mixedBatches.Count == 2 && mixedBatches.Single(batch => batch.CoversMainQuota).Count == 2
+            && mixedBatches.Single(batch => !batch.CoversMainQuota).Count == 1,
+            "Different reset scopes sharing an expiry retain their independent usable quantities.");
+        var plain = new CodexAccountInfo("plain", "plain@example.test", "pro", true);
+        var cards = new CodexAccountInfo("cards", "cards@example.test", "pro", false);
+        CodexAccountQuota Quota(string id, double hours) => new(id,
+            [new("7d", 50, now.AddHours(hours), TimeSpan.FromDays(7))], now) { CardKey = id };
+        var earlier = Quota("plain", 10);
+        var backlog = Quota("cards", 144) with
+        {
+            ResetCreditsAvailable = 4,
+            ResetCreditBatches = [new(now.AddHours(28), 4, true)],
+        };
+        var strategy = CodexUsageStrategy.Create([plain, cards], [earlier, backlog], now);
+        var row = strategy.Accounts[0];
+        Check(row.Account.AccountId == "cards" && row.AttentionAt == now.AddHours(8)
+            && row.SuggestedStartAt is null && row.ConsumptionHours is null && row.PressureIncludesCredit
+            && row.UpcomingEvents.Count == 0 && strategy.Urgent.Count == 1,
+            "Four later cards require earlier attention even without pace; the 24h badge does not truncate planning or invent usage hours.");
+        var fewer = backlog with { ResetCreditsAvailable = 1, ResetCreditBatches = [new(now.AddHours(28), 1, true)] };
+        Check(CodexUsageStrategy.Create([plain, cards], [earlier, fewer], now).Accounts[0].Account.AccountId == "plain",
+            "Reducing the card backlog removes its artificial urgency while retaining the earlier natural reset.");
+        QuotaPaceEstimate Pace(double rate) => new(QuotaPaceStatus.ProjectedExhaustion,
+            Recent: new(TimeSpan.FromHours(1), rate, now.AddHours(50 / rate), false, QuotaTrendConfidence.Stable),
+            ValidUntil: now.AddMinutes(5)) { ForecastExpiresAt = now.AddMinutes(5) };
+        var paces = new Dictionary<string, QuotaPaceEstimate>
+        {
+            [QuotaPaceTracker.SeriesKey("plain", earlier.Windows[0])] = Pace(50),
+            [QuotaPaceTracker.SeriesKey("cards", backlog.Windows[0])] = Pace(10),
+        };
+        var forecast = CodexUsageStrategy.Create([plain, cards], [earlier, backlog], now, paces).Accounts[0];
+        Check(forecast.Account.AccountId == "cards" && forecast.SuggestedStartAt == now
+            && forecast.ConsumptionHours == 35 && forecast.PressureEvent?.At == now.AddHours(28),
+            "A known card expiry beyond 24 hours participates in the measured consumption schedule.");
+        var overlap = backlog with { Windows = [backlog.Windows[0] with { ResetsAt = now.AddHours(25) }] };
+        Check(CodexUsageStrategy.Create([cards], [overlap], now, paces).Accounts[0] is
+            { ConsumptionHours: 45, PressureIncludesReset: true, PressureIncludesCredit: true },
+            "Later natural resets and credit batches share the same cumulative workload without adding quota windows together.");
+        var ending = backlog with { SubscriptionActiveUntil = now.AddHours(26) };
+        Check(CodexUsageStrategy.Create([cards], [ending], now, paces).Accounts[0] is
+            { ConsumptionHours: 45, PressureEvent.Kind: CodexStrategyDeadline.Subscription },
+            "Subscription end bounds both card redemption and consumption of the final refill.");
+        var dual = backlog with { Windows = [backlog.Windows[0], new("5h", 40, now.AddHours(30), TimeSpan.FromHours(5))] };
+        var incompletePace = CodexUsageStrategy.Create([plain, cards], [earlier, dual], now, paces).Accounts[0];
+        Check(incompletePace.Account.AccountId == "cards" && incompletePace.SuggestedStartAt is null
+            && incompletePace.ConsumptionHours is null && incompletePace.PressureIncludesCredit,
+            "One missing window pace retains relative multi-card pressure without publishing a partial hours estimate.");
+        var mixedQuota = backlog with { ResetCreditsAvailable = 3, ResetCreditBatches = mixedBatches };
+        var mixedRow = CodexUsageStrategy.Create([cards], [mixedQuota], now, paces).Accounts[0];
+        Check(mixedRow.Events.Count(item => item.Kind == CodexStrategyDeadline.ResetCredit) == 2
+            && mixedRow.ConsumptionHours == 15,
+            "A partial credit neither suppresses full credits at the same expiry nor creates a full refill itself.");
+        var partialFirst = mixedQuota with
+        {
+            ResetCreditBatches = [new(now.AddHours(20), 1, false), new(now.AddHours(28), 2, true)],
+        };
+        Check(CodexUsageStrategy.Create([cards], [partialFirst], now).Accounts[0].CanRedeem
+            && !CodexUsageStrategy.Create([cards], [partialFirst with { ApplicableResetCredits = 0 }], now).Accounts[0].CanRedeem,
+            "An earlier partial batch cannot hide an eligible full batch, and authoritative ineligibility overrides the heuristic.");
+
+        var unknown = backlog with { ResetCreditBatches = [], ApplicableResetCredits = 0 };
+        var unknownRow = CodexUsageStrategy.Create([cards], [unknown], now).Accounts[0];
+        Check(unknownRow.Cards == 4 && unknownRow.UnresolvedCards == 4 && !unknownRow.CanRedeem
+            && unknownRow.Events.All(item => item.Kind != CodexStrategyDeadline.ResetCredit)
+            && !unknownRow.PressureIncludesCredit,
+            "A count alone stays visible without inventing an expiry, reset scope or redeemable quota.");
+        using var panel = new CodexStrategyPopoverForm();
+        using var bitmap = panel.RenderForTest(CodexUsageStrategy.Create([cards], [unknown], now), NativeText.For("zh-CN"),
+            QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
+        Check(panel.VisibleTextForAcceptance.Contains("共 4 张") && panel.VisibleTextForAcceptance.Contains("当前可兑 0 张")
+            && panel.VisibleTextForAcceptance.Contains("4 张有效期待核对"),
+            "Each account exposes its balance, current applicability and missing expiry rather than hiding them in a global note.");
+        if (capture is not null) bitmap.Save(Path.ChangeExtension(capture, ".credit-balance.png"));
+        using var workload = panel.RenderForTest(strategy, NativeText.For("zh-CN"),
+            QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
+        Check(panel.VisibleTextForAcceptance.Contains("多张卡临期") && !panel.AccessibleDescription!.Contains("需约"),
+            "Relative workload ordering explains multiple credits without claiming a measured consumption time.");
+        if (capture is not null) workload.Save(Path.ChangeExtension(capture, ".credit-order.png"));
+        using var english = panel.RenderForTest(CodexUsageStrategy.Create([cards], [unknown], now), NativeText.For("en"),
+            QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), 192);
+        Check(panel.VisibleTextForAcceptance.Contains("0 redeemable now") && panel.VisibleTextForAcceptance.Contains("Check expiry for 4"),
+            "Credit inventory and uncertainty are localized with the production renderer.");
+        if (capture is not null) english.Save(Path.ChangeExtension(capture, ".credit-balance.en.192dpi.png"));
     }
 
     private static void TestRenewalAdvice(DateTimeOffset now, string? capture)

@@ -21,6 +21,7 @@ if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJob
 if (args.Length > 0 && args[0] == "--codex-usage-strategy")
 {
     CodexUsageStrategyTests.Run(args.Length == 2 ? args[1] : null);
+    TestCockpitProCodexAccountMerge();
     return 0;
 }
 
@@ -2963,6 +2964,7 @@ static void TestCockpitProCodexAccountMerge()
             staleSnapshotAt,
             currentAccessToken,
             resetCreditsAvailable: 3,
+            applicableResetCredits: 1,
             resetCredits:
             [
                 new { id = "credit-one", status = "available", reset_type = "full", expires_at = now.AddHours(2).ToUnixTimeSeconds() },
@@ -2977,7 +2979,8 @@ static void TestCockpitProCodexAccountMerge()
             "pro",
             94,
             staleSnapshotAt,
-            accessToken);
+            accessToken,
+            resetCreditsAvailable: 2);
         WriteCockpitCodexAccount(
             Path.Combine(accountDirectory, "plus.json"),
             key,
@@ -3000,6 +3003,8 @@ static void TestCockpitProCodexAccountMerge()
         Equal(2, selected.Count(account => account.Plan == "pro"), "both valid Pro accounts are selected");
         Equal(1, selected.Count(account => account.Plan == "plus"), "valid Plus account is selected case-insensitively");
         Equal(1, selected.Count(account => account.IsApiService), "API service account is selected without OAuth");
+        Equal(1, selected.Single(account => account.Key == $"cockpit:{currentId}").ApplicableResetCredits,
+            "cached usage retains the distinction between total and applicable credits");
         Equal(
             true,
             selected.Where(account => !account.IsApiService)
@@ -3024,6 +3029,22 @@ static void TestCockpitProCodexAccountMerge()
             [plusAccessToken] = "plus",
             [nativePlusAccessToken] = "plus",
             [staleNativeCurrentAccessToken] = "plus",
+        }, new Dictionary<string, (int Total, int Applicable)>
+        {
+            [currentAccessToken] = (3, 0),
+            [accessToken] = (0, 0),
+        }, new Dictionary<string, string>
+        {
+            [currentAccessToken] = JsonSerializer.Serialize(new
+            {
+                available_count = 3,
+                credits = new[]
+                {
+                    new { id = "live-one", status = "available", reset_type = "codex_rate_limits", expires_at = now.AddHours(12).ToString("O") },
+                    new { id = "live-two", status = "available", reset_type = "codex_rate_limits", expires_at = now.AddHours(12).ToString("O") },
+                    new { id = "live-three", status = "available", reset_type = "codex_rate_limits", expires_at = now.AddHours(30).ToString("O") },
+                },
+            }),
         });
         using var client = new HttpClient(handler);
         var service = new CodexQuotaService(client, directory);
@@ -3041,6 +3062,16 @@ static void TestCockpitProCodexAccountMerge()
         Equal("2,1", string.Join(',', result.CodexAccounts.Single(account => account.AccountId == currentId)
             .ResetCreditBatches.Select(batch => batch.Count)),
             "encrypted Cockpit reset-credit batches reach the normal account snapshot");
+        Equal(0, result.CodexAccounts.Single(account => account.AccountId == currentId).ApplicableResetCredits,
+            "live ineligibility replaces the older cached applicable balance");
+        Equal(0, result.CodexAccounts.Single(account => account.AccountId == secondProId).ResetCreditsAvailable,
+            "a live zero balance replaces cached credit inventory");
+        var liveCredits = result.CodexAccounts.Single(account => account.AccountId == currentId);
+        Equal(now.AddHours(12), liveCredits.NextResetCreditExpiry, "live credit detail supersedes cached expiry");
+        Equal(true, liveCredits.ResetCreditBatches.All(batch => batch.CoversMainQuota),
+            "the upstream codex_rate_limits scope is recognized as a full reset");
+        Equal(1, handler.CreditCalls, "only a positive live balance requests read-only credit details");
+        Equal(true, handler.CreditHasAccountHeader, "credit queries retain the same account-bound authentication");
         Equal(
             "6,11,17",
             string.Join(",", result.CodexAccounts
@@ -3062,6 +3093,23 @@ static void TestCockpitProCodexAccountMerge()
             true,
             handler.RequestedTokens.ContainsKey(accessToken),
             "same email with a different account id remains a distinct account");
+
+        foreach (var detail in new string?[] { null, "{invalid", new string('x', 33 * 1024), "{\"available_count\":0,\"credits\":[]}" })
+        {
+            using var fallbackHandler = new CodexUsageMapHandler(
+                new Dictionary<string, double> { [currentAccessToken] = 11, [accessToken] = 6, [nativePlusAccessToken] = 17 },
+                creditsByToken: new Dictionary<string, (int, int)> { [currentAccessToken] = (3, 0) },
+                creditDetailsByToken: detail is null ? null : new Dictionary<string, string> { [currentAccessToken] = detail });
+            using var fallbackClient = new HttpClient(fallbackHandler);
+            var fallback = new CodexQuotaService(fallbackClient, directory).FetchAsync(CancellationToken.None).GetAwaiter().GetResult();
+            var fallbackQuota = fallback.CodexAccounts.Single(account => account.AccountId == currentId);
+            Equal(11d, fallbackQuota.Windows.Single().UsedPercent, "unavailable or malformed credit detail cannot discard valid usage");
+            Equal(detail?.Contains("available_count") == true ? 0 : 3, fallbackQuota.ResetCreditsAvailable,
+                "an authoritative empty credit list clears inventory; failed details retain the known balance");
+            if (fallbackQuota.ResetCreditsAvailable == 0)
+                Equal(true, fallbackQuota.ResetCreditBatches.Count == 0 && fallbackQuota.NextResetCreditExpiry is null,
+                    "an authoritative empty credit list clears cached card expiries");
+        }
 
         var nativeAccountDirectory = Path.Combine(codexHome, "accounts");
         Directory.CreateDirectory(nativeAccountDirectory);
@@ -3523,6 +3571,7 @@ static void WriteCockpitCodexAccount(
     string? refreshToken = null,
     DateTimeOffset? subscriptionActiveUntil = null,
     int? resetCreditsAvailable = null,
+    int? applicableResetCredits = null,
     object[]? resetCredits = null)
 {
     var effectiveSubscription = subscriptionActiveUntil ?? capturedAt.AddDays(30);
@@ -3558,6 +3607,11 @@ static void WriteCockpitCodexAccount(
                 account_id = $"acct-{id}",
                 email,
                 plan_type = plan,
+                rate_limit_reset_credits = resetCreditsAvailable is null ? null : new
+                {
+                    available_count = resetCreditsAvailable,
+                    applicable_available_count = applicableResetCredits,
+                },
                 rate_limit = new
                 {
                     primary_window = new
@@ -16809,15 +16863,20 @@ sealed class CodexUsageHandler(string expectedToken, double usedPercent) : HttpM
 
 sealed class CodexUsageMapHandler(
     IReadOnlyDictionary<string, double> usageByToken,
-    IReadOnlyDictionary<string, string>? planByToken = null) : HttpMessageHandler
+    IReadOnlyDictionary<string, string>? planByToken = null,
+    IReadOnlyDictionary<string, (int Total, int Applicable)>? creditsByToken = null,
+    IReadOnlyDictionary<string, string>? creditDetailsByToken = null) : HttpMessageHandler
 {
     private int _calls;
     private int _expectedCalls;
     private int _profileCalls;
+    private int _creditCalls;
 
     public int Calls => Volatile.Read(ref _calls);
     public int ExpectedCalls => Volatile.Read(ref _expectedCalls);
     public int ProfileCalls => Volatile.Read(ref _profileCalls);
+    public int CreditCalls => Volatile.Read(ref _creditCalls);
+    public bool CreditHasAccountHeader { get; private set; }
     public System.Collections.Concurrent.ConcurrentDictionary<string, byte> RequestedTokens { get; } =
         new(StringComparer.Ordinal);
 
@@ -16825,6 +16884,16 @@ sealed class CodexUsageMapHandler(
         HttpRequestMessage request,
         CancellationToken cancellationToken)
     {
+        if (request.RequestUri?.AbsolutePath.EndsWith("/rate-limit-reset-credits", StringComparison.Ordinal) == true)
+        {
+            Interlocked.Increment(ref _creditCalls);
+            if (request.Method != HttpMethod.Get) throw new InvalidOperationException("Credit inspection must be read-only.");
+            CreditHasAccountHeader = request.Headers.Contains("ChatGPT-Account-Id");
+            var creditToken = request.Headers.Authorization?.Parameter;
+            return Task.FromResult(creditToken is not null && creditDetailsByToken?.TryGetValue(creditToken, out var details) == true
+                ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(details, Encoding.UTF8, "application/json") }
+                : new HttpResponseMessage(HttpStatusCode.NotFound));
+        }
         if (request.RequestUri?.AbsolutePath.EndsWith("/profiles/me", StringComparison.Ordinal) == true)
         {
             Interlocked.Increment(ref _profileCalls);
@@ -16850,6 +16919,11 @@ sealed class CodexUsageMapHandler(
         var payload = JsonSerializer.Serialize(new
         {
             plan_type = plan,
+            rate_limit_reset_credits = creditsByToken?.TryGetValue(token!, out var credits) == true ? new
+            {
+                available_count = credits.Total,
+                applicable_available_count = credits.Applicable,
+            } : null,
             rate_limit = new
             {
                 primary_window = new

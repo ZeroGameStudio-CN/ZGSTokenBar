@@ -205,6 +205,7 @@ public sealed record CodexAccountQuota(
     public string? QuotaIdentity { get; init; }
     public DateTimeOffset? SubscriptionActiveUntil { get; init; }
     public int? ResetCreditsAvailable { get; init; }
+    public int? ApplicableResetCredits { get; init; }
     public DateTimeOffset? NextResetCreditExpiry { get; init; }
     public bool NextResetCreditCoversMainQuota { get; init; }
     public IReadOnlyList<CodexResetCreditBatch> ResetCreditBatches { get; init; } = [];
