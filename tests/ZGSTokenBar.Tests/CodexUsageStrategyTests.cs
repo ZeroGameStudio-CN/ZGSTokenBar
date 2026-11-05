@@ -14,6 +14,7 @@ internal static class CodexUsageStrategyTests
         TestConsumptionPressure(now, capture);
         TestResetCreditScheduling(now, capture);
         TestCreditPriority(now, capture);
+        TestPresentationReview(now, capture);
         TestRenewalAdvice(now, capture);
         var zh = NativeText.For("zh-CN");
         Check(CodexStrategyPopoverForm.Countdown(now.AddHours(3).AddMinutes(20), now, CodexStrategyDeadline.Reset, zh)
@@ -46,6 +47,7 @@ internal static class CodexUsageStrategyTests
             Quota("tomorrow", 45, 22) with
             {
                 ResetCreditsAvailable = 1,
+                ApplicableResetCredits = 1,
                 NextResetCreditExpiry = now.AddHours(23),
                 NextResetCreditCoversMainQuota = true,
             },
@@ -91,11 +93,11 @@ internal static class CodexUsageStrategyTests
         using var bitmap = form.RenderForTest(strategy, NativeText.For("zh-CN"),
             QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
         Check(form.VisibleTextForAcceptance.Contains("1. s***l@example.test")
-            && form.VisibleTextForAcceptance.Contains("可并行 · 订阅")
-            && form.VisibleTextForAcceptance.Contains("可并行")
-            && form.VisibleTextForAcceptance.Contains("少量 · 短任务")
+            && form.VisibleTextForAcceptance.Contains("随后使用 · 订阅")
+            && !form.VisibleTextForAcceptance.Contains("可并行")
+            && form.VisibleTextForAcceptance.Contains("适合短任务")
             && form.VisibleTextForAcceptance.Contains("预测待采样"),
-            "The displayed recommendation communicates order, reasons, parallel choices and low-quota limits.");
+            "Recommendations explain relative order and low-quota limits without promising a parallel task allocation.");
         var exactDeadline = now.AddMinutes(30).ToLocalTime().ToString("MM-dd HH:mm");
         Check(Occurrences(form.VisibleTextForAcceptance, "22小时后重置") == 1
             && form.VisibleTextForAcceptance.Contains("20小时后到期")
@@ -264,10 +266,14 @@ internal static class CodexUsageStrategyTests
                 .QuotaPace(displayPaces[QuotaPaceTracker.SeriesKey("multiple", window)], now, window.ResetsAt).Right)),
             "Each window keeps its own existing exhaustion or reset-first forecast.");
         if (capture is not null) bitmap.Save(Path.ChangeExtension(capture, ".multiple.png"), System.Drawing.Imaging.ImageFormat.Png);
+        using var english = panel.RenderForTest(displayStrategy, NativeText.For("en"),
+            QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), 192);
+        if (capture is not null) english.Save(Path.ChangeExtension(capture, ".multiple.en.192dpi.png"));
         var needsCard = quota with
         {
             Windows = [new("7d", 100, now.AddDays(2), TimeSpan.FromDays(7))],
             ResetCreditsAvailable = 1,
+            ApplicableResetCredits = 1,
             ResetCreditBatches = [new(now.AddMinutes(20), 1, true)],
             NextResetCreditExpiry = now.AddMinutes(20),
         };
@@ -278,6 +284,7 @@ internal static class CodexUsageStrategyTests
             && panel.VisibleTextForAcceptance.Contains("可兑卡")
             && panel.VisibleTextForAcceptance.Contains("m***e@example.test · 在用"),
             "A near-expiring reset for an exhausted account is an immediate review action, not a buried usage recommendation.");
+        if (capture is not null) urgentBitmap.Save(Path.ChangeExtension(capture, ".immediate.png"));
         var later = quota with
         {
             Windows = [new("7d", 50, now.AddDays(5), TimeSpan.FromDays(7))],
@@ -418,6 +425,8 @@ internal static class CodexUsageStrategyTests
         using var bitmap = panel.RenderForTest(strategy, NativeText.For("zh-CN"),
             QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
         Check(panel.VisibleTextForAcceptance.Contains("自然重置与卡到期叠加")
+            && Occurrences(panel.VisibleTextForAcceptance, "6小时内兑卡") == 1
+            && Occurrences(panel.VisibleTextForAcceptance, "4小时后重置") == 1
             && panel.AccessibleDescription!.Contains("需约 12 小时")
             && !panel.AccessibleDescription.Contains("自然重置后复查"),
             "The visible reason and detailed consumption estimate explain the combined priority without blindly waiting for reset.");
@@ -556,11 +565,13 @@ internal static class CodexUsageStrategyTests
             "A partial credit neither suppresses full credits at the same expiry nor creates a full refill itself.");
         var partialFirst = mixedQuota with
         {
+            ApplicableResetCredits = 1,
             ResetCreditBatches = [new(now.AddHours(20), 1, false), new(now.AddHours(28), 2, true)],
         };
         Check(CodexUsageStrategy.Create([cards], [partialFirst], now).Accounts[0].CanRedeem
-            && !CodexUsageStrategy.Create([cards], [partialFirst with { ApplicableResetCredits = 0 }], now).Accounts[0].CanRedeem,
-            "An earlier partial batch cannot hide an eligible full batch, and authoritative ineligibility overrides the heuristic.");
+            && !CodexUsageStrategy.Create([cards], [partialFirst with { ApplicableResetCredits = 0 }], now).Accounts[0].CanRedeem
+            && !CodexUsageStrategy.Create([cards], [partialFirst with { ApplicableResetCredits = null }], now).Accounts[0].CanRedeem,
+            "Only reported applicability establishes current eligibility; usage percentages cannot infer it when the report is absent.");
 
         var unknown = backlog with { ResetCreditBatches = [], ApplicableResetCredits = 0 };
         var unknownRow = CodexUsageStrategy.Create([cards], [unknown], now).Accounts[0];
@@ -577,7 +588,7 @@ internal static class CodexUsageStrategyTests
         if (capture is not null) bitmap.Save(Path.ChangeExtension(capture, ".credit-balance.png"));
         using var workload = panel.RenderForTest(strategy, NativeText.For("zh-CN"),
             QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
-        Check(panel.VisibleTextForAcceptance.Contains("多张卡临期") && !panel.AccessibleDescription!.Contains("需约"),
+        Check(panel.VisibleTextForAcceptance.Contains("多张卡需逐次使用") && !panel.AccessibleDescription!.Contains("需约"),
             "Relative workload ordering explains multiple credits without claiming a measured consumption time.");
         if (capture is not null) workload.Save(Path.ChangeExtension(capture, ".credit-order.png"));
         using var english = panel.RenderForTest(CodexUsageStrategy.Create([cards], [unknown], now), NativeText.For("en"),
@@ -585,6 +596,31 @@ internal static class CodexUsageStrategyTests
         Check(panel.VisibleTextForAcceptance.Contains("0 redeemable now") && panel.VisibleTextForAcceptance.Contains("Check expiry for 4"),
             "Credit inventory and uncertainty are localized with the production renderer.");
         if (capture is not null) english.Save(Path.ChangeExtension(capture, ".credit-balance.en.192dpi.png"));
+    }
+
+    private static void TestPresentationReview(DateTimeOffset now, string? capture)
+    {
+        var account = new CodexAccountInfo("long", "long-account@a-long-domain-name-for-readability.example.test", "pro", true);
+        var quota = new CodexAccountQuota("long", [new("7d", 50, now.AddHours(2), TimeSpan.FromDays(7))], now)
+        {
+            ResetCreditsAvailable = 2,
+            ResetCreditBatches = [new(now.AddDays(20), 1, true), new(now.AddDays(21), 1, false)],
+        };
+        var strategy = CodexUsageStrategy.Create([account], [quota], now);
+        using var panel = new CodexStrategyPopoverForm();
+        foreach (var locale in new[] { "zh-CN", "en" })
+        foreach (var dpi in new[] { 96, 144, 192 })
+        {
+            using var bitmap = panel.RenderForTest(strategy, NativeText.For(locale),
+                QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), dpi);
+            Check(panel.VisibleTextForAcceptance.Contains(CodexAccountFormatting.MaskEmail(account.Email))
+                && panel.VisibleTextForAcceptance.Contains(locale == "zh-CN" ? "在用" : "Active"),
+                "Long names retain the active-account status in the rendered and accessible content.");
+            Check(!panel.VisibleTextForAcceptance.Contains("均临期") && !panel.VisibleTextForAcceptance.Contains("both approaching")
+                && panel.VisibleTextForAcceptance.Contains(locale == "zh-CN" ? "范围待核对" : "Check scope"),
+                "A distant or unconfirmed credit is not presented as an imminent, full-scope reset.");
+            if (capture is not null) bitmap.Save(Path.ChangeExtension(capture, $".review-{locale}-{dpi}.png"));
+        }
     }
 
     private static void TestRenewalAdvice(DateTimeOffset now, string? capture)

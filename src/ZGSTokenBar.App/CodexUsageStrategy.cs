@@ -203,9 +203,7 @@ internal sealed record CodexUsageStrategy(
         var redeemBy = firstCredit?.At;
         var lastReview = redeemBy is { } cutoff ? cutoff - RedeemLead : (DateTimeOffset?)null;
         var canRedeem = confirmed && !expired && quota?.ResetCreditsAvailable != 0
-            && (quota?.ApplicableResetCredits is { } applicable ? applicable > 0
-                : ordered.Any(item => item.Kind == CodexStrategyDeadline.ResetCredit && item.CoversMainQuota)
-                    && windows.Any(window => window.UsedPercent > 20));
+            && quota?.ApplicableResetCredits is > 0;
         var row = new CodexStrategyAccount(account, windows, state, deadlineKind, deadline, recovery, cardExpiry, redeemBy,
             lastReview > now ? lastReview : null,
             quota?.ResetCreditsAvailable, canRedeem, nextReset < lastReview)
