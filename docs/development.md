@@ -344,6 +344,13 @@ Only confirmed `codex_rate_limits`/legacy `full` credits contribute full rounds.
 The optional query has a five-second deadline and 32 KiB response limit; a failed
 query preserves valid usage and known cached metadata. No redemption is performed.
 A forecast never confirms a future refill.
+The strategy groups quota, pace and every credit batch inside its account card;
+the active-account label keeps a reserved badge beside long names. The main
+countdown follows the deadline driving the recommendation, while the nearest
+natural reset remains visible. Relative order does not promise parallel task
+allocation. Redemption eligibility requires a fresh positive applicable balance;
+quota percentages alone cannot establish eligibility. Unconfirmed reset scope
+is labeled explicitly, and distant cards are not described as imminent.
 For free or expired accounts with identity-matched weekly history, the strategy
 shows compact account cards with the recorded reset date, lowest recorded remaining
 quota and review countdown. Observation dates and renewal caveats remain on hover.

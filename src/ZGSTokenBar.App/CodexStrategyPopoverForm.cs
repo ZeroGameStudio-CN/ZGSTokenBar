@@ -178,7 +178,7 @@ internal sealed class CodexStrategyPopoverForm : Form
         foreach (var row in _rows)
         {
             if (contentY >= top && contentY < top + row.Height)
-                return row.Details is { } details ? $"{row.Values[0]}{Environment.NewLine}{details}" : null;
+                return row.Details is { } details ? $"{RowTitle(row)}{Environment.NewLine}{details}" : null;
             top += row.Height;
         }
         return null;
@@ -242,6 +242,7 @@ internal sealed class CodexStrategyPopoverForm : Form
         graphics.SetClip(RectangleF.Inflate(body, -1, -1));
         graphics.TranslateTransform(body.Left, body.Top - _scrollbar.Value / _scale);
         var contentWidth = Math.Max(1, body.Width - 32 - (_scrollbar.Maximum >= _scrollbar.LargeChange ? 16 : 0));
+        DrawAccountSurfaces(graphics, contentWidth);
         var y = 8f;
         foreach (var row in _rows)
         {
@@ -253,8 +254,37 @@ internal sealed class CodexStrategyPopoverForm : Form
         graphics.Restore(state);
     }
 
+    private void DrawAccountSurfaces(Graphics graphics, float width)
+    {
+        var y = 8f;
+        for (var index = 0; index < _rows.Count; index++)
+        {
+            var row = _rows[index];
+            if (row.Kind == RowKind.Recommendation)
+            {
+                var height = row.Height;
+                for (var next = index + 1; next < _rows.Count && _rows[next].Kind != RowKind.Gap; next++)
+                    height += _rows[next].Height;
+                var bounds = new RectangleF(16, y + 1, width, height - 2);
+                var first = row.Priority == 1;
+                using var fill = new SolidBrush(first ? _theme.QuotaGroup : Color.FromArgb(100, _theme.QuotaGroup));
+                graphics.FillRoundedRectangle(fill, bounds, 10);
+                if (first)
+                {
+                    using var tint = new SolidBrush(Color.FromArgb(14, Accent));
+                    graphics.FillRoundedRectangle(tint, bounds, 10);
+                }
+                using var border = new Pen(Color.FromArgb(first ? 72 : 24, first ? Accent : Muted), 1);
+                using var path = RoundedRectangle(bounds);
+                graphics.DrawPath(border, path);
+            }
+            y += row.Height;
+        }
+    }
+
     private void DrawRow(Graphics graphics, DisplayRow row, RectangleF bounds)
     {
+        if (row.Kind == RowKind.Gap) return;
         var values = row.Values;
         if (row.Kind == RowKind.Title)
         {
@@ -283,8 +313,6 @@ internal sealed class CodexStrategyPopoverForm : Form
         }
         if (row.Kind == RowKind.Event)
         {
-            using var guide = new Pen(Color.FromArgb(55, 148, 163, 184));
-            graphics.DrawLine(guide, bounds.Left + 24, bounds.Top, bounds.Left + 24, bounds.Bottom);
             var left = bounds.Left + 50;
             var availableWidth = bounds.Right - 8 - left;
             var split = left + availableWidth * .60f;
@@ -322,7 +350,7 @@ internal sealed class CodexStrategyPopoverForm : Form
         }
         if (row.Kind == RowKind.Compact)
         {
-            DrawText(graphics, values[0], _bodyFont, Muted,
+            DrawAccountName(graphics, row, _bodyFont, Muted,
                 new RectangleF(bounds.Left + 8, bounds.Top, bounds.Width * .6f - 8, bounds.Height));
             DrawText(graphics, values[3], _strongFont, row.Critical ? CriticalColor : Muted,
                 new RectangleF(bounds.Left + bounds.Width * .6f, bounds.Top, bounds.Width * .4f - 8, bounds.Height), StringAlignment.Far);
@@ -352,18 +380,11 @@ internal sealed class CodexStrategyPopoverForm : Form
         if (row.Kind == RowKind.Recommendation)
         {
             var first = row.Priority == 1;
-            if (first)
-            {
-                using var surface = new SolidBrush(_theme.QuotaGroup);
-                graphics.FillRoundedRectangle(surface, RectangleF.Inflate(bounds, 0, -2), 8);
-                using var tint = new SolidBrush(Color.FromArgb(19, Accent));
-                graphics.FillRoundedRectangle(tint, RectangleF.Inflate(bounds, 0, -2), 8);
-            }
             var rankBounds = new RectangleF(bounds.Left + 10, bounds.Top + 13, 28, 28);
-            using var rankFill = new SolidBrush(first ? Color.FromArgb(45, Accent) : _theme.QuotaGroup);
+            using var rankFill = new SolidBrush(Color.FromArgb(first ? 45 : 20, first ? Accent : Muted));
             graphics.FillRoundedRectangle(rankFill, rankBounds, 7);
             DrawText(graphics, row.Priority!.Value.ToString(CultureInfo.InvariantCulture), _rankFont,
-                row.LowQuota ? Muted : Accent, rankBounds, StringAlignment.Center);
+                first && !row.LowQuota ? Accent : Muted, rankBounds, StringAlignment.Center);
             nameX = bounds.Left + 50;
         }
         else
@@ -375,7 +396,7 @@ internal sealed class CodexStrategyPopoverForm : Form
         var nameWidth = Math.Max(1, (contentRight - nameX) * .60f);
         var rightX = nameX + nameWidth + 8;
         var rightWidth = Math.Max(1, contentRight - rightX);
-        DrawText(graphics, values[0], row.Kind == RowKind.Recommendation ? _nameFont : _strongFont,
+        DrawAccountName(graphics, row, row.Kind == RowKind.Recommendation ? _nameFont : _strongFont,
             row.LowQuota ? Muted : ForeColor, new RectangleF(nameX, bounds.Top + 3, nameWidth, 24));
         var primaryRight = row.Kind == RowKind.Recommendation ? values[3] : values[1];
         var primaryColor = row.Kind == RowKind.Recommendation
@@ -392,6 +413,24 @@ internal sealed class CodexStrategyPopoverForm : Form
         if (row.Kind != RowKind.Recommendation)
             DrawText(graphics, values[3], _strongFont, row.Critical ? CriticalColor : row.Urgent ? DeadlineColor : Muted,
                 new RectangleF(rightX, detailY, rightWidth, 20), StringAlignment.Far);
+    }
+
+    private void DrawAccountName(Graphics graphics, DisplayRow row, Font font, Color color, RectangleF bounds)
+    {
+        if (row.Status is not { } status)
+        {
+            DrawText(graphics, row.Values[0], font, color, bounds);
+            return;
+        }
+        var badgeWidth = Math.Min(bounds.Width, graphics.MeasureString(status, _bodyFont).Width + 12);
+        var nameWidth = Math.Max(1, bounds.Width - badgeWidth - 6);
+        var name = new RectangleF(bounds.Left, bounds.Top, nameWidth, bounds.Height);
+        DrawText(graphics, row.Values[0], font, color, name);
+        var badgeLeft = bounds.Left + Math.Min(graphics.MeasureString(row.Values[0], font).Width + 6, nameWidth + 6);
+        var badge = new RectangleF(badgeLeft, bounds.Top + (bounds.Height - 20) / 2, badgeWidth, 20);
+        using var fill = new SolidBrush(Color.FromArgb(20, Accent));
+        graphics.FillRoundedRectangle(fill, badge, 5);
+        DrawText(graphics, status, _bodyFont, Accent, badge, StringAlignment.Center);
     }
 
     private static void DrawText(Graphics graphics, string value, Font font, Color color,
@@ -523,12 +562,10 @@ internal sealed class CodexStrategyPopoverForm : Form
         foreach (var account in ready)
         {
             var urgent = urgentAccounts.Contains(account.Account.AccountId);
-            var action = account.Priority == 1 ? T("先用", "Use first")
-                : urgent ? T("可并行", "Can run in parallel")
-                : T("备用", "Use next");
-            if (account.HasLittleQuota) action += T(" · 少量 · 短任务", " · Low quota · Short tasks");
-            var deadline = account.PriorityDeadline;
+            var action = account.Priority == 1 ? T("优先使用", "Use first") : T("随后使用", "Use next");
+            if (account.HasLittleQuota) action += T(" · 适合短任务", " · Short tasks");
             var primary = PrimaryEvent(account);
+            var deadline = primary?.At ?? account.PriorityDeadline;
             var promoted = primary?.Kind == CodexStrategyDeadline.ResetCredit && primary.At - now <= TimeSpan.FromMinutes(30);
             var context = primary?.Kind switch
             {
@@ -542,26 +579,27 @@ internal sealed class CodexStrategyPopoverForm : Form
             if (!string.IsNullOrEmpty(context)) action += $" · {context}";
             if (account.SuggestedStartAt is { } start)
             {
-                action += start <= now ? T(" · 需提前消耗（估算）", " · Start now (estimate)")
+                action += start <= now ? T(" · 建议现在开始（估算）", " · Start now (estimate)")
                     : T($" · 建议 {CountdownDuration(start - now, text)}内开始", $" · Start within {CountdownDuration(start - now, text)}");
                 explanation = start <= now ? T("按近期节奏，建议现在使用", "Observed pace suggests starting now")
                     : T($"按近期节奏，建议 {Time(start)} 前开始", $"Observed pace suggests starting by {Time(start)}");
             }
             if (promoted) action = T("先核对上方重置卡", "Review the reset credit above");
             var plan = CodexAccountFormatting.PlanLabel(account.Account.Plan).ToUpperInvariant();
-            var name = CodexAccountFormatting.MaskEmail(account.Account.Email) + (showPlans ? $" · {plan}" : "")
-                + (account.Account.Active ? T(" · 在用", " · Active") : "");
+            var name = CodexAccountFormatting.MaskEmail(account.Account.Email) + (showPlans ? $" · {plan}" : "");
             var reason = PriorityExplanation(account);
             var details = $"{plan}\n{(primary is null ? T("暂无已知截止", "No known deadline") : EventDetails(account, primary, now))}\n{reason}\n{explanation}";
             if (account.PressureEvent is { } driver && account.ConsumptionHours is { } hours)
                 details += "\n" + T($"按近期速度需约 {hours:0.#} 小时，截止前剩 {(driver.At - now).TotalHours:0.#} 小时（估算）",
                     $"About {hours:0.#}h of usage needed, {(driver.At - now).TotalHours:0.#}h until the deadline (estimate)");
             _rows.Add(new([name, reason, action,
-                promoted ? "" : Countdown(deadline, now, account.PriorityReason ?? CodexStrategyDeadline.Reset, text)],
+                promoted ? "" : Countdown(deadline, now, primary?.Kind ?? account.PriorityReason ?? CodexStrategyDeadline.Reset, text)],
                 RowKind.Recommendation, 74, account.Priority, urgent, account.HasLittleQuota,
-                Critical: !promoted && IsCritical(deadline, now), Details: details));
+                Critical: !promoted && IsCritical(deadline, now), Details: details,
+                Status: account.Account.Active ? T("在用", "Active") : null));
             AddProgress(account, now);
             AddEvents(account, now, displayed: primary);
+            _rows.Add(new([""], RowKind.Gap, 8));
         }
         if (strategy.Accounts.Count == 0 && strategy.Renewals.Count == 0)
             _rows.Add(new([T("暂无付费账号额度", "No paid-account quota available")], RowKind.Note, 30));
@@ -580,10 +618,10 @@ internal sealed class CodexStrategyPopoverForm : Form
             };
             var countdown = account.CanRedeem ? action
                 : account.Recovery is not null ? Countdown(account.Recovery, now, CodexStrategyDeadline.Reset, text) : action;
-            var name = CodexAccountFormatting.MaskEmail(account.Account.Email)
-                + (account.Account.Active ? T(" · 在用", " · Active") : "");
+            var name = CodexAccountFormatting.MaskEmail(account.Account.Email);
             _rows.Add(new([name, "", "", countdown], RowKind.Compact, 30,
-                Details: $"{Quotas(account.Windows)}\n{action}{(account.Recovery is null ? "" : $" · {Time(account.Recovery)}")}"));
+                Details: $"{Quotas(account.Windows)}\n{action}{(account.Recovery is null ? "" : $" · {Time(account.Recovery)}")}",
+                Status: account.Account.Active ? T("在用", "Active") : null));
             AddEvents(account, now, skipRecovery: true);
         }
         if (strategy.Renewals.Count > 0)
@@ -603,16 +641,6 @@ internal sealed class CodexStrategyPopoverForm : Form
                     RowKind.Renewal, 74, Details: details));
             }
         }
-        var laterCards = strategy.Accounts.Where(row => row.State != CodexStrategyState.Expired)
-            .SelectMany(account => account.Events.Where(item =>
-                    item.Kind == CodexStrategyDeadline.ResetCredit && item.At - now > TimeSpan.FromHours(24)
-                    && item != PrimaryEvent(account))
-                .Select(item => (Account: account, Event: item)))
-            .OrderBy(item => item.Event.At).ToArray();
-        if (laterCards.Length > 0) Section(T("后续重置卡", "Later reset credits"));
-        foreach (var (account, item) in laterCards)
-            AddCreditRow(account, item, now);
-
         AccessibleDescription = string.Join(Environment.NewLine, _rows.Select(row =>
             RowText(row) + (row.Details is { } details ? $"\n{details}" : "")));
         Invalidate();
@@ -658,13 +686,16 @@ internal sealed class CodexStrategyPopoverForm : Form
                 Details: T("仅有总数的卡不推定有效期或恢复范围；在 Cockpit Tools 核对卡详情",
                     "A balance alone establishes neither expiry nor reset scope; check credit details in Cockpit Tools")));
         }
-        foreach (var item in account.UpcomingEvents)
+        var nextReset = account.Events.FirstOrDefault(item => item.Kind == CodexStrategyDeadline.Reset);
+        foreach (var item in account.Events.Where(item => item.Kind == CodexStrategyDeadline.ResetCredit
+                     || item.At - now <= TimeSpan.FromHours(24) || item == nextReset))
         {
             if (item == displayed) continue;
             if (skipRecovery && item.Recovery && item.At == account.Recovery) continue;
             if (item.Kind == CodexStrategyDeadline.ResetCredit && item.At - now <= TimeSpan.FromMinutes(30)) continue;
             _rows.Add(new([EventLabel(item), "", "", Countdown(item.At, now, item.Kind, _text)],
-                RowKind.Event, 28, Urgent: !item.Recovery, Critical: !item.Recovery && IsCritical(item.At, now),
+                RowKind.Event, 28, Urgent: !item.Recovery && item.At - now <= TimeSpan.FromHours(24),
+                Critical: !item.Recovery && IsCritical(item.At, now),
                 Details: EventDetails(account, item, now)));
         }
     }
@@ -683,16 +714,17 @@ internal sealed class CodexStrategyPopoverForm : Form
     {
         CodexStrategyDeadline.Reset => T($"{WindowNames(item.WindowLabel)}额度", $"{item.WindowLabel} quota"),
         CodexStrategyDeadline.Subscription => T("订阅", "Subscription"),
-        _ => CreditCount(item),
+        _ => item.CoversMainQuota ? CreditCount(item)
+            : CreditCount(item) + T(" · 范围待核对", " · Check scope"),
     };
 
     private static CodexStrategyEvent? PrimaryEvent(CodexStrategyAccount account) =>
         account.State == CodexStrategyState.Ready
-            ? account.Events.FirstOrDefault(item => item.Kind == account.PriorityReason && item.At == account.PriorityDeadline)
+            ? account.PressureEvent ?? account.Events.FirstOrDefault(item => item.Kind == account.PriorityReason && item.At == account.PriorityDeadline)
             : null;
 
     private string CreditCount(CodexStrategyEvent item) => item.CardCount is { } count
-        ? T($"{count} 张重置卡", $"{count} reset credits")
+        ? T($"{count} 张重置卡", $"{count} reset {(count == 1 ? "credit" : "credits")}")
         : T("重置卡（张数待刷新）", "Reset credits (count unavailable)");
 
     private string WindowNames(string? labels) => string.Join(" / ", (labels ?? "").Split(" / ").Select(WindowLabel));
@@ -701,7 +733,9 @@ internal sealed class CodexStrategyPopoverForm : Form
     {
         var details = $"{DeadlineText(item.Kind, _text)} · {Time(item.At)}";
         if (item.Kind == CodexStrategyDeadline.ResetCredit)
-            details += $"\n{CreditAction(account, item)}\n{ReviewText(item, now)}";
+            details += $"\n{CreditAction(account, item)}\n{ReviewText(item, now)}\n"
+                + (item.CoversMainQuota ? T("恢复完整额度", "Resets the full allowance")
+                    : T("恢复范围待核对，未计入完整额度预测", "Scope unconfirmed; excluded from full-refill forecasts"));
         return details;
     }
 
@@ -714,14 +748,14 @@ internal sealed class CodexStrategyPopoverForm : Form
             && driver?.Kind != CodexStrategyDeadline.Subscription)
             return T("自然重置与卡到期叠加，需要预留消耗时间", "Reset and credit expiry overlap; allow time to use both");
         if (driver?.Kind == CodexStrategyDeadline.Subscription)
-            return hasCredit ? T("订阅结束前需消耗余量，并处理临期卡", "Use remaining quota and review credits before the plan ends")
-                : T("订阅即将结束，优先消耗剩余额度", "Use remaining quota before the subscription ends");
+            return hasCredit ? T("订阅结束前使用余量，并处理重置卡", "Use quota and review credits before the plan ends")
+                : T("订阅到期前使用剩余额度", "Use remaining quota before the subscription ends");
         if (driver?.Kind == CodexStrategyDeadline.ResetCredit)
             return account.Events.Where(item => item.At <= driver.At && item.CoversMainQuota)
                     .Sum(item => (long)(item.CardCount ?? 0)) > 1
-                ? T("多张卡临期，需要预留逐次消耗时间", "Multiple credits expire; allow usage time between resets")
-                : T("重置卡即将到期，先消耗再核对兑换条件", "Credit expires soon; use quota, then check redemption");
-        if (hasCredit && hasReset)
+                ? T("多张卡需逐次使用，预留消耗间隔", "Allow usage time between multiple credit resets")
+                : T("卡失效前，先消耗余量再核对兑换", "Use quota and review redemption before credit expiry");
+        if (hasReset && account.UpcomingEvents.Any(item => item.Kind == CodexStrategyDeadline.ResetCredit))
             return T("自然重置与重置卡均临期，优先消耗当前额度", "Quota reset and credit expiry are both approaching");
         if (driver?.Kind == CodexStrategyDeadline.Reset)
             return account.ConsumptionPressure > 1
@@ -736,8 +770,8 @@ internal sealed class CodexStrategyPopoverForm : Form
         if (item.CardExpiresAt != item.At) return T("订阅结束前使用", "Use before the subscription ends");
         if (account.Events.Any(other => other.Kind == CodexStrategyDeadline.Reset && other.At < item.At.AddMinutes(-30)))
             return T("先消耗，结合自然重置核对兑卡时机", "Use quota; consider the scheduled reset before redeeming");
-        return account.CanRedeem && (item.CoversMainQuota || account.ApplicableCards > 0)
-                ? T("可兑卡 · 手动确认", "Eligible · Confirm manually")
+        return account.CanRedeem
+                ? T("有可兑卡 · 核对本批条件", "Credits apply now · Check this batch")
                 : T("核对兑换条件", "Check eligibility");
     }
 
@@ -755,13 +789,16 @@ internal sealed class CodexStrategyPopoverForm : Form
     private void Section(string value, string? detail = null) =>
         _rows.Add(new(detail is null ? [value] : [value, detail], RowKind.Section, 28));
 
-    private static string RowText(DisplayRow row) => (row.Priority is { } priority ? $"{priority}. " : "")
-        + string.Join(" · ", row.Values.Where(value => !string.IsNullOrEmpty(value)));
+    private static string RowTitle(DisplayRow row) => row.Values[0] + (row.Status is { } status ? $" · {status}" : "");
 
-    private enum RowKind { Title, Note, Section, Recommendation, Detail, Event, Compact, Progress, Renewal }
+    private static string RowText(DisplayRow row) => (row.Priority is { } priority ? $"{priority}. " : "")
+        + string.Join(" · ", row.Values.Select((value, index) => index == 0 ? RowTitle(row) : value)
+            .Where(value => !string.IsNullOrEmpty(value)));
+
+    private enum RowKind { Title, Note, Section, Recommendation, Detail, Event, Compact, Progress, Renewal, Gap }
     private sealed record DisplayRow(string[] Values, RowKind Kind, int Height,
         int? Priority = null, bool Urgent = false, bool LowQuota = false, bool Critical = false, string? Details = null,
-        double? RemainingPercent = null, bool Predicted = false);
+        double? RemainingPercent = null, bool Predicted = false, string? Status = null);
 
     internal static string Countdown(DateTimeOffset? deadline, DateTimeOffset now,
         CodexStrategyDeadline kind, NativeText text)
