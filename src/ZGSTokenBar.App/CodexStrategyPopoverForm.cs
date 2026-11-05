@@ -329,6 +329,24 @@ internal sealed class CodexStrategyPopoverForm : Form
             return;
         }
 
+        if (row.Kind == RowKind.Renewal)
+        {
+            using var surface = new SolidBrush(_theme.QuotaGroup);
+            graphics.FillRoundedRectangle(surface, RectangleF.Inflate(bounds, 0, -3), 8);
+            var left = bounds.Left + 14;
+            var right = bounds.Right - 14;
+            var split = left + (right - left) * .53f;
+            DrawText(graphics, values[0], _nameFont, ForeColor,
+                new RectangleF(left, bounds.Top + 8, split - left - 8, 24));
+            DrawText(graphics, values[1], _strongFont, Muted,
+                new RectangleF(split, bounds.Top + 8, right - split, 24), StringAlignment.Far);
+            DrawText(graphics, values[2], _bodyFont, Muted,
+                new RectangleF(left, bounds.Top + 37, split - left - 8, 24));
+            DrawText(graphics, values[3], _strongFont, Accent,
+                new RectangleF(split, bounds.Top + 37, right - split, 24), StringAlignment.Far);
+            return;
+        }
+
         var nameX = bounds.Left + 8;
         var contentRight = bounds.Right - 8;
         if (row.Kind == RowKind.Recommendation)
@@ -567,24 +585,20 @@ internal sealed class CodexStrategyPopoverForm : Form
         }
         if (strategy.Renewals.Count > 0)
         {
-            Section(T("续开时机", "When to renew"), T("历史记录", "Recorded history"));
+            Section(T("续开时机", "When to renew"));
             foreach (var advice in strategy.Renewals)
             {
                 var future = advice.RecordedResetAt > now;
-                var action = future
-                    ? T($"可等 {Time(advice.RecordedResetAt)} 后复查，再决定续开",
-                        $"Recheck after {Time(advice.RecordedResetAt)} before renewing")
-                    : T("原重置时间已到，先刷新额度再决定续开", "Recorded reset is due; refresh quota before renewing");
-                var history = T($"本轮最低曾余 {100 - advice.HighestUsedPercent:0.#}% · 最后观察 {Time(advice.LastObservedAt)}",
-                    $"Lowest recorded remaining: {100 - advice.HighestUsedPercent:0.#}% · Last seen {Time(advice.LastObservedAt)}");
-                _rows.Add(new([CodexAccountFormatting.MaskEmail(advice.Account.Email), "", "",
+                var history = T($"历史最低剩余 {100 - advice.HighestUsedPercent:0.#}%",
+                    $"Recorded low: {100 - advice.HighestUsedPercent:0.#}% left");
+                var details = T($"最后记录 {Time(advice.LastObservedAt)}\n续开后的额度与周期，以刷新结果为准",
+                    $"Last seen {Time(advice.LastObservedAt)}\nConfirm allowance and cycle after renewing");
+                _rows.Add(new([CodexAccountFormatting.MaskEmail(advice.Account.Email), history,
+                    T($"原定重置 {Time(advice.RecordedResetAt)}", $"Prior reset {Time(advice.RecordedResetAt)}"),
                     future ? T($"{CountdownDuration(advice.RecordedResetAt - now, text)}后复查",
-                        $"Recheck in {CountdownDuration(advice.RecordedResetAt - now, text)}") : T("到点待复查", "Ready to recheck")],
-                    RowKind.Compact, 30, Details: $"{history}\n{action}"));
-                _rows.Add(new([action], RowKind.Note, 26, Details: history));
-                _rows.Add(new([history], RowKind.Note, 26));
+                        $"Recheck in {CountdownDuration(advice.RecordedResetAt - now, text)}") : T("原定时间已到 · 待复查", "Prior reset due · Recheck")],
+                    RowKind.Renewal, 74, Details: details));
             }
-            _rows.Add(new([T("续开后的额度与周期，以刷新结果为准", "Confirm allowance and cycle after renewing")], RowKind.Note, 28));
         }
         var laterCards = strategy.Accounts.Where(row => row.State != CodexStrategyState.Expired)
             .SelectMany(account => account.Events.Where(item =>
@@ -741,7 +755,7 @@ internal sealed class CodexStrategyPopoverForm : Form
     private static string RowText(DisplayRow row) => (row.Priority is { } priority ? $"{priority}. " : "")
         + string.Join(" · ", row.Values.Where(value => !string.IsNullOrEmpty(value)));
 
-    private enum RowKind { Title, Note, Section, Recommendation, Detail, Event, Compact, Progress }
+    private enum RowKind { Title, Note, Section, Recommendation, Detail, Event, Compact, Progress, Renewal }
     private sealed record DisplayRow(string[] Values, RowKind Kind, int Height,
         int? Priority = null, bool Urgent = false, bool LowQuota = false, bool Critical = false, string? Details = null,
         double? RemainingPercent = null, bool Predicted = false);
