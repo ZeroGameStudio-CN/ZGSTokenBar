@@ -50,6 +50,7 @@ for (const scriptPath of [
   'scripts/build-ai-gateway-observer-plugin.ps1',
   'scripts/build-native-portable.ps1',
   'scripts/prepare-token-history.ps1',
+  'scripts/cleanup-task.ps1',
 ]) {
   const source = fs.readFileSync(scriptPath, 'utf8');
   if (!/^#Requires -Version 7\.0\s/m.test(source)) {
