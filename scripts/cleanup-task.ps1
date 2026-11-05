@@ -1,5 +1,8 @@
 #Requires -Version 7.0
 
+# Supported platform: Windows 10/11 with PowerShell 7 (ZGSTokenBar).
+# macOS/Linux execution is not qualified; use the project's platform-qualified entry.
+
 [CmdletBinding()]
 param(
   [Parameter(Mandatory)][string] $Manifest,
