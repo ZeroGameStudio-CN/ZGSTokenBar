@@ -38,6 +38,7 @@ internal sealed record CodexStrategyAccount(
 {
     public bool HasLittleQuota => Windows.Any(window => window.UsedPercent >= 95);
     public int? Priority { get; init; }
+    public int? ApplicableCards { get; init; }
     public IReadOnlyList<CodexStrategyEvent> Events { get; init; } = [];
     public IReadOnlyList<CodexStrategyEvent> UpcomingEvents { get; init; } = [];
     public DateTimeOffset? SuggestedStartAt { get; init; }
@@ -46,6 +47,8 @@ internal sealed record CodexStrategyAccount(
     public bool PressureIncludesReset { get; init; }
     public bool PressureIncludesCredit { get; init; }
     public double? ConsumptionHours { get; init; }
+    public DateTimeOffset? AttentionAt { get; init; }
+    public double? QuotaPressure { get; init; }
     public int? UnresolvedCards { get; init; }
     public IReadOnlyList<CodexStrategyProgress> Progress { get; init; } = [];
     public DateTimeOffset? PriorityDeadline =>
@@ -82,12 +85,12 @@ internal sealed record CodexUsageStrategy(
                 .ThenByDescending(item => item.Account.Active).First())
             .Select(item => Project(item.Account, item.Quota, now, paceEstimates))
             .OrderBy(row => row.State)
-            .ThenBy(row => row.SuggestedStartAt ?? row.PriorityDeadline ?? row.Recovery ?? DateTimeOffset.MaxValue)
+            .ThenBy(row => row.SuggestedStartAt ?? row.AttentionAt ?? row.PriorityDeadline ?? row.Recovery ?? DateTimeOffset.MaxValue)
             .ThenByDescending(row => row.ConsumptionPressure)
-            .ThenByDescending(row => row.UpcomingEvents.Count(item => !item.Recovery))
-            .ThenByDescending(row => row.UpcomingEvents.Sum(item => (long)(item.CardCount ?? 0)))
+            .ThenByDescending(row => row.QuotaPressure)
             .ThenBy(row => row.HasLittleQuota)
             .ThenBy(row => row.PriorityDeadline)
+            .ThenByDescending(row => row.Cards)
             .ThenByDescending(row => row.Account.Active)
             .ThenBy(row => row.Account.AccountId, StringComparer.Ordinal)
             .Select((row, index) => row.State == CodexStrategyState.Ready
@@ -169,9 +172,9 @@ internal sealed record CodexUsageStrategy(
             .Where(batch => batch.Count > 0 && batch.ExpiresAt > now)
             .Distinct()
             .Take(256)
-            .GroupBy(batch => batch.ExpiresAt)
-            .Select(group => (Expiry: group.Key, Count: group.Sum(batch => (long)batch.Count),
-                Full: group.All(batch => batch.CoversMainQuota)))
+            .GroupBy(batch => (batch.ExpiresAt, batch.CoversMainQuota))
+            .Select(group => (Expiry: group.Key.ExpiresAt, Count: group.Sum(batch => (long)batch.Count),
+                Full: group.Key.CoversMainQuota))
             .Where(group => group.Count <= int.MaxValue)
             .Select(group => new CodexResetCreditBatch(group.Expiry, (int)group.Count, group.Full))
             .OrderBy(batch => batch.ExpiresAt)
@@ -199,12 +202,15 @@ internal sealed record CodexUsageStrategy(
         var cardExpiry = firstCredit?.CardExpiresAt;
         var redeemBy = firstCredit?.At;
         var lastReview = redeemBy is { } cutoff ? cutoff - RedeemLead : (DateTimeOffset?)null;
-        var canRedeem = redeemBy is not null && confirmed && firstCredit!.CoversMainQuota
-            && windows.Any(window => window.UsedPercent > 20);
+        var canRedeem = confirmed && !expired && quota?.ResetCreditsAvailable != 0
+            && (quota?.ApplicableResetCredits is { } applicable ? applicable > 0
+                : ordered.Any(item => item.Kind == CodexStrategyDeadline.ResetCredit && item.CoversMainQuota)
+                    && windows.Any(window => window.UsedPercent > 20));
         var row = new CodexStrategyAccount(account, windows, state, deadlineKind, deadline, recovery, cardExpiry, redeemBy,
             lastReview > now ? lastReview : null,
             quota?.ResetCreditsAvailable, canRedeem, nextReset < lastReview)
         {
+            ApplicableCards = quota?.ApplicableResetCredits,
             Events = ordered,
             UpcomingEvents = ordered.Where(item => item.At > now && item.At - now <= UrgencyWindow).ToArray(),
             UnresolvedCards = quota?.ResetCreditsAvailable is { } count
@@ -223,74 +229,55 @@ internal sealed record CodexUsageStrategy(
         DateTimeOffset now)
     {
         if (row.State != CodexStrategyState.Ready) return row;
-        var rates = new List<(QuotaWindow Window, double Rate)>();
+        // Without reliable pace, compare time per remaining full-quota round. This is
+        // a relative attention order, never a prediction of hours needed or a refill.
+        foreach (var load in Workloads(row, row.Windows.Select(_ => 100d).ToArray()))
+        {
+            var availableHours = (load.Event.At - now).TotalHours;
+            var attention = now.AddHours(availableHours / Math.Max(1, load.Work));
+            var quotaPressure = load.Work / availableHours;
+            if (row.AttentionAt is not null && (attention > row.AttentionAt
+                    || attention == row.AttentionAt && quotaPressure <= row.QuotaPressure)) continue;
+            row = row with
+            {
+                AttentionAt = attention, QuotaPressure = quotaPressure, PressureEvent = load.Event,
+                PressureIncludesReset = load.IncludesReset, PressureIncludesCredit = load.IncludesCredit,
+            };
+        }
+        if (row.PriorityDeadline < row.AttentionAt)
+            row = row with { AttentionAt = row.PriorityDeadline, QuotaPressure = null,
+                PressureEvent = null, PressureIncludesReset = false, PressureIncludesCredit = false };
+        var rates = new List<double>();
         foreach (var progress in row.Progress)
         {
-            var window = progress.Window;
             var estimate = progress.Pace;
             if (estimate is null || estimate.Status is not (QuotaPaceStatus.ProjectedExhaustion or QuotaPaceStatus.ResetsBeforeExhaustion)
                 || estimate.ValidUntil is not { } validUntil || validUntil <= now
                 || estimate.Recent is not { Confidence: not QuotaTrendConfidence.Provisional } trend
                 || trend.ObservedSpan < TimeSpan.FromMinutes(5)
                 || !double.IsFinite(trend.PercentPerHour) || trend.PercentPerHour <= 0) return row;
-            rates.Add((window, trend.PercentPerHour));
+            rates.Add(trend.PercentPerHour);
         }
         if (rates.Count == 0) return row;
-        var remaining = rates.Select(rate => (100 - rate.Window.UsedPercent!.Value) / rate.Rate).ToArray();
-        var full = rates.Select(rate => 100 / rate.Rate).ToArray();
-        if (remaining.Concat(full).Any(value => !double.IsFinite(value))) return row;
-        var fullHours = full.Min();
-        double ConsumeRemaining()
-        {
-            var hours = remaining.Min();
-            for (var index = 0; index < remaining.Length; index++) remaining[index] = Math.Max(0, remaining[index] - hours);
-            return hours;
-        }
         DateTimeOffset? start = null;
         double? pressure = null;
         double? consumptionHours = null;
         CodexStrategyEvent? driver = null;
         var includesReset = false;
         var includesCredit = false;
-        var sawReset = false;
-        var sawCredit = false;
-        var workHours = 0d;
-        var subscription = row.Events.FirstOrDefault(item => item.Kind == CodexStrategyDeadline.Subscription)?.At;
-        foreach (var item in row.UpcomingEvents.Where(item => !item.Recovery)
-                     .OrderBy(item => item.At)
-                     .ThenBy(item => item.Kind == CodexStrategyDeadline.Subscription ? 2
-                         : item.Kind == CodexStrategyDeadline.ResetCredit ? 1 : 0))
+        foreach (var load in Workloads(row, rates))
         {
-            if (item.Kind == CodexStrategyDeadline.ResetCredit)
-            {
-                if (item.CardCount is not { } count || !item.CoversMainQuota) continue;
-                // Each redemption discards the other windows' unused allowance. Re-evaluate the
-                // bottleneck for a full round instead of pooling capacities across multiple rounds.
-                workHours += ConsumeRemaining() + Math.Max(0, count - 1) * fullHours;
-                Array.Copy(full, remaining, full.Length);
-                sawCredit = true;
-            }
-            else workHours += ConsumeRemaining();
-            if (!double.IsFinite(workHours)) continue;
-            var availableHours = (item.At - now).TotalHours;
-            var candidateStart = now.AddHours(Math.Max(0, availableHours - workHours));
-            var candidatePressure = workHours / availableHours;
+            var availableHours = (load.Event.At - now).TotalHours;
+            var candidateStart = now.AddHours(Math.Max(0, availableHours - load.Work));
+            var candidatePressure = load.Work / availableHours;
             if (start is null || candidateStart < start || candidateStart == start && candidatePressure > pressure)
             {
                 start = candidateStart;
                 pressure = candidatePressure;
-                consumptionHours = workHours;
-                driver = item;
-                includesReset = sawReset || item.Kind == CodexStrategyDeadline.Reset;
-                includesCredit = sawCredit;
-            }
-            // Only a window's own observed reset replenishes it, never a new cycle at subscription end.
-            // Later forecasts require a new observation when that reset actually happens.
-            if (item.Kind == CodexStrategyDeadline.Reset && (subscription is null || item.At < subscription))
-            {
-                for (var index = 0; index < rates.Count; index++)
-                    if (rates[index].Window.ResetsAt == item.At) remaining[index] = full[index];
-                sawReset = true;
+                consumptionHours = load.Work;
+                driver = load.Event;
+                includesReset = load.IncludesReset;
+                includesCredit = load.IncludesCredit;
             }
         }
         // An unquantified earlier deadline still needs attention; a later pace estimate cannot postpone it.
@@ -300,6 +287,51 @@ internal sealed record CodexUsageStrategy(
             SuggestedStartAt = start, ConsumptionPressure = pressure, PressureEvent = driver,
             PressureIncludesReset = includesReset, PressureIncludesCredit = includesCredit, ConsumptionHours = consumptionHours,
         };
+    }
+
+    private sealed record Workload(CodexStrategyEvent Event, double Work, bool IncludesReset, bool IncludesCredit);
+
+    private static IEnumerable<Workload> Workloads(CodexStrategyAccount row, IReadOnlyList<double> rates)
+    {
+        var remaining = row.Windows.Select((window, index) => (100 - window.UsedPercent!.Value) / rates[index]).ToArray();
+        var full = rates.Select(rate => 100 / rate).ToArray();
+        if (remaining.Length == 0 || remaining.Concat(full).Any(value => !double.IsFinite(value))) yield break;
+        var fullRound = full.Min();
+        double ConsumeRemaining()
+        {
+            var work = remaining.Min();
+            for (var index = 0; index < remaining.Length; index++) remaining[index] = Math.Max(0, remaining[index] - work);
+            return work;
+        }
+        var work = 0d;
+        var sawReset = false;
+        var sawCredit = false;
+        var subscription = row.Events.FirstOrDefault(item => item.Kind == CodexStrategyDeadline.Subscription)?.At;
+        // The 24-hour badge is a presentation boundary, not a scheduling horizon.
+        foreach (var item in row.Events.Where(item => !item.Recovery)
+                     .OrderBy(item => item.At)
+                     .ThenBy(item => item.Kind == CodexStrategyDeadline.Subscription ? 2
+                         : item.Kind == CodexStrategyDeadline.ResetCredit ? 1 : 0))
+        {
+            if (item.Kind == CodexStrategyDeadline.ResetCredit)
+            {
+                if (item.CardCount is not { } count || !item.CoversMainQuota) continue;
+                // Every redemption discards unused allowance in the other windows.
+                work += ConsumeRemaining() + Math.Max(0, count - 1) * fullRound;
+                Array.Copy(full, remaining, full.Length);
+                sawCredit = true;
+            }
+            else work += ConsumeRemaining();
+            if (!double.IsFinite(work)) yield break;
+            yield return new(item, work, sawReset || item.Kind == CodexStrategyDeadline.Reset, sawCredit);
+            // Forecast only the recorded reset, and replenish only that window.
+            if (item.Kind == CodexStrategyDeadline.Reset && (subscription is null || item.At < subscription))
+            {
+                for (var index = 0; index < rates.Count; index++)
+                    if (row.Windows[index].ResetsAt == item.At) remaining[index] = full[index];
+                sawReset = true;
+            }
+        }
     }
 
     private static DateTimeOffset? Earlier(DateTimeOffset? left, DateTimeOffset? right) =>

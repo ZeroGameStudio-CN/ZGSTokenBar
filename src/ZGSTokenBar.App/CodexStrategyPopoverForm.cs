@@ -519,7 +519,7 @@ internal sealed class CodexStrategyPopoverForm : Form
         var urgentAccounts = strategy.Urgent.Select(item => item.Account.Account.AccountId).ToHashSet(StringComparer.Ordinal);
         var ready = strategy.Accounts.Where(row => row.State == CodexStrategyState.Ready).ToArray();
         var showPlans = ready.Select(row => CodexAccountFormatting.PlanLabel(row.Account.Plan)).Distinct().Count() > 1;
-        if (ready.Length > 0) Section(T("优先顺序", "Use in this order"), T("倒计时 · 用量预测", "Deadline · Usage forecast"));
+        if (ready.Length > 0) Section(T("优先顺序", "Use in this order"), T("截止 · 余量 · 重置卡", "Deadline · Quota · Credits"));
         foreach (var account in ready)
         {
             var urgent = urgentAccounts.Contains(account.Account.AccountId);
@@ -537,7 +537,8 @@ internal sealed class CodexStrategyPopoverForm : Form
                 CodexStrategyDeadline.Reset when account.Windows.Count > 1 => WindowNames(primary.WindowLabel),
                 _ => "",
             };
-            var explanation = T("按已知截止排序", "Ordered by known deadlines");
+            var explanation = T("缺少可靠速度时，按余量、已知整轮重置卡和截止比较压力",
+                "Without reliable pace, compare remaining quota, confirmed full resets and deadlines");
             if (!string.IsNullOrEmpty(context)) action += $" · {context}";
             if (account.SuggestedStartAt is { } start)
             {
@@ -572,11 +573,13 @@ internal sealed class CodexStrategyPopoverForm : Form
         {
             var action = account.State switch
             {
+                CodexStrategyState.Waiting when account.CanRedeem => T("可核对兑卡 · 手动确认", "Review redemption · Confirm manually"),
                 CodexStrategyState.Waiting => T("等待额度恢复", "Waiting for quota"),
                 CodexStrategyState.Expired => T("订阅有效期结束", "Subscription ended"),
                 _ => T("额度待刷新", "Refresh quota"),
             };
-            var countdown = account.Recovery is not null ? Countdown(account.Recovery, now, CodexStrategyDeadline.Reset, text) : action;
+            var countdown = account.CanRedeem ? action
+                : account.Recovery is not null ? Countdown(account.Recovery, now, CodexStrategyDeadline.Reset, text) : action;
             var name = CodexAccountFormatting.MaskEmail(account.Account.Email)
                 + (account.Account.Active ? T(" · 在用", " · Active") : "");
             _rows.Add(new([name, "", "", countdown], RowKind.Compact, 30,
@@ -606,21 +609,9 @@ internal sealed class CodexStrategyPopoverForm : Form
                     && item != PrimaryEvent(account))
                 .Select(item => (Account: account, Event: item)))
             .OrderBy(item => item.Event.At).ToArray();
-        var incomplete = strategy.Accounts.Where(row => row.State != CodexStrategyState.Expired
-            && (row.UnresolvedCards > 0 || row.Events.Any(item => item.Kind == CodexStrategyDeadline.ResetCredit && item.CardCount is null)))
-            .ToArray();
         if (laterCards.Length > 0) Section(T("后续重置卡", "Later reset credits"));
         foreach (var (account, item) in laterCards)
             AddCreditRow(account, item, now);
-        if (incomplete.Length > 0)
-        {
-            var details = string.Join(Environment.NewLine, incomplete.Select(account =>
-                $"{CodexAccountFormatting.MaskEmail(account.Account.Email)} · " + (account.Cards is { } count
-                    ? T($"共 {count} 张", $"{count} credits total") : T("张数待刷新", "Count unavailable"))));
-            details += Environment.NewLine + T("在 Cockpit Tools 刷新重置卡详情", "Refresh reset-credit details in Cockpit Tools");
-            _rows.Add(new([T($"{incomplete.Length} 个账号的卡到期明细待刷新", $"Reset-credit expiry details pending for {incomplete.Length} accounts")],
-                RowKind.Note, 32, Details: details));
-        }
 
         AccessibleDescription = string.Join(Environment.NewLine, _rows.Select(row =>
             RowText(row) + (row.Details is { } details ? $"\n{details}" : "")));
@@ -656,6 +647,17 @@ internal sealed class CodexStrategyPopoverForm : Form
     private void AddEvents(CodexStrategyAccount account, DateTimeOffset now,
         CodexStrategyEvent? displayed = null, bool skipRecovery = false)
     {
+        if (account.State != CodexStrategyState.Expired && account.Cards is { } count && count > 0)
+        {
+            var total = T($"共 {count} 张", $"{count} total");
+            var applicable = account.State != CodexStrategyState.Refresh && account.ApplicableCards is { } available
+                ? T($"当前可兑 {available} 张", $"{available} redeemable now") : T("兑换条件待核对", "Check eligibility");
+            var unresolved = account.UnresolvedCards > 0
+                ? T($"{account.UnresolvedCards} 张有效期待核对", $"Check expiry for {account.UnresolvedCards}") : "";
+            _rows.Add(new([$"{T("重置卡", "Reset credits")} · {total} · {applicable}", "", "", unresolved], RowKind.Event, 28,
+                Details: T("仅有总数的卡不推定有效期或恢复范围；在 Cockpit Tools 核对卡详情",
+                    "A balance alone establishes neither expiry nor reset scope; check credit details in Cockpit Tools")));
+        }
         foreach (var item in account.UpcomingEvents)
         {
             if (item == displayed) continue;
@@ -706,7 +708,7 @@ internal sealed class CodexStrategyPopoverForm : Form
     private string PriorityExplanation(CodexStrategyAccount account)
     {
         var driver = account.PressureEvent ?? PrimaryEvent(account);
-        var hasCredit = account.UpcomingEvents.Any(item => item.Kind == CodexStrategyDeadline.ResetCredit);
+        var hasCredit = account.Events.Any(item => item.Kind == CodexStrategyDeadline.ResetCredit);
         var hasReset = account.UpcomingEvents.Any(item => item.Kind == CodexStrategyDeadline.Reset && !item.Recovery);
         if (account.PressureIncludesReset && account.PressureIncludesCredit
             && driver?.Kind != CodexStrategyDeadline.Subscription)
@@ -715,7 +717,8 @@ internal sealed class CodexStrategyPopoverForm : Form
             return hasCredit ? T("订阅结束前需消耗余量，并处理临期卡", "Use remaining quota and review credits before the plan ends")
                 : T("订阅即将结束，优先消耗剩余额度", "Use remaining quota before the subscription ends");
         if (driver?.Kind == CodexStrategyDeadline.ResetCredit)
-            return account.UpcomingEvents.Sum(item => (long)(item.CardCount ?? 0)) > 1
+            return account.Events.Where(item => item.At <= driver.At && item.CoversMainQuota)
+                    .Sum(item => (long)(item.CardCount ?? 0)) > 1
                 ? T("多张卡临期，需要预留逐次消耗时间", "Multiple credits expire; allow usage time between resets")
                 : T("重置卡即将到期，先消耗再核对兑换条件", "Credit expires soon; use quota, then check redemption");
         if (hasCredit && hasReset)
@@ -729,11 +732,11 @@ internal sealed class CodexStrategyPopoverForm : Form
 
     private string CreditAction(CodexStrategyAccount account, CodexStrategyEvent item)
     {
+        if (account.ApplicableCards == 0) return T("当前不可兑 · 消耗后复查", "Not redeemable now · Recheck after usage");
         if (item.CardExpiresAt != item.At) return T("订阅结束前使用", "Use before the subscription ends");
         if (account.Events.Any(other => other.Kind == CodexStrategyDeadline.Reset && other.At < item.At.AddMinutes(-30)))
             return T("先消耗，结合自然重置核对兑卡时机", "Use quota; consider the scheduled reset before redeeming");
-        return item.CoversMainQuota && account.State is (CodexStrategyState.Ready or CodexStrategyState.Waiting)
-            && account.Windows.Any(window => window.UsedPercent > 20)
+        return account.CanRedeem && (item.CoversMainQuota || account.ApplicableCards > 0)
                 ? T("可兑卡 · 手动确认", "Eligible · Confirm manually")
                 : T("核对兑换条件", "Check eligibility");
     }

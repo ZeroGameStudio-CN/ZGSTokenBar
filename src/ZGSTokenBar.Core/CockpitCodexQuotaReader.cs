@@ -16,6 +16,7 @@ internal sealed record CockpitCodexQuotaAccount(
     public string? ApiProviderName { get; init; }
     public DateTimeOffset? SubscriptionActiveUntil { get; init; }
     public int? ResetCreditsAvailable { get; init; }
+    public int? ApplicableResetCredits { get; init; }
     public DateTimeOffset? NextResetCreditExpiry { get; init; }
     public bool NextResetCreditCoversMainQuota { get; init; }
     public IReadOnlyList<CodexResetCreditBatch> ResetCreditBatches { get; init; } = [];
@@ -228,8 +229,8 @@ internal static class CockpitCodexQuotaReader
             if (usage is null && string.IsNullOrWhiteSpace(accessToken)) return null;
 
             var rawCreditCount = quota?.NumberProperty("reset_credits_available");
-            int? creditCount = rawCreditCount is >= 0 and <= int.MaxValue
-                && rawCreditCount == Math.Truncate(rawCreditCount.Value) ? (int)rawCreditCount : null;
+            int? creditCount = usage?.ResetCreditsAvailable ?? (rawCreditCount is >= 0 and <= int.MaxValue
+                && rawCreditCount == Math.Truncate(rawCreditCount.Value) ? (int)rawCreditCount : null);
             var creditBatches = ReadResetCreditBatches(quota, now, creditCount);
             var creditExpiry = UnixTime(quota?.NumberProperty("reset_credits_next_expires_at"));
             if (creditExpiry <= now || creditCount == 0) creditExpiry = null;
@@ -250,6 +251,7 @@ internal static class CockpitCodexQuotaReader
                         ? indexed
                         : subscription,
                 ResetCreditsAvailable = creditCount,
+                ApplicableResetCredits = usage?.ApplicableResetCredits,
                 NextResetCreditExpiry = creditExpiry,
                 NextResetCreditCoversMainQuota = creditBatches.Any(batch =>
                     batch.ExpiresAt == creditExpiry && batch.CoversMainQuota),
@@ -284,25 +286,26 @@ internal static class CockpitCodexQuotaReader
         DateTimeOffset now,
         int? availableCount)
     {
-        if (availableCount == 0 || quota?.ArrayProperty("reset_credits") is not { } credits) return [];
+        if (availableCount == 0 || quota?.ArrayProperty("reset_credits", "credits") is not { } credits) return [];
         var parsed = credits.EnumerateArray().Take(256).Select((credit, index) =>
         {
             var status = (credit.StringProperty("status") ?? credit.StringProperty("raw_status"))?
                 .Trim().ToLowerInvariant();
             var expiry = CreditTime(credit, "expires_at");
-            var usable = status is not ("redeemed" or "used" or "consumed" or "expired" or "revoked" or "cancelled" or "canceled")
-                && CreditTime(credit, "redeemed_at") is null && expiry > now;
+            var usable = status is null or "available"
+                && CreditTime(credit, "redeemed_at") is null && CreditTime(credit, "redeem_started_at") is null && expiry > now;
             var identity = credit.StringProperty("id") is { } id ? $"id:{id}" : $"row:{index}";
             return (Identity: identity, Expiry: expiry, Usable: usable,
-                CoversMain: string.Equals(credit.StringProperty("reset_type"), "full", StringComparison.OrdinalIgnoreCase));
+                CoversMain: credit.StringProperty("reset_type")?.ToLowerInvariant() is "full" or "codex_rate_limits");
         });
         var batches = parsed.GroupBy(credit => credit.Identity, StringComparer.Ordinal)
             .Where(group => group.All(credit => credit.Usable)
                 && group.Select(credit => (credit.Expiry, credit.CoversMain)).Distinct().Count() == 1)
             .Select(group => group.First())
-            .GroupBy(credit => credit.Expiry!.Value)
-            .OrderBy(group => group.Key)
-            .Select(group => new CodexResetCreditBatch(group.Key, group.Count(), group.All(credit => credit.CoversMain)))
+            .GroupBy(credit => (Expiry: credit.Expiry!.Value, credit.CoversMain))
+            .OrderBy(group => group.Key.Expiry)
+            .ThenByDescending(group => group.Key.CoversMain)
+            .Select(group => new CodexResetCreditBatch(group.Key.Expiry, group.Count(), group.Key.CoversMain))
             .ToArray();
         return availableCount is { } total && batches.Sum(batch => batch.Count) > total ? [] : batches;
     }

@@ -226,6 +226,17 @@ public sealed class CodexQuotaService
 
                 var json = await response.Content.ReadAsStringAsync(cancellationToken);
                 var usage = CodexUsageParser.Parse(json);
+                if (usage.ResetCreditsAvailable is > 0)
+                {
+                    var credits = await TryFetchResetCreditsAsync(credential, usageUrl, usage.ResetCreditsAvailable.Value, cancellationToken);
+                    if (credits is not null)
+                        usage = usage with
+                        {
+                            ResetCreditsAvailable = credits.Count,
+                            ApplicableResetCredits = usage.ApplicableResetCredits > credits.Count ? null : usage.ApplicableResetCredits,
+                            ResetCreditBatches = credits.Batches,
+                        };
+                }
                 var profileTokens = await TryFetchProfileTokenStatsAsync(
                     credential,
                     usageUrl,
@@ -298,10 +309,36 @@ public sealed class CodexQuotaService
         CancellationToken cancellationToken) =>
         SendGetAsync(credential, usageUrl, cancellationToken);
 
+    private sealed record ResetCreditDetails(int Count, IReadOnlyList<CodexResetCreditBatch> Batches);
+
+    private async Task<ResetCreditDetails?> TryFetchResetCreditsAsync(
+        CodexCredential credential, Uri usageUrl, int availableCount, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(5));
+            // Match the upstream backend client's read route; never call the consume endpoint.
+            using var response = await SendGetAsync(credential, new Uri(usageUrl, "rate-limit-reset-credits"),
+                timeout.Token, HttpCompletionOption.ResponseHeadersRead);
+            if (!response.IsSuccessStatusCode) return null;
+            using var document = JsonDocument.Parse(await BoundedHttpBodyReader.ReadAsync(response, timeout.Token));
+            var root = document.RootElement;
+            if (root.ArrayProperty("credits") is null) return null;
+            var rawCount = root.NumberProperty("available_count");
+            var count = rawCount is >= 0 and <= int.MaxValue && rawCount == Math.Truncate(rawCount.Value)
+                ? (int)rawCount : availableCount;
+            return new(count, CockpitCodexQuotaReader.ReadResetCreditBatches(root, DateTimeOffset.UtcNow, count));
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return null; }
+        catch (Exception exception) when (exception is HttpRequestException or JsonException or IOException or InvalidDataException) { return null; }
+    }
+
     private async Task<HttpResponseMessage> SendGetAsync(
         CodexCredential credential,
         Uri url,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        HttpCompletionOption completion = HttpCompletionOption.ResponseContentRead)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", credential.AccessToken);
@@ -314,7 +351,7 @@ public sealed class CodexQuotaService
             request.Headers.TryAddWithoutValidation("ChatGPT-Account-Id", credential.AccountId);
         }
 
-        return await _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
+        return await _httpClient.SendAsync(request, completion, cancellationToken);
     }
 
     private static Uri ProfileUrl(Uri usageUrl)
@@ -763,6 +800,10 @@ public sealed class CodexQuotaService
                     .ThenByDescending(candidate => candidate.Live)
                     .FirstOrDefault();
                 var usage = result?.Usage ?? account.Usage;
+                var creditCount = usage?.ResetCreditsAvailable ?? account.ResetCreditsAvailable;
+                var applicableCredits = result is { Live: true, Usage: not null }
+                    ? result.Usage.ApplicableResetCredits : account.ApplicableResetCredits;
+                if (applicableCredits > creditCount) applicableCredits = null;
                 return new CodexAccountQuota(
                     account.Key["cockpit:".Length..],
                     usage?.Windows ?? [],
@@ -776,10 +817,13 @@ public sealed class CodexQuotaService
                         : StableCardKey(result.Credential.Key),
                     QuotaIdentity = StableCardKey($"strategy:{account.AccountId}"),
                     SubscriptionActiveUntil = account.SubscriptionActiveUntil,
-                    ResetCreditsAvailable = account.ResetCreditsAvailable,
-                    NextResetCreditExpiry = account.NextResetCreditExpiry,
-                    NextResetCreditCoversMainQuota = account.NextResetCreditCoversMainQuota,
-                    ResetCreditBatches = account.ResetCreditBatches,
+                    ResetCreditsAvailable = creditCount,
+                    ApplicableResetCredits = applicableCredits,
+                    NextResetCreditExpiry = usage?.ResetCreditBatches is { } batches
+                        ? batches.FirstOrDefault()?.ExpiresAt : account.NextResetCreditExpiry,
+                    NextResetCreditCoversMainQuota = usage?.ResetCreditBatches is { } scoped
+                        ? scoped.FirstOrDefault()?.CoversMainQuota == true : account.NextResetCreditCoversMainQuota,
+                    ResetCreditBatches = usage?.ResetCreditBatches ?? account.ResetCreditBatches,
                 };
             })
             .ToArray();

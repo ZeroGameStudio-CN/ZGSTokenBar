@@ -325,10 +325,25 @@ the estimate is pending. Without a current observation the section is hidden.
 Linear budget goals and separate historical average/peak figures are omitted.
 The usage strategy compares each deadline with the measured consumption time,
 including a window's observed natural reset and full reset credits expiring before
-subscription end. Short and weekly windows constrain the same workload; they are
+subscription end. Planning uses every known deadline; the 24-hour badge only
+limits immediate reminders. Without reliable pace for every window, relative
+attention compares time per remaining full-quota round, retaining known card
+quantities and resets without publishing consumption hours or a suggested start.
+Short and weekly windows constrain the same workload; they are
 not summed. Small remaining balances retain their deadline priority and a short-task
 label. Visible reasons explain the binding deadline; stale or provisional speed
-samples fall back to recorded deadlines. A forecast never confirms a future refill.
+samples fall back to this relative workload and recorded deadlines. Different
+reset scopes at the same expiry remain separate. Each account shows its total
+credit balance and, when reported, currently applicable balance. Count-only
+credits retain unknown expiry/scope and never manufacture a refill or deadline;
+their count breaks otherwise equal priorities. Live usage balances supersede
+cached balances, including zero. A positive live balance also queries the
+same account's read-only `rate-limit-reset-credits` endpoint in the existing
+refresh, matching the [upstream backend client](https://github.com/openai/codex/blob/main/codex-rs/backend-client/src/client/rate_limit_resets.rs).
+Only confirmed `codex_rate_limits`/legacy `full` credits contribute full rounds.
+The optional query has a five-second deadline and 32 KiB response limit; a failed
+query preserves valid usage and known cached metadata. No redemption is performed.
+A forecast never confirms a future refill.
 For free or expired accounts with identity-matched weekly history, the strategy
 shows compact account cards with the recorded reset date, lowest recorded remaining
 quota and review countdown. Observation dates and renewal caveats remain on hover.

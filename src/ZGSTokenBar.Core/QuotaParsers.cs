@@ -65,7 +65,12 @@ public static class ClaudeUsageParser
 
 public sealed record CodexUsageData(
     IReadOnlyList<QuotaWindow> Windows,
-    string? Plan);
+    string? Plan)
+{
+    public int? ResetCreditsAvailable { get; init; }
+    public int? ApplicableResetCredits { get; init; }
+    public IReadOnlyList<CodexResetCreditBatch>? ResetCreditBatches { get; init; }
+}
 
 public static class CodexUsageParser
 {
@@ -86,10 +91,20 @@ public static class CodexUsageParser
             .Select(group => group.First())
             .OrderBy(WindowOrder)
             .ToArray();
+        var credits = source.ObjectProperty("rate_limit_reset_credits") ?? root.ObjectProperty("rate_limit_reset_credits");
+        var count = CreditCount(credits?.NumberProperty("available_count"));
+        var applicable = CreditCount(credits?.NumberProperty("applicable_available_count"));
         return new CodexUsageData(
             windows,
-            source.StringProperty("plan_type") ?? root.StringProperty("plan_type"));
+            source.StringProperty("plan_type") ?? root.StringProperty("plan_type"))
+        {
+            ResetCreditsAvailable = count,
+            ApplicableResetCredits = count is { } total && applicable > total ? null : applicable,
+        };
     }
+
+    private static int? CreditCount(double? value) => value is >= 0 and <= int.MaxValue
+        && value == Math.Truncate(value.Value) ? (int)value : null;
 
     private static QuotaWindow? ParseWindow(JsonElement window)
     {
