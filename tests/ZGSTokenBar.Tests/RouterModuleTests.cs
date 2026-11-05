@@ -551,9 +551,12 @@ internal static class RouterModuleTests
                 }
                 var scale = scales[i];
                 form.ShowFor(owner, anchor, i % 2 == 1, scale, QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
+                Check(Math.Abs(form.Font.Size - 11 * scale) < .1, "Reopening restores the design font even at the same DPI");
+                // Row capacity belongs to the synthetic viewport, not the CI runner's desktop.
+                // The owned ShowFor call above still checks font recovery through native creation.
+                form.ConfigureFor(anchor, i % 2 == 1, scale, QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), new Rectangle(0, 0, 2560, 2160));
                 Pump(form.RefreshViewAsync());
                 System.Windows.Forms.Application.DoEvents();
-                Check(Math.Abs(form.Font.Size - 11 * scale) < .1, "Reopening restores the design font even at the same DPI");
                 var title = AllControls(form).OfType<System.Windows.Forms.Label>().Single(label => label.Text == "Boot To Base · Then Verify Scenario");
                 Check(Math.Abs(title.Font.Size - 12 * scale) < .1 && title.Height >= title.Font.Height, "Current task font fits its row after DPI and pin changes");
                 foreach (var grid in AllControls(form).OfType<RouterGrid>())
