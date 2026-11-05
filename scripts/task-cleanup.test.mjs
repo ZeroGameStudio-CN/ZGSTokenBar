@@ -194,3 +194,26 @@ exit $code
   assert.ifError(result.error);
   rejected({ ...result, receipt: JSON.parse(result.stdout) }, f);
 });
+
+test('cleanup fails closed when an ancestor cannot be inspected', t => {
+  const f = fixture(t);
+  const wrapper = path.join(f.base, 'deny-metadata.ps1');
+  fs.writeFileSync(wrapper, `#Requires -Version 7.0
+param([string] $Script, [string] $Manifest)
+function Get-Item {
+  [CmdletBinding()]
+  param([string] $LiteralPath, [switch] $Force)
+  if ($LiteralPath.TrimEnd('\\', '/') -eq [IO.Path]::GetTempPath().TrimEnd('\\', '/')) {
+    Write-Error 'Synthetic metadata access denied' -Category PermissionDenied
+    return
+  }
+  Microsoft.PowerShell.Management\\Get-Item @PSBoundParameters
+}
+& $Script -Manifest $Manifest
+exit $LASTEXITCODE
+`);
+  const result = spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-File', wrapper,
+    '-Script', f.script, '-Manifest', f.manifest], { cwd: f.repo, env: f.env, encoding: 'utf8', input: '', timeout: 20000 });
+  assert.ifError(result.error);
+  rejected({ ...result, receipt: JSON.parse(result.stdout) }, f);
+});

@@ -28,7 +28,8 @@ function Full-Path([string] $Path) {
 function Assert-NoLinks([string] $Path) {
   $cursor = [IO.Path]::GetFullPath($Path)
   while ($cursor) {
-    $item = Get-Item -LiteralPath $cursor -Force -ErrorAction SilentlyContinue
+    try { $item = Get-Item -LiteralPath $cursor -Force -ErrorAction Stop }
+    catch [System.Management.Automation.ItemNotFoundException] { $item = $null }
     if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
       throw "Links and reparse points are not cleanup targets: $cursor"
     }
