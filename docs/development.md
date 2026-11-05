@@ -279,6 +279,19 @@ has been observed. The same section retains the recorded amount, sample span
 and partial-cycle or local source; a smaller sample shows recorded usage while
 the estimate is pending. Without a current observation the section is hidden.
 Linear budget goals and separate historical average/peak figures are omitted.
+The usage strategy compares each deadline with the measured consumption time,
+including a window's observed natural reset and full reset credits expiring before
+subscription end. Short and weekly windows constrain the same workload; they are
+not summed. Small remaining balances retain their deadline priority and a short-task
+label. Visible reasons explain the binding deadline; stale or provisional speed
+samples fall back to recorded deadlines. A forecast never confirms a future refill.
+For free or expired accounts with identity-matched weekly history, the strategy
+shows the recorded reset date, observation date and lowest recorded remaining quota
+as a renewal review reminder. It does not assume that renewal restores the old quota
+or cycle. Existing history is reused without changing ledger persistence.
+Run `dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj -c Release
+-- --codex-usage-strategy <temporary-capture.png>` for synthetic scheduling, renewal
+and localized renderer checks.
 The taskbar quota rail has no obsolete goal marker. Quota cards show remaining
 percentage once; pinning uses a small icon and the existing interaction footer.
 The underlying token history and ledger collection retain their existing behavior.

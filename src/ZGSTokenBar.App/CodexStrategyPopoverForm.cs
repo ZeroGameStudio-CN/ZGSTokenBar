@@ -333,7 +333,7 @@ internal sealed class CodexStrategyPopoverForm : Form
         var contentRight = bounds.Right - 8;
         if (row.Kind == RowKind.Recommendation)
         {
-            var first = row.Priority == 1 && !row.LowQuota;
+            var first = row.Priority == 1;
             if (first)
             {
                 using var surface = new SolidBrush(_theme.QuotaGroup);
@@ -366,8 +366,11 @@ internal sealed class CodexStrategyPopoverForm : Form
         DrawText(graphics, primaryRight, _strongFont, primaryColor,
             new RectangleF(rightX, bounds.Top + 3, rightWidth, 24), StringAlignment.Far);
         DrawText(graphics, values[2], _bodyFont,
-            row.Kind == RowKind.Recommendation && row.Priority == 1 && !row.LowQuota ? Accent : Muted,
-            new RectangleF(nameX, detailY, nameWidth, 20));
+            row.Kind == RowKind.Recommendation && row.Priority == 1 ? Accent : Muted,
+            new RectangleF(nameX, detailY, row.Kind == RowKind.Recommendation ? contentRight - nameX : nameWidth, 20));
+        if (row.Kind == RowKind.Recommendation)
+            DrawText(graphics, values[1], _bodyFont, Muted,
+                new RectangleF(nameX, detailY + 21, contentRight - nameX, 20));
         if (row.Kind != RowKind.Recommendation)
             DrawText(graphics, values[3], _strongFont, row.Critical ? CriticalColor : row.Urgent ? DeadlineColor : Muted,
                 new RectangleF(rightX, detailY, rightWidth, 20), StringAlignment.Far);
@@ -502,10 +505,10 @@ internal sealed class CodexStrategyPopoverForm : Form
         foreach (var account in ready)
         {
             var urgent = urgentAccounts.Contains(account.Account.AccountId);
-            var action = account.HasLittleQuota ? T("少量 · 短任务", "Low quota · Short tasks")
-                : account.Priority == 1 ? T("先用", "Use first")
+            var action = account.Priority == 1 ? T("先用", "Use first")
                 : urgent ? T("可并行", "Can run in parallel")
                 : T("备用", "Use next");
+            if (account.HasLittleQuota) action += T(" · 少量 · 短任务", " · Low quota · Short tasks");
             var deadline = account.PriorityDeadline;
             var primary = PrimaryEvent(account);
             var promoted = primary?.Kind == CodexStrategyDeadline.ResetCredit && primary.At - now <= TimeSpan.FromMinutes(30);
@@ -518,7 +521,7 @@ internal sealed class CodexStrategyPopoverForm : Form
             };
             var explanation = T("按已知截止排序", "Ordered by known deadlines");
             if (!string.IsNullOrEmpty(context)) action += $" · {context}";
-            if (account.SuggestedStartAt is { } start && !account.HasLittleQuota)
+            if (account.SuggestedStartAt is { } start)
             {
                 action += start <= now ? T(" · 需提前消耗（估算）", " · Start now (estimate)")
                     : T($" · 建议 {CountdownDuration(start - now, text)}内开始", $" · Start within {CountdownDuration(start - now, text)}");
@@ -529,17 +532,23 @@ internal sealed class CodexStrategyPopoverForm : Form
             var plan = CodexAccountFormatting.PlanLabel(account.Account.Plan).ToUpperInvariant();
             var name = CodexAccountFormatting.MaskEmail(account.Account.Email) + (showPlans ? $" · {plan}" : "")
                 + (account.Account.Active ? T(" · 在用", " · Active") : "");
-            var details = $"{plan}\n{(primary is null ? T("暂无已知截止", "No known deadline") : EventDetails(account, primary, now))}\n{explanation}";
-            _rows.Add(new([name, "", action,
+            var reason = PriorityExplanation(account);
+            var details = $"{plan}\n{(primary is null ? T("暂无已知截止", "No known deadline") : EventDetails(account, primary, now))}\n{reason}\n{explanation}";
+            if (account.PressureEvent is { } driver && account.ConsumptionHours is { } hours)
+                details += "\n" + T($"按近期速度需约 {hours:0.#} 小时，截止前剩 {(driver.At - now).TotalHours:0.#} 小时（估算）",
+                    $"About {hours:0.#}h of usage needed, {(driver.At - now).TotalHours:0.#}h until the deadline (estimate)");
+            _rows.Add(new([name, reason, action,
                 promoted ? "" : Countdown(deadline, now, account.PriorityReason ?? CodexStrategyDeadline.Reset, text)],
-                RowKind.Recommendation, 52, account.Priority, urgent, account.HasLittleQuota,
+                RowKind.Recommendation, 74, account.Priority, urgent, account.HasLittleQuota,
                 Critical: !promoted && IsCritical(deadline, now), Details: details));
             AddProgress(account, now);
             AddEvents(account, now, displayed: primary);
         }
-        if (strategy.Accounts.Count == 0)
+        if (strategy.Accounts.Count == 0 && strategy.Renewals.Count == 0)
             _rows.Add(new([T("暂无付费账号额度", "No paid-account quota available")], RowKind.Note, 30));
-        var waiting = strategy.Accounts.Where(row => row.State != CodexStrategyState.Ready).ToArray();
+        var renewalIds = strategy.Renewals.Select(advice => advice.Account.AccountId).ToHashSet(StringComparer.Ordinal);
+        var waiting = strategy.Accounts.Where(row => row.State != CodexStrategyState.Ready
+            && !renewalIds.Contains(row.Account.AccountId)).ToArray();
         if (waiting.Length > 0) Section(T("暂不可用", "Unavailable for now"));
         foreach (var account in waiting)
         {
@@ -555,6 +564,27 @@ internal sealed class CodexStrategyPopoverForm : Form
             _rows.Add(new([name, "", "", countdown], RowKind.Compact, 30,
                 Details: $"{Quotas(account.Windows)}\n{action}{(account.Recovery is null ? "" : $" · {Time(account.Recovery)}")}"));
             AddEvents(account, now, skipRecovery: true);
+        }
+        if (strategy.Renewals.Count > 0)
+        {
+            Section(T("续开时机", "When to renew"), T("历史记录", "Recorded history"));
+            foreach (var advice in strategy.Renewals)
+            {
+                var future = advice.RecordedResetAt > now;
+                var action = future
+                    ? T($"可等 {Time(advice.RecordedResetAt)} 后复查，再决定续开",
+                        $"Recheck after {Time(advice.RecordedResetAt)} before renewing")
+                    : T("原重置时间已到，先刷新额度再决定续开", "Recorded reset is due; refresh quota before renewing");
+                var history = T($"本轮最低曾余 {100 - advice.HighestUsedPercent:0.#}% · 最后观察 {Time(advice.LastObservedAt)}",
+                    $"Lowest recorded remaining: {100 - advice.HighestUsedPercent:0.#}% · Last seen {Time(advice.LastObservedAt)}");
+                _rows.Add(new([CodexAccountFormatting.MaskEmail(advice.Account.Email), "", "",
+                    future ? T($"{CountdownDuration(advice.RecordedResetAt - now, text)}后复查",
+                        $"Recheck in {CountdownDuration(advice.RecordedResetAt - now, text)}") : T("到点待复查", "Ready to recheck")],
+                    RowKind.Compact, 30, Details: $"{history}\n{action}"));
+                _rows.Add(new([action], RowKind.Note, 26, Details: history));
+                _rows.Add(new([history], RowKind.Note, 26));
+            }
+            _rows.Add(new([T("续开后的额度与周期，以刷新结果为准", "Confirm allowance and cycle after renewing")], RowKind.Note, 28));
         }
         var laterCards = strategy.Accounts.Where(row => row.State != CodexStrategyState.Expired)
             .SelectMany(account => account.Events.Where(item =>
@@ -659,11 +689,35 @@ internal sealed class CodexStrategyPopoverForm : Form
         return details;
     }
 
+    private string PriorityExplanation(CodexStrategyAccount account)
+    {
+        var driver = account.PressureEvent ?? PrimaryEvent(account);
+        var hasCredit = account.UpcomingEvents.Any(item => item.Kind == CodexStrategyDeadline.ResetCredit);
+        var hasReset = account.UpcomingEvents.Any(item => item.Kind == CodexStrategyDeadline.Reset && !item.Recovery);
+        if (account.PressureIncludesReset && account.PressureIncludesCredit
+            && driver?.Kind != CodexStrategyDeadline.Subscription)
+            return T("自然重置与卡到期叠加，需要预留消耗时间", "Reset and credit expiry overlap; allow time to use both");
+        if (driver?.Kind == CodexStrategyDeadline.Subscription)
+            return hasCredit ? T("订阅结束前需消耗余量，并处理临期卡", "Use remaining quota and review credits before the plan ends")
+                : T("订阅即将结束，优先消耗剩余额度", "Use remaining quota before the subscription ends");
+        if (driver?.Kind == CodexStrategyDeadline.ResetCredit)
+            return account.UpcomingEvents.Sum(item => (long)(item.CardCount ?? 0)) > 1
+                ? T("多张卡临期，需要预留逐次消耗时间", "Multiple credits expire; allow usage time between resets")
+                : T("重置卡即将到期，先消耗再核对兑换条件", "Credit expires soon; use quota, then check redemption");
+        if (hasCredit && hasReset)
+            return T("自然重置与重置卡均临期，优先消耗当前额度", "Quota reset and credit expiry are both approaching");
+        if (driver?.Kind == CodexStrategyDeadline.Reset)
+            return account.ConsumptionPressure > 1
+                ? T("按近期速度，重置前预计用不完", "At the recent pace, quota may remain at reset")
+                : T("自然重置将覆盖当前余量", "Scheduled reset replaces the remaining allowance");
+        return T("截止时间或消耗速度待刷新", "Refresh deadlines or usage pace");
+    }
+
     private string CreditAction(CodexStrategyAccount account, CodexStrategyEvent item)
     {
         if (item.CardExpiresAt != item.At) return T("订阅结束前使用", "Use before the subscription ends");
         if (account.Events.Any(other => other.Kind == CodexStrategyDeadline.Reset && other.At < item.At.AddMinutes(-30)))
-            return T("自然重置后复查", "Review after scheduled reset");
+            return T("先消耗，结合自然重置核对兑卡时机", "Use quota; consider the scheduled reset before redeeming");
         return item.CoversMainQuota && account.State is (CodexStrategyState.Ready or CodexStrategyState.Waiting)
             && account.Windows.Any(window => window.UsedPercent > 20)
                 ? T("可兑卡 · 手动确认", "Eligible · Confirm manually")

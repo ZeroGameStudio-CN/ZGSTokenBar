@@ -387,7 +387,10 @@ internal sealed partial class BarForm : Form
     public void SetCodexQuotaTokenSummaries(
         IReadOnlyDictionary<string, CodexQuotaTokenSummary> summaries)
     {
+        var hadStrategy = CodexStrategy.Accounts.Count > 0 || CodexStrategy.Renewals.Count > 0;
         _codexQuotaTokenSummaries = summaries;
+        RefreshCodexStrategy();
+        if (hadStrategy != (CodexStrategy.Accounts.Count > 0 || CodexStrategy.Renewals.Count > 0)) ApplySnapshotLayout();
         RefreshQuotaPopover();
         Invalidate();
     }
