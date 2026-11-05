@@ -59,7 +59,11 @@ unavailable and long-name cases at 96, 144 and 192 DPI.
 
 ## Task cleanup
 
-The fixed entry is `scripts/cleanup-task.ps1` (PowerShell 7). Record the authorized
+**Supported platform: Windows 10/11 with PowerShell 7.** This entry is qualified
+for Windows only; macOS/Linux execution has not been qualified. Sharing its skill
+instructions to another platform does not extend this support boundary.
+
+The fixed entry is `scripts/cleanup-task.ps1`. Record the authorized
 task scope in `release/task-cleanup/<task-id>/manifest.json`, outside the outputs
 being removed. A manifest grants no authority by itself and must list only the
 current task's disposable outputs and local branches. For example:
