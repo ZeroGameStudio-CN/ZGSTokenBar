@@ -73,7 +73,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         SuspendLayout();
         Text = "Router";
         AutoScaleMode = AutoScaleMode.None;
-        Font = new Font("Microsoft YaHei UI", RouterVisualGeometry.LogicalFontPixels, FontStyle.Regular, GraphicsUnit.Pixel);
+        SetLogicalFont(this, "Microsoft YaHei UI", RouterVisualGeometry.LogicalFontPixels);
         BackColor = Color.FromArgb(17, 21, 29);
         ForeColor = Color.FromArgb(229, 234, 243);
         FormBorderStyle = FormBorderStyle.None;
@@ -93,7 +93,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _kind.Width = _outcome.Width = 92; _day.Width = 112; _query.Width = 160;
         _kind.AccessibleName = "任务类型"; _outcome.AccessibleName = "结果"; _day.AccessibleName = "日期"; _query.AccessibleName = "搜索任务或对话";
         _pin = IconButton(RouterButtonIcon.Pin, "固定弹层", () => { PinChanged?.Invoke(this, !_pinned); return Task.CompletedTask; });
-        var brand = Label("ROUTER", 70); brand.Font = new Font("Segoe UI Semibold", 11, FontStyle.Regular, GraphicsUnit.Pixel);
+        var brand = Label("ROUTER", 70); SetLogicalFont(brand, "Segoe UI Semibold", 11);
         var header = Header(Flow(brand), Flow(_freshness, IconButton(RouterButtonIcon.Refresh, "刷新", async () => { await RefreshViewAsync(); await HistoryAsync(forceRefresh: true); }), _pin,
             IconButton(RouterButtonIcon.Close, "收起弹层", () => { CloseRequested?.Invoke(this, EventArgs.Empty); return Task.CompletedTask; })), 240);
         var navigation = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 1, RowCount = 2 };
@@ -107,10 +107,12 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         projectRow.Controls.Add(projectLabel, 0, 0); projectRow.Controls.Add(_projects, 1, 0);
         projectSurface.Controls.Add(projectRow); navigation.Controls.Add(projectSurface, 0, 1);
         _root.Controls.Add(navigation, 0, 0);
-        _headline.Font = new Font(Font.FontFamily, 10.5f, FontStyle.Bold, GraphicsUnit.Pixel);
-        _task.Font = new Font(Font.FontFamily, 12, FontStyle.Bold, GraphicsUnit.Pixel);
-        _metrics.Font = _detail.Font = _source.Font = _freshness.Font = _notice.Font = _historySummary.Font = new Font(Font.FontFamily, 10.5f, FontStyle.Regular, GraphicsUnit.Pixel);
-        _currentHeading.Font = _queueHeading.Font = _historyHeading.Font = new Font(Font.FontFamily, 11.5f, FontStyle.Bold, GraphicsUnit.Pixel);
+        SetLogicalFont(_headline, Font.FontFamily.Name, 10.5f, FontStyle.Bold);
+        SetLogicalFont(_task, Font.FontFamily.Name, 12, FontStyle.Bold);
+        foreach (var label in new[] { _metrics, _detail, _source, _freshness, _notice, _historySummary })
+            SetLogicalFont(label, Font.FontFamily.Name, 10.5f);
+        foreach (var label in new[] { _currentHeading, _queueHeading, _historyHeading })
+            SetLogicalFont(label, Font.FontFamily.Name, 11.5f, FontStyle.Bold);
         _currentHeading.Height = 24; _queueHeading.Height = _historyHeading.Height = _historySummary.Height = 30;
         _currentHeading.Margin = _queueHeading.Margin = _historyHeading.Margin = _historySummary.Margin = Padding.Empty;
         _metrics.TextAlign = ContentAlignment.MiddleRight;
@@ -182,11 +184,6 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         UpdateControls();
         ApplyPalette(QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
         ResumeLayout(true);
-        foreach (var control in new[] { this }.Concat(Children(this)))
-        {
-            var font = control.Font;
-            _logicalFonts[control] = (font.FontFamily.Name, font.Unit == GraphicsUnit.Pixel ? font.Size : font.SizeInPoints * 96 / 72, font.Style);
-        }
     }
 
     protected override bool ShowWithoutActivation => !_pinned;
@@ -210,6 +207,9 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     {
         ConfigureFor(anchor, pinned, scale, theme, Screen.FromRectangle(anchor).WorkingArea);
         if (!Visible) Show(owner);
+        // Creating/showing a native window can rescale fonts after ConfigureFor ran.
+        ApplyLogicalFonts();
+        ApplyPalette(theme);
         if (pinned) Activate();
     }
     internal void ConfigureFor(Rectangle anchor, bool pinned, float scale, QuotaBackgroundTheme theme, Rectangle area)
@@ -220,16 +220,10 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         {
             SuspendLayout();
             Scale(new SizeF(nextScale / _popoverScale, nextScale / _popoverScale));
-            foreach (var (control, logical) in _logicalFonts)
-            {
-                var key = (logical.Family, logical.Pixels * nextScale, logical.Style);
-                if (!_scaledFonts.TryGetValue(key, out var font))
-                { font = new Font(key.Family, key.Item2, key.Style, GraphicsUnit.Pixel); _scaledFonts[key] = font; }
-                control.Font = font;
-            }
             ResumeLayout(true);
         }
-        _popoverScale = Math.Max(1, scale);
+        _popoverScale = nextScale;
+        ApplyLogicalFonts();
         ApplyPalette(theme);
         _bodySize = new(Math.Min((int)(PreferredBodySize.Width * _popoverScale), area.Width - (int)(16 * _popoverScale)),
             Math.Min((int)(PreferredBodySize.Height * _popoverScale), area.Height - (int)(28 * _popoverScale)));
@@ -241,6 +235,26 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         ClientSize = placement.WindowSize;
         Location = placement.Location;
         using (var path = SurfacePath()) { var old = Region; Region = new Region(path); old?.Dispose(); }
+    }
+    private void SetLogicalFont(Control control, string family, float pixels, FontStyle style = FontStyle.Regular)
+    {
+        _logicalFonts[control] = (family, pixels, style);
+        control.Font = ScaledFont((family, pixels, style));
+    }
+    private Font ScaledFont((string Family, float Pixels, FontStyle Style) logical)
+    {
+        var key = (logical.Family, logical.Pixels * _popoverScale, logical.Style);
+        if (!_scaledFonts.TryGetValue(key, out var font))
+        { font = new Font(key.Family, key.Item2, key.Style, GraphicsUnit.Pixel); _scaledFonts[key] = font; }
+        return font;
+    }
+    private void ApplyLogicalFonts()
+    {
+        SuspendLayout();
+        // Include project chips created after construction, without retaining disposed chips.
+        foreach (var control in new[] { this }.Concat(Children(this)))
+            control.Font = ScaledFont(_logicalFonts.GetValueOrDefault(control, _logicalFonts[this]));
+        ResumeLayout(true);
     }
     private GraphicsPath SurfacePath()
     {
