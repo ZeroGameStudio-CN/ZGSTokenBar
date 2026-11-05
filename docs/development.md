@@ -330,8 +330,9 @@ not summed. Small remaining balances retain their deadline priority and a short-
 label. Visible reasons explain the binding deadline; stale or provisional speed
 samples fall back to recorded deadlines. A forecast never confirms a future refill.
 For free or expired accounts with identity-matched weekly history, the strategy
-shows the recorded reset date, observation date and lowest recorded remaining quota
-as a renewal review reminder. It does not assume that renewal restores the old quota
+shows compact account cards with the recorded reset date, lowest recorded remaining
+quota and review countdown. Observation dates and renewal caveats remain on hover.
+It does not assume that renewal restores the old quota
 or cycle. Existing history is reused without changing ledger persistence.
 Run `dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj -c Release
 -- --codex-usage-strategy <temporary-capture.png>` for synthetic scheduling, renewal

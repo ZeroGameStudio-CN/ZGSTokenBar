@@ -490,15 +490,26 @@ internal static class CodexUsageStrategyTests
         using var bitmap = panel.RenderForTest(strategy, NativeText.For("zh-CN"),
             QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
         Check(panel.VisibleTextForAcceptance.Contains("续开时机")
-            && panel.VisibleTextForAcceptance.Contains("最低曾余 16%")
-            && panel.VisibleTextForAcceptance.Contains("再决定续开")
-            && panel.VisibleTextForAcceptance.Contains("以刷新结果为准")
+            && panel.VisibleTextForAcceptance.Contains("历史最低剩余 16%")
+            && panel.VisibleTextForAcceptance.Contains("原定重置")
+            && panel.VisibleTextForAcceptance.Contains("后复查")
+            && !panel.VisibleTextForAcceptance.Contains("最后记录")
             && !panel.VisibleTextForAcceptance.Contains("暂无付费账号"),
-            "Renewal advice separates historical low remaining quota from the current allowance and makes verification explicit.");
+            "Renewal cards show historical quota and reset timing without repeated notes.");
+        var hover = panel.DetailAt(new Point(30, 100));
+        Check(hover?.Contains("最后记录") == true && hover.Contains("以刷新结果为准"),
+            "Record freshness and the renewal caveat remain available on hover.");
         if (capture is not null) bitmap.Save(Path.ChangeExtension(capture, ".renewal.png"));
+        foreach (var locale in new[] { "zh-CN", "en" })
+        foreach (var dpi in new[] { 96, 144, 192 })
+        {
+            using var localized = panel.RenderForTest(strategy, NativeText.For(locale),
+                QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), dpi);
+            if (capture is not null) localized.Save(Path.ChangeExtension(capture, $".renewal-{locale}-{dpi}.png"));
+        }
         using var afterReset = panel.RenderForTest(CodexUsageStrategy.Create([account], [quota], recordedReset, tokenSummaries: summaries),
             NativeText.For("zh-CN"), QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
-        Check(panel.VisibleTextForAcceptance.Contains("原重置时间已到") && !panel.VisibleTextForAcceptance.Contains("已恢复"),
+        Check(panel.VisibleTextForAcceptance.Contains("原定时间已到") && !panel.VisibleTextForAcceptance.Contains("已恢复"),
             "Reaching a historical reset date asks for fresh evidence, not a presumed quota restoration.");
         Check(CodexUsageStrategy.Create([account with { Plan = "pro" }], [quota], now, tokenSummaries: summaries).Renewals.Count == 0
             && CodexUsageStrategy.Create([account], [quota with { CardKey = "other" }], now, tokenSummaries: summaries).Renewals.Count == 0
