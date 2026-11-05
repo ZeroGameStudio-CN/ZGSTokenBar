@@ -423,7 +423,6 @@ internal static class RouterModuleTests
     internal static void Capture(string directory)
     {
         Directory.CreateDirectory(directory);
-        OwnedFontScaling(directory);
         CaptureIcons(directory);
         foreach (var dpi in new[] { 96, 144, 192 })
         {
@@ -526,12 +525,13 @@ internal static class RouterModuleTests
                 "Short desktops retain bounded visible pages without scrollbars");
         Save(compact, Path.Combine(directory, "router-short-desktop-192.png")); compact.Close();
     }
-    private static void OwnedFontScaling(string? directory = null)
+    private static void OwnedFontScaling()
     {
         using var owner = new BarForm(new AppSettings(), QuotaSnapshot.Empty(DateTimeOffset.UtcNow), renderOnly: true, renderDpi: 192)
         { Location = new(-30000, -30000), ShowInTaskbar = false };
         owner.Show();
-        using var form = new RouterMonitorForm(new RouterMonitorClient(new Fixture()), observe: false);
+        using var form = new RouterMonitorForm(new RouterMonitorClient(new Fixture()), observe: false)
+        { MaximumSize = new Size(1024, 768) };
         var anchor = new Rectangle(400, 600, 48, 44);
         var scales = new[] { 2f, 2f, 1.5f, 2f, 1f, 2f };
         var fonts = new List<Font>();
@@ -552,19 +552,22 @@ internal static class RouterModuleTests
                 var scale = scales[i];
                 form.ShowFor(owner, anchor, i % 2 == 1, scale, QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
                 Check(Math.Abs(form.Font.Size - 11 * scale) < .1, "Reopening restores the design font even at the same DPI");
-                // Row capacity belongs to the synthetic viewport, not the CI runner's desktop.
-                // The owned ShowFor call above still checks font recovery through native creation.
-                form.ConfigureFor(anchor, i % 2 == 1, scale, QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), new Rectangle(0, 0, 2560, 2160));
                 Pump(form.RefreshViewAsync());
                 System.Windows.Forms.Application.DoEvents();
                 var title = AllControls(form).OfType<System.Windows.Forms.Label>().Single(label => label.Text == "Boot To Base · Then Verify Scenario");
                 Check(Math.Abs(title.Font.Size - 12 * scale) < .1 && title.Height >= title.Font.Height, "Current task font fits its row after DPI and pin changes");
                 foreach (var grid in AllControls(form).OfType<RouterGrid>())
-                    Check(Math.Abs(grid.Font.Size - 11 * scale) < .1 && grid.Rows.Cast<System.Windows.Forms.DataGridViewRow>().Sum(row => row.Height) <= grid.Height - grid.ColumnHeadersHeight,
-                        "Native font changes cannot enlarge grid rows beyond the visible page");
+                {
+                    Check(Math.Abs(grid.Font.Size - 11 * scale) < .1,
+                        $"Grid font recovers after open {i} at scale {scale}: {grid.Font.Size} {grid.Font.Unit}");
+                    // Form.SetBoundsCore caps large windows to the host desktop's track size.
+                    // Whole-page fit is covered by Capture's explicit viewport cases; here verify
+                    // that font drift cannot inflate the intended row height at any DPI.
+                    Check(grid.Rows.Cast<System.Windows.Forms.DataGridViewRow>().All(row => row.Height == (int)Math.Round(26 * scale) && row.Height >= grid.Font.Height),
+                        $"Grid rows keep their intended height after open {i} at scale {scale}: font {grid.Font.Height}, rows {string.Join(',', grid.Rows.Cast<System.Windows.Forms.DataGridViewRow>().Select(row => row.Height))}");
+                }
                 foreach (var button in AllControls(form).OfType<RouterButton>())
                     Check(Math.Abs(button.Font.Size - 11 * scale) < .1, "Late project chips and toolbar buttons use the same font scale");
-                if (directory is not null) Save(form, Path.Combine(directory, $"router-owned-{i}.png"));
                 form.Hide();
             }
         }
