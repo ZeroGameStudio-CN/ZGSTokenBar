@@ -27,6 +27,7 @@ internal static class RouterModuleTests
         LocalQueueUnavailable();
         QueueBadgeDigits();
         QueueRefreshRecovery();
+        OwnedFontScaling();
         using var handler = new Fixture();
         using var client = new RouterMonitorClient(handler);
         var snapshot = client.SnapshotAsync().GetAwaiter().GetResult();
@@ -422,6 +423,7 @@ internal static class RouterModuleTests
     internal static void Capture(string directory)
     {
         Directory.CreateDirectory(directory);
+        OwnedFontScaling(directory);
         CaptureIcons(directory);
         foreach (var dpi in new[] { 96, 144, 192 })
         {
@@ -523,6 +525,47 @@ internal static class RouterModuleTests
             Check(table.Rows.Cast<System.Windows.Forms.DataGridViewRow>().Sum(row => row.Height) <= table.ClientSize.Height - table.ColumnHeadersHeight,
                 "Short desktops retain bounded visible pages without scrollbars");
         Save(compact, Path.Combine(directory, "router-short-desktop-192.png")); compact.Close();
+    }
+    private static void OwnedFontScaling(string? directory = null)
+    {
+        using var owner = new BarForm(new AppSettings(), QuotaSnapshot.Empty(DateTimeOffset.UtcNow), renderOnly: true, renderDpi: 192)
+        { Location = new(-30000, -30000), ShowInTaskbar = false };
+        owner.Show();
+        using var form = new RouterMonitorForm(new RouterMonitorClient(new Fixture()), observe: false);
+        var anchor = new Rectangle(400, 600, 48, 44);
+        var scales = new[] { 2f, 2f, 1.5f, 2f, 1f, 2f };
+        var fonts = new List<Font>();
+        try
+        {
+            for (var i = 0; i < scales.Length; i++)
+            {
+                if (i > 0)
+                {
+                    // Model the font rewrite performed by native DPI handling between opens.
+                    var prior = new[] { form }.Concat(AllControls(form)).Select(control => (Control: control, Font: control.Font)).ToArray();
+                    foreach (var (control, font) in prior)
+                    {
+                        var inflated = new Font(font.FontFamily, font.Size * 2, font.Style, GraphicsUnit.Pixel);
+                        fonts.Add(inflated); control.Font = inflated;
+                    }
+                }
+                var scale = scales[i];
+                form.ShowFor(owner, anchor, i % 2 == 1, scale, QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
+                Pump(form.RefreshViewAsync());
+                System.Windows.Forms.Application.DoEvents();
+                Check(Math.Abs(form.Font.Size - 11 * scale) < .1, "Reopening restores the design font even at the same DPI");
+                var title = AllControls(form).OfType<System.Windows.Forms.Label>().Single(label => label.Text == "Boot To Base · Then Verify Scenario");
+                Check(Math.Abs(title.Font.Size - 12 * scale) < .1 && title.Height >= title.Font.Height, "Current task font fits its row after DPI and pin changes");
+                foreach (var grid in AllControls(form).OfType<RouterGrid>())
+                    Check(Math.Abs(grid.Font.Size - 11 * scale) < .1 && grid.Rows.Cast<System.Windows.Forms.DataGridViewRow>().Sum(row => row.Height) <= grid.Height - grid.ColumnHeadersHeight,
+                        "Native font changes cannot enlarge grid rows beyond the visible page");
+                foreach (var button in AllControls(form).OfType<RouterButton>())
+                    Check(Math.Abs(button.Font.Size - 11 * scale) < .1, "Late project chips and toolbar buttons use the same font scale");
+                if (directory is not null) Save(form, Path.Combine(directory, $"router-owned-{i}.png"));
+                form.Hide();
+            }
+        }
+        finally { foreach (var font in fonts) font.Dispose(); }
     }
     private static IEnumerable<System.Windows.Forms.Control> AllControls(System.Windows.Forms.Control parent) =>
         parent.Controls.Cast<System.Windows.Forms.Control>().SelectMany(child => new[] { child }.Concat(AllControls(child)));
