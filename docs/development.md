@@ -57,6 +57,46 @@ unavailable and long-name cases at 96, 144 and 192 DPI.
 
 `scripts/build-ai-gateway-observer-plugin.ps1` builds the independently verifiable DeepSeek Harness package. The portable build embeds that exact package so a normal application start can idempotently install the missing bundled version before local-only Provider discovery runs. No runtime package or pricing download is required.
 
+## Task cleanup
+
+The fixed entry is `scripts/cleanup-task.ps1` (PowerShell 7). Record the authorized
+task scope in `release/task-cleanup/<task-id>/manifest.json`, outside the outputs
+being removed. A manifest grants no authority by itself and must list only the
+current task's disposable outputs and local branches. For example:
+
+```json
+{
+  "schemaVersion": 1,
+  "taskId": "example-task",
+  "temporaryRoots": ["C:/Users/you/AppData/Local/Temp/zgstokenbar-example-task-0123456789abcdef0123456789abcdef"],
+  "localBranches": [{"name": "codex/example-task", "commit": "<exact 40-character task commit>"}]
+}
+```
+
+```powershell
+pwsh -NoProfile -NonInteractive -File scripts/cleanup-task.ps1 -Manifest <absolute-manifest-path>
+pwsh -NoProfile -NonInteractive -File scripts/cleanup-task.ps1 -Manifest <absolute-manifest-path> -Apply -ExpectedPlanHash <preview-plan-hash>
+```
+
+Preview records an inventory digest without deleting anything. Apply rechecks the
+entry script, manifest, paths, file contents and branch tips against that digest. Only direct
+children of the system temporary directory named `zgstokenbar-<task-id>-<32 hex>`
+are eligible. Links/reparse points, read-only or open files, changed inventories,
+checked-out branches and commits missing from either local or remote-tracking
+`main` are refused. Fetch before preparing a branch cleanup; the entry does not
+fetch or delete remote branches. Existing worktrees and persistent data are outside
+its scope. Files are removed individually and directories only when empty, so a
+new file cannot be swept into a recursive deletion. Keep task output directories
+exclusive to their owner until cleanup returns.
+
+`preview.json` and `result.json` retain per-target outcomes next to the manifest.
+Exit 0 means a successful preview/apply (including already absent targets), 2 means
+preflight refusal, and 3 means a partial apply with exact remaining targets. There
+are no interactive prompts or force-delete fallbacks. If the host refuses to launch
+the entry, retain that external rejection separately; a script cannot override it.
+Run `node --test scripts/task-cleanup.test.mjs` for isolated unattended and refusal
+cases. These fixtures never use production settings or data roots.
+
 ## Acceptance
 
 The optional `zgstokenbar.monitor.router` module is a client of the separately
