@@ -46,6 +46,9 @@ public sealed record CodexQuotaTokenSummary(
     public long? CurrentCycleTokens => CoversCycleStart ? CurrentObservedTokens : null;
     public bool HasHistory => CompletedCycleCount > 0;
     public bool HasData => HasCurrentObservation || HasHistory;
+    public DateTimeOffset? RecordedResetAt { get; init; }
+    public DateTimeOffset? LastObservedAt { get; init; }
+    public double? HighestUsedPercent { get; init; }
 
     public long? EstimateUsedTokens(double? currentUsedPercent)
     {
@@ -644,7 +647,12 @@ public sealed class CodexQuotaTokenTracker
                 : null,
             state.CurrentMinUsedPercent is not null ? span : null,
             state.CurrentMinUsedPercent is <= 0,
-            IsFallbackMode(state));
+            IsFallbackMode(state))
+        {
+            RecordedResetAt = state.CurrentResetsAt,
+            LastObservedAt = state.CurrentLastObservedAt,
+            HighestUsedPercent = state.CurrentMaxUsedPercent,
+        };
     }
 
     private static CodexQuotaTokenSeriesHistory ToHistory(

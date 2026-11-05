@@ -14,10 +14,11 @@ internal sealed partial class BarForm
         : throw new InvalidOperationException("Strategy hit testing is render-only.");
 
     private CodexUsageStrategy CodexStrategy => _codexStrategy ??=
-        CodexUsageStrategy.Create(_codexAccounts, _snapshot.CodexAccounts, _utcNow(), _quotaPaceEstimates);
+        CodexUsageStrategy.Create(_codexAccounts, _snapshot.CodexAccounts, _utcNow(), _quotaPaceEstimates,
+            _codexQuotaTokenSummaries);
 
     private int CodexStrategyExtraWidth(string areaId, bool collapsed) =>
-        !collapsed && areaId == MiniAreaIds.Codex && CodexStrategy.Accounts.Count > 0
+        !collapsed && areaId == MiniAreaIds.Codex && (CodexStrategy.Accounts.Count > 0 || CodexStrategy.Renewals.Count > 0)
             ? CodexStrategyButtonWidth
             : 0;
 

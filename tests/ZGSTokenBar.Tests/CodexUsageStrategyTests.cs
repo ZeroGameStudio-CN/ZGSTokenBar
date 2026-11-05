@@ -12,6 +12,8 @@ internal static class CodexUsageStrategyTests
         var now = new DateTimeOffset(2026, 11, 4, 6, 9, 0, TimeSpan.Zero);
         TestMultipleEvents(now, capture);
         TestConsumptionPressure(now, capture);
+        TestResetCreditScheduling(now, capture);
+        TestRenewalAdvice(now, capture);
         var zh = NativeText.For("zh-CN");
         Check(CodexStrategyPopoverForm.Countdown(now.AddHours(3).AddMinutes(20), now, CodexStrategyDeadline.Reset, zh)
                 == "3小时20分后重置"
@@ -53,23 +55,23 @@ internal static class CodexUsageStrategyTests
         };
         var strategy = CodexUsageStrategy.Create(accounts, quotas, now);
         Check(strategy.Accounts.Select(row => row.Account.AccountId)
-            .SequenceEqual(new[] { "plan", "tomorrow", "small", "blocked", "stale" }),
-            "Prioritize usable quotas, group low quota separately, deduplicate shared quota and skip API keys.");
+            .SequenceEqual(new[] { "small", "plan", "tomorrow", "blocked", "stale" }),
+            "Prioritize expiring usable quotas including small balances, deduplicate shared quota and skip API keys.");
         Check(strategy.Accounts.Select(row => row.Priority).SequenceEqual(new int?[] { 1, 2, 3, null, null }),
             "Usable accounts have explicit contiguous priorities while waiting and stale accounts remain unranked.");
         var cardFirst = CodexUsageStrategy.Create(accounts, quotas.Select(quota =>
-            quota.AccountId == "tomorrow" ? quota with { NextResetCreditExpiry = now.AddHours(1) } : quota).ToArray(), now);
+            quota.AccountId == "tomorrow" ? quota with { NextResetCreditExpiry = now.AddHours(.25) } : quota).ToArray(), now);
         Check(cardFirst.Accounts[0].Account.AccountId == "tomorrow"
             && cardFirst.Accounts[0].Priority == 1
             && cardFirst.Accounts[0].PriorityReason == CodexStrategyDeadline.ResetCredit
-            && cardFirst.Accounts[0].PriorityDeadline == now.AddHours(1),
+            && cardFirst.Accounts[0].PriorityDeadline == now.AddHours(.25),
             "A known earlier reset-credit cutoff changes the actual account recommendation.");
-        Check(strategy.Accounts[0].DeadlineKind == CodexStrategyDeadline.Subscription
-            && strategy.Accounts[0].Deadline == now.AddHours(20)
-            && strategy.Accounts[0].Cards == 3 && strategy.Accounts[0].CardExpiry is null,
+        Check(strategy.Accounts[1].DeadlineKind == CodexStrategyDeadline.Subscription
+            && strategy.Accounts[1].Deadline == now.AddHours(20)
+            && strategy.Accounts[1].Cards == 3 && strategy.Accounts[1].CardExpiry is null,
             "Use the earlier subscription cutoff and preserve an unknown reset-credit date.");
-        Check(strategy.Accounts[1].ResetBeforeCard && strategy.Accounts[1].CanRedeem
-            && strategy.Accounts[1].ReviewBy == now.AddHours(22.5),
+        Check(strategy.Accounts[2].ResetBeforeCard && strategy.Accounts[2].CanRedeem
+            && strategy.Accounts[2].ReviewBy == now.AddHours(22.5),
             "Review eligibility after natural reset with time left before the card expires.");
         Check(strategy.Accounts[3].State == CodexStrategyState.Waiting
             && strategy.Accounts[3].Recovery == now.AddHours(0.75)
@@ -85,13 +87,13 @@ internal static class CodexUsageStrategyTests
         using var form = new CodexStrategyPopoverForm();
         using var bitmap = form.RenderForTest(strategy, NativeText.For("zh-CN"),
             QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
-        Check(form.VisibleTextForAcceptance.Contains("1. p***n@example.test")
-            && form.VisibleTextForAcceptance.Contains("先用 · 订阅")
+        Check(form.VisibleTextForAcceptance.Contains("1. s***l@example.test")
+            && form.VisibleTextForAcceptance.Contains("可并行 · 订阅")
             && form.VisibleTextForAcceptance.Contains("可并行")
             && form.VisibleTextForAcceptance.Contains("少量 · 短任务")
             && form.VisibleTextForAcceptance.Contains("预测待采样"),
             "The displayed recommendation communicates order, reasons, parallel choices and low-quota limits.");
-        var exactDeadline = now.AddHours(20).ToLocalTime().ToString("MM-dd HH:mm");
+        var exactDeadline = now.AddMinutes(30).ToLocalTime().ToString("MM-dd HH:mm");
         Check(Occurrences(form.VisibleTextForAcceptance, "22小时后重置") == 1
             && form.VisibleTextForAcceptance.Contains("20小时后到期")
             && form.VisibleTextForAcceptance.Contains("30分0秒后重置")
@@ -363,8 +365,8 @@ internal static class CodexUsageStrategyTests
         Check(stacked.Accounts[0].Account.AccountId == "slow" && stacked.Accounts[0].SuggestedStartAt == now,
             "Several expiring full resets account for consumption between redemptions.");
         var naturalFirst = cards with { Windows = [new("7d", 80, now.AddHours(4), TimeSpan.FromDays(7))] };
-        Check(CodexUsageStrategy.Create([accounts[1]], [naturalFirst], now, estimates).Accounts[0].SuggestedStartAt == now.AddHours(2),
-            "An intervening scheduled reset is re-evaluated from the next observed round instead of counting both refills in advance.");
+        Check(CodexUsageStrategy.Create([accounts[1]], [naturalFirst], now, estimates).Accounts[0].SuggestedStartAt == now,
+            "An intervening scheduled reset contributes to the estimated workload before credits expire.");
         using var bar = new BarForm(new AppSettings { EnableAnimations = false },
             new QuotaSnapshot([], [], now) { CodexAccounts = quotas },
             renderOnly: true, codexAccounts: accounts, utcNow: () => now);
@@ -375,6 +377,140 @@ internal static class CodexUsageStrategyTests
         bar.SetQuotaPaceEstimates(estimates);
         Check(((CodexUsageStrategy)property.GetValue(bar)!).Accounts[0].Account.AccountId == "slow",
             "New pace observations refresh the strategy through the existing Bar entry point.");
+    }
+
+    private static void TestResetCreditScheduling(DateTimeOffset now, string? capture)
+    {
+        var accounts = new[]
+        {
+            new CodexAccountInfo("plain", "plain@example.test", "pro", false),
+            new CodexAccountInfo("overlap", "overlap@example.test", "pro", true),
+        };
+        var plain = new CodexAccountQuota("plain", [new("7d", 80, now.AddHours(2), TimeSpan.FromDays(7))], now)
+            { CardKey = "plain" };
+        var overlap = new CodexAccountQuota("overlap", [new("7d", 80, now.AddHours(4), TimeSpan.FromDays(7))], now)
+        {
+            CardKey = "overlap", ResetCreditsAvailable = 1,
+            ResetCreditBatches = [new(now.AddHours(6), 1, true)],
+        };
+        QuotaPaceEstimate Pace(double rate, QuotaWindow window)
+        {
+            var exhausted = now.AddHours((100 - window.UsedPercent!.Value) / rate);
+            var resetFirst = exhausted >= window.ResetsAt;
+            return new(resetFirst ? QuotaPaceStatus.ResetsBeforeExhaustion : QuotaPaceStatus.ProjectedExhaustion,
+                Recent: new(TimeSpan.FromHours(1), rate, exhausted, resetFirst, QuotaTrendConfidence.Stable),
+                ValidUntil: now.AddMinutes(5)) { ForecastExpiresAt = now.AddMinutes(5) };
+        }
+        Dictionary<string, QuotaPaceEstimate> Paces(CodexAccountQuota quota, double rate) => quota.Windows.ToDictionary(
+            window => QuotaPaceTracker.SeriesKey(quota.CardKey!, window), window => Pace(rate, window));
+        var estimates = Paces(overlap, 10);
+        estimates[QuotaPaceTracker.SeriesKey("plain", plain.Windows[0])] = Pace(20, plain.Windows[0]);
+        var strategy = CodexUsageStrategy.Create(accounts, [plain, overlap], now, estimates);
+        var row = strategy.Accounts[0];
+        Check(row.Account.AccountId == "overlap" && row.SuggestedStartAt == now
+            && row.PressureEvent?.Kind == CodexStrategyDeadline.ResetCredit
+            && row.PressureIncludesReset && row.ConsumptionHours == 12 && row.ConsumptionPressure == 2,
+            "A later reset followed by one expiring credit outranks an easier earlier deadline at the observed pace.");
+        using var panel = new CodexStrategyPopoverForm();
+        using var bitmap = panel.RenderForTest(strategy, NativeText.For("zh-CN"),
+            QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
+        Check(panel.VisibleTextForAcceptance.Contains("自然重置与卡到期叠加")
+            && panel.AccessibleDescription!.Contains("需约 12 小时")
+            && !panel.AccessibleDescription.Contains("自然重置后复查"),
+            "The visible reason and detailed consumption estimate explain the combined priority without blindly waiting for reset.");
+        if (capture is not null) bitmap.Save(Path.ChangeExtension(capture, ".overlap.png"));
+        using var english = panel.RenderForTest(strategy, NativeText.For("en"),
+            QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), 192);
+        Check(panel.VisibleTextForAcceptance.Contains("Reset and credit expiry overlap"), "The combined reason is localized.");
+        if (capture is not null) english.Save(Path.ChangeExtension(capture, ".overlap.en.192dpi.png"));
+
+        estimates[QuotaPaceTracker.SeriesKey("overlap", overlap.Windows[0])] = Pace(80, overlap.Windows[0]);
+        Check(CodexUsageStrategy.Create(accounts, [plain, overlap], now, estimates).Accounts[0].Account.AccountId == "plain",
+            "A fast enough consumption pace removes the need to promote the overlapping deadlines.");
+        var noResetBeforeCredit = overlap with { ResetCreditBatches = [new(now.AddHours(3), 1, true)] };
+        var creditFirst = CodexUsageStrategy.Create([accounts[1]], [noResetBeforeCredit], now, Paces(overlap, 10)).Accounts[0];
+        Check(creditFirst.ConsumptionHours == 12 && creditFirst.PressureIncludesReset && creditFirst.SuggestedStartAt == now,
+            "When a credit expires first, reserve time to consume its refill before the following natural reset too.");
+        var ending = overlap with { SubscriptionActiveUntil = now.AddHours(6) };
+        var expires = CodexUsageStrategy.Create([accounts[1]], [ending], now, Paces(ending, 10)).Accounts[0];
+        Check(expires.ConsumptionHours == 22,
+            "When the subscription also ends, the last credit refill must be consumed before that same cutoff.");
+        var endingAtReset = overlap with { SubscriptionActiveUntil = now.AddHours(4) };
+        Check(CodexUsageStrategy.Create([accounts[1]], [endingAtReset], now, Paces(endingAtReset, 10)).Accounts[0].ConsumptionHours == 12,
+            "A natural reset exactly at subscription end does not create an extra usable round.");
+        var partial = overlap with { ResetCreditBatches = [new(now.AddHours(6), 1, false)] };
+        Check(CodexUsageStrategy.Create([accounts[1]], [partial], now, Paces(partial, 10)).Accounts[0].ConsumptionHours == 2,
+            "A partial or unconfirmed credit cannot manufacture a full refill in the estimate.");
+        var unknownEarly = overlap with { ResetCreditBatches = [new(now.AddHours(1), 1, false)] };
+        Check(CodexUsageStrategy.Create([accounts[1]], [unknownEarly], now, Paces(unknownEarly, 10)).Accounts[0].SuggestedStartAt is null,
+            "An unquantified early card deadline is not postponed by a later usage estimate.");
+        var dual = overlap with
+        {
+            Windows = [new("5h", 80, now.AddHours(1), TimeSpan.FromHours(5)), new("7d", 40, now.AddHours(20), TimeSpan.FromDays(7))],
+            ResetCreditBatches = [new(now.AddHours(3), 1, true)],
+        };
+        var dualPaces = Paces(dual, 10);
+        dualPaces[QuotaPaceTracker.SeriesKey("overlap", dual.Windows[0])] = Pace(20, dual.Windows[0]);
+        Check(CodexUsageStrategy.Create([accounts[1]], [dual], now, dualPaces).Accounts[0].ConsumptionHours == 6,
+            "A short-window reset replenishes only that window; short and weekly workloads constrain rather than add to each other.");
+        var changingBottleneck = overlap with
+        {
+            Windows = [new("5h", 99, now.AddHours(5), TimeSpan.FromHours(5)), new("7d", 10, now.AddHours(48), TimeSpan.FromDays(7))],
+            ResetCreditsAvailable = 2, ResetCreditBatches = [new(now.AddHours(2), 2, true)],
+        };
+        var changingPaces = Paces(changingBottleneck, 10);
+        changingPaces[QuotaPaceTracker.SeriesKey("overlap", changingBottleneck.Windows[0])] = Pace(1, changingBottleneck.Windows[0]);
+        Check(CodexUsageStrategy.Create([accounts[1]], [changingBottleneck], now, changingPaces).Accounts[0].ConsumptionHours == 11,
+            "Redemption discards nonbinding remainder: one hour of current use plus ten hours between cards, not nineteen pooled hours.");
+        dualPaces[QuotaPaceTracker.SeriesKey("overlap", dual.Windows[1])] = Pace(10, dual.Windows[1]) with { ForecastExpiresAt = now };
+        Check(CodexUsageStrategy.Create([accounts[1]], [dual], now, dualPaces).Accounts[0].SuggestedStartAt is null,
+            "A stale bottleneck forecast falls back to known deadlines instead of inventing consumption speed.");
+        Check(CodexUsageStrategy.Create([accounts[1]], [overlap], now.AddHours(4), estimates).Accounts[0].State == CodexStrategyState.Refresh,
+            "Forecasting a refill never makes pre-reset observations usable after the reset time.");
+    }
+
+    private static void TestRenewalAdvice(DateTimeOffset now, string? capture)
+    {
+        var account = new CodexAccountInfo("former", "former@example.test", "free", false)
+            { SubscriptionActiveUntil = now.AddDays(15) };
+        var quota = new CodexAccountQuota(account.AccountId, [new("30d", 0, now.AddDays(30), TimeSpan.FromDays(30))], now)
+            { CardKey = "former-key" };
+        var recordedReset = now.AddDays(4);
+        var tracker = new CodexQuotaTokenTracker();
+        Check(tracker.Observe(new("former-key", "7d", TimeSpan.FromDays(7).Ticks, now.AddDays(-1), 84,
+            recordedReset, CodexQuotaTokenTracker.ProfileLifetimeSourceKey, 1000), now), "Synthetic prior paid-quota observation is accepted.");
+        var restored = new CodexQuotaTokenTracker(JsonSerializer.Deserialize<CodexQuotaTokenHistory>(JsonSerializer.Serialize(tracker.Export())));
+        var summaries = restored.ExportSummaries(now).ToDictionary(summary =>
+            new CodexQuotaTokenSeriesKey(summary.CardKey, summary.WindowLabel, summary.DurationTicks).ToString());
+        var strategy = CodexUsageStrategy.Create([account], [quota], now, tokenSummaries: summaries);
+        Check(strategy.Accounts.Count == 0 && strategy.Urgent.Count == 0 && strategy.Renewals.Count == 1
+            && strategy.Renewals[0].HighestUsedPercent == 84 && strategy.Renewals[0].RecordedResetAt == recordedReset,
+            "A former paid account can expose its historical weekly reset without turning Free monthly limits or stale subscription metadata into usable Pro quota.");
+        using var panel = new CodexStrategyPopoverForm();
+        using var bitmap = panel.RenderForTest(strategy, NativeText.For("zh-CN"),
+            QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
+        Check(panel.VisibleTextForAcceptance.Contains("续开时机")
+            && panel.VisibleTextForAcceptance.Contains("最低曾余 16%")
+            && panel.VisibleTextForAcceptance.Contains("再决定续开")
+            && panel.VisibleTextForAcceptance.Contains("以刷新结果为准")
+            && !panel.VisibleTextForAcceptance.Contains("暂无付费账号"),
+            "Renewal advice separates historical low remaining quota from the current allowance and makes verification explicit.");
+        if (capture is not null) bitmap.Save(Path.ChangeExtension(capture, ".renewal.png"));
+        using var afterReset = panel.RenderForTest(CodexUsageStrategy.Create([account], [quota], recordedReset, tokenSummaries: summaries),
+            NativeText.For("zh-CN"), QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
+        Check(panel.VisibleTextForAcceptance.Contains("原重置时间已到") && !panel.VisibleTextForAcceptance.Contains("已恢复"),
+            "Reaching a historical reset date asks for fresh evidence, not a presumed quota restoration.");
+        Check(CodexUsageStrategy.Create([account with { Plan = "pro" }], [quota], now, tokenSummaries: summaries).Renewals.Count == 0
+            && CodexUsageStrategy.Create([account], [quota with { CardKey = "other" }], now, tokenSummaries: summaries).Renewals.Count == 0
+            && CodexUsageStrategy.Create([account], [quota], now.AddDays(12), tokenSummaries: summaries).Renewals.Count == 0,
+            "Active subscriptions, another account's history and obsolete cycles cannot produce renewal advice.");
+        using var bar = new BarForm(new AppSettings { EnableAnimations = false },
+            new QuotaSnapshot([], [], now) { CodexAccounts = [quota] }, renderOnly: true, codexAccounts: [account], utcNow: () => now);
+        var property = typeof(BarForm).GetProperty("CodexStrategy", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        Check(((CodexUsageStrategy)property.GetValue(bar)!).Renewals.Count == 0, "No history means no invented renewal schedule.");
+        bar.SetCodexQuotaTokenSummaries(summaries);
+        Check(((CodexUsageStrategy)property.GetValue(bar)!).Renewals.Count == 1,
+            "Existing historical-summary updates invalidate the strategy so renewal advice reaches the real bar.");
     }
 
     private static void Check(bool value, string message)
