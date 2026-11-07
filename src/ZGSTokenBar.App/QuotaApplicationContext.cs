@@ -74,6 +74,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     private readonly RegisteredWaitHandle _activationWait;
     private readonly ZgsTokenBarHost _pluginHost;
     private readonly RouterModule _routerModule;
+    private readonly OtherToolsModule _otherToolsModule;
     private readonly ZgsNamedPipeServer _apiServer;
     private readonly ZgsTokenBarHost.Subscription _pluginSubscription;
     private readonly Task _pluginEventTask;
@@ -141,6 +142,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             _settings.EnableRadar ? [_radarService.Provider] : [],
             codexAccounts: _codexAccounts,
             activeProviders: _activeProviders);
+        _otherToolsModule = new OtherToolsModule(_bar, ApplyGenericPluginCards);
         _bar.SetQuotaPaceEstimates(QuotaPaceEstimates(_snapshot, now));
         _bar.SetCodexQuotaTokenSummaries(CodexQuotaTokenSummaries(now));
         _bar.SetCodexTokenUsage(_activeProviders.Contains(ProviderKind.Codex)
@@ -1699,7 +1701,9 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                     card,
                     assets[plugin.PluginId].Text,
                     assets[plugin.PluginId].Icon)))
-            .ToArray();
+            .ToList();
+        if (_otherToolsModule.Card(_settings.Locale == "zh-CN") is { } otherTools)
+            cards.Add(otherTools);
         _bar.SetPluginMiniCards(cards);
     }
 
@@ -2209,6 +2213,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         if (disposing)
         {
             _routerModule.Dispose();
+            _otherToolsModule.Dispose();
             _shutdown.Cancel();
             _refreshTimer.Dispose();
             _providerActivityTimer.Dispose();

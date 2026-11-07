@@ -2,6 +2,7 @@
 
 - Docked or floating compact Mini with topology-aware placement.
 - Claude and Codex quota windows with reset time, health, caching, and pace estimates.
+- A collapsed GA taskbar entry shows installed Grok and Antigravity local process status in a popup, without implying quota availability.
 - Bundled DeepSeek Harness balance Provider with local credential discovery, no duplicate API-key entry, and account-bound cached fallback.
 - Codex multi-account display ordered by plan and remaining quota.
 - Local Codex token and cache-hit summaries plus Today, Yesterday, and 30-day API-equivalent USD estimates without conversation-content retention.

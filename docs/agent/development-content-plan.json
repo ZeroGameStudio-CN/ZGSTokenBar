@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "projectId": "zgstokenbar",
+  "currentReleaseId": "",
+  "releases": [],
+  "records": [
+    {
+      "id": "local-other-tools-status",
+      "title": "Grok and Antigravity local status",
+      "stage": "Previewable",
+      "availability": "DevelopmentOnly",
+      "targetReleaseId": "",
+      "entrance": "Collapsed Other tools taskbar card and popup",
+      "resourcePath": "src/ZGSTokenBar.App/OtherToolsModule.cs",
+      "nextAction": "Confirm live package identity and obtain user visual feedback."
+    }
+  ]
+}
