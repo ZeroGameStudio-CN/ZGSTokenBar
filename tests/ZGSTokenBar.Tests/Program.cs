@@ -11010,6 +11010,19 @@ static void TestRadarPersistentResetMini()
             && !string.Equals(area.AreaId, MiniAreaIds.SystemMetrics, StringComparison.Ordinal)),
         "persistent reset area does not consume an ordinary card slot");
 
+    var otherToolsCard = new PluginMiniCardView(
+        OtherToolsModule.Id,
+        "Other tools",
+        new MiniCardContribution("card.other-tools", OtherToolsModule.Id, "other-tools",
+            ContributionKind.Metric, 900, "Other tools", "other-tools.icon", "accent.other-tools", []),
+        new Dictionary<string, string>(StringComparer.Ordinal));
+    form.SetPluginMiniCards([.. pluginCards, otherToolsCard]);
+    var otherToolsArea = form.GetMiniAreaStates().Single(area => area.AreaId == OtherToolsModule.Id);
+    Equal(true, otherToolsArea.Collapsed, "other tools defaults to a compact icon");
+    Equal(TaskbarMiniLayoutMath.CollapsedCardWidth + TaskbarMiniLayoutMath.ProviderCollapseHandleWidth,
+        TaskbarMiniLayoutMath.AreaWidth(otherToolsArea.Width, otherToolsArea.Collapsed, OtherToolsModule.Id),
+        "other tools adds only one collapsed icon width");
+
     form.SetRadarState(StateFor(estimatedWindow));
     Equal(true, form.IsRadarResetTimerEnabled, "estimated date Mini keeps a low-frequency timer");
     Equal(RadarResetTiming.EstimatedDateRefreshIntervalMilliseconds, form.RadarResetTimerInterval, "estimated Mini timer uses minute cadence");

@@ -5728,6 +5728,7 @@ internal sealed partial class BarForm : Form
             .ToHashSet(StringComparer.Ordinal);
         visibleIds.Add(MiniAreaIds.RadarReset);
         visibleIds.Add(MiniAreaIds.SystemMetrics);
+        visibleIds.Add(OtherToolsModule.Id);
         return areas.Where(area => visibleIds.Contains(area.AreaId)).ToArray();
     }
 
