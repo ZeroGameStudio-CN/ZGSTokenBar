@@ -1541,7 +1541,7 @@ internal sealed partial class BarForm : Form
         graphics.FillEllipse(iconFill, iconBounds);
         DrawString(
             graphics,
-            PluginMonogram(view.Title),
+            view.PluginId == OtherToolsModule.Id ? "GA" : PluginMonogram(view.Title),
             _badgeFont,
             iconText,
             iconBounds,
@@ -5655,7 +5655,7 @@ internal sealed partial class BarForm : Form
     {
         var normalized = _miniAreaLayouts.TryGetValue(areaId, out var layout)
             ? layout.Normalized(areaId)
-            : new MiniAreaLayout(Collapsed: areaId is MiniAreaIds.Router or MiniAreaIds.LiveMetrics);
+            : new MiniAreaLayout(Collapsed: areaId is MiniAreaIds.Router or MiniAreaIds.LiveMetrics or OtherToolsModule.Id);
         return normalized;
     }
 
