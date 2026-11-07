@@ -41,6 +41,8 @@ internal sealed class SettingsForm : Form
     private readonly ToggleSwitch _systemMetrics;
     private readonly ToggleSwitch _claude;
     private readonly ToggleSwitch _codex;
+    private readonly ToggleSwitch _grok;
+    private readonly ToggleSwitch _antigravity;
     private readonly ToggleSwitch _codexLocalUsage;
     private readonly ToggleSwitch _sub2ApiPool;
     private readonly ToggleSwitch _openAtLogin;
@@ -174,6 +176,10 @@ internal sealed class SettingsForm : Form
             settings.IsPluginEnabled("zgstokenbar.metrics.system", true));
         _claude = CreateToggle("Claude", _text.ClaudeProviderHint, settings.IsEnabled(ProviderKind.Claude));
         _codex = CreateToggle("Codex", _text.CodexProviderHint, settings.IsEnabled(ProviderKind.Codex));
+        _grok = CreateToggle("Grok", _text.IsChinese ? "读取本机 Grok 配额" : "Read local Grok quota",
+            settings.IsPluginEnabled(OtherToolsModule.GrokId, true));
+        _antigravity = CreateToggle("Antigravity", _text.IsChinese ? "读取本机 Antigravity 配额" : "Read local Antigravity quota",
+            settings.IsPluginEnabled(OtherToolsModule.AntigravityId, true));
         _codexLocalUsage = CreateToggle(
             _text.CodexLocalUsageModule,
             _text.CodexLocalUsageModuleHint,
@@ -299,6 +305,8 @@ internal sealed class SettingsForm : Form
         _systemMetrics.CheckedChanged += (_, _) => RefreshDirtyState();
         _claude.CheckedChanged += (_, _) => RefreshDirtyState();
         _codex.CheckedChanged += (_, _) => UpdateCodexDependencies();
+        _grok.CheckedChanged += (_, _) => RefreshDirtyState();
+        _antigravity.CheckedChanged += (_, _) => RefreshDirtyState();
         _codexLocalUsage.CheckedChanged += (_, _) =>
         {
             if (!_updatingCodexDependency && _codex.Checked)
@@ -431,6 +439,10 @@ internal sealed class SettingsForm : Form
             _scale));
         providers.Add(new ToggleSettingRow(_claude, "Claude", _text.ClaudeProviderHint, _theme, _scale));
         providers.Add(new ToggleSettingRow(_codex, "Codex", _text.CodexProviderHint, _theme, _scale));
+        providers.Add(new ToggleSettingRow(_grok, "Grok",
+            _text.IsChinese ? "本机 CLI 不支持读取套餐额度时显示不可读" : "Shows unavailable when the local CLI cannot read plan quota", _theme, _scale));
+        providers.Add(new ToggleSettingRow(_antigravity, "Antigravity",
+            _text.IsChinese ? "复用本机登录，读取模型剩余额度" : "Uses the local sign-in to read model quota", _theme, _scale));
         providers.Add(new ToggleSettingRow(
             _codexLocalUsage,
             _text.CodexLocalUsageModule,
@@ -879,6 +891,10 @@ internal sealed class SettingsForm : Form
         ApplyPluginToggle(settings, "zgstokenbar.metrics.system", _systemMetrics.Checked, true);
         ApplyPluginToggle(settings, "zgstokenbar.provider.claude", _claude.Checked, false);
         ApplyPluginToggle(settings, "zgstokenbar.provider.codex", _codex.Checked, false);
+        if (_original.IsPluginEnabled(OtherToolsModule.GrokId, true) != _grok.Checked)
+            ApplyPluginToggle(settings, OtherToolsModule.GrokId, _grok.Checked, true);
+        if (_original.IsPluginEnabled(OtherToolsModule.AntigravityId, true) != _antigravity.Checked)
+            ApplyPluginToggle(settings, OtherToolsModule.AntigravityId, _antigravity.Checked, true);
         ApplyPluginToggle(
             settings,
             "zgstokenbar.usage.codex-local",

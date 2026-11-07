@@ -645,6 +645,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         ApplyClockInterval();
         ApplyText();
         _radarMenuItem.Visible = _settings.EnableRadar;
+        ApplyGenericPluginCards();
     }
 
     private void SaveMiniAreaLayout()
@@ -1702,8 +1703,9 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                     assets[plugin.PluginId].Text,
                     assets[plugin.PluginId].Icon)))
             .ToList();
-        if (_otherToolsModule.Card(_settings.Locale == "zh-CN") is { } otherTools)
-            cards.Add(otherTools);
+        cards.AddRange(_otherToolsModule.Cards(_settings.Locale == "zh-CN",
+            _settings.IsPluginEnabled(OtherToolsModule.GrokId, true),
+            _settings.IsPluginEnabled(OtherToolsModule.AntigravityId, true)));
         _bar.SetPluginMiniCards(cards);
     }
 

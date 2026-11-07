@@ -6,11 +6,11 @@
   "records": [
     {
       "id": "local-other-tools-status",
-      "title": "Grok and Antigravity local status",
+      "title": "Grok and Antigravity quota modules",
       "stage": "Previewable",
       "availability": "DevelopmentOnly",
       "targetReleaseId": "",
-      "entrance": "Collapsed Other tools taskbar card and popup",
+      "entrance": "Separate collapsed Grok and Antigravity taskbar cards and Settings switches",
       "resourcePath": "src/ZGSTokenBar.App/OtherToolsModule.cs",
       "nextAction": "Confirm live package identity and obtain user visual feedback."
     }
