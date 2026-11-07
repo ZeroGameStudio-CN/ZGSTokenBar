@@ -11010,18 +11010,29 @@ static void TestRadarPersistentResetMini()
             && !string.Equals(area.AreaId, MiniAreaIds.SystemMetrics, StringComparison.Ordinal)),
         "persistent reset area does not consume an ordinary card slot");
 
-    var otherToolsCard = new PluginMiniCardView(
-        OtherToolsModule.Id,
-        "Other tools",
-        new MiniCardContribution("card.other-tools", OtherToolsModule.Id, "other-tools",
-            ContributionKind.Metric, 900, "Other tools", "other-tools.icon", "accent.other-tools", []),
-        new Dictionary<string, string>(StringComparer.Ordinal));
-    form.SetPluginMiniCards([.. pluginCards, otherToolsCard]);
-    var otherToolsArea = form.GetMiniAreaStates().Single(area => area.AreaId == OtherToolsModule.Id);
-    Equal(true, otherToolsArea.Collapsed, "other tools defaults to a compact icon");
-    Equal(TaskbarMiniLayoutMath.CollapsedCardWidth + TaskbarMiniLayoutMath.ProviderCollapseHandleWidth,
-        TaskbarMiniLayoutMath.AreaWidth(otherToolsArea.Width, otherToolsArea.Collapsed, OtherToolsModule.Id),
-        "other tools adds only one collapsed icon width");
+    var quotaCards = new[] { OtherToolsModule.GrokId, OtherToolsModule.AntigravityId }
+        .Select((id, index) => new PluginMiniCardView(id, id,
+            new MiniCardContribution($"card.{id}", id, id, ContributionKind.Quota,
+                900 + index, id, $"{id}.icon", $"accent.{id}", []),
+            new Dictionary<string, string>(StringComparer.Ordinal)))
+        .ToArray();
+    Equal("Gemini Models 100%", OtherToolsModule.ParseAntigravity(
+        "Gemini Models\tWeekly Limit Remaining\t100%\t2026-11-14T17:41:52Z\n" +
+        "Claude and GPT models\tWeekly Limit Remaining\t0%\t2026-11-08T03:50:06Z\n")[0],
+        "Antigravity retains the remaining quota scale");
+    Equal(0, OtherToolsModule.ParseAntigravity("invalid").Length,
+        "malformed Antigravity output cannot become a quota");
+    Equal(null, OtherToolsModule.ParseGrok("{\"message\":\"unavailable\"}"),
+        "Grok errors cannot become a quota");
+    form.SetPluginMiniCards([.. pluginCards, .. quotaCards]);
+    foreach (var id in quotaCards.Select(card => card.PluginId))
+    {
+        var area = form.GetMiniAreaStates().Single(value => value.AreaId == id);
+        Equal(true, area.Collapsed, "each local quota provider defaults to a compact icon");
+        Equal(TaskbarMiniLayoutMath.CollapsedCardWidth + TaskbarMiniLayoutMath.ProviderCollapseHandleWidth,
+            TaskbarMiniLayoutMath.AreaWidth(area.Width, area.Collapsed, id),
+            "each local quota provider adds only one collapsed icon width");
+    }
 
     form.SetRadarState(StateFor(estimatedWindow));
     Equal(true, form.IsRadarResetTimerEnabled, "estimated date Mini keeps a low-frequency timer");

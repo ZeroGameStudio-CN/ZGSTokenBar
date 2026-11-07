@@ -6,7 +6,7 @@ ZGSTokenBar 是一个开源、本地优先的 Windows 任务栏用量工具。�
 ## 主要能力
 
 - 内置 Claude、Codex 配额 Provider、系统指标，以及随应用打包的 DeepSeek Harness Provider。现有本机 Provider 凭据会被自动识别，无需复制 Key；显式模块开关始终优先。
-- 已安装 Grok 或 Antigravity 时，任务栏增加默认折叠的 GA 入口；悬停或点击可看各自本机运行状态，不显示未能可靠取得的配额。
+- Grok 和 Antigravity 各有设置开关与默认折叠的任务栏入口。Antigravity 复用本机登录读取模型剩余额度；当前 Grok CLI 不提供可读的套餐额度时明确显示不可读。
 - 本机 Codex Token 汇总，以及今日、昨日和 30 天 API 等值美元估算。估算使用带日期的模型价格快照，不等同于订阅账单。
 - 最近对话的输出 Token、耗时与整轮平均 tok/s；包含思考、工具和等待时间，不等同于纯生成速度。
 - 多个 Codex 账号先按 Pro、Plus 分组，同一套餐内再按剩余额度从高到低排序。
