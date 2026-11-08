@@ -24,6 +24,7 @@ internal sealed class SettingsForm : Form
     private const int LogicalResponsiveBreakpoint = 640;
     private const int PhysicalSafeMargin = 16;
     private const int WmSetRedraw = 0x000B;
+    private const int WmDpiChanged = 0x02E0;
     private const uint RedrawNowAllChildren = 0x0181;
 
     private readonly AppSettings _original;
@@ -38,6 +39,7 @@ internal sealed class SettingsForm : Form
     private readonly Panel _pageHost;
     private readonly Dictionary<string, SettingsPage> _pages = new(StringComparer.Ordinal);
     private readonly Dictionary<string, NavigationButton> _navigationButtons = new(StringComparer.Ordinal);
+    private readonly Dictionary<Control, Font> _designFonts = [];
     private readonly ToggleSwitch _systemMetrics;
     private readonly ToggleSwitch _claude;
     private readonly ToggleSwitch _codex;
@@ -358,9 +360,40 @@ internal sealed class SettingsForm : Form
         Resize += (_, _) => ApplyResponsiveLayout();
         Shown += (_, _) => ApplyProductionWorkingArea();
         FormClosing += OnFormClosing;
+        CaptureDesignFonts(this);
+    }
+
+    private void CaptureDesignFonts(Control control)
+    {
+        _designFonts[control] = (Font)control.Font.Clone();
+        foreach (Control child in control.Controls) CaptureDesignFonts(child);
+    }
+
+    private void RestoreDesignFonts()
+    {
+        // Native DPI initialization can rewrite fonts even with AutoScaleMode.None.
+        // These fonts already include the same DPI factor as the manual row geometry.
+        foreach (var (control, font) in _designFonts)
+        {
+            if (!control.IsDisposed && !control.Font.Equals(font)) control.Font = font;
+        }
+    }
+
+    protected override void OnVisibleChanged(EventArgs e)
+    {
+        base.OnVisibleChanged(e);
+        if (Visible) RestoreDesignFonts();
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        base.WndProc(ref m);
+        if (m.Msg == WmDpiChanged) RestoreDesignFonts();
     }
 
     internal Panel ScrollViewport => _activePage;
+
+    internal bool FontsMatchLayout => _designFonts.All(pair => pair.Key.Font.Equals(pair.Value));
 
     internal (int Offset, int Maximum, bool ThemedBarVisible) ScrollStateForAcceptance =>
         _activePage.ScrollState;
@@ -1052,6 +1085,11 @@ internal sealed class SettingsForm : Form
     {
         if (disposing) _windowIcon?.Dispose();
         base.Dispose(disposing);
+        if (disposing)
+        {
+            foreach (var font in _designFonts.Values) font.Dispose();
+            _designFonts.Clear();
+        }
     }
 
     private static GraphicsPath RoundedRectangle(Rectangle bounds, int radius)

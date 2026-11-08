@@ -48,6 +48,12 @@ The persistence and plugin lifecycle regressions can be run independently with
 `dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj -c Release -- --persistence-regressions`.
 They use synthetic settings, ledgers and Providers in temporary directories.
 
+Settings font and row geometry after native window creation/reopening can be checked with
+`dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj -c Release -- --settings-layout-regressions`.
+Append a temporary capture directory for Chinese/English captures at 96, 144 and 192 DPI.
+On the running app, `app settings` followed by `window inspect --json` reports
+`settingsVisible` and `settingsFontsMatchLayout` without changing the settings draft.
+
 System metrics sampling and presentation can be checked with
 `dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj -c Release -- --system-usage-regressions`.
 Append a temporary capture directory to render Chinese/English populated,
