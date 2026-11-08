@@ -59,6 +59,14 @@ const commands = [
     '-c', 'Release',
     '--artifacts-path', artifactsPath,
     '--disable-build-servers',
+    '--', '--settings-layout-regressions',
+  ]],
+  ['dotnet', [
+    'run',
+    '--project', 'tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj',
+    '-c', 'Release',
+    '--artifacts-path', artifactsPath,
+    '--disable-build-servers',
     '--', '--native-window-lifecycle',
   ]],
   ['dotnet', [

@@ -2049,6 +2049,8 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                 NetworkHistorySavedAt = _bar.LiveMetrics.NetworkHistory?.SavedAt,
                 NetworkHistorySaveFailed = _bar.LiveMetrics.NetworkHistorySaveFailed,
                 DisplayedTokenTotal = _bar.DisplayedTokenTotal,
+                SettingsVisible = _settingsDialog is { Visible: true },
+                SettingsFontsMatchLayout = _settingsDialog?.FontsMatchLayout,
                 RouterVisible = _routerModule.Visible,
                 DisplayedRouterQueuedCount = _bar.DisplayedRouterQueuedCount,
                 DisplayedRouterState = _bar.DisplayedRouterState,

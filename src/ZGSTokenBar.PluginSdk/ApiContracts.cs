@@ -114,6 +114,8 @@ public sealed record WindowInspection(
     public bool NetworkHistorySaveFailed { get; init; }
     public long? DisplayedTokenTotal { get; init; }
     public bool RadarVisible { get; init; }
+    public bool SettingsVisible { get; init; }
+    public bool? SettingsFontsMatchLayout { get; init; }
     public bool RouterVisible { get; init; }
     public long? DisplayedRouterQueuedCount { get; init; }
     public string? DisplayedRouterState { get; init; }

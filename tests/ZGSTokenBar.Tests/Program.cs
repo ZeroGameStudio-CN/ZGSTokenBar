@@ -160,6 +160,17 @@ if (args.Length > 0
     return RunQuotaImportFixture(args[1], Console.Out, Console.Error);
 }
 
+if (args.Length > 0 && args[0] == "--settings-layout-regressions")
+{
+    typeof(SettingsForm).Assembly.GetTypes().Single(type => type.Name == "ApplicationConfiguration")
+        .GetMethod("Initialize", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic)!
+        .Invoke(null, null);
+    TestNativeSettingsPanelContract();
+    if (args.Length == 2) RenderSettingsCaptures(args[1]);
+    Console.WriteLine("PASS settings layout after native DPI initialization");
+    return 0;
+}
+
 var settingsCaptureIndex = Array.FindIndex(
     args,
     value => string.Equals(value, "--settings-captures", StringComparison.OrdinalIgnoreCase));
@@ -16060,6 +16071,18 @@ static void TestNativeBackgroundPaletteContract()
 
 static void TestNativeSettingsPanelContract()
 {
+    using (var settings = new SettingsForm(new AppSettings { Locale = "zh-CN" }, 192))
+    {
+        var area = System.Windows.Forms.Screen.PrimaryScreen!.WorkingArea;
+        settings.Location = new Point(area.Left + (area.Width - settings.Width) / 2, area.Top + (area.Height - settings.Height) / 2);
+        settings.Show();
+        System.Windows.Forms.Application.DoEvents();
+        var title = DescendantControls(settings).OfType<System.Windows.Forms.Label>()
+            .First(label => Equals(label.Tag, "settings.page.title"));
+        Equal(true, Math.Abs(title.Font.Size - 14f * 96 / 72 * 2) < .1f,
+            $"production settings heading scales once (actual {title.Font.Size}, native DPI {settings.DeviceDpi})");
+        settings.Hide();
+    }
     using (var hiddenSettings = new System.Windows.Forms.Form
            {
                ShowInTaskbar = false,
@@ -16136,8 +16159,38 @@ static void TestNativeSettingsPanelContract()
                     dpi,
                     renderOnly: true,
                     renderWorkingArea: constrained ? new Rectangle(0, 0, 1024, 720) : null);
-                LayoutControlTree(form);
                 var descendants = DescendantControls(form).ToArray();
+                var designedFonts = descendants.Select(control => (Control: control, Font: control.Font)).ToArray();
+                LayoutControlTree(form);
+                for (var open = 0; open < 2; open++)
+                {
+                    var rewrittenFonts = new List<Font>();
+                    if (open > 0)
+                    {
+                        // Model Windows rewriting already scaled fonts between native opens.
+                        foreach (var (control, font) in designedFonts)
+                        {
+                            var inflated = new Font(font.FontFamily, font.Size * 2, font.Style, font.Unit);
+                            rewrittenFonts.Add(inflated);
+                            control.Font = inflated;
+                        }
+                    }
+                    form.Show();
+                    System.Windows.Forms.Application.DoEvents();
+                    LayoutControlTree(form);
+                    foreach (var (control, font) in designedFonts)
+                    {
+                        Equal(true, Math.Abs(control.Font.Size - font.Size) < .1f,
+                            $"{locale} {dpi} DPI open {open}: {control.GetType().Name} keeps its design font ({font.Size} vs {control.Font.Size})");
+                    }
+                    var pageTitle = descendants.OfType<System.Windows.Forms.Label>()
+                        .First(label => Equals(label.Tag, "settings.page.title"));
+                    Equal(true, Math.Abs(pageTitle.Font.Size - 14f * 96 / 72 * dpi / 96) < .1f,
+                        $"settings heading scales once at {dpi} DPI (actual {pageTitle.Font.Size})");
+                    Equal(true, pageTitle.Height >= pageTitle.Font.Height, "settings heading fits its row after showing");
+                    form.Hide();
+                    foreach (var font in rewrittenFonts) font.Dispose();
+                }
                 Equal(false, form.TopMost, "settings stay in the normal window band");
                 Equal(true, form.ShowInTaskbar, "settings remain reachable like a normal window");
                 Equal(
