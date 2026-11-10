@@ -9,6 +9,7 @@ internal static class WindowBackdrop
     private const int DwmwaBorderColor = 34;
     private const int DwmwaSystemBackdropType = 38;
     private const int DwmwcpRound = 2;
+    private const int DwmwcpDoNotRound = 1;
     private const int DwmsbtMainWindow = 2;
     private const int DwmsbtTransientWindow = 3;
     private const int DwmwaColorNone = unchecked((int)0xFFFFFFFE);
@@ -43,12 +44,38 @@ internal static class WindowBackdrop
         }
     }
 
-    private static bool TryAccent(IntPtr handle, bool light)
+    /// <summary>
+    /// Blur-behind for a per-pixel-alpha (layered) window. DWM's own rounding and border are
+    /// turned off because the pill paints its own anti-aliased edge; the acrylic tint is kept
+    /// nearly clear so the painted glass layer controls the material.
+    /// </summary>
+    public static bool TryApplyLayeredBlur(IntPtr handle, bool light)
     {
+        if (handle == IntPtr.Zero || !OperatingSystem.IsWindows()) return false;
+        try
+        {
+            var corner = DwmwcpDoNotRound;
+            _ = DwmSetWindowAttribute(handle, DwmwaWindowCornerPreference, ref corner, sizeof(int));
+            var border = DwmwaColorNone;
+            _ = DwmSetWindowAttribute(handle, DwmwaBorderColor, ref border, sizeof(int));
+            return TryAccent(handle, light, light ? 0x18FFFFFFu : 0x14140F0Cu);
+        }
+        catch (Exception error) when (error is DllNotFoundException or EntryPointNotFoundException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryAccent(IntPtr handle, bool light) =>
+        TryAccent(handle, light, light ? 0xB0F6F4F4u : 0xCC1C1612u);
+
+    private static bool TryAccent(IntPtr handle, bool light, uint gradient)
+    {
+        _ = light;
         var accent = new AccentPolicy
         {
             AccentState = AccentEnableAcrylic,
-            GradientColor = light ? 0xB0F6F4F4u : 0xCC1C1612u,
+            GradientColor = gradient,
         };
         var size = Marshal.SizeOf<AccentPolicy>();
         var data = Marshal.AllocHGlobal(size);
@@ -105,5 +132,101 @@ internal static class WindowBackdrop
         public int Attribute;
         public IntPtr Data;
         public int SizeOfData;
+    }
+}
+
+/// <summary>Pushes a 32bpp ARGB bitmap to a WS_EX_LAYERED window with per-pixel alpha.</summary>
+internal static class LayeredWindow
+{
+    public const int ExStyle = 0x00080000;
+    private const int UlwAlpha = 2;
+    private const byte AcSrcOver = 0;
+    private const byte AcSrcAlpha = 1;
+
+    public static bool Update(IntPtr handle, Bitmap bitmap)
+    {
+        if (handle == IntPtr.Zero || !OperatingSystem.IsWindows()) return false;
+        var screen = GetDC(IntPtr.Zero);
+        var memory = CreateCompatibleDC(screen);
+        var hbitmap = IntPtr.Zero;
+        var previous = IntPtr.Zero;
+        try
+        {
+            hbitmap = bitmap.GetHbitmap(Color.FromArgb(0));
+            previous = SelectObject(memory, hbitmap);
+            var size = new NativeSize { Width = bitmap.Width, Height = bitmap.Height };
+            var source = new NativePoint();
+            var blend = new BlendFunction
+            {
+                BlendOp = AcSrcOver,
+                BlendFlags = 0,
+                SourceConstantAlpha = 255,
+                AlphaFormat = AcSrcAlpha,
+            };
+            return UpdateLayeredWindow(handle, screen, IntPtr.Zero, ref size, memory, ref source, 0, ref blend, UlwAlpha);
+        }
+        finally
+        {
+            if (previous != IntPtr.Zero) SelectObject(memory, previous);
+            if (hbitmap != IntPtr.Zero) DeleteObject(hbitmap);
+            DeleteDC(memory);
+            ReleaseDC(IntPtr.Zero, screen);
+        }
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool UpdateLayeredWindow(
+        IntPtr window,
+        IntPtr destination,
+        IntPtr destinationPoint,
+        ref NativeSize size,
+        IntPtr source,
+        ref NativePoint sourcePoint,
+        int colorKey,
+        ref BlendFunction blend,
+        int flags);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetDC(IntPtr window);
+
+    [DllImport("user32.dll")]
+    private static extern int ReleaseDC(IntPtr window, IntPtr dc);
+
+    [DllImport("gdi32.dll")]
+    private static extern IntPtr CreateCompatibleDC(IntPtr dc);
+
+    [DllImport("gdi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeleteDC(IntPtr dc);
+
+    [DllImport("gdi32.dll")]
+    private static extern IntPtr SelectObject(IntPtr dc, IntPtr value);
+
+    [DllImport("gdi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeleteObject(IntPtr value);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeSize
+    {
+        public int Width;
+        public int Height;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativePoint
+    {
+        public int X;
+        public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    private struct BlendFunction
+    {
+        public byte BlendOp;
+        public byte BlendFlags;
+        public byte SourceConstantAlpha;
+        public byte AlphaFormat;
     }
 }

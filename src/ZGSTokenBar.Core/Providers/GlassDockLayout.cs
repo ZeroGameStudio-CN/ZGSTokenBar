@@ -35,61 +35,85 @@ public sealed record GlassDockProviderGroup(
     IReadOnlyList<GlassDockAccountLine> Accounts);
 
 /// <summary>
-/// Fixed taskbar pill. Width never grows with provider or module count.
+/// Bounded taskbar pill. The collapsed width shrinks to the rings that report usage and is
+/// capped at <see cref="Width"/>; only an explicit +N expansion widens it temporarily.
 /// </summary>
 public static class GlassDockLayout
 {
-    public const int Width = 294;
     public const int Height = 44;
-    public const int Corner = 14;
+    public const int Corner = 16;
     public const int MaxVisibleRings = 4;
-    public const int RingSize = 26;
-    public const int RingGap = 4;
-    public const int PadLeft = 8;
+    public const int RingSize = 30;
+    public const int ItemWidth = 60;
+    public const int RingGap = 2;
+    public const int PadLeft = 6;
     public const int PadRight = 8;
-    public const int ChipWidth = 26;
-    public const int ChipGap = 5;
-    public const int DividerGap = 8;
-    public const int SystemWidth = 122;
-    public const int RouterSize = 18;
-    public const int BarWidth = 3;
-    public const int BarGap = 2;
-    public const int BarHeight = 16;
-    public const int SparkWidth = 28;
-    public const int SparkHeight = 12;
+    public const int ChipWidth = 24;
+    public const int ChipGap = 4;
+    public const int DividerGap = 10;
+    public const int SystemWidth = 118;
+    public const int RouterSize = 26;
+    public const int BarWidth = 5;
+    public const int BarGap = 3;
+    public const int BarHeight = 22;
+    public const int SparkWidth = 26;
+    public const int SparkHeight = 14;
     public const int FlyoutWidth = 316;
+    public const int Width = PadLeft + MaxVisibleRings * ItemWidth + (MaxVisibleRings - 1) * RingGap
+        + ChipGap + ChipWidth + DividerGap + SystemWidth + PadRight;
 
-    public static int SystemLeft => Width - PadRight - SystemWidth;
+    /// <summary>Width of a pill that shows <paramref name="items"/> rings plus the +N/collapse chip.</summary>
+    public static int WidthFor(int items, bool chip) =>
+        PadLeft + Math.Max(0, items) * ItemWidth + Math.Max(0, items - 1) * RingGap
+        + (chip ? ChipGap + ChipWidth : 0) + DividerGap + SystemWidth + PadRight;
 
-    public static Rectangle RouterBounds => new(
-        SystemLeft,
-        (Height - RouterSize) / 2,
+    public static int SystemLeftFor(int width) => width - PadRight - SystemWidth;
+
+    public static int SystemLeft => SystemLeftFor(Width);
+
+    public static Rectangle RouterBoundsFor(int width) => new(
+        SystemLeftFor(width),
+        (Height - 36) / 2,
         RouterSize,
-        RouterSize);
+        36);
 
-    public static Rectangle BarsBounds
+    public static Rectangle RouterBounds => RouterBoundsFor(Width);
+
+    public static Rectangle BarsBoundsFor(int width)
     {
-        get
-        {
-            var width = BarWidth * 3 + BarGap * 2;
-            return new Rectangle(SystemLeft + RouterSize + 6, (Height - BarHeight) / 2, width, BarHeight);
-        }
+        var barsWidth = BarWidth * 3 + BarGap * 2;
+        return new Rectangle(SystemLeftFor(width) + RouterSize + 5, (Height - BarHeight) / 2, barsWidth, BarHeight);
     }
 
-    public static Rectangle SparkBounds => new(
-        Width - PadRight - SparkWidth,
+    public static Rectangle BarsBounds => BarsBoundsFor(Width);
+
+    public static Rectangle SparkBoundsFor(int width) => new(
+        width - PadRight - SparkWidth,
         (Height - SparkHeight) / 2,
         SparkWidth,
         SparkHeight);
 
-    public static Rectangle RateBounds
+    public static Rectangle SparkBounds => SparkBoundsFor(Width);
+
+    public static Rectangle RateBoundsFor(int width)
     {
-        get
-        {
-            var left = BarsBounds.Right + 6;
-            return new Rectangle(left, 8, Math.Max(8, SparkBounds.Left - 4 - left), Height - 16);
-        }
+        var left = BarsBoundsFor(width).Right + 6;
+        return new Rectangle(left, 8, Math.Max(8, SparkBoundsFor(width).Left - 3 - left), Height - 16);
     }
+
+    public static Rectangle RateBounds => RateBoundsFor(Width);
+
+    /// <summary>Minimum sweep so a small non-zero remaining value stays visible on the ring.</summary>
+    public static float RingSweep(double? remaining) => remaining switch
+    {
+        null => 0f,
+        <= 0 => 0f,
+        { } value => Math.Max(22f, (float)(360d * Math.Clamp(value, 0, 100) / 100d)),
+    };
+
+    public static string PercentText(double? remaining) => remaining is { } value
+        ? Math.Round(Math.Clamp(value, 0, 100)).ToString("0", System.Globalization.CultureInfo.InvariantCulture) + "%"
+        : "—";
 
     public static string Band(double? remaining) => remaining switch
     {
@@ -115,7 +139,7 @@ public static class GlassDockLayout
         var used = 0;
         while (count < maxVisible)
         {
-            var next = used + (count == 0 ? 0 : RingGap) + RingSize;
+            var next = used + (count == 0 ? 0 : RingGap) + ItemWidth;
             if (next > available) break;
             used = next;
             count++;
@@ -127,12 +151,7 @@ public static class GlassDockLayout
     public static GlassDockPlan Plan(IReadOnlyList<GlassDockRing> rings, int maxVisible = MaxVisibleRings)
     {
         var limit = VisibleCapacity(maxVisible);
-        var ordered = rings
-            .OrderBy(ring => ring.RemainingPercent ?? double.PositiveInfinity)
-            .ThenBy(ring => ring.Title, StringComparer.Ordinal)
-            .ThenBy(ring => ring.AccountNumber)
-            .ThenBy(ring => ring.AccountLabel, StringComparer.Ordinal)
-            .ToArray();
+        var ordered = Order(rings);
         var count = Math.Min(limit, ordered.Length);
         var visible = ordered.Take(count).ToArray();
         var hidden = ordered.Skip(count).ToArray();
@@ -141,25 +160,41 @@ public static class GlassDockLayout
             visible,
             hidden.Length,
             urgent,
-            Width,
+            WidthFor(visible.Length, hidden.Length > 0),
             Height,
             Slots(visible.Length, hidden.Length > 0));
     }
 
+    /// <summary>Plan that shows every ring, used while the +N chip is expanded.</summary>
+    public static GlassDockPlan PlanExpanded(IReadOnlyList<GlassDockRing> rings)
+    {
+        var ordered = Order(rings);
+        var width = WidthFor(ordered.Length, chip: true);
+        return new GlassDockPlan(ordered, 0, false, width, Height, Slots(ordered.Length, true));
+    }
+
+    private static GlassDockRing[] Order(IReadOnlyList<GlassDockRing> rings) => rings
+        .OrderBy(ring => ring.RemainingPercent ?? double.PositiveInfinity)
+        .ThenBy(ring => ring.Title, StringComparer.Ordinal)
+        .ThenBy(ring => ring.AccountNumber)
+        .ThenBy(ring => ring.AccountLabel, StringComparer.Ordinal)
+        .ToArray();
+
+    /// <summary>Item slots: each ring slot spans the ring plus its percentage/name text column.</summary>
     public static IReadOnlyList<GlassDockSlot> Slots(int visibleCount, bool overflow)
     {
         var slots = new List<GlassDockSlot>(visibleCount + 1);
         var x = PadLeft;
-        var y = (Height - RingSize) / 2;
         for (var index = 0; index < visibleCount; index++)
         {
-            slots.Add(new GlassDockSlot(new Rectangle(x, y, RingSize, RingSize), false));
-            x += RingSize + RingGap;
+            slots.Add(new GlassDockSlot(new Rectangle(x, 3, ItemWidth, Height - 6), false));
+            x += ItemWidth + RingGap;
         }
 
         if (overflow)
         {
-            slots.Add(new GlassDockSlot(new Rectangle(x, (Height - 18) / 2, ChipWidth, 18), true));
+            x += ChipGap - RingGap;
+            slots.Add(new GlassDockSlot(new Rectangle(x, (Height - 22) / 2, ChipWidth, 22), true));
         }
 
         return slots;

@@ -115,9 +115,16 @@ internal sealed partial class BarForm : Form
     private UsageBoard _usageBoard = UsageBoard.Empty;
     private int _glassMaxRings = GlassDockLayout.MaxVisibleRings;
     private readonly Queue<double> _glassRates = new();
-    private GlassDockFlyoutForm? _glassFlyout;
     private ContextMenuStrip? _glassMenu;
-    private GlassDockPlan? _glassPlan;
+    private bool _glassExpanded;
+    private bool _glassChipHovered;
+    private bool _glassRenderQueued;
+    private RectangleF _glassChipBounds;
+    private DateTime? _glassLeftAt;
+    private readonly System.Windows.Forms.Timer _glassChipTimer = new() { Interval = 320 };
+    private readonly System.Windows.Forms.Timer _glassCollapseTimer = new() { Interval = 200 };
+    private readonly Dictionary<string, Image?> _glassIcons = new(StringComparer.Ordinal);
+    private bool GlassLayered => _glassDock && !_renderOnly;
     internal event EventHandler? OverviewRequested;
     private bool _animationsEnabled;
     private readonly bool _renderOnly;
@@ -268,6 +275,8 @@ internal sealed partial class BarForm : Form
         _radarResetTimer.Tick += (_, _) => RefreshRadarResetClock();
         _popoverHoverTimer.Tick += (_, _) => ShowHoveredPopover();
         _popoverStateTimer.Tick += (_, _) => MonitorPopover();
+        _glassChipTimer.Tick += (_, _) => HandleGlassChipHoverTick();
+        _glassCollapseTimer.Tick += (_, _) => HandleGlassCollapseTick();
         _shellSettleTimer.Tick += (_, _) =>
         {
             _shellSettleTimer.Stop();
@@ -301,6 +310,7 @@ internal sealed partial class BarForm : Form
         {
             var parameters = base.CreateParams;
             parameters.ExStyle |= ToolWindowStyle | NoActivateStyle;
+            if (GlassLayered) parameters.ExStyle |= LayeredWindow.ExStyle;
             return parameters;
         }
     }
@@ -327,6 +337,7 @@ internal sealed partial class BarForm : Form
         _showSystemMetrics && !_systemAnchorIsLive && (_hoverSystemUsage || _systemUsagePopover?.Visible == true);
     internal bool IsRadarResetTimerEnabled => _radarResetTimer.Enabled;
     internal int RadarResetTimerInterval => _radarResetTimer.Interval;
+    internal void SetGlassExpandedForAcceptance(bool expanded) => SetGlassExpanded(expanded);
     internal int CodexPoolAccountCountForAcceptance => _taskbarContentAreas
         .FirstOrDefault(area => area.Group?.IsCodexPool == true)
         ?.Group?.Cards.Count ?? 0;
@@ -920,7 +931,11 @@ internal sealed partial class BarForm : Form
             }
         }
         UpdateDpiAndRegion();
-        if (_glassDock) _ = WindowBackdrop.TryApply(Handle, GlassPrefersLight(), transient: false);
+        if (GlassLayered)
+        {
+            _ = WindowBackdrop.TryApplyLayeredBlur(Handle, GlassPrefersLight());
+            QueueGlassRender();
+        }
         if (!_renderOnly) RequestTopologyRefresh(topologyMayHaveChanged: false);
     }
 
@@ -1193,6 +1208,19 @@ internal sealed partial class BarForm : Form
     {
         base.OnVisibleChanged(e);
         if (!Visible) HidePopovers();
+        else if (GlassLayered) QueueGlassRender();
+    }
+
+    protected override void OnInvalidated(InvalidateEventArgs e)
+    {
+        base.OnInvalidated(e);
+        if (GlassLayered) QueueGlassRender();
+    }
+
+    protected override void OnSizeChanged(EventArgs e)
+    {
+        base.OnSizeChanged(e);
+        if (GlassLayered) QueueGlassRender();
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -3825,14 +3853,32 @@ internal sealed partial class BarForm : Form
             return;
         }
 
+        var logical = ToLogical(e.Location);
         if (_glassDock)
         {
-            Cursor = Cursors.SizeAll;
-            ShowGlassFlyout();
-            return;
+            _glassLeftAt = null;
+            var onChip = !_glassChipBounds.IsEmpty && _glassChipBounds.Contains(logical);
+            if (onChip != _glassChipHovered)
+            {
+                _glassChipHovered = onChip;
+                if (onChip && !_glassExpanded) _glassChipTimer.Start();
+                else _glassChipTimer.Stop();
+                Invalidate();
+            }
+            if (onChip)
+            {
+                UpdateSystemUsageHover(false);
+                UpdateRadarHover(null);
+                UpdateCodexAccountsHover(null);
+                UpdateQuotaHover(null);
+                _hoverPluginTarget = null;
+                UpdateHintHover(HoverTarget.None);
+                _hoverTarget = HoverTarget.None;
+                Cursor = Cursors.Hand;
+                return;
+            }
         }
 
-        var logical = ToLogical(e.Location);
         var resizeTarget = TaskbarResizeTargetAt(logical);
         if (resizeTarget is not null)
         {
@@ -3948,7 +3994,16 @@ internal sealed partial class BarForm : Form
         _hoverTarget = HoverTarget.None;
         _pressedTarget = HoverTarget.None;
         Cursor = Cursors.Default;
-        HideGlassFlyoutIfIdle();
+        if (_glassDock)
+        {
+            _glassChipHovered = false;
+            _glassChipTimer.Stop();
+            if (_glassExpanded)
+            {
+                _glassLeftAt = DateTime.UtcNow;
+                _glassCollapseTimer.Start();
+            }
+        }
         EnsureAnimationTimer();
         Invalidate();
     }
@@ -4077,13 +4132,12 @@ internal sealed partial class BarForm : Form
         base.OnMouseClick(e);
         if (e.Button != MouseButtons.Left) return;
         if (DateTime.UtcNow <= _suppressClickUntil) return;
-        if (_glassDock)
+        var logical = ToLogical(e.Location);
+        if (_glassDock && !_glassChipBounds.IsEmpty && _glassChipBounds.Contains(logical))
         {
-            OverviewRequested?.Invoke(this, EventArgs.Empty);
+            SetGlassExpanded(!_glassExpanded);
             return;
         }
-
-        var logical = ToLogical(e.Location);
         if (TaskbarReorderTargetAt(logical) is not null) return;
         if (TaskbarCollapseTargetAt(logical) is { } miniArea)
         {
@@ -4122,6 +4176,7 @@ internal sealed partial class BarForm : Form
         HidePopovers();
         if (_refreshBounds.Contains(logical)) RefreshRequested?.Invoke(this, EventArgs.Empty);
         else if (_settingsBounds.Contains(logical)) SettingsRequested?.Invoke(this, EventArgs.Empty);
+        else if (_glassDock) OverviewRequested?.Invoke(this, EventArgs.Empty);
     }
 
     private void BeginMiniAreaResize(MiniAreaTarget target, Point location)
@@ -5179,6 +5234,7 @@ internal sealed partial class BarForm : Form
 
     private MiniQuotaTarget? ResolveQuotaTarget(string id)
     {
+        if (_glassDock) return _taskbarWindowBounds.FirstOrDefault(target => string.Equals(target.Id, id, StringComparison.Ordinal));
         var x = TaskbarMiniLayoutMath.OuterPadding;
         foreach (var area in _visibleTaskbarAreas)
         {
@@ -5330,7 +5386,6 @@ internal sealed partial class BarForm : Form
     internal void SetUsageBoard(UsageBoard board)
     {
         _usageBoard = board ?? UsageBoard.Empty;
-        if (_glassFlyout is { Visible: true }) ShowGlassFlyout();
         Invalidate();
     }
 
@@ -5351,6 +5406,8 @@ internal sealed partial class BarForm : Form
         {
             using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
                 @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+            // The pill sits on the taskbar, so follow the system (taskbar) theme, then the app theme.
+            if (key?.GetValue("SystemUsesLightTheme") is int system) return system != 0;
             return key?.GetValue("AppsUseLightTheme") is int theme && theme != 0;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.SecurityException)
@@ -5359,97 +5416,292 @@ internal sealed partial class BarForm : Form
         }
     }
 
-    private GlassDockPlan CurrentGlassPlan()
+    private sealed record GlassItem(
+        GlassDockRing Ring,
+        string Name,
+        Image? Icon,
+        QuotaCard? Card,
+        QuotaWindow? Window,
+        PluginMiniCardView? Plugin);
+
+    /// <summary>
+    /// Builds one ring per provider account that currently reports usage. Accounts and plugins
+    /// without a remaining percentage or balance (signed out, failed, loading) stay off the bar.
+    /// </summary>
+    private IReadOnlyList<GlassItem> BuildGlassItems()
     {
-        var rings = new List<GlassDockRing>();
-        if (_usageBoard.Providers.Count > 0) rings.AddRange(GlassDockComposer.FromBoard(_usageBoard));
-        else rings.AddRange(GlassDockComposer.FromQuota(_snapshot.Cards.Where(card => _activeProviders.Contains(card.Provider)).ToArray(), _snapshot.CodexAccounts));
-        foreach (var card in _pluginMiniCards)
+        var items = new List<GlassItem>();
+        var cards = _snapshot.Cards.Where(card => _activeProviders.Contains(card.Provider)).ToArray();
+        var codexCount = cards.Count(card => card.Provider == ProviderKind.Codex && !card.IsService);
+        foreach (var card in cards)
         {
-            if (card.PluginId == MiniAreaIds.Router || card.PluginId == MiniAreaIds.SystemMetrics || card.PluginId == MiniAreaIds.LiveMetrics) continue;
-            if (rings.Any(ring => string.Equals(ring.ProviderId, card.PluginId, StringComparison.Ordinal))) continue;
-            var summary = card.Card.Summary.FirstOrDefault();
-            double? remaining = summary?.Status == "usage-remaining" ? summary.Value.Number : null;
-            string? balance = remaining is null && summary?.Value.Text is { Length: > 0 } text ? text : null;
-            rings.Add(new GlassDockRing(card.PluginId, card.Title, card.Title, 0, remaining, null, balance, "#8b5cf6"));
+            var window = card.Windows.Where(item => item.UsedPercent is not null)
+                .OrderByDescending(item => item.UsedPercent)
+                .FirstOrDefault();
+            double? remaining = window?.UsedPercent is { } used ? Math.Clamp(100 - used, 0, 100) : null;
+            var balance = card.Balance is { TotalBalance: { } amount } money
+                ? UsageFormatting.Money(money.Currency, amount)
+                : null;
+            if (remaining is null && balance is null) continue;
+            window ??= card.Windows.FirstOrDefault();
+            var multi = card.Provider == ProviderKind.Codex && !card.IsService && codexCount > 1;
+            var ordinal = multi && int.TryParse(CodexAccountOrdinal(card), out var number) ? number : 0;
+            var providerId = card.Provider switch
+            {
+                ProviderKind.Claude => UsageProviderIds.Claude,
+                ProviderKind.Codex => UsageProviderIds.Codex,
+                _ => card.Key,
+            };
+            var title = card.Provider == ProviderKind.Codex ? "Codex" : card.DisplayLabel;
+            var ring = new GlassDockRing(
+                providerId,
+                title,
+                card.AccountHint ?? card.DisplayLabel,
+                ordinal,
+                remaining,
+                window?.ResetsAt,
+                remaining is null ? balance : null,
+                string.IsNullOrWhiteSpace(card.Accent) ? "#10a37f" : card.Accent);
+            var name = multi ? GlassAccountName(card, ordinal) : card.DisplayLabel;
+            items.Add(new GlassItem(ring, name, ProviderLogo(card.Provider), card, window, null));
         }
 
-        return GlassDockLayout.Plan(rings, _glassMaxRings);
+        foreach (var view in _pluginMiniCards)
+        {
+            if (view.PluginId is MiniAreaIds.Router or MiniAreaIds.SystemMetrics or MiniAreaIds.LiveMetrics) continue;
+            if (items.Any(item => string.Equals(item.Ring.ProviderId, view.PluginId, StringComparison.Ordinal))) continue;
+            var summary = view.Card.Summary.FirstOrDefault();
+            if (summary is null) continue;
+            double? remaining = summary.Status == "usage-remaining" ? summary.Value.Number : null;
+            string? balance = null;
+            if (remaining is null
+                && (view.Card.Kind == ContributionKind.Balance || summary.Value.Kind == "currency")
+                && summary.Status is not ("unavailable" or "error" or "loading" or "unknown"))
+            {
+                var text = CompactPluginValue(summary.Value);
+                if (!string.IsNullOrWhiteSpace(text) && text != "—") balance = text;
+            }
+            if (remaining is null && balance is null) continue;
+            var accent = view.Card.AccentToken is { Length: 7 } token && token[0] == '#' ? token : "#8b5cf6";
+            var ring = new GlassDockRing(view.PluginId, view.Title, view.Title, 0, remaining, null, balance, accent);
+            items.Add(new GlassItem(ring, view.Title, GlassPluginIcon(view), null, null, view));
+        }
+
+        return items;
     }
+
+    private static string GlassAccountName(QuotaCard card, int ordinal)
+    {
+        var hint = card.AccountHint;
+        if (!string.IsNullOrWhiteSpace(hint)
+            && !string.Equals(hint, "Codex account", StringComparison.OrdinalIgnoreCase))
+        {
+            var at = hint.IndexOf('@');
+            return at > 0 ? hint[..at] : hint;
+        }
+
+        return ordinal > 0 ? "#" + ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture) : card.DisplayLabel;
+    }
+
+    private Image? GlassPluginIcon(PluginMiniCardView view)
+    {
+        if (_pluginIcons.TryGetValue(view.PluginId, out var pluginIcon)) return pluginIcon;
+        if (_glassIcons.TryGetValue(view.PluginId, out var cached)) return cached;
+        var resource = view.PluginId switch
+        {
+            UsageProviderIds.Grok or UsageProviderIds.Xai => "xai-official-icon.png",
+            UsageProviderIds.Antigravity => "antigravity-official-icon.png",
+            UsageProviderIds.Cursor => "cursor-official-icon.png",
+            UsageProviderIds.OpenCode => "opencode-official-icon.png",
+            UsageProviderIds.OpenRouter => "openrouter-official-icon.png",
+            UsageProviderIds.DeepSeek => "deepseek-whale-icon.png",
+            UsageProviderIds.Claude => "claude-icon-rounded.png",
+            UsageProviderIds.Codex => "openai-official-ios-icon.png",
+            _ => null,
+        };
+        Image? image = null;
+        if (resource is not null)
+        {
+            try
+            {
+                image = LoadEmbeddedImage("ZGSTokenBar.App.Assets." + resource);
+            }
+            catch (Exception error) when (error is InvalidOperationException or ArgumentException or IOException)
+            {
+                image = null;
+            }
+        }
+        _glassIcons[view.PluginId] = image;
+        return image;
+    }
+
+    private (GlassDockPlan Plan, IReadOnlyList<GlassItem> Items) CurrentGlassLayout()
+    {
+        var items = BuildGlassItems();
+        var rings = items.Select(item => item.Ring).ToArray();
+        var plan = GlassDockLayout.Plan(rings, _glassMaxRings);
+        if (_glassExpanded)
+        {
+            if (plan.OverflowCount > 0) plan = GlassDockLayout.PlanExpanded(rings);
+            else _glassExpanded = false;
+        }
+        var byRing = new Dictionary<GlassDockRing, GlassItem>(ReferenceEqualityComparer.Instance);
+        foreach (var item in items) byRing[item.Ring] = item;
+        var visible = plan.Visible.Select(ring => byRing[ring]).ToArray();
+        return (plan, visible);
+    }
+
+    private GlassDockPlan CurrentGlassPlan() => CurrentGlassLayout().Plan;
 
     private void DrawGlassDock(Graphics graphics)
     {
         var light = GlassPrefersLight();
-        var plan = CurrentGlassPlan();
-        _glassPlan = plan;
-        var state = DisplayedRouterState;
-        var routerWarning = state is "attention" or "cleanup" or "failed" or "offline"
-            || DisplayedRouterQueuedCount is > 0
-            || _radarState.Error is not null;
-        GlassDockPainter.Draw(
-            graphics,
+        var (plan, items) = CurrentGlassLayout();
+        _cardBounds.Clear();
+        _taskbarWindowBounds.Clear();
+        _taskbarRadarBounds.Clear();
+        _taskbarPluginBounds.Clear();
+        _taskbarCodexAccountBounds.Clear();
+        _taskbarAreaBounds.Clear();
+        _codexStrategyBounds = RectangleF.Empty;
+        _refreshBounds = RectangleF.Empty;
+        _settingsBounds = RectangleF.Empty;
+        _glassChipBounds = RectangleF.Empty;
+        var width = plan.Width;
+        var visuals = new List<GlassDockItemVisual>(items.Count);
+        for (var index = 0; index < plan.Slots.Count; index++)
+        {
+            var slot = plan.Slots[index];
+            RectangleF bounds = slot.Bounds;
+            if (slot.Chip)
+            {
+                _glassChipBounds = RectangleF.Inflate(bounds, 2, 6);
+                continue;
+            }
+            if (index >= items.Count) continue;
+            var item = items[index];
+            var hovered = false;
+            if (item.Card is { } card && item.Window is { } window)
+            {
+                var target = new MiniQuotaTarget(bounds, card, window);
+                _taskbarWindowBounds.Add(target);
+                _cardBounds.Add((bounds, card));
+                hovered = string.Equals(_hoverQuotaTarget?.Id, target.Id, StringComparison.Ordinal);
+            }
+            else if (item.Plugin is { } plugin)
+            {
+                _taskbarPluginBounds.Add((bounds, plugin));
+                hovered = string.Equals(_hoverPluginTarget?.Card.PluginId, plugin.PluginId, StringComparison.Ordinal);
+            }
+            visuals.Add(new GlassDockItemVisual(item.Ring, item.Icon, item.Name, hovered));
+        }
+
+        var router = _pluginMiniCards.FirstOrDefault(card => card.PluginId == MiniAreaIds.Router);
+        var routerBounds = GlassDockLayout.RouterBoundsFor(width);
+        if (router is not null) _taskbarPluginBounds.Add((routerBounds, router));
+        var bars = GlassDockLayout.BarsBoundsFor(width);
+        _systemUsageBounds = _showSystemMetrics ? RectangleF.Inflate(bars, 4, 5) : RectangleF.Empty;
+        var rate = GlassDockLayout.RateBoundsFor(width);
+        var spark = GlassDockLayout.SparkBoundsFor(width);
+        _liveMetricsBounds = RectangleF.FromLTRB(rate.Left - 3, 6, spark.Right + 3, GlassDockLayout.Height - 6);
+        var scene = new GlassDockScene(
             light,
+            width,
+            1f / Math.Max(1f, _scale),
             plan,
-            routerWarning,
+            visuals,
+            _glassExpanded,
+            _glassChipHovered,
+            router?.Card,
+            router is not null && _hoverPluginTarget?.Card.PluginId == MiniAreaIds.Router,
             _systemUsage.CpuPercent,
             _systemUsage.MemoryPercent,
             _systemUsage.GpuPercent,
+            _hoverSystemUsage && !_systemAnchorIsLive,
             _systemUsage.CurrentOutputRate,
-            _glassRates.ToArray(),
-            _text.IsChinese);
+            _systemUsage.CurrentOutputRate is not null && _systemUsage.LiveRate?.HasEstimate == true,
+            _hoverSystemUsage && _systemAnchorIsLive,
+            _glassRates.ToArray());
+        GlassDockPainter.Draw(graphics, scene, _badgeFont);
     }
 
-    private GlassDockFlyoutModel BuildGlassFlyout()
+    private void SetGlassExpanded(bool expanded)
     {
-        var rings = _usageBoard.Providers.Count > 0
-            ? GlassDockComposer.FromBoard(_usageBoard)
-            : CurrentGlassPlan().Visible.Concat(HiddenGlassRings()).ToArray();
-        var state = DisplayedRouterState;
-        return new GlassDockFlyoutModel(
-            GlassDockComposer.Groups(rings, _utcNow(), _text.IsChinese),
-            _systemUsage.CpuPercent,
-            _systemUsage.MemoryPercent,
-            _systemUsage.GpuPercent,
-            _systemUsage.CurrentOutputRate,
-            state is "attention" or "cleanup" or "failed" or "offline" || DisplayedRouterQueuedCount is > 0,
-            GlassDockComposer.FirstLedger(_usageBoard));
+        _glassChipTimer.Stop();
+        if (_glassExpanded == expanded) return;
+        _glassExpanded = expanded;
+        if (expanded)
+        {
+            _glassLeftAt = null;
+            _glassCollapseTimer.Start();
+        }
+        else _glassCollapseTimer.Stop();
+        HidePopovers();
+        ApplySnapshotLayout();
+        Invalidate();
     }
 
-    private IReadOnlyList<GlassDockRing> HiddenGlassRings()
+    private void HandleGlassChipHoverTick()
     {
-        var all = GlassDockComposer.FromQuota(
-            _snapshot.Cards.Where(card => _activeProviders.Contains(card.Provider)).ToArray(),
-            _snapshot.CodexAccounts);
-        var visible = _glassPlan?.Visible ?? [];
-        return all.Where(ring => !visible.Any(shown =>
-            shown.ProviderId == ring.ProviderId
-            && shown.AccountNumber == ring.AccountNumber
-            && shown.AccountLabel == ring.AccountLabel)).ToArray();
+        _glassChipTimer.Stop();
+        if (!_glassChipHovered || _glassExpanded || _taskbarDragging) return;
+        if (!QuotaTargetScreenBounds(_glassChipBounds).Contains(Cursor.Position)) return;
+        SetGlassExpanded(true);
     }
 
-    private void ShowGlassFlyout()
+    private void HandleGlassCollapseTick()
     {
-        if (_renderOnly || _taskbarDragging) return;
-        _glassFlyout ??= new GlassDockFlyoutForm();
-        _glassFlyout.SetLeaveIdle(HideGlassFlyoutIfIdle);
-        _glassFlyout.Present(
-            BuildGlassFlyout(),
-            RectangleToScreen(ClientRectangle),
-            _scale,
-            GlassPrefersLight(),
-            _text.IsChinese,
-            () => RefreshRequested?.Invoke(this, EventArgs.Empty),
-            () => SettingsRequested?.Invoke(this, EventArgs.Empty),
-            () => OverviewRequested?.Invoke(this, EventArgs.Empty),
-            this);
-    }
-
-    private void HideGlassFlyoutIfIdle()
-    {
-        if (_glassFlyout is not { Visible: true }) return;
+        if (!_glassExpanded)
+        {
+            _glassCollapseTimer.Stop();
+            return;
+        }
         var cursor = Cursor.Position;
-        if (_glassFlyout.Bounds.Contains(cursor) || Bounds.Contains(cursor)) return;
-        _glassFlyout.Hide();
+        var overPopover = (_quotaPopover?.Visible == true && _quotaPopover.Bounds.Contains(cursor))
+            || (_pluginPopover?.Visible == true && _pluginPopover.Bounds.Contains(cursor))
+            || (_hintPopover?.Visible == true && _hintPopover.Bounds.Contains(cursor))
+            || (_systemUsagePopover?.Visible == true && _systemUsagePopover.Bounds.Contains(cursor));
+        if (Bounds.Contains(cursor) || overPopover || _popoverPinned)
+        {
+            _glassLeftAt = null;
+            return;
+        }
+        _glassLeftAt ??= DateTime.UtcNow;
+        if (DateTime.UtcNow - _glassLeftAt >= TimeSpan.FromMilliseconds(700)) SetGlassExpanded(false);
+    }
+
+    private void QueueGlassRender()
+    {
+        if (_glassRenderQueued || !IsHandleCreated || IsDisposed) return;
+        _glassRenderQueued = true;
+        BeginInvoke(RenderGlassLayered);
+    }
+
+    /// <summary>
+    /// Renders the pill into a per-pixel-alpha bitmap and hands it to UpdateLayeredWindow, so the
+    /// rounded edge is anti-aliased against the real backdrop instead of a clipped region colour.
+    /// </summary>
+    private void RenderGlassLayered()
+    {
+        _glassRenderQueued = false;
+        if (!IsHandleCreated || IsDisposed || ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
+        using var bitmap = new Bitmap(ClientSize.Width, ClientSize.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        using (var graphics = Graphics.FromImage(bitmap))
+        {
+            graphics.Clear(Color.Transparent);
+            graphics.ScaleTransform(_scale, _scale);
+            try
+            {
+                DrawGlassDock(graphics);
+                _taskbarRenderFailureAreaIds.Remove("bar");
+            }
+            catch (Exception exception) when (IsRecoverableRenderException(exception))
+            {
+                TraceTaskbarRenderFailure("bar", exception);
+            }
+        }
+
+        LayeredWindow.Update(Handle, bitmap);
     }
 
     private void ShowGlassMenu(Point location)
@@ -5504,7 +5756,7 @@ internal sealed partial class BarForm : Form
         _hiddenCardCount = Math.Max(0, layoutCards.Length - _visibleCards.Length)
             + Math.Max(0, _pluginMiniCards.Length - _visibleTaskbarAreas.Count(area => area.Plugin is not null));
         var miniLogicalWidth = _glassDock
-            ? GlassDockLayout.Width
+            ? CurrentGlassPlan().Width
             : TaskbarMiniLayoutMath.ModuleContentWidth(
                 _visibleTaskbarAreas.Select(TaskbarAreaWidth)
                     .ToArray(),
@@ -6087,8 +6339,10 @@ internal sealed partial class BarForm : Form
             _hintPopover?.Dispose();
             _radarPopover?.Dispose();
             _systemUsagePopover?.Dispose();
-            _glassFlyout?.Dispose();
             _glassMenu?.Dispose();
+            _glassChipTimer.Dispose();
+            _glassCollapseTimer.Dispose();
+            foreach (var icon in _glassIcons.Values) icon?.Dispose();
             _titleFont.Dispose();
             _subtitleFont.Dispose();
             _cardTitleFont.Dispose();

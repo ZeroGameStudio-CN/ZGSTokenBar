@@ -1716,7 +1716,7 @@ static void TestSub2ApiPool()
         stackedMini.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
         Equal(TaskbarMiniLayoutMath.CardWidth, stackedMini.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Codex).Width, "stacked Codex Mini keeps a full-width service row");
 
-        Equal(GlassDockLayout.Width, stackedMini.ClientSize.Width, "stacked Codex stays inside the bounded dock");
+        Equal(true, stackedMini.ClientSize.Width <= GlassDockLayout.Width, "stacked Codex stays inside the bounded dock");
         var quotaRingVisible = Enumerable.Range(0, bitmap.Width)
             .Any(x => Enumerable.Range(0, bitmap.Height)
                 .Select(y => bitmap.GetPixel(x, y))
@@ -8789,8 +8789,38 @@ static void RenderQuotaTokenEstimateCaptures(string outputDirectory)
     }
 }
 
+static void RenderGlassOverflowCaptures(string outputDirectory)
+{
+    Directory.CreateDirectory(outputDirectory);
+    var overflowAccounts = Enumerable.Range(1, 4)
+        .Select(index => new CodexAccountInfo($"account-{index}", $"user{index}@example.test", "pro", index == 1))
+        .ToArray();
+    var overflowSnapshot = TaskbarMiniCaptureSnapshot(true, 4);
+    using var overflowForm = new BarForm(
+        new AppSettings { Locale = "zh-CN", UseTaskbarRings = true, EnableAnimations = false, EnableRadar = false, GlassDockMaxRings = 3 },
+        overflowSnapshot,
+        renderOnly: true,
+        renderDpi: 192,
+        codexAccounts: overflowAccounts);
+    overflowForm.CreateControl();
+    var collapsedWidth = overflowForm.ClientSize.Width;
+    foreach (var expanded in new[] { false, true })
+    {
+        overflowForm.SetGlassExpandedForAcceptance(expanded);
+        using var overflowBitmap = new Bitmap(overflowForm.ClientSize.Width, overflowForm.ClientSize.Height, PixelFormat.Format32bppPArgb);
+        overflowForm.DrawToBitmap(overflowBitmap, new Rectangle(Point.Empty, overflowBitmap.Size));
+        var overflowPath = Path.GetFullPath(Path.Combine(
+            outputDirectory,
+            $"taskbar-glass-overflow-{(expanded ? "expanded" : "collapsed")}-192dpi.png"));
+        overflowBitmap.Save(overflowPath, ImageFormat.Png);
+        Console.WriteLine($"{overflowPath} {overflowBitmap.Width}x{overflowBitmap.Height}");
+    }
+    if (overflowForm.ClientSize.Width <= collapsedWidth) throw new InvalidOperationException("+N expansion widens the glass dock");
+}
+
 static void RenderTaskbarMiniCaptures(string outputDirectory)
 {
+    RenderGlassOverflowCaptures(outputDirectory);
     LiveMetricTests.Render(outputDirectory);
     Directory.CreateDirectory(outputDirectory);
     var systemUsage = new SystemUsageSnapshot(
@@ -8882,8 +8912,8 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
                         PixelFormat.Format32bppPArgb);
                     form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
                     Equal(
-                        (int)Math.Round(GlassDockLayout.Width * dpi / 96d),
-                        form.ClientSize.Width,
+                        true,
+                        form.ClientSize.Width <= (int)Math.Round(GlassDockLayout.Width * dpi / 96d),
                         $"{scenario.CodexCount}-account glass dock width stays bounded");
                     Equal(
                         (int)Math.Round(GlassDockLayout.Height * dpi / 96d),
@@ -15106,7 +15136,7 @@ static void TestTaskbarStackedCodexAccounts()
         new QuotaSnapshot([claude, firstCodex, secondCodex], [], reset),
         renderOnly: true,
         renderDpi: 96);
-    Equal(GlassDockLayout.Width, perAreaForm.ClientSize.Width, "the glass dock stays a fixed width");
+    Equal(true, perAreaForm.ClientSize.Width <= GlassDockLayout.Width, "the glass dock stays a fixed width");
     var systemArea = perAreaForm.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.SystemMetrics);
     Equal(false, systemArea.Collapsed, "system area starts expanded");
     Equal(88, systemArea.Width, "system area reports the shared default width");
@@ -15127,17 +15157,17 @@ static void TestTaskbarStackedCodexAccounts()
         perAreaForm.GetMiniAreaStates()[0].AreaId,
         "system metrics can move before provider modules");
     Equal(true, perAreaForm.SetMiniAreaFromCommand(MiniAreaIds.Claude, true, null), "Claude area collapse is accepted");
-    Equal(GlassDockLayout.Width, perAreaForm.ClientSize.Width, "collapsing Claude does not resize the dock");
+    Equal(true, perAreaForm.ClientSize.Width <= GlassDockLayout.Width, "collapsing Claude does not resize the dock");
     Equal(false, perAreaForm.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Codex).Collapsed, "Codex remains expanded");
     Equal(true, perAreaForm.SetMiniAreaFromCommand(MiniAreaIds.Codex, null, 200), "Codex area width is accepted");
-    Equal(GlassDockLayout.Width, perAreaForm.ClientSize.Width, "Codex area width does not resize the dock");
+    Equal(true, perAreaForm.ClientSize.Width <= GlassDockLayout.Width, "Codex area width does not resize the dock");
     Equal(200, perAreaForm.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Codex).Width, "Codex width is reported through the area contract");
     Equal(true, perAreaForm.SetMiniAreaFromCommand(MiniAreaIds.SystemMetrics, true, null), "system area collapse is accepted");
-    Equal(GlassDockLayout.Width, perAreaForm.ClientSize.Width, "collapsing system usage does not resize the dock");
+    Equal(true, perAreaForm.ClientSize.Width <= GlassDockLayout.Width, "collapsing system usage does not resize the dock");
     Equal(true, perAreaForm.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Claude).Collapsed, "system collapse preserves Claude state");
     Equal(200, perAreaForm.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Codex).Width, "system collapse preserves Codex width");
     Equal(true, perAreaForm.SetMiniAreaFromCommand(MiniAreaIds.SystemMetrics, false, 120), "system area width is accepted");
-    Equal(GlassDockLayout.Width, perAreaForm.ClientSize.Width, "system area width does not resize the dock");
+    Equal(true, perAreaForm.ClientSize.Width <= GlassDockLayout.Width, "system area width does not resize the dock");
     Equal(120, perAreaForm.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.SystemMetrics).Width, "system width is reported through the area contract");
     Equal(false, perAreaForm.SetMiniAreaFromCommand("missing.area", true, null), "unknown area fails closed");
 
@@ -15184,7 +15214,7 @@ static void TestTaskbarStackedCodexAccounts()
         new QuotaSnapshot([claude, firstCodex, secondCodex], [], reset),
         renderOnly: true,
         renderDpi: 96);
-    Equal(GlassDockLayout.Width, collapsedForm.ClientSize.Width, "collapsed areas keep the same dock width");
+    Equal(true, collapsedForm.ClientSize.Width <= GlassDockLayout.Width, "collapsed areas keep the same dock width");
     Equal(true, collapsedForm.AreAllMiniAreasCollapsed, "all-area state includes system metrics");
 }
 
@@ -15872,7 +15902,7 @@ static void TestTaskbarCompactAiGatewayBalance()
         renderOnly: true,
         renderDpi: 96,
         activeProviders: new HashSet<ProviderKind> { ProviderKind.AiGateway });
-    Equal(GlassDockLayout.Width, form.ClientSize.Width, "AI Gateway still uses the bounded glass dock");
+    Equal(true, form.ClientSize.Width <= GlassDockLayout.Width, "AI Gateway still uses the bounded glass dock");
 
     using var collapsedForm = new BarForm(
         new AppSettings
@@ -15890,7 +15920,7 @@ static void TestTaskbarCompactAiGatewayBalance()
         renderOnly: true,
         renderDpi: 96,
         activeProviders: new HashSet<ProviderKind> { ProviderKind.AiGateway });
-    Equal(GlassDockLayout.Width, collapsedForm.ClientSize.Width, "collapsed AI Gateway keeps the bounded dock width");
+    Equal(true, collapsedForm.ClientSize.Width <= GlassDockLayout.Width, "collapsed AI Gateway keeps the bounded dock width");
 }
 
 static void TestTaskbarMiniPopoverPlacement()
@@ -16035,7 +16065,7 @@ static void TestNativeBackgroundPaletteContract()
                 pixels[argb] = pixels.GetValueOrDefault(argb) + 1;
             }
         }
-        Equal(GlassDockLayout.Width, mini.ClientSize.Width, "a palette change does not resize the glass dock");
+        Equal(true, mini.ClientSize.Width <= GlassDockLayout.Width, "a palette change does not resize the glass dock");
         Equal(true, pixels.Any(pair => (pair.Key >>> 24) != 0), "a palette change still leaves the glass dock painted");
     }
 

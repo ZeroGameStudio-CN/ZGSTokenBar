@@ -26,7 +26,17 @@ public static class GlassDockSvg
             }
 
             var index = plan.Slots.TakeWhile(item => !item.Bounds.Equals(slot.Bounds)).Count();
-            if (index < plan.Visible.Count) Ring(svg, x + slot.Bounds.X, y + slot.Bounds.Y, slot.Bounds.Width, plan.Visible[index], light);
+            if (index >= plan.Visible.Count) continue;
+            var ring = plan.Visible[index];
+            var ringY = y + (GlassDockLayout.Height - GlassDockLayout.RingSize) / 2;
+            Ring(svg, x + slot.Bounds.X, ringY, GlassDockLayout.RingSize, ring, light);
+            var textX = x + slot.Bounds.X + GlassDockLayout.RingSize + 3;
+            svg.Append("<text x=\"").Append(textX).Append("\" y=\"").Append(y + 21).Append("\" fill=\"").Append(light ? "#1c2430" : "#ffffff")
+                .Append("\" font-family=\"Segoe UI, sans-serif\" font-size=\"12\" font-weight=\"700\">")
+                .Append(Escape(ring.BalanceText ?? GlassDockLayout.PercentText(ring.RemainingPercent))).Append("</text>");
+            svg.Append("<text x=\"").Append(textX).Append("\" y=\"").Append(y + 32).Append("\" fill=\"").Append(light ? "rgba(28,36,48,.6)" : "rgba(255,255,255,.6)")
+                .Append("\" font-family=\"Segoe UI, sans-serif\" font-size=\"8.5\">")
+                .Append(Escape(ring.AccountNumber > 0 ? "#" + ring.AccountNumber.ToString(CultureInfo.InvariantCulture) : ring.Title)).Append("</text>");
         }
 
         var dividerX = x + GlassDockLayout.SystemLeft - 6;

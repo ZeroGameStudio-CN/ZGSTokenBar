@@ -1,154 +1,289 @@
 using System.Drawing.Drawing2D;
+using System.Drawing.Text;
 using System.Globalization;
 using ZGSTokenBar.Core;
+using ZGSTokenBar.PluginSdk;
 
 namespace ZGSTokenBar.App;
 
+/// <summary>One visible ring item: the ring, its official icon and the name shown under the percentage.</summary>
+internal sealed record GlassDockItemVisual(GlassDockRing Ring, Image? Icon, string Name, bool Hovered);
+
+internal sealed record GlassDockScene(
+    bool Light,
+    int Width,
+    float DevicePixel,
+    GlassDockPlan Plan,
+    IReadOnlyList<GlassDockItemVisual> Items,
+    bool Expanded,
+    bool ChipHovered,
+    MiniCardContribution? Router,
+    bool RouterHovered,
+    double? Cpu,
+    double? Memory,
+    double? Gpu,
+    bool SystemHovered,
+    double? TokensPerSecond,
+    bool RateEstimated,
+    bool RateHovered,
+    IReadOnlyList<double> Spark);
+
 internal static class GlassDockPainter
 {
-    public static void Draw(
-        Graphics graphics,
-        bool light,
-        GlassDockPlan plan,
-        bool routerWarning,
-        double? cpu,
-        double? memory,
-        double? gpu,
-        double? tokensPerSecond,
-        IReadOnlyList<double> spark,
-        bool chinese)
+    public static void Draw(Graphics graphics, GlassDockScene scene, Font badgeFont)
     {
-        var bounds = new RectangleF(0.5f, 0.5f, GlassDockLayout.Width - 1f, GlassDockLayout.Height - 1f);
-        using var path = Rounded(bounds, GlassDockLayout.Corner);
-        using var wash = new LinearGradientBrush(
-            bounds,
-            light ? Color.FromArgb(210, 255, 255, 255) : Color.FromArgb(168, 36, 30, 42),
-            light ? Color.FromArgb(150, 244, 246, 251) : Color.FromArgb(150, 16, 18, 26),
-            LinearGradientMode.Vertical);
-        using var border = new Pen(light ? Color.FromArgb(180, 255, 255, 255) : Color.FromArgb(90, 255, 255, 255), 1f);
-        using var highlight = new Pen(Color.FromArgb(light ? 160 : 90, 255, 255, 255), 1f);
-        graphics.FillPath(wash, path);
-        graphics.DrawPath(border, path);
-        graphics.DrawLine(highlight, 16, 1.5f, GlassDockLayout.Width - 16, 1.5f);
+        graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+        DrawGlass(graphics, scene);
 
-        for (var index = 0; index < plan.Slots.Count; index++)
+        for (var index = 0; index < scene.Plan.Slots.Count; index++)
         {
-            var slot = plan.Slots[index];
+            var slot = scene.Plan.Slots[index];
             if (slot.Chip)
             {
-                DrawChip(graphics, slot.Bounds, plan.OverflowCount, plan.OverflowUrgent, light);
+                DrawChip(graphics, slot.Bounds, scene);
                 continue;
             }
 
-            if (index < plan.Visible.Count) DrawRing(graphics, slot.Bounds, plan.Visible[index], light);
+            if (index < scene.Items.Count) DrawItem(graphics, slot.Bounds, scene.Items[index], scene.Light);
         }
 
-        var dividerX = GlassDockLayout.SystemLeft - 6f;
-        using var divider = new Pen(light ? Color.FromArgb(40, 20, 24, 32) : Color.FromArgb(56, 255, 255, 255), 1f);
-        graphics.DrawLine(divider, dividerX, 12, dividerX, GlassDockLayout.Height - 12);
-        DrawRouter(graphics, GlassDockLayout.RouterBounds, routerWarning);
-        DrawBars(graphics, GlassDockLayout.BarsBounds, cpu, memory, gpu, light);
-        DrawRate(graphics, GlassDockLayout.RateBounds, tokensPerSecond, light, chinese);
-        DrawSpark(graphics, GlassDockLayout.SparkBounds, spark);
-    }
-
-    private static void DrawRing(Graphics graphics, Rectangle bounds, GlassDockRing ring, bool light)
-    {
-        var color = Band(ring.RemainingPercent);
-        var ellipse = new RectangleF(bounds.X + 1.2f, bounds.Y + 1.2f, bounds.Width - 2.4f, bounds.Height - 2.4f);
-        using var track = new Pen(light ? Color.FromArgb(36, 20, 24, 32) : Color.FromArgb(40, 255, 255, 255), 2.4f);
-        graphics.DrawEllipse(track, ellipse);
-        var sweep = ring.RemainingPercent is { } remaining
-            ? (float)(360d * Math.Clamp(remaining, 0, 100) / 100d)
-            : 0f;
-        if (sweep > 0.5f)
+        var systemLeft = GlassDockLayout.SystemLeftFor(scene.Width);
+        var dividerX = systemLeft - GlassDockLayout.DividerGap / 2f;
+        using (var divider = new LinearGradientBrush(
+                   new RectangleF(dividerX, 8, 1, GlassDockLayout.Height - 16),
+                   Color.FromArgb(0, Ink(scene.Light)),
+                   Color.FromArgb(scene.Light ? 60 : 70, Ink(scene.Light)),
+                   LinearGradientMode.Vertical))
         {
-            using var glow = new Pen(Color.FromArgb(70, color), 4.2f);
-            using var ink = new Pen(color, 2.4f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
-            graphics.DrawArc(glow, ellipse, -90, sweep);
-            graphics.DrawArc(ink, ellipse, -90, sweep);
+            divider.SetBlendTriangularShape(.5f);
+            graphics.FillRectangle(divider, dividerX - .5f, 8, 1f, GlassDockLayout.Height - 16);
         }
 
-        var icon = RectangleF.Inflate(bounds, -6, -6);
-        using var fill = new SolidBrush(light ? Color.White : Color.FromArgb(22, 22, 28));
-        graphics.FillEllipse(fill, icon);
-        using var font = new Font("Segoe UI", 9f, FontStyle.Bold, GraphicsUnit.Pixel);
-        using var text = new SolidBrush(light ? Color.FromArgb(28, 36, 48) : Color.White);
-        var letter = string.IsNullOrWhiteSpace(ring.Title) ? "?" : ring.Title[..1].ToUpperInvariant();
-        using var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-        graphics.DrawString(letter, font, text, icon, format);
-        if (ring.AccountNumber <= 0) return;
-        var badge = new RectangleF(bounds.Right - 10, bounds.Bottom - 10, 11, 11);
-        using var badgeBrush = new SolidBrush(color);
-        graphics.FillEllipse(badgeBrush, badge);
-        using var badgeFont = new Font("Segoe UI", 7f, FontStyle.Bold, GraphicsUnit.Pixel);
-        graphics.DrawString(ring.AccountNumber.ToString(CultureInfo.InvariantCulture), badgeFont, text, badge, format);
-    }
-
-    private static void DrawChip(Graphics graphics, Rectangle bounds, int overflow, bool urgent, bool light)
-    {
-        var rect = new RectangleF(bounds.X, bounds.Y, bounds.Width, bounds.Height);
-        using var path = Rounded(rect, 9);
-        using var fill = new SolidBrush(light ? Color.FromArgb(24, 20, 24, 32) : Color.FromArgb(28, 255, 255, 255));
-        using var text = new SolidBrush(light ? Color.FromArgb(220, 28, 36, 48) : Color.FromArgb(210, 255, 255, 255));
-        using var font = new Font("Segoe UI", 8.5f, FontStyle.Bold, GraphicsUnit.Pixel);
-        using var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-        graphics.FillPath(fill, path);
-        graphics.DrawString("+" + overflow.ToString(CultureInfo.InvariantCulture), font, text, rect, format);
-        if (!urgent) return;
-        using var dot = new SolidBrush(Color.FromArgb(255, 176, 32));
-        graphics.FillEllipse(dot, bounds.Right - 4, bounds.Top - 1, 6, 6);
-    }
-
-    private static void DrawRouter(Graphics graphics, Rectangle bounds, bool warning)
-    {
-        var color = warning ? Color.FromArgb(245, 193, 74) : Color.FromArgb(70, 229, 154);
-        using var pen = new Pen(color, 1.6f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
-        if (!warning)
+        var routerBounds = GlassDockLayout.RouterBoundsFor(scene.Width);
+        if (scene.RouterHovered) DrawHover(graphics, RectangleF.Inflate(routerBounds, 1, -2), scene.Light);
+        if (scene.Router is { } router)
         {
-            graphics.DrawEllipse(pen, bounds);
+            RouterCardRenderer.Draw(graphics, routerBounds, router, badgeFont, collapsed: true);
+        }
+
+        var barsBounds = GlassDockLayout.BarsBoundsFor(scene.Width);
+        if (scene.SystemHovered) DrawHover(graphics, RectangleF.Inflate(barsBounds, 4, 5), scene.Light);
+        DrawBars(graphics, barsBounds, scene);
+        var rateBounds = GlassDockLayout.RateBoundsFor(scene.Width);
+        var sparkBounds = GlassDockLayout.SparkBoundsFor(scene.Width);
+        if (scene.RateHovered)
+        {
+            DrawHover(graphics, RectangleF.FromLTRB(rateBounds.Left - 3, 6, sparkBounds.Right + 3, GlassDockLayout.Height - 6), scene.Light);
+        }
+
+        DrawRate(graphics, rateBounds, scene);
+        DrawSpark(graphics, sparkBounds, scene.Spark, scene.Light);
+    }
+
+    /// <summary>
+    /// Liquid-glass material: a thin tint over the DWM blur, a soft refraction highlight on the
+    /// upper half, a gradient specular rim that fades out towards the bottom (no hard white border)
+    /// and a faint dark contact edge so the pill reads on light taskbars.
+    /// </summary>
+    private static void DrawGlass(Graphics graphics, GlassDockScene scene)
+    {
+        var light = scene.Light;
+        var inset = scene.DevicePixel;
+        var bounds = new RectangleF(inset, inset, scene.Width - inset * 2, GlassDockLayout.Height - inset * 2);
+        using var path = Rounded(bounds, GlassDockLayout.Corner);
+        using (var tint = new LinearGradientBrush(
+                   bounds,
+                   light ? Color.FromArgb(150, 252, 253, 255) : Color.FromArgb(118, 52, 56, 72),
+                   light ? Color.FromArgb(118, 236, 240, 248) : Color.FromArgb(150, 14, 16, 24),
+                   LinearGradientMode.Vertical))
+        {
+            graphics.FillPath(tint, path);
+        }
+
+        var state = graphics.Save();
+        graphics.SetClip(path);
+        var sheen = new RectangleF(bounds.X - bounds.Width * .1f, bounds.Y - bounds.Height * .9f, bounds.Width * 1.2f, bounds.Height * 1.45f);
+        using (var sheenPath = new GraphicsPath())
+        {
+            sheenPath.AddEllipse(sheen);
+            using var sheenBrush = new PathGradientBrush(sheenPath)
+            {
+                CenterColor = Color.FromArgb(light ? 120 : 46, 255, 255, 255),
+                SurroundColors = [Color.FromArgb(0, 255, 255, 255)],
+                CenterPoint = new PointF(sheen.X + sheen.Width * .42f, sheen.Y + sheen.Height * .62f),
+                FocusScales = new PointF(.55f, .25f),
+            };
+            graphics.FillEllipse(sheenBrush, sheen);
+        }
+
+        var caustic = new RectangleF(bounds.X + bounds.Width * .2f, bounds.Bottom - 7, bounds.Width * .6f, 12);
+        using (var causticPath = new GraphicsPath())
+        {
+            causticPath.AddEllipse(caustic);
+            using var causticBrush = new PathGradientBrush(causticPath)
+            {
+                CenterColor = Color.FromArgb(light ? 60 : 22, 255, 255, 255),
+                SurroundColors = [Color.FromArgb(0, 255, 255, 255)],
+            };
+            graphics.FillEllipse(causticBrush, caustic);
+        }
+
+        graphics.Restore(state);
+        var rimBounds = RectangleF.Inflate(bounds, -.6f, -.6f);
+        using (var rimPath = Rounded(rimBounds, GlassDockLayout.Corner - .6f))
+        using (var rimBrush = new LinearGradientBrush(
+                   rimBounds,
+                   Color.FromArgb(light ? 210 : 96, 255, 255, 255),
+                   Color.FromArgb(light ? 40 : 6, 255, 255, 255),
+                   LinearGradientMode.Vertical))
+        {
+            rimBrush.SetSigmaBellShape(0f, 1f);
+            using var rim = new Pen(rimBrush, 1.1f);
+            graphics.DrawPath(rim, rimPath);
+        }
+
+        using var contact = new Pen(Color.FromArgb(light ? 34 : 70, 0, 0, 0), Math.Max(.5f, inset));
+        graphics.DrawPath(contact, path);
+    }
+
+    private static void DrawItem(Graphics graphics, Rectangle slot, GlassDockItemVisual item, bool light)
+    {
+        var ring = item.Ring;
+        if (item.Hovered) DrawHover(graphics, slot, light);
+        var size = GlassDockLayout.RingSize;
+        var ringBounds = new RectangleF(slot.X + 1, (GlassDockLayout.Height - size) / 2f, size, size);
+        var color = Band(ring.RemainingPercent, light);
+        var stroke = 3.4f;
+        var ellipse = RectangleF.Inflate(ringBounds, -stroke / 2, -stroke / 2);
+        using (var track = new Pen(light ? Color.FromArgb(46, 15, 23, 42) : Color.FromArgb(52, 255, 255, 255), stroke))
+        {
+            graphics.DrawEllipse(track, ellipse);
+        }
+
+        var sweep = ring.BalanceText is not null && ring.RemainingPercent is null
+            ? 360f
+            : GlassDockLayout.RingSweep(ring.RemainingPercent);
+        if (ring.BalanceText is not null && ring.RemainingPercent is null) color = Accent(ring.Accent, light);
+        if (sweep > 0)
+        {
+            using var glow = new Pen(Color.FromArgb(light ? 40 : 70, color), stroke + 2.2f);
+            using var ink = new Pen(color, stroke) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            if (sweep >= 360f)
+            {
+                graphics.DrawEllipse(glow, ellipse);
+                graphics.DrawEllipse(ink, ellipse);
+            }
+            else
+            {
+                graphics.DrawArc(glow, ellipse, -90, sweep);
+                graphics.DrawArc(ink, ellipse, -90, sweep);
+            }
+        }
+
+        var iconBounds = RectangleF.Inflate(ringBounds, -7f, -7f);
+        DrawIcon(graphics, iconBounds, item, light);
+        if (ring.AccountNumber > 0)
+        {
+            var badge = new RectangleF(ringBounds.Right - 10.5f, ringBounds.Bottom - 10.5f, 11.5f, 11.5f);
+            using var badgeFill = new SolidBrush(light ? Color.FromArgb(255, 30, 41, 59) : Color.FromArgb(255, 241, 245, 249));
+            using var badgeEdge = new Pen(light ? Color.FromArgb(230, 255, 255, 255) : Color.FromArgb(230, 15, 18, 26), 1.2f);
+            graphics.FillEllipse(badgeFill, badge);
+            graphics.DrawEllipse(badgeEdge, badge);
+            using var badgeFont = new Font("Segoe UI", 7.5f, FontStyle.Bold, GraphicsUnit.Pixel);
+            using var badgeText = new SolidBrush(light ? Color.White : Color.FromArgb(15, 23, 42));
+            DrawCentered(graphics, ring.AccountNumber.ToString(CultureInfo.InvariantCulture), badgeFont, badgeText, RectangleF.Inflate(badge, 1, 0));
+        }
+
+        var textLeft = ringBounds.Right + 3;
+        var textWidth = slot.Right - textLeft;
+        var value = ring.RemainingPercent is null && ring.BalanceText is { } balance
+            ? balance
+            : GlassDockLayout.PercentText(ring.RemainingPercent);
+        using var valueBrush = new SolidBrush(ValueColor(ring, light));
+        using var valueFont = FitFont(graphics, value, textWidth, 13.5f, 9.5f, FontStyle.Bold);
+        graphics.DrawString(value, valueFont, valueBrush, new RectangleF(textLeft - 1.5f, 6.5f, textWidth + 3, 17), Format(StringAlignment.Near));
+        using var nameFont = new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Pixel);
+        using var nameBrush = new SolidBrush(light ? Color.FromArgb(200, 30, 41, 59) : Color.FromArgb(200, 226, 232, 240));
+        graphics.DrawString(item.Name, nameFont, nameBrush, new RectangleF(textLeft - 1, 23.5f, textWidth + 2, 13), Format(StringAlignment.Near));
+    }
+
+    private static void DrawIcon(Graphics graphics, RectangleF bounds, GlassDockItemVisual item, bool light)
+    {
+        using var clip = new GraphicsPath();
+        clip.AddEllipse(bounds);
+        if (item.Icon is { } icon)
+        {
+            var state = graphics.Save();
+            graphics.SetClip(clip);
+            graphics.DrawImage(icon, RectangleF.Inflate(bounds, .5f, .5f));
+            graphics.Restore(state);
             return;
         }
 
-        graphics.DrawPolygon(pen, [
-            new PointF(bounds.Left + bounds.Width / 2f, bounds.Top + 1),
-            new PointF(bounds.Right - 1, bounds.Bottom - 1),
-            new PointF(bounds.Left + 1, bounds.Bottom - 1),
-        ]);
+        using var fill = new SolidBrush(Accent(item.Ring.Accent, light));
+        graphics.FillEllipse(fill, bounds);
+        using var font = new Font("Segoe UI", 9.5f, FontStyle.Bold, GraphicsUnit.Pixel);
+        using var text = new SolidBrush(Color.White);
+        var letter = string.IsNullOrWhiteSpace(item.Ring.Title) ? "?" : item.Ring.Title[..1].ToUpperInvariant();
+        DrawCentered(graphics, letter, font, text, bounds);
     }
 
-    private static void DrawBars(Graphics graphics, Rectangle bounds, double? cpu, double? memory, double? gpu, bool light)
+    private static void DrawChip(Graphics graphics, Rectangle bounds, GlassDockScene scene)
     {
-        double?[] values = [cpu, memory, gpu];
+        var light = scene.Light;
+        var rect = new RectangleF(bounds.X, bounds.Y, bounds.Width, bounds.Height);
+        using var path = Rounded(rect, rect.Height / 2);
+        using var fill = new SolidBrush(scene.ChipHovered
+            ? light ? Color.FromArgb(70, 15, 23, 42) : Color.FromArgb(70, 255, 255, 255)
+            : light ? Color.FromArgb(34, 15, 23, 42) : Color.FromArgb(36, 255, 255, 255));
+        graphics.FillPath(fill, path);
+        using var text = new SolidBrush(light ? Color.FromArgb(235, 15, 23, 42) : Color.FromArgb(240, 255, 255, 255));
+        using var font = new Font("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Pixel);
+        var label = scene.Expanded ? "‹" : "+" + scene.Plan.OverflowCount.ToString(CultureInfo.InvariantCulture);
+        DrawCentered(graphics, label, font, text, rect);
+        if (scene.Expanded || !scene.Plan.OverflowUrgent) return;
+        using var dot = new SolidBrush(Color.FromArgb(255, 80, 80));
+        graphics.FillEllipse(dot, rect.Right - 5, rect.Top - 1, 6, 6);
+    }
+
+    private static void DrawBars(Graphics graphics, Rectangle bounds, GlassDockScene scene)
+    {
+        double?[] values = [scene.Cpu, scene.Memory, scene.Gpu];
         for (var index = 0; index < values.Length; index++)
         {
             var x = bounds.X + index * (GlassDockLayout.BarWidth + GlassDockLayout.BarGap);
             var track = new RectangleF(x, bounds.Y, GlassDockLayout.BarWidth, bounds.Height);
-            using var trackBrush = new SolidBrush(light ? Color.FromArgb(36, 20, 24, 32) : Color.FromArgb(40, 255, 255, 255));
-            graphics.FillRectangle(trackBrush, track);
+            using var trackBrush = new SolidBrush(scene.Light ? Color.FromArgb(40, 15, 23, 42) : Color.FromArgb(46, 255, 255, 255));
+            graphics.FillRoundedRectangle(trackBrush, track, GlassDockLayout.BarWidth / 2f);
             if (values[index] is not { } value || value <= 0) continue;
             var fraction = (float)Math.Clamp(value / 100d, 0, 1);
-            var height = Math.Max(1.5f, bounds.Height * fraction);
-            using var ink = new SolidBrush(LoadColor(value));
-            graphics.FillRectangle(ink, new RectangleF(x, bounds.Bottom - height, GlassDockLayout.BarWidth, height));
+            var height = Math.Max(GlassDockLayout.BarWidth, bounds.Height * fraction);
+            using var ink = new SolidBrush(LoadColor(value, scene.Light));
+            graphics.FillRoundedRectangle(ink, new RectangleF(x, bounds.Bottom - height, GlassDockLayout.BarWidth, height), GlassDockLayout.BarWidth / 2f);
         }
     }
 
-    private static void DrawRate(Graphics graphics, Rectangle bounds, double? tokensPerSecond, bool light, bool chinese)
+    private static void DrawRate(Graphics graphics, Rectangle bounds, GlassDockScene scene)
     {
-        _ = chinese;
-        var rate = tokensPerSecond is { } value && double.IsFinite(value)
-            ? value.ToString("0", CultureInfo.InvariantCulture)
-            : "—";
-        using var font = new Font("Segoe UI", 12f, FontStyle.Bold, GraphicsUnit.Pixel);
-        using var small = new Font("Segoe UI", 8f, FontStyle.Regular, GraphicsUnit.Pixel);
-        using var text = new SolidBrush(light ? Color.FromArgb(230, 20, 24, 32) : Color.FromArgb(235, 255, 255, 255));
-        using var muted = new SolidBrush(light ? Color.FromArgb(150, 20, 24, 32) : Color.FromArgb(140, 255, 255, 255));
-        graphics.DrawString(rate, font, text, bounds.X, bounds.Y - 2);
-        graphics.DrawString("tok/s", small, muted, bounds.X, bounds.Bottom - 10);
+        var rate = BarForm.CompactOutputRate(scene.TokensPerSecond);
+        if (scene.RateEstimated && scene.TokensPerSecond is not null) rate = "~" + rate;
+        using var font = FitFont(graphics, rate, bounds.Width + 2, 13.5f, 9.5f, FontStyle.Bold);
+        using var small = new Font("Segoe UI", 8.5f, FontStyle.Regular, GraphicsUnit.Pixel);
+        var color = scene.TokensPerSecond is null
+            ? Muted(scene.Light)
+            : scene.RateEstimated
+                ? scene.Light ? Color.FromArgb(180, 110, 0) : Color.FromArgb(251, 191, 36)
+                : scene.Light ? Color.FromArgb(4, 120, 87) : Color.FromArgb(110, 231, 183);
+        using var text = new SolidBrush(color);
+        using var muted = new SolidBrush(Muted(scene.Light));
+        graphics.DrawString(rate, font, text, new RectangleF(bounds.X - 1.5f, 6.5f, bounds.Width + 4, 17), Format(StringAlignment.Near));
+        graphics.DrawString("tok/s", small, muted, new RectangleF(bounds.X - 1, 23.5f, bounds.Width + 4, 12), Format(StringAlignment.Near));
     }
 
-    private static void DrawSpark(Graphics graphics, Rectangle bounds, IReadOnlyList<double> spark)
+    private static void DrawSpark(Graphics graphics, Rectangle bounds, IReadOnlyList<double> spark, bool light)
     {
         if (spark.Count < 2) return;
         var min = spark.Min();
@@ -162,24 +297,79 @@ internal static class GlassDockPainter
             points[index] = new PointF(x, y);
         }
 
-        using var pen = new Pen(Color.FromArgb(70, 229, 154), 1.4f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+        var color = light ? Color.FromArgb(5, 150, 105) : Color.FromArgb(52, 211, 153);
+        using var pen = new Pen(color, 1.6f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
         graphics.DrawLines(pen, points);
     }
 
-    private static Color LoadColor(double value) => value switch
+    private static void DrawHover(Graphics graphics, RectangleF bounds, bool light)
     {
-        > 80 => Color.FromArgb(255, 90, 90),
-        > 50 => Color.FromArgb(245, 193, 74),
-        _ => Color.FromArgb(70, 229, 154),
-    };
-
-    private static Color Band(double? remaining)
-    {
-        var color = GlassDockLayout.BandColor(remaining);
-        return Color.FromArgb(color.R, color.G, color.B);
+        using var path = Rounded(bounds, Math.Min(10, bounds.Height / 2));
+        using var fill = new SolidBrush(light ? Color.FromArgb(30, 15, 23, 42) : Color.FromArgb(30, 255, 255, 255));
+        graphics.FillPath(fill, path);
     }
 
-    private static GraphicsPath Rounded(RectangleF bounds, float radius)
+    private static Font FitFont(Graphics graphics, string text, float width, float size, float minimum, FontStyle style)
+    {
+        while (true)
+        {
+            var font = new Font("Segoe UI", size, style, GraphicsUnit.Pixel);
+            if (size <= minimum || graphics.MeasureString(text, font, PointF.Empty, StringFormat.GenericTypographic).Width <= width) return font;
+            font.Dispose();
+            size -= .5f;
+        }
+    }
+
+    private static void DrawCentered(Graphics graphics, string text, Font font, Brush brush, RectangleF bounds) =>
+        graphics.DrawString(text, font, brush, bounds, Format(StringAlignment.Center));
+
+    private static StringFormat Format(StringAlignment alignment) => new(StringFormat.GenericTypographic)
+    {
+        Alignment = alignment,
+        LineAlignment = alignment == StringAlignment.Center ? StringAlignment.Center : StringAlignment.Near,
+        Trimming = StringTrimming.EllipsisCharacter,
+        FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces,
+    };
+
+    private static Color ValueColor(GlassDockRing ring, bool light)
+    {
+        if (ring.RemainingPercent is null) return light ? Color.FromArgb(15, 23, 42) : Color.FromArgb(248, 250, 252);
+        return Band(ring.RemainingPercent, light);
+    }
+
+    private static Color Ink(bool light) => light ? Color.FromArgb(15, 23, 42) : Color.FromArgb(255, 255, 255);
+
+    private static Color Muted(bool light) => light ? Color.FromArgb(190, 51, 65, 85) : Color.FromArgb(190, 203, 213, 225);
+
+    private static Color LoadColor(double value, bool light) => value switch
+    {
+        > 80 => light ? Color.FromArgb(220, 38, 38) : Color.FromArgb(255, 107, 107),
+        > 50 => light ? Color.FromArgb(202, 138, 4) : Color.FromArgb(252, 196, 64),
+        _ => light ? Color.FromArgb(5, 150, 105) : Color.FromArgb(52, 211, 153),
+    };
+
+    private static Color Band(double? remaining, bool light) => GlassDockLayout.Band(remaining) switch
+    {
+        "red" => light ? Color.FromArgb(220, 38, 38) : Color.FromArgb(255, 99, 99),
+        "amber" => light ? Color.FromArgb(194, 120, 3) : Color.FromArgb(252, 196, 64),
+        "green" => light ? Color.FromArgb(5, 150, 105) : Color.FromArgb(52, 220, 150),
+        _ => light ? Color.FromArgb(100, 116, 139) : Color.FromArgb(203, 213, 225),
+    };
+
+    private static Color Accent(string accent, bool light)
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(accent)) return ColorTranslator.FromHtml(accent);
+        }
+        catch (Exception error) when (error is ArgumentException or FormatException)
+        {
+        }
+
+        return light ? Color.FromArgb(79, 70, 229) : Color.FromArgb(129, 140, 248);
+    }
+
+    internal static GraphicsPath Rounded(RectangleF bounds, float radius)
     {
         var diameter = Math.Min(radius * 2, Math.Min(bounds.Width, bounds.Height));
         var path = new GraphicsPath();

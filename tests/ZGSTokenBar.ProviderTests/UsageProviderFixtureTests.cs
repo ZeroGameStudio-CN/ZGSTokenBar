@@ -317,7 +317,7 @@ public static class UsageProviderFixtureTests
         Check(rings.Count == 3, "board rings include every account");
         Check(rings.Count(ring => ring.AccountNumber > 0) == 2, "multi-account provider badges each account");
         var plan = GlassDockLayout.Plan(rings);
-        Check(plan.Width == GlassDockLayout.Width && plan.Height == GlassDockLayout.Height, "dock size is fixed");
+        Check(plan.Width == GlassDockLayout.WidthFor(3, false) && plan.Width < GlassDockLayout.Width && plan.Height == GlassDockLayout.Height, "dock fits its rings");
         Check(plan.Visible[0].RemainingPercent == 30, "tightest remaining leads");
         Check(plan.OverflowCount == 0, "three accounts fit");
         var many = Enumerable.Range(0, 12).Select(index => new GlassDockRing(
@@ -331,13 +331,16 @@ public static class UsageProviderFixtureTests
             "#10a37f")).ToArray();
         var bounded = GlassDockLayout.Plan(many);
         var single = GlassDockLayout.Plan(many.Take(1).ToArray());
-        Check(bounded.Width == single.Width && bounded.Width == 294, "width does not grow with providers");
+        Check(bounded.Width == GlassDockLayout.Width && single.Width < bounded.Width, "width is capped however many providers report");
         Check(bounded.Visible.Count == 4 && bounded.OverflowCount == 8, "four rings then +N");
         Check(bounded.Visible[0].RemainingPercent == 80 - 11, "tightest of the long list is first");
         Check(bounded.Slots.Count == 5 && bounded.Slots[^1].Chip, "overflow chip is laid out");
         Check(bounded.Slots.All(slot => slot.Bounds.Right <= GlassDockLayout.SystemLeft - GlassDockLayout.DividerGap), "rings stay left of the system cluster");
         var limited = GlassDockLayout.Plan(many, 2);
-        Check(limited.Visible.Count == 2 && limited.OverflowCount == 10 && limited.Width == 294, "ring limit is configurable");
+        Check(limited.Visible.Count == 2 && limited.OverflowCount == 10 && limited.Width == GlassDockLayout.WidthFor(2, true), "ring limit is configurable");
+        var expanded = GlassDockLayout.PlanExpanded(many);
+        Check(expanded.Visible.Count == 12 && expanded.OverflowCount == 0 && expanded.Width == GlassDockLayout.WidthFor(12, true) && expanded.Slots[^1].Chip, "+N expands to every ring");
+        Check(GlassDockLayout.RingSweep(4) >= 22f && GlassDockLayout.RingSweep(0) == 0f && GlassDockLayout.RingSweep(null) == 0f && GlassDockLayout.PercentText(4.4) == "4%", "small remaining stays legible");
         Check(GlassDockLayout.Band(19) == "red" && GlassDockLayout.Band(20) == "amber" && GlassDockLayout.Band(50) == "amber" && GlassDockLayout.Band(51) == "green", "quota bands");
         var quota = GlassDockComposer.FromQuota(
             [
