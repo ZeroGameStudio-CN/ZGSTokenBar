@@ -336,6 +336,8 @@ public static class UsageProviderFixtureTests
         Check(bounded.Visible[0].RemainingPercent == 80 - 11, "tightest of the long list is first");
         Check(bounded.Slots.Count == 5 && bounded.Slots[^1].Chip, "overflow chip is laid out");
         Check(bounded.Slots.All(slot => slot.Bounds.Right <= GlassDockLayout.SystemLeft - GlassDockLayout.DividerGap), "rings stay left of the system cluster");
+        Check(bounded.Slots.Where(slot => !slot.Chip).All(slot => slot.Bounds.Width <= GlassDockLayout.RingSize + 4) && GlassDockLayout.WidthFor(4, false) - GlassDockLayout.WidthFor(3, false) == GlassDockLayout.ItemWidth + GlassDockLayout.RingGap, "percent sits inside the ring so N rings take about N ring widths");
+        Check(GlassDockLayout.BarsBounds.Height >= GlassDockLayout.MetricsRows * 7 && GlassDockLayout.RateBounds.Left >= GlassDockLayout.BarsBounds.Right, "four labelled system rows sit before the tok/s readout");
         var limited = GlassDockLayout.Plan(many, 2);
         Check(limited.Visible.Count == 2 && limited.OverflowCount == 10 && limited.Width == GlassDockLayout.WidthFor(2, true), "ring limit is configurable");
         var expanded = GlassDockLayout.PlanExpanded(many);

@@ -114,7 +114,6 @@ internal sealed partial class BarForm : Form
     private readonly bool _glassDock = true;
     private UsageBoard _usageBoard = UsageBoard.Empty;
     private int _glassMaxRings = GlassDockLayout.MaxVisibleRings;
-    private readonly Queue<double> _glassRates = new();
     private ContextMenuStrip? _glassMenu;
     private bool _glassExpanded;
     private bool _glassChipHovered;
@@ -338,6 +337,21 @@ internal sealed partial class BarForm : Form
     internal bool IsRadarResetTimerEnabled => _radarResetTimer.Enabled;
     internal int RadarResetTimerInterval => _radarResetTimer.Interval;
     internal void SetGlassExpandedForAcceptance(bool expanded) => SetGlassExpanded(expanded);
+
+    /// <summary>Renders the hover popover a glass ring opens, or null when the ring has no scoped quota card.</summary>
+    internal Bitmap? RenderGlassRingPopoverForAcceptance(string providerId, int dpi, DateTimeOffset now)
+    {
+        var item = BuildGlassItems().FirstOrDefault(entry => string.Equals(entry.Ring.ProviderId, providerId, StringComparison.Ordinal));
+        if (item?.Card is not { } card || item.Window is not { } window) return null;
+        using var popover = new QuotaPopoverForm();
+        return popover.RenderForTest(
+            new QuotaPopoverContent(card, window, null, card.CapturedAt ?? now, null, false),
+            _text,
+            item.Logo ?? ProviderLogo(card.Provider),
+            _resetClockIcon,
+            dpi,
+            now);
+    }
     internal int CodexPoolAccountCountForAcceptance => _taskbarContentAreas
         .FirstOrDefault(area => area.Group?.IsCodexPool == true)
         ?.Group?.Cards.Count ?? 0;
@@ -675,7 +689,6 @@ internal sealed partial class BarForm : Form
     {
         var first = _systemUsage.OutputRateCapturedAt is null;
         _systemUsage = _systemUsage with { ObservedOutputTokensPerSecond = rate.Total, OutputRateCapturedAt = rate.CapturedAt, LiveRate = rate };
-        RememberRate(rate.Total);
         if (first) ApplySnapshotLayout();
         Invalidate();
     }
@@ -684,7 +697,6 @@ internal sealed partial class BarForm : Form
     {
         snapshot = snapshot with { ObservedOutputTokensPerSecond = _systemUsage.ObservedOutputTokensPerSecond, OutputRateCapturedAt = _systemUsage.OutputRateCapturedAt, LiveRate = _systemUsage.LiveRate, CumulativeTokens = _codexTokenUsage?.LocalTokens };
         _systemUsage = snapshot;
-        RememberRate(snapshot.CurrentOutputRate);
         if (_systemUsagePopover?.Visible == true)
         {
             var previousHeight = _systemUsagePopover.CurrentLogicalBodyHeight;
@@ -4965,7 +4977,7 @@ internal sealed partial class BarForm : Form
         _quotaPopover ??= new QuotaPopoverForm();
         _quotaPopover.ApplyTheme(_backgroundTheme);
         var anchor = QuotaTargetScreenBounds(target.Bounds);
-        var logo = ProviderLogo(target.Card.Provider);
+        var logo = target.Logo ?? ProviderLogo(target.Card.Provider);
         _quotaPopover.ShowFor(
             this,
             anchor,
@@ -5392,13 +5404,6 @@ internal sealed partial class BarForm : Form
     private static int NormalizeGlassMax(int value) =>
         value <= 0 ? GlassDockLayout.MaxVisibleRings : Math.Clamp(value, 1, 8);
 
-    private void RememberRate(double? rate)
-    {
-        if (rate is not { } value || !double.IsFinite(value) || value < 0) return;
-        _glassRates.Enqueue(value);
-        while (_glassRates.Count > 24) _glassRates.Dequeue();
-    }
-
     private bool GlassPrefersLight()
     {
         if (!OperatingSystem.IsWindows()) return false;
@@ -5422,7 +5427,8 @@ internal sealed partial class BarForm : Form
         Image? Icon,
         QuotaCard? Card,
         QuotaWindow? Window,
-        PluginMiniCardView? Plugin);
+        PluginMiniCardView? Plugin,
+        Image? Logo = null);
 
     /// <summary>
     /// Builds one ring per provider account that currently reports usage. Accounts and plugins
@@ -5483,11 +5489,49 @@ internal sealed partial class BarForm : Form
             }
             if (remaining is null && balance is null) continue;
             var accent = view.Card.AccentToken is { Length: 7 } token && token[0] == '#' ? token : "#8b5cf6";
-            var ring = new GlassDockRing(view.PluginId, view.Title, view.Title, 0, remaining, null, balance, accent);
-            items.Add(new GlassItem(ring, view.Title, GlassPluginIcon(view), null, null, view));
+            var icon = GlassPluginIcon(view);
+            var quota = remaining is not null ? GlassPluginQuota(view) : null;
+            var ring = new GlassDockRing(view.PluginId, view.Title, view.Title, 0, remaining, quota?.Window.ResetsAt, balance, accent);
+            items.Add(quota is { } scoped
+                ? new GlassItem(ring, view.Title, icon, scoped.Card, scoped.Window, null, icon)
+                : new GlassItem(ring, view.Title, icon, null, null, view));
         }
 
         return items;
+    }
+
+    /// <summary>
+    /// Projects a usage-board provider (Grok, Cursor, …) onto the same quota card/window shape the
+    /// Codex and Claude rings use, so hovering its ring opens the shared per-ring quota popover
+    /// scoped to that provider's own account instead of the combined usage board.
+    /// </summary>
+    private (QuotaCard Card, QuotaWindow Window)? GlassPluginQuota(PluginMiniCardView view)
+    {
+        var provider = _usageBoard.Providers.FirstOrDefault(item => string.Equals(item.ProviderId, view.PluginId, StringComparison.Ordinal));
+        if (provider is null) return null;
+        foreach (var account in provider.Accounts)
+        {
+            var window = account.Windows.Where(item => item.UsedPercent is not null && !item.Unlimited)
+                .OrderByDescending(item => item.UsedPercent)
+                .FirstOrDefault();
+            if (window is null) continue;
+            var quotaWindow = new QuotaWindow(window.Label, window.UsedPercent, window.ResetsAt, window.Duration ?? TimeSpan.Zero);
+            var card = new QuotaCard(
+                "usage:" + provider.ProviderId + ":" + account.AccountId,
+                ProviderKind.Claude,
+                view.Title,
+                account.Plan,
+                string.IsNullOrWhiteSpace(provider.Accent) ? "#8b5cf6" : provider.Accent,
+                true,
+                [quotaWindow])
+            {
+                CapturedAt = account.SampledAt,
+                AccountHint = string.Equals(account.Label, view.Title, StringComparison.OrdinalIgnoreCase) ? null : account.Label,
+            };
+            return (card, quotaWindow);
+        }
+
+        return null;
     }
 
     private static string GlassAccountName(QuotaCard card, int ordinal)
@@ -5509,7 +5553,8 @@ internal sealed partial class BarForm : Form
         if (_glassIcons.TryGetValue(view.PluginId, out var cached)) return cached;
         var resource = view.PluginId switch
         {
-            UsageProviderIds.Grok or UsageProviderIds.Xai => "xai-official-icon.png",
+            UsageProviderIds.Grok => "grok-official-icon.png",
+            UsageProviderIds.Xai => "xai-official-icon.png",
             UsageProviderIds.Antigravity => "antigravity-official-icon.png",
             UsageProviderIds.Cursor => "cursor-official-icon.png",
             UsageProviderIds.OpenCode => "opencode-official-icon.png",
@@ -5583,7 +5628,7 @@ internal sealed partial class BarForm : Form
             var hovered = false;
             if (item.Card is { } card && item.Window is { } window)
             {
-                var target = new MiniQuotaTarget(bounds, card, window);
+                var target = new MiniQuotaTarget(bounds, card, window, null, item.Logo);
                 _taskbarWindowBounds.Add(target);
                 _cardBounds.Add((bounds, card));
                 hovered = string.Equals(_hoverQuotaTarget?.Id, target.Id, StringComparison.Ordinal);
@@ -5600,10 +5645,9 @@ internal sealed partial class BarForm : Form
         var routerBounds = GlassDockLayout.RouterBoundsFor(width);
         if (router is not null) _taskbarPluginBounds.Add((routerBounds, router));
         var bars = GlassDockLayout.BarsBoundsFor(width);
-        _systemUsageBounds = _showSystemMetrics ? RectangleF.Inflate(bars, 4, 5) : RectangleF.Empty;
+        _systemUsageBounds = _showSystemMetrics ? RectangleF.Inflate(bars, 4, 3) : RectangleF.Empty;
         var rate = GlassDockLayout.RateBoundsFor(width);
-        var spark = GlassDockLayout.SparkBoundsFor(width);
-        _liveMetricsBounds = RectangleF.FromLTRB(rate.Left - 3, 6, spark.Right + 3, GlassDockLayout.Height - 6);
+        _liveMetricsBounds = RectangleF.Inflate(rate, 3, 3);
         var scene = new GlassDockScene(
             light,
             width,
@@ -5616,12 +5660,12 @@ internal sealed partial class BarForm : Form
             router is not null && _hoverPluginTarget?.Card.PluginId == MiniAreaIds.Router,
             _systemUsage.CpuPercent,
             _systemUsage.MemoryPercent,
+            _systemUsage.DiskActivePercent,
             _systemUsage.GpuPercent,
             _hoverSystemUsage && !_systemAnchorIsLive,
             _systemUsage.CurrentOutputRate,
             _systemUsage.CurrentOutputRate is not null && _systemUsage.LiveRate?.HasEstimate == true,
-            _hoverSystemUsage && _systemAnchorIsLive,
-            _glassRates.ToArray());
+            _hoverSystemUsage && _systemAnchorIsLive);
         GlassDockPainter.Draw(graphics, scene, _badgeFont);
     }
 
@@ -6398,7 +6442,8 @@ internal sealed partial class BarForm : Form
         RectangleF Bounds,
         QuotaCard Card,
         QuotaWindow Window,
-        string? IdOverride = null)
+        string? IdOverride = null,
+        Image? Logo = null)
     {
         public string Id { get; } = IdOverride ?? WindowKey(Card.Key, Window.Label);
         public string PaceKey { get; } = QuotaPaceTracker.SeriesKey(Card, Window);

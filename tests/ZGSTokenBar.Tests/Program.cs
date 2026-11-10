@@ -8789,9 +8789,129 @@ static void RenderQuotaTokenEstimateCaptures(string outputDirectory)
     }
 }
 
+static void RenderGrokHoverCapture(string outputDirectory)
+{
+    var now = DateTimeOffset.Parse("2026-11-10T15:00:00Z", CultureInfo.InvariantCulture);
+    var grok = new UsageProviderSnapshot(UsageProviderIds.Grok, "Grok", "#111111", 40,
+    [
+        new UsageAccountSnapshot("grok-account", "user@example.test", "SuperGrok", "billing",
+            [new UsageWindow("credits", "Weekly", 18, now.AddDays(3), TimeSpan.FromDays(7))],
+            null, null, [], UsageFreshness.Current, now, null),
+    ]);
+    using var form = new BarForm(
+        new AppSettings { Locale = "zh-CN", UseTaskbarRings = true, EnableAnimations = false, EnableRadar = false },
+        TaskbarMiniCaptureSnapshot(true, 1),
+        renderOnly: true,
+        renderDpi: 192);
+    form.SetUsageBoard(new UsageBoard([grok]));
+    form.SetPluginMiniCards([new PluginMiniCardView(UsageProviderIds.Grok, "Grok", UsageProjection.MiniCard(grok, true), new Dictionary<string, string>(StringComparer.Ordinal))]);
+    using var bitmap = form.RenderGlassRingPopoverForAcceptance(UsageProviderIds.Grok, 192, now);
+    Equal(true, bitmap is not null, "the Grok ring hovers into the shared per-ring quota popover");
+    var path = Path.Combine(outputDirectory, "glass-grok-hover-popover-192dpi.png");
+    bitmap!.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+    Console.WriteLine($"{path} {bitmap.Width}x{bitmap.Height}");
+}
+
+static void RenderRingVariantsCapture(string outputDirectory)
+{
+    static Image Asset(string name)
+    {
+        using var stream = typeof(BarForm).Assembly.GetManifestResourceStream("ZGSTokenBar.App.Assets." + name)
+            ?? throw new InvalidOperationException("missing asset " + name);
+        using var source = Image.FromStream(stream);
+        return new Bitmap(source);
+    }
+
+    using var openAi = Asset("openai-official-ios-icon.png");
+    using var claude = Asset("claude-icon-rounded.png");
+    using var grokIcon = Asset("grok-official-icon.png");
+    using var cursorIcon = Asset("cursor-official-icon.png");
+    var rings = new[]
+    {
+        (Ring: new GlassDockRing(UsageProviderIds.Codex, "Codex", "a", 1, 13, null, null, "#10a37f"), Icon: (Image)openAi),
+        (Ring: new GlassDockRing(UsageProviderIds.Codex, "Codex", "b", 2, 64, null, null, "#10a37f"), Icon: (Image)openAi),
+        (Ring: new GlassDockRing(UsageProviderIds.Claude, "Claude", "c", 0, 52, null, null, "#d97757"), Icon: (Image)claude),
+        (Ring: new GlassDockRing(UsageProviderIds.Grok, "Grok", "g", 0, 82, null, null, "#111111"), Icon: (Image)grokIcon),
+    };
+    var plan = GlassDockLayout.Plan(rings.Select(item => item.Ring).ToArray());
+    var visuals = plan.Visible.Select(ring => new GlassDockItemVisual(ring, rings.First(item => ReferenceEquals(item.Ring, ring)).Icon, ring.Title, false)).ToArray();
+    (GlassRingStyle Style, string Label)[] variants =
+    [
+        (GlassRingStyle.Watermark, "A  水印 26%（默认）"),
+        (GlassRingStyle.WatermarkFaint, "B  水印 16%（更淡）"),
+        (GlassRingStyle.WatermarkStrong, "C  水印 38%（更明显）"),
+        (GlassRingStyle.IconPercentBelow, "D  图标在环内 + 百分比在环下"),
+    ];
+    const int scale = 2;
+    const int labelWidth = 190;
+    var rowHeight = GlassDockLayout.Height + 16;
+    using var bitmap = new Bitmap((labelWidth + plan.Width * 2 + 40) * scale, (variants.Length * rowHeight + 30) * scale);
+    using var graphics = Graphics.FromImage(bitmap);
+    graphics.Clear(Color.FromArgb(24, 24, 28));
+    using var labelFont = new Font("Microsoft YaHei UI", 11f, FontStyle.Bold, GraphicsUnit.Pixel);
+    using var headerFont = new Font("Microsoft YaHei UI", 10f, FontStyle.Regular, GraphicsUnit.Pixel);
+    using var labelBrush = new SolidBrush(Color.FromArgb(235, 240, 245));
+    graphics.ScaleTransform(scale, scale);
+    graphics.DrawString("深色任务栏", headerFont, labelBrush, labelWidth, 6);
+    graphics.DrawString("浅色任务栏", headerFont, labelBrush, labelWidth + plan.Width + 20, 6);
+    using var darkTaskbar = new SolidBrush(Color.FromArgb(32, 32, 32));
+    using var lightTaskbar = new SolidBrush(Color.FromArgb(238, 240, 244));
+    using var badgeFont = new Font("Segoe UI", 8f, FontStyle.Bold, GraphicsUnit.Pixel);
+    for (var index = 0; index < variants.Length; index++)
+    {
+        var top = 24 + index * rowHeight;
+        graphics.DrawString(variants[index].Label, labelFont, labelBrush, 8, top + 14);
+        for (var theme = 0; theme < 2; theme++)
+        {
+            var light = theme == 1;
+            var left = labelWidth + theme * (plan.Width + 20);
+            graphics.FillRectangle(light ? lightTaskbar : darkTaskbar, left - 6, top - 4, plan.Width + 12, GlassDockLayout.Height + 8);
+            var state = graphics.Save();
+            graphics.TranslateTransform(left, top);
+            var scene = new GlassDockScene(light, plan.Width, 1f / scale, plan, visuals, false, false, null, false,
+                18, 46, 7, 13, false, 122.5, false, false, variants[index].Style);
+            GlassDockPainter.Draw(graphics, scene, badgeFont);
+            graphics.Restore(state);
+        }
+    }
+
+    var path = Path.Combine(outputDirectory, "ring-variants.png");
+    bitmap.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+    Console.WriteLine($"{path} {bitmap.Width}x{bitmap.Height}");
+}
+
+static void RenderRouterGlyphCaptures(string outputDirectory)
+{
+    (string State, long Queued)[] states = [("unknown", 0), ("unknown", 2), ("waiting", 0), ("attention", 0), ("running", 0), ("running", 1), ("idle", 0), ("offline", 0)];
+    const int scale = 4;
+    var cell = GlassDockLayout.RouterSize;
+    using var bitmap = new Bitmap(states.Length * (cell + 6) * scale, (cell + 6) * scale);
+    using var graphics = Graphics.FromImage(bitmap);
+    graphics.Clear(Color.FromArgb(32, 33, 40));
+    graphics.ScaleTransform(scale, scale);
+    using var badgeFont = new Font("Segoe UI", 8f, FontStyle.Bold, GraphicsUnit.Pixel);
+    using var guide = new Pen(Color.FromArgb(60, 255, 255, 255), 1f / scale);
+    for (var index = 0; index < states.Length; index++)
+    {
+        var bounds = new RectangleF(3 + index * (cell + 6), 3, cell, cell);
+        graphics.DrawLine(guide, bounds.Left + bounds.Width / 2, bounds.Top, bounds.Left + bounds.Width / 2, bounds.Bottom);
+        graphics.DrawLine(guide, bounds.Left, bounds.Top + bounds.Height / 2, bounds.Right, bounds.Top + bounds.Height / 2);
+        var card = new MiniCardContribution("card.router", MiniAreaIds.Router, "router", ContributionKind.Metric, 0, "Router", "router.icon", "accent.router",
+            [new("router.state", new("text", Text: states[index].State), states[index].State), new("router.queued", new("integer", Integer: states[index].Queued))]);
+        RouterCardRenderer.Draw(graphics, bounds, card, badgeFont, collapsed: true);
+    }
+
+    var path = Path.Combine(outputDirectory, "router-glyph-states-4x.png");
+    bitmap.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+    Console.WriteLine($"{path} {bitmap.Width}x{bitmap.Height}");
+}
+
 static void RenderGlassOverflowCaptures(string outputDirectory)
 {
     Directory.CreateDirectory(outputDirectory);
+    RenderRouterGlyphCaptures(outputDirectory);
+    RenderGrokHoverCapture(outputDirectory);
+    RenderRingVariantsCapture(outputDirectory);
     var overflowAccounts = Enumerable.Range(1, 4)
         .Select(index => new CodexAccountInfo($"account-{index}", $"user{index}@example.test", "pro", index == 1))
         .ToArray();

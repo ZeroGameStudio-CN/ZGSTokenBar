@@ -38,6 +38,7 @@
     <EmbeddedResource Include="Assets\opencode-official-icon.png" LogicalName="ZGSTokenBar.App.Assets.opencode-official-icon.png" />
     <EmbeddedResource Include="Assets\openrouter-official-icon.png" LogicalName="ZGSTokenBar.App.Assets.openrouter-official-icon.png" />
     <EmbeddedResource Include="Assets\xai-official-icon.png" LogicalName="ZGSTokenBar.App.Assets.xai-official-icon.png" />
+    <EmbeddedResource Include="Assets\grok-official-icon.png" LogicalName="ZGSTokenBar.App.Assets.grok-official-icon.png" />
   </ItemGroup>
   <ItemGroup Condition="'$(BundledPluginPackage)' != ''">
     <EmbeddedResource Include="$(BundledPluginPackage)"

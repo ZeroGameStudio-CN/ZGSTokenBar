@@ -33,8 +33,7 @@ internal static class RouterCardRenderer
                 break;
             case "attention":
                 graphics.DrawPolygon(pen, [new PointF(icon.Left + size / 2, icon.Top), new PointF(icon.Right, icon.Bottom), new PointF(icon.Left, icon.Bottom)]);
-                graphics.DrawLine(pen, icon.Left + size / 2, icon.Top + 7, icon.Left + size / 2, icon.Top + 12);
-                graphics.FillEllipse(fill, icon.Left + size / 2 - 1, icon.Bottom - 5, 2, 2);
+                DrawCenteredGlyph(graphics, "!", new RectangleF(icon.Left, icon.Top + size * .36f, size, size * .6f), fill);
                 break;
             default:
                 graphics.DrawEllipse(pen, icon);
@@ -42,7 +41,7 @@ internal static class RouterCardRenderer
                 { graphics.DrawLine(pen, icon.Left + size / 2, icon.Top + 4, icon.Left + size / 2, icon.Top + size / 2); graphics.DrawLine(pen, icon.Left + size / 2, icon.Top + size / 2, icon.Right - 4, icon.Top + size / 2); }
                 else if (state == "offline") graphics.DrawLine(pen, icon.Left + 3, icon.Bottom - 3, icon.Right - 3, icon.Top + 3);
                 else if (state != "idle")
-                { graphics.DrawArc(pen, icon.Left + 6, icon.Top + 4, 8, 7, 200, 250); graphics.FillEllipse(fill, icon.Left + 10, icon.Bottom - 5, 2, 2); }
+                    DrawCenteredGlyph(graphics, "?", icon, fill);
                 break;
         }
         if (queued > 0)
@@ -71,5 +70,24 @@ internal static class RouterCardRenderer
                 detailFont ?? badgeFont, muted, textBounds, format);
         }
         graphics.Restore(saved);
+    }
+
+    /// <summary>
+    /// Draws a glyph optically centred inside <paramref name="icon"/> using its real outline bounds,
+    /// so the mark sits in the middle of the circle at every DPI instead of relying on hand-tuned offsets.
+    /// </summary>
+    private static void DrawCenteredGlyph(Graphics graphics, string glyph, RectangleF icon, Brush brush)
+    {
+        using var path = new GraphicsPath();
+        using var family = new FontFamily("Segoe UI");
+        path.AddString(glyph, family, (int)FontStyle.Bold, icon.Height * .66f, PointF.Empty, StringFormat.GenericTypographic);
+        var glyphBounds = path.GetBounds();
+        if (glyphBounds.Width <= 0 || glyphBounds.Height <= 0) return;
+        using var move = new Matrix();
+        move.Translate(
+            icon.Left + icon.Width / 2 - (glyphBounds.Left + glyphBounds.Width / 2),
+            icon.Top + icon.Height / 2 - (glyphBounds.Top + glyphBounds.Height / 2));
+        path.Transform(move);
+        graphics.FillPath(brush, path);
     }
 }

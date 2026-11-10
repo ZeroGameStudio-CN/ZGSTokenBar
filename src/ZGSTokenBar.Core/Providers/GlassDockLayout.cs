@@ -41,23 +41,22 @@ public sealed record GlassDockProviderGroup(
 public static class GlassDockLayout
 {
     public const int Height = 44;
-    public const int Corner = 16;
+    public const int Corner = 18;
     public const int MaxVisibleRings = 4;
-    public const int RingSize = 30;
-    public const int ItemWidth = 60;
-    public const int RingGap = 2;
+    public const int RingSize = 34;
+    public const int ItemWidth = 36;
+    public const int RingGap = 3;
     public const int PadLeft = 6;
-    public const int PadRight = 8;
+    public const int PadRight = 10;
     public const int ChipWidth = 24;
     public const int ChipGap = 4;
-    public const int DividerGap = 10;
-    public const int SystemWidth = 118;
+    public const int DividerGap = 13;
     public const int RouterSize = 26;
-    public const int BarWidth = 5;
-    public const int BarGap = 3;
-    public const int BarHeight = 22;
-    public const int SparkWidth = 26;
-    public const int SparkHeight = 14;
+    public const int ModuleGap = 7;
+    public const int MetricsWidth = 54;
+    public const int MetricsRows = 4;
+    public const int RateWidth = 36;
+    public const int SystemWidth = RouterSize + ModuleGap + MetricsWidth + ModuleGap + RateWidth;
     public const int FlyoutWidth = 316;
     public const int Width = PadLeft + MaxVisibleRings * ItemWidth + (MaxVisibleRings - 1) * RingGap
         + ChipGap + ChipWidth + DividerGap + SystemWidth + PadRight;
@@ -73,33 +72,26 @@ public static class GlassDockLayout
 
     public static Rectangle RouterBoundsFor(int width) => new(
         SystemLeftFor(width),
-        (Height - 36) / 2,
+        (Height - RouterSize) / 2,
         RouterSize,
-        36);
+        RouterSize);
 
     public static Rectangle RouterBounds => RouterBoundsFor(Width);
 
-    public static Rectangle BarsBoundsFor(int width)
-    {
-        var barsWidth = BarWidth * 3 + BarGap * 2;
-        return new Rectangle(SystemLeftFor(width) + RouterSize + 5, (Height - BarHeight) / 2, barsWidth, BarHeight);
-    }
+    /// <summary>CPU / RAM / I/O / GPU rows, matching the four metrics of the classic system card.</summary>
+    public static Rectangle BarsBoundsFor(int width) => new(
+        SystemLeftFor(width) + RouterSize + ModuleGap,
+        (Height - 32) / 2,
+        MetricsWidth,
+        32);
 
     public static Rectangle BarsBounds => BarsBoundsFor(Width);
 
-    public static Rectangle SparkBoundsFor(int width) => new(
-        width - PadRight - SparkWidth,
-        (Height - SparkHeight) / 2,
-        SparkWidth,
-        SparkHeight);
-
-    public static Rectangle SparkBounds => SparkBoundsFor(Width);
-
-    public static Rectangle RateBoundsFor(int width)
-    {
-        var left = BarsBoundsFor(width).Right + 6;
-        return new Rectangle(left, 8, Math.Max(8, SparkBoundsFor(width).Left - 3 - left), Height - 16);
-    }
+    public static Rectangle RateBoundsFor(int width) => new(
+        width - PadRight - RateWidth,
+        (Height - 26) / 2,
+        RateWidth,
+        26);
 
     public static Rectangle RateBounds => RateBoundsFor(Width);
 
@@ -180,14 +172,14 @@ public static class GlassDockLayout
         .ThenBy(ring => ring.AccountLabel, StringComparer.Ordinal)
         .ToArray();
 
-    /// <summary>Item slots: each ring slot spans the ring plus its percentage/name text column.</summary>
+    /// <summary>Item slots: each ring carries its percentage inside, so a slot is only the ring footprint.</summary>
     public static IReadOnlyList<GlassDockSlot> Slots(int visibleCount, bool overflow)
     {
         var slots = new List<GlassDockSlot>(visibleCount + 1);
         var x = PadLeft;
         for (var index = 0; index < visibleCount; index++)
         {
-            slots.Add(new GlassDockSlot(new Rectangle(x, 3, ItemWidth, Height - 6), false));
+            slots.Add(new GlassDockSlot(new Rectangle(x, (Height - RingSize) / 2 - 1, ItemWidth, RingSize + 2), false));
             x += ItemWidth + RingGap;
         }
 

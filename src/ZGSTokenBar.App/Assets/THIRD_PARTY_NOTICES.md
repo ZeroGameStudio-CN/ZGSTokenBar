@@ -3,7 +3,8 @@
 - `claude-icon-rounded.png` is the unmodified Claude icon from Anthropic's official press kit: <https://www.anthropic.com/news>
 - `openai-official-ios-icon.png` is the unmodified official OpenAI/ChatGPT app icon published by OpenAI: <https://help.openai.com/en/articles/7905742-what-does-the-official-chatgpt-ios-app-icon-look-like>
 - `deepseek-whale-icon.png` is the DeepSeek whale mark downloaded from DeepSeek's official site favicon: <https://www.deepseek.com/favicon.ico>
-- `xai-official-icon.png` is the xAI mark from xAI's official site favicon (<https://x.ai/favicon.ico>), also used for Grok.
+- `xai-official-icon.png` is the xAI mark from xAI's official site favicon (<https://x.ai/favicon.ico>).
+- `grok-official-icon.png` is the Grok mark (white on black, as in the Grok app icon) rasterized from the `grok` SVG of LobeHub Icons (MIT License, <https://github.com/lobehub/lobe-icons>, <https://unpkg.com/@lobehub/icons-static-svg/icons/grok.svg>).
 - `antigravity-official-icon.png` is Google Antigravity's official site icon (<https://antigravity.google/apple-touch-icon.png>).
 - `cursor-official-icon.png` is Cursor's official site icon (<https://cursor.com/apple-touch-icon.png>).
 - `opencode-official-icon.png` is OpenCode's official site icon (<https://opencode.ai/apple-touch-icon.png>).

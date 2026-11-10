@@ -7,7 +7,7 @@ public static class GlassDockSvg
 {
     public static string Pill(GlassDockPlan plan, bool light, double? tokensPerSecond, bool routerWarning, IReadOnlyList<double>? bars = null)
     {
-        bars ??= [18, 46, 13];
+        bars ??= [18, 46, 7, 13];
         var svg = new StringBuilder();
         svg.Append("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"640\" height=\"120\" viewBox=\"0 0 640 120\">");
         svg.Append(light
@@ -29,14 +29,7 @@ public static class GlassDockSvg
             if (index >= plan.Visible.Count) continue;
             var ring = plan.Visible[index];
             var ringY = y + (GlassDockLayout.Height - GlassDockLayout.RingSize) / 2;
-            Ring(svg, x + slot.Bounds.X, ringY, GlassDockLayout.RingSize, ring, light);
-            var textX = x + slot.Bounds.X + GlassDockLayout.RingSize + 3;
-            svg.Append("<text x=\"").Append(textX).Append("\" y=\"").Append(y + 21).Append("\" fill=\"").Append(light ? "#1c2430" : "#ffffff")
-                .Append("\" font-family=\"Segoe UI, sans-serif\" font-size=\"12\" font-weight=\"700\">")
-                .Append(Escape(ring.BalanceText ?? GlassDockLayout.PercentText(ring.RemainingPercent))).Append("</text>");
-            svg.Append("<text x=\"").Append(textX).Append("\" y=\"").Append(y + 32).Append("\" fill=\"").Append(light ? "rgba(28,36,48,.6)" : "rgba(255,255,255,.6)")
-                .Append("\" font-family=\"Segoe UI, sans-serif\" font-size=\"8.5\">")
-                .Append(Escape(ring.AccountNumber > 0 ? "#" + ring.AccountNumber.ToString(CultureInfo.InvariantCulture) : ring.Title)).Append("</text>");
+            Ring(svg, x + slot.Bounds.X + (slot.Bounds.Width - GlassDockLayout.RingSize) / 2, ringY, GlassDockLayout.RingSize, ring, light);
         }
 
         var dividerX = x + GlassDockLayout.SystemLeft - 6;
@@ -45,10 +38,9 @@ public static class GlassDockSvg
         Bars(svg, x + GlassDockLayout.BarsBounds.X, y + GlassDockLayout.BarsBounds.Y, bars);
         var rate = tokensPerSecond is { } value ? value.ToString("0", CultureInfo.InvariantCulture) : "—";
         var rateX = x + GlassDockLayout.RateBounds.X;
-        var rateY = y + 18;
+        var rateY = y + GlassDockLayout.RateBounds.Y + 13;
         svg.Append("<text x=\"").Append(rateX).Append("\" y=\"").Append(rateY).Append("\" fill=\"").Append(light ? "#1c2430" : "rgba(255,255,255,.92)").Append("\" font-family=\"Segoe UI, sans-serif\" font-size=\"13\" font-weight=\"650\">").Append(rate).Append("</text>");
         svg.Append("<text x=\"").Append(rateX).Append("\" y=\"").Append(rateY + 11).Append("\" fill=\"").Append(light ? "rgba(28,36,48,.55)" : "rgba(255,255,255,.55)").Append("\" font-family=\"Segoe UI, sans-serif\" font-size=\"8\">tok/s</text>");
-        Spark(svg, x + GlassDockLayout.SparkBounds.X, y + GlassDockLayout.SparkBounds.Y);
         svg.Append("</svg>");
         return svg.ToString();
     }
@@ -84,7 +76,7 @@ public static class GlassDockSvg
         }
 
         svg.Append("<text x=\"32\" y=\"").Append(y + 16).Append("\" fill=\"rgba(255,255,255,.62)\" font-family=\"Segoe UI, sans-serif\" font-size=\"10\">系统</text>");
-        svg.Append("<text x=\"32\" y=\"").Append(y + 36).Append("\" fill=\"rgba(255,255,255,.88)\" font-family=\"Segoe UI, sans-serif\" font-size=\"11\">CPU 18%   RAM 46%   GPU 13%</text>");
+        svg.Append("<text x=\"32\" y=\"").Append(y + 36).Append("\" fill=\"rgba(255,255,255,.88)\" font-family=\"Segoe UI, sans-serif\" font-size=\"11\">CPU 18%   RAM 46%   I/O 7%   GPU 13%</text>");
         svg.Append("<text x=\"32\" y=\"").Append(y + 56).Append("\" fill=\"rgba(255,255,255,.88)\" font-family=\"Segoe UI, sans-serif\" font-size=\"11\">~85 tok/s</text>");
         svg.Append("<text x=\"180\" y=\"").Append(y + 56).Append("\" fill=\"#F5C14A\" font-family=\"Segoe UI, sans-serif\" font-size=\"11\">Router 警告</text>");
         y += 64;
@@ -130,12 +122,10 @@ public static class GlassDockSvg
                 .Append("\" transform=\"rotate(-90 ").Append(cx).Append(' ').Append(cy).Append(")\"/>");
         }
 
-        svg.Append("<circle cx=\"").Append(cx).Append("\" cy=\"").Append(cy).Append("\" r=\"").Append((c - 5).ToString("0.###", CultureInfo.InvariantCulture))
-            .Append("\" fill=\"").Append(light ? "#ffffff" : "#16161c").Append("\"/>");
-        var letter = string.IsNullOrWhiteSpace(ring.Title) ? "?" : ring.Title[..1].ToUpperInvariant();
-        svg.Append("<text x=\"").Append(cx).Append("\" y=\"").Append((y + c + 3.2).ToString("0.###", CultureInfo.InvariantCulture))
-            .Append("\" text-anchor=\"middle\" fill=\"").Append(light ? "#1c2430" : "#ffffff").Append("\" font-family=\"Segoe UI, sans-serif\" font-size=\"10\" font-weight=\"700\">")
-            .Append(Escape(letter)).Append("</text>");
+        var label = ring.BalanceText ?? GlassDockLayout.PercentText(ring.RemainingPercent).TrimEnd('%');
+        svg.Append("<text x=\"").Append(cx).Append("\" y=\"").Append((y + c + 4).ToString("0.###", CultureInfo.InvariantCulture))
+            .Append("\" text-anchor=\"middle\" fill=\"").Append(light ? "#1c2430" : "#ffffff").Append("\" font-family=\"Segoe UI, sans-serif\" font-size=\"11.5\" font-weight=\"650\">")
+            .Append(Escape(label)).Append("</text>");
         if (ring.AccountNumber > 0)
         {
             svg.Append("<circle cx=\"").Append(x + size - 2).Append("\" cy=\"").Append(y + size - 2).Append("\" r=\"5.5\" fill=\"rgb(")
@@ -171,31 +161,21 @@ public static class GlassDockSvg
 
     private static void Bars(StringBuilder svg, int x, int y, IReadOnlyList<double> bars)
     {
-        for (var index = 0; index < 3; index++)
+        string[] labels = ["CPU", "RAM", "I/O", "GPU"];
+        for (var index = 0; index < GlassDockLayout.MetricsRows; index++)
         {
             var value = index < bars.Count ? Math.Clamp(bars[index], 0, 100) : 0;
-            var bx = x + index * (GlassDockLayout.BarWidth + GlassDockLayout.BarGap);
-            svg.Append("<rect x=\"").Append(bx).Append("\" y=\"").Append(y).Append("\" width=\"").Append(GlassDockLayout.BarWidth).Append("\" height=\"").Append(GlassDockLayout.BarHeight).Append("\" rx=\"1.5\" fill=\"rgba(255,255,255,.16)\"/>");
-            var h = GlassDockLayout.BarHeight * value / 100d;
+            var rowY = y + index * 8;
+            svg.Append("<text x=\"").Append(x).Append("\" y=\"").Append(rowY + 6.5).Append("\" fill=\"rgba(255,255,255,.6)\" font-family=\"Segoe UI, sans-serif\" font-size=\"7\" font-weight=\"600\">")
+                .Append(labels[index]).Append("</text>");
+            var trackX = x + 18;
+            var trackW = GlassDockLayout.MetricsWidth - 18;
+            svg.Append("<rect x=\"").Append(trackX).Append("\" y=\"").Append(rowY + 2.5).Append("\" width=\"").Append(trackW).Append("\" height=\"3.5\" rx=\"1.75\" fill=\"rgba(255,255,255,.16)\"/>");
+            var w = Math.Max(3.5, trackW * value / 100d);
             var color = value > 80 ? "255,90,90" : value > 50 ? "245,193,74" : "70,229,154";
-            svg.Append("<rect x=\"").Append(bx).Append("\" y=\"").Append((y + GlassDockLayout.BarHeight - h).ToString("0.###", CultureInfo.InvariantCulture))
-                .Append("\" width=\"").Append(GlassDockLayout.BarWidth).Append("\" height=\"").Append(h.ToString("0.###", CultureInfo.InvariantCulture))
-                .Append("\" rx=\"1.5\" fill=\"rgb(").Append(color).Append(")\"/>");
+            svg.Append("<rect x=\"").Append(trackX).Append("\" y=\"").Append(rowY + 2.5).Append("\" width=\"").Append(w.ToString("0.###", CultureInfo.InvariantCulture))
+                .Append("\" height=\"3.5\" rx=\"1.75\" fill=\"rgb(").Append(color).Append(")\"/>");
         }
-    }
-
-    private static void Spark(StringBuilder svg, int x, int y)
-    {
-        svg.Append("<polyline fill=\"none\" stroke=\"#46E59A\" stroke-width=\"1.4\" points=\"");
-        double[] sample = [4, 6, 5, 8, 7, 11, 9, 12];
-        for (var index = 0; index < sample.Length; index++)
-        {
-            var px = x + index * (GlassDockLayout.SparkWidth / (sample.Length - 1d));
-            var py = y + GlassDockLayout.SparkHeight - sample[index];
-            svg.Append(px.ToString("0.#", CultureInfo.InvariantCulture)).Append(',').Append(py.ToString("0.#", CultureInfo.InvariantCulture)).Append(' ');
-        }
-
-        svg.Append("\"/>");
     }
 
     private static string Escape(string text) =>
