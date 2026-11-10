@@ -1,26 +1,29 @@
 using System.Diagnostics;
-using System.Text.Json;
+using ZGSTokenBar.Core;
 using ZGSTokenBar.PluginSdk;
 
 namespace ZGSTokenBar.App;
 
 internal sealed class OtherToolsModule : IDisposable
 {
-    public const string GrokId = "zgstokenbar.provider.grok-local";
-    public const string AntigravityId = "zgstokenbar.provider.antigravity-local";
+    public const string GrokId = UsageProviderIds.Grok;
+    public const string AntigravityId = UsageProviderIds.Antigravity;
     private readonly BarForm _bar;
     private readonly Action _changed;
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 1_000 };
-    private readonly string _grokPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".grok", "bin", "grok.exe");
-    private readonly string _antigravityPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "agy", "bin", "agy.exe");
-    private Form? _popup;
-    private string? _popupId;
-    private string _grokText = "额度不可读";
-    private string _antigravityText = "读取中";
-    private string[] _antigravityRows = [];
+    private readonly HttpClient _http = new(new HttpClientHandler { AllowAutoRedirect = false })
+    {
+        Timeout = TimeSpan.FromSeconds(20),
+    };
+    private readonly UsagePaths _paths = UsagePaths.Current();
+    private readonly object _gate = new();
+    private UsageBoard _board = UsageBoard.Empty;
+    private UsageBoard _fetched = UsageBoard.Empty;
+    private IReadOnlyList<UsageProviderSnapshot> _external = [];
+    private UsageBoardForm? _popup;
+    private Func<string, bool> _enabled = static _ => true;
     private bool _chinese;
-    private bool _grokEnabled;
-    private bool _antigravityEnabled;
+    private bool _light;
     private bool _refreshing;
     private bool _disposed;
 
@@ -29,36 +32,62 @@ internal sealed class OtherToolsModule : IDisposable
         _bar = bar;
         _changed = changed;
         _bar.PluginPopoverRequested += OnPopoverRequested;
-        _timer.Tick += (_, _) => { _timer.Interval = 120_000; _ = RefreshAsync(); };
+        _timer.Tick += (_, _) =>
+        {
+            _timer.Interval = 120_000;
+            _ = RefreshAsync();
+        };
         _timer.Start();
     }
 
-    public IReadOnlyList<PluginMiniCardView> Cards(bool chinese, bool grokEnabled, bool antigravityEnabled)
+    public IReadOnlyList<PluginMiniCardView> Cards(bool chinese, Func<string, bool> enabled)
     {
         _chinese = chinese;
-        if ((!_grokEnabled && grokEnabled) || (!_antigravityEnabled && antigravityEnabled))
-            _timer.Interval = 1_000;
-        _grokEnabled = grokEnabled;
-        _antigravityEnabled = antigravityEnabled;
-        var cards = new List<PluginMiniCardView>(2);
-        if (grokEnabled && File.Exists(_grokPath)) cards.Add(Card(GrokId, "Grok", chinese ? _grokText : "Quota unavailable", 900));
-        if (antigravityEnabled && File.Exists(_antigravityPath))
-            cards.Add(Card(AntigravityId, "Antigravity", chinese ? _antigravityText : EnglishAntigravityText(), 910));
+        _enabled = enabled;
+        UsageBoard board;
+        lock (_gate) board = _board;
+        var cards = new List<PluginMiniCardView>();
+        foreach (var definition in ProviderCatalog.All)
+        {
+            if (definition.Surface != UsageSurface.Mini || !enabled(definition.Id)) continue;
+            var provider = board.Providers.FirstOrDefault(item => item.ProviderId == definition.Id)
+                ?? Placeholder(definition);
+            if (provider is null) continue;
+            cards.Add(new PluginMiniCardView(
+                definition.Id,
+                definition.DisplayName,
+                UsageProjection.MiniCard(provider, chinese),
+                new Dictionary<string, string>(StringComparer.Ordinal)));
+        }
+
         return cards;
     }
 
-    private static PluginMiniCardView Card(string id, string title, string value, int order) => new(
-        id, title,
-        new MiniCardContribution($"card.{id}", id, id, ContributionKind.Quota, order, title,
-            $"{id}.icon", $"accent.{id}", [new("quota", new("text", Text: value))]),
-        new Dictionary<string, string>(StringComparer.Ordinal));
-
-    private string EnglishAntigravityText() => _antigravityText switch
+    public void SetExternal(IReadOnlyList<UsageProviderSnapshot> snapshots)
     {
-        "读取中" => "Loading",
-        "额度不可读" => "Quota unavailable",
-        _ => _antigravityText,
-    };
+        _external = snapshots;
+        Publish();
+    }
+
+    internal static string? ParseGrok(string? json) => UsageParsers.GrokRemainingText(json);
+
+    internal static string[] ParseAntigravity(string? output) => UsageParsers.AntigravityRows(output);
+
+    private UsageProviderSnapshot? Placeholder(ProviderDefinition definition)
+    {
+        var present = definition.Id switch
+        {
+            GrokId => UsageProbes.GrokPresent(_paths, ProcessUsageEnvironment.Instance),
+            AntigravityId => UsageProbes.AntigravityPresent(_paths),
+            _ => false,
+        };
+        if (!present) return null;
+        return new UsageProviderSnapshot(definition.Id, definition.DisplayName, definition.Accent, definition.Order,
+        [
+            new UsageAccountSnapshot(definition.Id, definition.DisplayName, null, "probe", [], null, null, [],
+                UsageFreshness.Loading, null, null),
+        ]);
+    }
 
     private async Task RefreshAsync()
     {
@@ -66,111 +95,157 @@ internal sealed class OtherToolsModule : IDisposable
         _refreshing = true;
         try
         {
-            var grok = _grokEnabled && File.Exists(_grokPath) ? Run(_grokPath, "usage", "--json") : Task.FromResult<string?>(null);
-            var antigravity = _antigravityEnabled && File.Exists(_antigravityPath)
-                ? Run(_antigravityPath, "-p", "/usage", "--print-timeout", "20s")
-                : Task.FromResult<string?>(null);
-            var grokOutput = await grok;
-            var antigravityOutput = await antigravity;
+            var request = new UsageLoadRequest(
+                DateTimeOffset.UtcNow,
+                _paths,
+                _enabled,
+                new HttpUsageTransport(_http),
+                ProcessUsageEnvironment.Instance,
+                _enabled(UsageProviderIds.Claude));
+            var fetched = await UsageProviderEngine.LoadAsync(request, CancellationToken.None).ConfigureAwait(true);
+            fetched = await WithCliAsync(fetched).ConfigureAwait(true);
             if (_disposed) return;
-            _grokText = ParseGrok(grokOutput) ?? "额度不可读";
-            _antigravityRows = ParseAntigravity(antigravityOutput);
-            _antigravityText = _antigravityRows.Length == 0 ? "额度不可读" : _antigravityRows[0];
-            _changed();
-            UpdatePopup();
+            _fetched = fetched;
+            Publish();
         }
-        finally { _refreshing = false; }
+        catch (Exception error) when (error is IOException or HttpRequestException or System.Text.Json.JsonException or InvalidOperationException)
+        {
+        }
+        finally
+        {
+            _refreshing = false;
+        }
     }
 
-    private static async Task<string?> Run(string executable, params string[] args)
+    private async Task<UsageBoard> WithCliAsync(UsageBoard board)
+    {
+        if (_enabled(GrokId) && !HasReading(board, GrokId) && UsageProbes.GrokExecutable(_paths, ProcessUsageEnvironment.Instance) is { } grok)
+        {
+            board = Replace(board, GrokId, UsageParsers.ParseGrok(await RunAsync(grok, "usage", "--json")), "grok-cli");
+        }
+
+        if (_enabled(AntigravityId)
+            && !HasReading(board, AntigravityId)
+            && UsageProbes.AntigravityExecutable(_paths) is { } antigravity)
+        {
+            var output = await RunAsync(antigravity, "-p", "/usage", "--print-timeout", "20s");
+            var parsed = UsageParsers.ParseAntigravity(output)
+                ?? UsageParsers.ParseAntigravity(await RunAsync(antigravity, "-p", "/quota", "--output-format", "json"));
+            board = Replace(board, AntigravityId, parsed, "agy-cli");
+        }
+
+        return board;
+    }
+
+    private static UsageBoard Replace(UsageBoard board, string providerId, UsageParseResult? parsed, string source)
+    {
+        var definition = ProviderCatalog.Find(providerId);
+        if (definition is null || (parsed is null && board.Providers.Any(provider => provider.ProviderId == providerId)))
+        {
+            return board;
+        }
+        var account = new UsageAccountSnapshot(
+            source,
+            definition.DisplayName,
+            parsed?.Plan,
+            source,
+            parsed?.Windows ?? [],
+            parsed?.Credits,
+            null,
+            parsed?.Products ?? [],
+            parsed is null ? UsageFreshness.Unavailable : UsageFreshness.Current,
+            DateTimeOffset.UtcNow,
+            parsed is null ? "unavailable" : parsed.ErrorKey);
+        var snapshot = new UsageProviderSnapshot(definition.Id, definition.DisplayName, definition.Accent, definition.Order, [account]);
+        var others = board.Providers.Where(provider => !string.Equals(provider.ProviderId, providerId, StringComparison.Ordinal)).ToArray();
+        return UsageProviderEngine.Merge(new UsageBoard(others), [snapshot]);
+    }
+
+    private static bool HasReading(UsageBoard board, string providerId) =>
+        board.Providers.Any(provider => provider.ProviderId == providerId
+            && provider.Accounts.Any(account => account.Freshness == UsageFreshness.Current
+                && (account.Windows.Any(window => window.UsedPercent is not null) || account.Credits is not null)));
+
+    private static async Task<string?> RunAsync(string executable, params string[] args)
     {
         try
         {
-            using var process = new Process { StartInfo = new ProcessStartInfo(executable)
+            using var process = new Process
             {
-                UseShellExecute = false, CreateNoWindow = true,
-                RedirectStandardOutput = true, RedirectStandardError = true,
-            } };
+                StartInfo = new ProcessStartInfo(executable)
+                {
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                },
+            };
             foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
             if (!process.Start()) return null;
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
-            try { await process.WaitForExitAsync(timeout.Token); }
-            catch (OperationCanceledException) { process.Kill(entireProcessTree: true); return null; }
+            try
+            {
+                await process.WaitForExitAsync(timeout.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                process.Kill(entireProcessTree: true);
+                return null;
+            }
+
             if (process.ExitCode != 0) return null;
             var output = await process.StandardOutput.ReadToEndAsync();
-            return output.Length <= 16_384 ? output : null;
+            return output.Length <= 65_536 ? output : null;
         }
         catch (Exception error) when (error is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
-        { return null; }
-    }
-
-    internal static string? ParseGrok(string? json)
-    {
-        if (string.IsNullOrWhiteSpace(json)) return null;
-        try
         {
-            using var document = JsonDocument.Parse(json);
-            if (document.RootElement.TryGetProperty("remainingPercent", out var percent)
-                && percent.TryGetDouble(out var value) && value is >= 0 and <= 100)
-                return $"{value:0.#}%";
+            return null;
         }
-        catch (JsonException) { }
-        return null;
     }
 
-    internal static string[] ParseAntigravity(string? output) =>
-        (output ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(line => line.Split('\t'))
-            .Where(parts => parts.Length >= 3 && parts[1].Contains("Weekly Limit Remaining", StringComparison.Ordinal))
-            .Select(parts => $"{parts[0]} {parts[2]}")
-            .Take(2)
-            .ToArray();
+    private void Publish()
+    {
+        var merged = UsageProviderEngine.Merge(_fetched, _external);
+        lock (_gate) _board = merged;
+        if (_bar.IsDisposed) return;
+        if (_bar.InvokeRequired)
+        {
+            _bar.BeginInvoke(() =>
+            {
+                _changed();
+                _popup?.ShowBoard(merged);
+            });
+            return;
+        }
+
+        _changed();
+        _popup?.ShowBoard(merged);
+    }
 
     private void OnPopoverRequested(object? sender, PluginPopoverRequest request)
     {
-        if (request.PluginId is not (GrokId or AntigravityId)) return;
+        if (!ProviderCatalog.StartsCollapsed(request.PluginId)) return;
         _popup?.Dispose();
-        _popupId = request.PluginId;
-        _popup = new Form
-        {
-            FormBorderStyle = FormBorderStyle.None, ShowInTaskbar = false,
-            StartPosition = FormStartPosition.Manual,
-            BackColor = Color.FromArgb(28, 33, 43), ForeColor = Color.FromArgb(230, 235, 244),
-            ClientSize = new Size((int)(285 * request.Scale), (int)(92 * request.Scale)),
-        };
-        var title = request.PluginId == GrokId ? "Grok" : "Antigravity";
-        _popup.Controls.Add(new Label
-        {
-            Text = title, Location = new Point(14, 7), Size = new Size(_popup.Width - 28, 24),
-            Font = new Font("Segoe UI", 11f * request.Scale, FontStyle.Bold, GraphicsUnit.Pixel),
-        });
-        _popup.Controls.Add(new Label
-        {
-            Location = new Point(14, 34), Size = new Size(_popup.Width - 28, _popup.Height - 39),
-            Font = new Font("Segoe UI", 10f * request.Scale, FontStyle.Regular, GraphicsUnit.Pixel),
-        });
-        UpdatePopup();
+        _popup = new UsageBoardForm(request.Scale, _chinese, _light);
+        UsageBoard board;
+        lock (_gate) board = _board;
+        _popup.ShowBoard(board);
         var screen = Screen.FromRectangle(request.Anchor).WorkingArea;
-        _popup.Location = new Point(Math.Clamp(request.Anchor.Left, screen.Left, Math.Max(screen.Left, screen.Right - _popup.Width)),
-            request.Anchor.Top - _popup.Height >= screen.Top ? request.Anchor.Top - _popup.Height : request.Anchor.Bottom);
+        var x = Math.Clamp(request.Anchor.Left, screen.Left, Math.Max(screen.Left, screen.Right - _popup.Width));
+        var y = request.Anchor.Top - _popup.Height >= screen.Top
+            ? request.Anchor.Top - _popup.Height
+            : request.Anchor.Bottom;
+        _popup.Location = new Point(x, y);
+        _popup.FormClosed += (_, _) => _light = _popup?.Light == true;
         _popup.Show(_bar);
         request.Popup = _popup;
-    }
-
-    private void UpdatePopup()
-    {
-        if (_popup is not { IsDisposed: false } || _popup.Controls.Count < 2) return;
-        _popup.Controls[1].Text = _popupId == GrokId
-            ? _chinese ? _grokText : "Quota unavailable in this Grok CLI"
-            : _antigravityRows.Length == 0
-                ? _chinese ? _antigravityText : EnglishAntigravityText()
-                : string.Join(Environment.NewLine, _antigravityRows);
     }
 
     public void Dispose()
     {
         _disposed = true;
         _timer.Dispose();
+        _http.Dispose();
         _bar.PluginPopoverRequested -= OnPopoverRequested;
         _popup?.Dispose();
     }

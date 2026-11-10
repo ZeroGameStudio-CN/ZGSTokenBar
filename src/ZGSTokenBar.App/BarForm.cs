@@ -1531,12 +1531,7 @@ internal sealed partial class BarForm : Form
         }
         else
         {
-        using var iconFill = new SolidBrush(view.Card.Kind switch
-        {
-            ContributionKind.Balance => Color.FromArgb(42, 157, 143),
-            ContributionKind.Metric => Color.FromArgb(37, 99, 235),
-            _ => Color.FromArgb(124, 58, 237),
-        });
+        using var iconFill = new SolidBrush(PluginIconColor(view));
         using var iconText = new SolidBrush(Color.White);
         graphics.FillEllipse(iconFill, iconBounds);
         DrawString(
@@ -1549,16 +1544,21 @@ internal sealed partial class BarForm : Form
         }
         if (collapsed)
         {
-            if (view.Card.Kind == ContributionKind.Balance)
+            var compactSummary = view.Card.Summary.FirstOrDefault();
+            if (view.Card.Kind == ContributionKind.Balance || compactSummary?.Status == "usage-remaining")
             {
-                var compactSummary = view.Card.Summary.FirstOrDefault();
-                var color = PluginCompactStatusColor(compactSummary?.Status);
+                var color = compactSummary?.Status == "usage-remaining" && compactSummary.Value.Number is { } remaining
+                    ? QuotaColorScale.ForRemaining(remaining)
+                    : PluginCompactStatusColor(compactSummary?.Status);
                 using var statusBrush = new SolidBrush(color);
                 graphics.FillEllipse(statusBrush, bounds.Right - 7, bounds.Top + 4, 4, 4);
                 using var valueBrush = new SolidBrush(color);
+                var compactText = compactSummary?.Status == "usage-remaining" && compactSummary.Value.Number is { } compactRemaining
+                    ? compactRemaining.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + "%"
+                    : compactSummary is null ? "—" : CompactPluginValue(compactSummary.Value);
                 DrawString(
                     graphics,
-                    compactSummary is null ? "—" : CompactPluginValue(compactSummary.Value),
+                    compactText,
                     _badgeFont,
                     valueBrush,
                     new RectangleF(bounds.X + 2, bounds.Bottom - 12, bounds.Width - 4, 9),
@@ -1582,8 +1582,22 @@ internal sealed partial class BarForm : Form
             summary is null ? "—" : PluginValue(summary.Value),
             _cardTitleFont,
             value,
-            new RectangleF(bounds.X + 34, bounds.Y + 17, bounds.Width - 39, 14),
+            new RectangleF(bounds.X + 34, bounds.Y + 14, bounds.Width - 39, 14),
             StringAlignment.Near);
+        if (summary?.Status == "usage-remaining" && summary.Value.Number is { } remainingPercent)
+        {
+            var track = new RectangleF(bounds.X + 34, bounds.Bottom - 7, Math.Max(8, bounds.Width - 40), 3);
+            using var trackBrush = new SolidBrush(Color.FromArgb(30, 41, 59));
+            graphics.FillRoundedRectangle(trackBrush, track, 1.5f);
+            if (remainingPercent > 0)
+            {
+                using var active = new SolidBrush(QuotaColorScale.ForRemaining(remainingPercent));
+                graphics.FillRoundedRectangle(
+                    active,
+                    new RectangleF(track.X, track.Y, track.Width * (float)(Math.Clamp(remainingPercent, 0, 100) / 100), track.Height),
+                    1.5f);
+            }
+        }
     }
 
     private void DrawLiveMetricsCard(Graphics graphics, RectangleF bounds, bool collapsed)
@@ -5656,7 +5670,7 @@ internal sealed partial class BarForm : Form
         var normalized = _miniAreaLayouts.TryGetValue(areaId, out var layout)
             ? layout.Normalized(areaId)
             : new MiniAreaLayout(Collapsed: areaId is MiniAreaIds.Router or MiniAreaIds.LiveMetrics
-                or OtherToolsModule.GrokId or OtherToolsModule.AntigravityId);
+                || ProviderCatalog.StartsCollapsed(areaId));
         return normalized;
     }
 
@@ -5729,8 +5743,7 @@ internal sealed partial class BarForm : Form
             .ToHashSet(StringComparer.Ordinal);
         visibleIds.Add(MiniAreaIds.RadarReset);
         visibleIds.Add(MiniAreaIds.SystemMetrics);
-        visibleIds.Add(OtherToolsModule.GrokId);
-        visibleIds.Add(OtherToolsModule.AntigravityId);
+        foreach (var providerId in ProviderCatalog.PersistentMiniIds) visibleIds.Add(providerId);
         return areas.Where(area => visibleIds.Contains(area.AreaId)).ToArray();
     }
 
@@ -5781,6 +5794,24 @@ internal sealed partial class BarForm : Form
             .Take(2)
             .ToArray();
         return characters.Length == 0 ? "P" : new string(characters).ToUpperInvariant();
+    }
+
+    private static Color PluginIconColor(PluginMiniCardView view)
+    {
+        var accent = view.Card.AccentToken;
+        if (accent.Length == 7
+            && accent[0] == '#'
+            && int.TryParse(accent.AsSpan(1), System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out var rgb))
+        {
+            return Color.FromArgb((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
+        }
+
+        return view.Card.Kind switch
+        {
+            ContributionKind.Balance => Color.FromArgb(42, 157, 143),
+            ContributionKind.Metric => Color.FromArgb(37, 99, 235),
+            _ => Color.FromArgb(124, 58, 237),
+        };
     }
 
     private static string PluginValue(ContributionValue value) =>

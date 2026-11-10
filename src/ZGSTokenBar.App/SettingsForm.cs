@@ -473,7 +473,7 @@ internal sealed class SettingsForm : Form
         providers.Add(new ToggleSettingRow(_claude, "Claude", _text.ClaudeProviderHint, _theme, _scale));
         providers.Add(new ToggleSettingRow(_codex, "Codex", _text.CodexProviderHint, _theme, _scale));
         providers.Add(new ToggleSettingRow(_grok, "Grok",
-            _text.IsChinese ? "本机 CLI 不支持读取套餐额度时显示不可读" : "Shows unavailable when the local CLI cannot read plan quota", _theme, _scale));
+            _text.IsChinese ? "读取本机 Grok 登录的套餐额度和预付余额" : "Reads the local Grok sign-in for plan quota and prepaid balance", _theme, _scale));
         providers.Add(new ToggleSettingRow(_antigravity, "Antigravity",
             _text.IsChinese ? "复用本机登录，读取模型剩余额度" : "Uses the local sign-in to read model quota", _theme, _scale));
         providers.Add(new ToggleSettingRow(

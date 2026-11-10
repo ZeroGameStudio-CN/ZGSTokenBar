@@ -384,6 +384,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                     CodexQuotaTokenObservations(next, observedAt),
                     observedAt);
             _bar.SetSnapshot(next, QuotaPaceEstimates(next, observedAt));
+            _otherToolsModule.SetExternal(UsageProjection.FromQuotaSnapshot(next));
             if (codexQuotaTokenCapacityChanged)
             {
                 try
@@ -1703,9 +1704,9 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                     assets[plugin.PluginId].Text,
                     assets[plugin.PluginId].Icon)))
             .ToList();
-        cards.AddRange(_otherToolsModule.Cards(_settings.Locale == "zh-CN",
-            _settings.IsPluginEnabled(OtherToolsModule.GrokId, true),
-            _settings.IsPluginEnabled(OtherToolsModule.AntigravityId, true)));
+        cards.AddRange(_otherToolsModule.Cards(
+            _settings.Locale == "zh-CN",
+            id => _settings.IsPluginEnabled(id, true)));
         _bar.SetPluginMiniCards(cards);
     }
 

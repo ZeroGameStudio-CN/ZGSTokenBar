@@ -10,6 +10,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using ZGSTokenBar.Core;
+using ZGSTokenBar.Tests;
 using ZGSTokenBar.App;
 using ZGSTokenBar.Builtins;
 using ZGSTokenBar.Host;
@@ -417,6 +418,7 @@ var tests = new (string Name, Action Run)[]
     ("Built-in plugin host data-root isolation", PersistenceRegressionTests.BuiltinDataRootIsolation),
     ("Plugin refresh and disable lifecycle", PluginLifecycleRegressionTests.Run),
     ("Claude usage parser", TestClaudeParser),
+    ("Unified usage providers", () => UsageProviderFixtureTests.Run()),
     ("Claude Retry-After backoff", TestClaudeRetryAfterBackoff),
     ("Claude explicit OAuth refresh", TestClaudeExplicitOAuthRefresh),
     ("Codex primary/secondary parser", TestCodexParser),
