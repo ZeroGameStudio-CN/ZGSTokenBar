@@ -945,7 +945,7 @@ internal sealed partial class BarForm : Form
         UpdateDpiAndRegion();
         if (GlassLayered)
         {
-            _ = WindowBackdrop.TryApplyLayeredBlur(Handle, GlassPrefersLight());
+            _ = WindowBackdrop.TryPrepareLayered(Handle);
             QueueGlassRender();
         }
         if (!_renderOnly) RequestTopologyRefresh(topologyMayHaveChanged: false);
@@ -5404,23 +5404,6 @@ internal sealed partial class BarForm : Form
     private static int NormalizeGlassMax(int value) =>
         value <= 0 ? GlassDockLayout.MaxVisibleRings : Math.Clamp(value, 1, 8);
 
-    private bool GlassPrefersLight()
-    {
-        if (!OperatingSystem.IsWindows()) return false;
-        try
-        {
-            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
-                @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
-            // The pill sits on the taskbar, so follow the system (taskbar) theme, then the app theme.
-            if (key?.GetValue("SystemUsesLightTheme") is int system) return system != 0;
-            return key?.GetValue("AppsUseLightTheme") is int theme && theme != 0;
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.SecurityException)
-        {
-            return false;
-        }
-    }
-
     private sealed record GlassItem(
         GlassDockRing Ring,
         string Name,
@@ -5600,7 +5583,8 @@ internal sealed partial class BarForm : Form
 
     private void DrawGlassDock(Graphics graphics)
     {
-        var light = GlassPrefersLight();
+        // The dock is a solid dark card in every theme so rings and labels keep full contrast.
+        var light = false;
         var (plan, items) = CurrentGlassLayout();
         _cardBounds.Clear();
         _taskbarWindowBounds.Clear();

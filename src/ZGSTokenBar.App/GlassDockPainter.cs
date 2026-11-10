@@ -36,10 +36,16 @@ internal sealed record GlassDockScene(
     double? TokensPerSecond,
     bool RateEstimated,
     bool RateHovered,
-    GlassRingStyle RingStyle = GlassRingStyle.Watermark);
+    GlassRingStyle RingStyle = GlassRingStyle.IconPercentBelow,
+    float IconRingSize = GlassDockPainter.DefaultIconRingSize,
+    float LabelSize = GlassDockPainter.DefaultLabelSize);
 
 internal static class GlassDockPainter
 {
+    /// <summary>Icon-in-ring layout: ring diameter and the % label size beneath it (logical px).</summary>
+    internal const float DefaultIconRingSize = 28f;
+    internal const float DefaultLabelSize = 10.5f;
+
     public static void Draw(Graphics graphics, GlassDockScene scene, Font badgeFont)
     {
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
@@ -47,6 +53,8 @@ internal static class GlassDockPainter
         graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
         graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
         DrawGlass(graphics, scene);
+        // Content is laid out against the full dock height; lift it so it centres on the card.
+        graphics.TranslateTransform(0, -ShadowDepth / 2f);
 
         for (var index = 0; index < scene.Plan.Slots.Count; index++)
         {
@@ -57,7 +65,7 @@ internal static class GlassDockPainter
                 continue;
             }
 
-            if (index < scene.Items.Count) DrawItem(graphics, slot.Bounds, scene.Items[index], scene.Light, scene.RingStyle);
+            if (index < scene.Items.Count) DrawItem(graphics, slot.Bounds, scene.Items[index], scene.Light, scene.RingStyle, scene.IconRingSize, scene.LabelSize);
         }
 
         var systemLeft = GlassDockLayout.SystemLeftFor(scene.Width);
@@ -87,99 +95,61 @@ internal static class GlassDockPainter
         DrawRate(graphics, rateBounds, scene);
     }
 
+    /// <summary>Space kept under the card for its soft drop shadow (logical px).</summary>
+    internal const float ShadowDepth = 3f;
+
     /// <summary>
-    /// Liquid-glass material over the DWM acrylic blur: a frosted body that is clearly lighter
-    /// (dark theme) or brighter (light theme) than the taskbar, a soft specular band across the top,
-    /// a subtle inner shadow along the bottom, a gradient rim that fades out downwards (no hard
-    /// white fringe) and a faint contact edge.
+    /// Solid dark card (refined from the v3.0.0 dark card): an almost opaque graphite body with a
+    /// barely-there vertical gradient, a 1px hairline border, a soft drop shadow underneath and
+    /// rounded corners. Opaque on purpose so ring tracks, arcs and labels keep full contrast.
     /// </summary>
     private static void DrawGlass(Graphics graphics, GlassDockScene scene)
     {
-        var light = scene.Light;
-        var inset = scene.DevicePixel;
-        var bounds = new RectangleF(inset, inset, scene.Width - inset * 2, GlassDockLayout.Height - inset * 2);
-        using var path = Rounded(bounds, GlassDockLayout.Corner);
-        using (var tint = new LinearGradientBrush(
-                   bounds,
-                   light ? Color.FromArgb(178, 255, 255, 255) : Color.FromArgb(150, 74, 80, 98),
-                   light ? Color.FromArgb(140, 232, 237, 246) : Color.FromArgb(168, 30, 33, 44),
+        var hairline = scene.DevicePixel;
+        var card = CardBounds(scene);
+        for (var layer = 3; layer >= 1; layer--)
+        {
+            using var shadowPath = Rounded(new RectangleF(card.X + .5f, card.Y + layer * .9f, card.Width - 1f, card.Height), GlassDockLayout.Corner);
+            using var shadow = new SolidBrush(Color.FromArgb(layer switch { 3 => 22, 2 => 38, _ => 60 }, 0, 0, 0));
+            graphics.FillPath(shadow, shadowPath);
+        }
+
+        using var path = Rounded(card, GlassDockLayout.Corner);
+        using (var body = new LinearGradientBrush(
+                   RectangleF.Inflate(card, 0, 1),
+                   Color.FromArgb(250, 30, 32, 39),
+                   Color.FromArgb(250, 19, 20, 25),
                    LinearGradientMode.Vertical))
         {
-            graphics.FillPath(tint, path);
+            graphics.FillPath(body, path);
         }
 
-        var state = graphics.Save();
-        graphics.SetClip(path);
-
-        // Specular band: brightest just below the top edge and fading smoothly to nothing by mid-height.
-        var specular = new RectangleF(bounds.X, bounds.Y, bounds.Width, bounds.Height * .55f);
-        using (var specularBrush = new LinearGradientBrush(
-                   RectangleF.Inflate(specular, 0, 1),
-                   Color.FromArgb(light ? 150 : 58, 255, 255, 255),
-                   Color.FromArgb(0, 255, 255, 255),
-                   LinearGradientMode.Vertical))
-        {
-            specularBrush.Blend = new Blend
-            {
-                Positions = [0f, .12f, .45f, 1f],
-                Factors = [.35f, 0f, .7f, 1f],
-            };
-            graphics.FillRectangle(specularBrush, specular);
-        }
-
-        // Inner shadow along the bottom gives the pill thickness.
-        var shadow = new RectangleF(bounds.X, bounds.Bottom - 9, bounds.Width, 9);
-        using (var shadowBrush = new LinearGradientBrush(
-                   RectangleF.Inflate(shadow, 0, .5f),
-                   Color.FromArgb(0, 0, 0, 0),
-                   Color.FromArgb(light ? 22 : 48, 0, 0, 0),
-                   LinearGradientMode.Vertical))
-        {
-            graphics.FillRectangle(shadowBrush, shadow);
-        }
-
-        // Faint caustic: light bending back up through the glass at the bottom centre.
-        var caustic = new RectangleF(bounds.X + bounds.Width * .25f, bounds.Bottom - 5, bounds.Width * .5f, 8);
-        using (var causticPath = new GraphicsPath())
-        {
-            causticPath.AddEllipse(caustic);
-            using var causticBrush = new PathGradientBrush(causticPath)
-            {
-                CenterColor = Color.FromArgb(light ? 46 : 18, 255, 255, 255),
-                SurroundColors = [Color.FromArgb(0, 255, 255, 255)],
-            };
-            graphics.FillEllipse(causticBrush, caustic);
-        }
-
-        graphics.Restore(state);
-        var rimBounds = RectangleF.Inflate(bounds, -.7f, -.7f);
-        using (var rimPath = Rounded(rimBounds, GlassDockLayout.Corner - .7f))
-        using (var rimBrush = new LinearGradientBrush(
-                   RectangleF.Inflate(rimBounds, 0, 1),
-                   Color.FromArgb(light ? 235 : 120, 255, 255, 255),
-                   Color.FromArgb(light ? 60 : 10, 255, 255, 255),
-                   LinearGradientMode.Vertical))
-        {
-            rimBrush.SetSigmaBellShape(0f, 1f);
-            using var rim = new Pen(rimBrush, 1f);
-            graphics.DrawPath(rim, rimPath);
-        }
-
-        using var contact = new Pen(Color.FromArgb(light ? 40 : 90, 0, 0, 0), Math.Max(.5f, inset));
-        graphics.DrawPath(contact, path);
+        var edge = RectangleF.Inflate(card, -hairline / 2, -hairline / 2);
+        using var edgePath = Rounded(edge, GlassDockLayout.Corner - hairline / 2);
+        using var border = new Pen(Color.FromArgb(34, 255, 255, 255), hairline);
+        graphics.DrawPath(border, edgePath);
     }
+
+    /// <summary>The card itself: full width, leaving <see cref="ShadowDepth"/> underneath for the shadow.</summary>
+    private static RectangleF CardBounds(GlassDockScene scene) =>
+        new(scene.DevicePixel, scene.DevicePixel, scene.Width - scene.DevicePixel * 2, GlassDockLayout.Height - ShadowDepth - scene.DevicePixel);
 
     /// <summary>
     /// Compact ring: the official provider icon sits large and translucent in the middle of the ring
     /// as a watermark, the bold remaining percentage is drawn on top, and the account ordinal is a
     /// small badge on the lower-right.
     /// </summary>
-    private static void DrawItem(Graphics graphics, Rectangle slot, GlassDockItemVisual item, bool light, GlassRingStyle style)
+    private static void DrawItem(Graphics graphics, Rectangle slot, GlassDockItemVisual item, bool light, GlassRingStyle style, float iconRingSize, float labelSize)
     {
         var ring = item.Ring;
-        var size = GlassDockLayout.RingSize;
         var below = style == GlassRingStyle.IconPercentBelow;
-        var ringTop = below ? 0.5f : (GlassDockLayout.Height - size) / 2f;
+        // Icon-in-ring layout: a slightly smaller ring sits high so the % label fits beneath it
+        // inside the 44px dock (ring 2..32, label 32..42).
+        var size = below ? iconRingSize : GlassDockLayout.RingSize;
+        var labelHeight = labelSize * 1.22f;
+        var ringTop = below
+            ? (GlassDockLayout.Height - (size + labelHeight - 1.5f)) / 2f
+            : (GlassDockLayout.Height - size) / 2f;
         var ringBounds = new RectangleF(slot.X + (slot.Width - size) / 2f, ringTop, size, size);
         if (item.Hovered)
         {
@@ -188,7 +158,7 @@ internal static class GlassDockPainter
         }
 
         var color = Band(ring.RemainingPercent, light);
-        const float stroke = 3.2f;
+        var stroke = below ? Math.Clamp(size * .1f, 2.5f, 3.2f) : 3.2f;
         var ellipse = RectangleF.Inflate(ringBounds, -stroke / 2 - .5f, -stroke / 2 - .5f);
         using (var track = new Pen(light ? Color.FromArgb(40, 15, 23, 42) : Color.FromArgb(46, 255, 255, 255), stroke))
         {
@@ -210,10 +180,16 @@ internal static class GlassDockPainter
         var core = RectangleF.Inflate(ringBounds, -stroke - 1f, -stroke - 1f);
         if (below)
         {
-            DrawWatermark(graphics, core, item, light, 1f, .7f);
+            DrawWatermark(graphics, core, item, light, 1f, .86f);
             var text = balanceOnly ? ring.BalanceText! : GlassDockLayout.PercentText(ring.RemainingPercent);
-            using var tiny = FitFont(graphics, text, slot.Width + 2, 8.5f, 7f, FontStyle.Bold);
-            DrawCentered(graphics, text, tiny, valueBrush, new RectangleF(slot.X - 3, ringBounds.Bottom - .5f, slot.Width + 6, 10));
+            using var label = FitFont(graphics, text, slot.Width + 3, labelSize, labelSize - 2f, FontStyle.Bold);
+            var labelBounds = new RectangleF(slot.X - 4, ringBounds.Bottom - 1.5f, slot.Width + 8, labelHeight);
+            using (var halo = new SolidBrush(light ? Color.FromArgb(140, 255, 255, 255) : Color.FromArgb(150, 0, 0, 0)))
+            {
+                DrawCentered(graphics, text, label, halo, new RectangleF(labelBounds.X, labelBounds.Y + .7f, labelBounds.Width, labelBounds.Height));
+            }
+
+            DrawCentered(graphics, text, label, valueBrush, labelBounds);
         }
         else
         {
@@ -237,12 +213,13 @@ internal static class GlassDockPainter
 
         if (ring.AccountNumber > 0)
         {
-            var badge = new RectangleF(ringBounds.Right - 11.5f, ringBounds.Bottom - 10.5f, 12f, 12f);
+            var badgeSide = below ? 11f : 12f;
+            var badge = new RectangleF(ringBounds.Right - badgeSide + .5f, ringBounds.Bottom - badgeSide + 1.5f, badgeSide, badgeSide);
             using var badgeFill = new SolidBrush(light ? Color.FromArgb(255, 30, 41, 59) : Color.FromArgb(255, 241, 245, 249));
             using var badgeEdge = new Pen(Separator(light), 1.4f);
             graphics.FillEllipse(badgeFill, badge);
             graphics.DrawEllipse(badgeEdge, badge);
-            using var badgeFont = new Font("Segoe UI", 8f, FontStyle.Bold, GraphicsUnit.Pixel);
+            using var badgeFont = new Font("Segoe UI", below ? 7.5f : 8f, FontStyle.Bold, GraphicsUnit.Pixel);
             using var badgeText = new SolidBrush(light ? Color.White : Color.FromArgb(15, 23, 42));
             DrawCentered(graphics, ring.AccountNumber.ToString(CultureInfo.InvariantCulture), badgeFont, badgeText, RectangleF.Inflate(badge, 1, 0));
         }

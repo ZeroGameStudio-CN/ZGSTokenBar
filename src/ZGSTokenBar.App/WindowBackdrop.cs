@@ -45,11 +45,10 @@ internal static class WindowBackdrop
     }
 
     /// <summary>
-    /// Blur-behind for a per-pixel-alpha (layered) window. DWM's own rounding and border are
-    /// turned off because the pill paints its own anti-aliased edge; the acrylic tint is kept
-    /// nearly clear so the painted glass layer controls the material.
+    /// Prepares a per-pixel-alpha (layered) window that paints its own opaque card: DWM rounding
+    /// and border are turned off and no blur is requested.
     /// </summary>
-    public static bool TryApplyLayeredBlur(IntPtr handle, bool light)
+    public static bool TryPrepareLayered(IntPtr handle)
     {
         if (handle == IntPtr.Zero || !OperatingSystem.IsWindows()) return false;
         try
@@ -57,8 +56,7 @@ internal static class WindowBackdrop
             var corner = DwmwcpDoNotRound;
             _ = DwmSetWindowAttribute(handle, DwmwaWindowCornerPreference, ref corner, sizeof(int));
             var border = DwmwaColorNone;
-            _ = DwmSetWindowAttribute(handle, DwmwaBorderColor, ref border, sizeof(int));
-            return TryAccent(handle, light, light ? 0x18FFFFFFu : 0x14140F0Cu);
+            return DwmSetWindowAttribute(handle, DwmwaBorderColor, ref border, sizeof(int)) == 0;
         }
         catch (Exception error) when (error is DllNotFoundException or EntryPointNotFoundException)
         {

@@ -8837,10 +8837,10 @@ static void RenderRingVariantsCapture(string outputDirectory)
     var visuals = plan.Visible.Select(ring => new GlassDockItemVisual(ring, rings.First(item => ReferenceEquals(item.Ring, ring)).Icon, ring.Title, false)).ToArray();
     (GlassRingStyle Style, string Label)[] variants =
     [
-        (GlassRingStyle.Watermark, "A  水印 26%（默认）"),
+        (GlassRingStyle.Watermark, "A  水印 26%"),
         (GlassRingStyle.WatermarkFaint, "B  水印 16%（更淡）"),
         (GlassRingStyle.WatermarkStrong, "C  水印 38%（更明显）"),
-        (GlassRingStyle.IconPercentBelow, "D  图标在环内 + 百分比在环下"),
+        (GlassRingStyle.IconPercentBelow, "D  图标在环内 + 百分比在环下（默认）"),
     ];
     const int scale = 2;
     const int labelWidth = 190;
@@ -8880,6 +8880,69 @@ static void RenderRingVariantsCapture(string outputDirectory)
     Console.WriteLine($"{path} {bitmap.Width}x{bitmap.Height}");
 }
 
+static void RenderIconRingSizeCapture(string outputDirectory)
+{
+    static Image Asset(string name)
+    {
+        using var stream = typeof(BarForm).Assembly.GetManifestResourceStream("ZGSTokenBar.App.Assets." + name)
+            ?? throw new InvalidOperationException("missing asset " + name);
+        using var source = Image.FromStream(stream);
+        return new Bitmap(source);
+    }
+
+    using var openAi = Asset("openai-official-ios-icon.png");
+    using var claude = Asset("claude-icon-rounded.png");
+    using var grokIcon = Asset("grok-official-icon.png");
+    var rings = new[]
+    {
+        (Ring: new GlassDockRing(UsageProviderIds.Codex, "Codex", "a", 1, 4, null, null, "#10a37f"), Icon: (Image)openAi),
+        (Ring: new GlassDockRing(UsageProviderIds.Codex, "Codex", "b", 2, 100, null, null, "#10a37f"), Icon: (Image)openAi),
+        (Ring: new GlassDockRing(UsageProviderIds.Claude, "Claude", "c", 0, 52, null, null, "#d97757"), Icon: (Image)claude),
+        (Ring: new GlassDockRing(UsageProviderIds.Grok, "Grok", "g", 0, 82, null, null, "#111111"), Icon: (Image)grokIcon),
+    };
+    var plan = GlassDockLayout.Plan(rings.Select(item => item.Ring).ToArray());
+    var visuals = plan.Visible.Select(ring => new GlassDockItemVisual(ring, rings.First(item => ReferenceEquals(item.Ring, ring)).Icon, ring.Title, false)).ToArray();
+    (float Ring, float Label, string Name)[] combos =
+    [
+        (30f, 9f, "1  环 30 / 字 9"),
+        (28f, 10.5f, "2  环 28 / 字 10.5（默认）"),
+        (26f, 11.5f, "3  环 26 / 字 11.5"),
+    ];
+    const int scale = 2;
+    const int labelWidth = 170;
+    var rowHeight = GlassDockLayout.Height + 16;
+    using var bitmap = new Bitmap((labelWidth + plan.Width * 2 + 40) * scale, (combos.Length * rowHeight + 30) * scale);
+    using var graphics = Graphics.FromImage(bitmap);
+    graphics.Clear(Color.FromArgb(24, 24, 28));
+    using var labelFont = new Font("Microsoft YaHei UI", 11f, FontStyle.Bold, GraphicsUnit.Pixel);
+    using var labelBrush = new SolidBrush(Color.FromArgb(235, 240, 245));
+    using var darkTaskbar = new SolidBrush(Color.FromArgb(32, 32, 32));
+    using var lightTaskbar = new SolidBrush(Color.FromArgb(238, 240, 244));
+    using var badgeFont = new Font("Segoe UI", 8f, FontStyle.Bold, GraphicsUnit.Pixel);
+    graphics.ScaleTransform(scale, scale);
+    for (var index = 0; index < combos.Length; index++)
+    {
+        var top = 20 + index * rowHeight;
+        graphics.DrawString(combos[index].Name, labelFont, labelBrush, 8, top + 14);
+        for (var theme = 0; theme < 2; theme++)
+        {
+            var light = theme == 1;
+            var left = labelWidth + theme * (plan.Width + 20);
+            graphics.FillRectangle(light ? lightTaskbar : darkTaskbar, left - 6, top - 4, plan.Width + 12, GlassDockLayout.Height + 8);
+            var state = graphics.Save();
+            graphics.TranslateTransform(left, top);
+            var scene = new GlassDockScene(light, plan.Width, 1f / scale, plan, visuals, false, false, null, false,
+                18, 46, 7, 13, false, 122.5, false, false, GlassRingStyle.IconPercentBelow, combos[index].Ring, combos[index].Label);
+            GlassDockPainter.Draw(graphics, scene, badgeFont);
+            graphics.Restore(state);
+        }
+    }
+
+    var path = Path.Combine(outputDirectory, "d-sizes.png");
+    bitmap.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+    Console.WriteLine($"{path} {bitmap.Width}x{bitmap.Height}");
+}
+
 static void RenderRouterGlyphCaptures(string outputDirectory)
 {
     (string State, long Queued)[] states = [("unknown", 0), ("unknown", 2), ("waiting", 0), ("attention", 0), ("running", 0), ("running", 1), ("idle", 0), ("offline", 0)];
@@ -8912,6 +8975,7 @@ static void RenderGlassOverflowCaptures(string outputDirectory)
     RenderRouterGlyphCaptures(outputDirectory);
     RenderGrokHoverCapture(outputDirectory);
     RenderRingVariantsCapture(outputDirectory);
+    RenderIconRingSizeCapture(outputDirectory);
     var overflowAccounts = Enumerable.Range(1, 4)
         .Select(index => new CodexAccountInfo($"account-{index}", $"user{index}@example.test", "pro", index == 1))
         .ToArray();
