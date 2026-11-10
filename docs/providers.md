@@ -40,4 +40,6 @@ Mainstream quota readers share one model in `ZGSTokenBar.Core/Providers`: a prov
 
 Every provider accepts up to 16 accounts. Declared accounts live beside the app as `accounts.json` plus per-account credential files; those files are never written by TokenBar, copied into snapshots, or sent to the local API. Requests are allow-listed HTTPS reads. The only POST is Antigravity's quota summary. Tokens are not redeemed, refreshed, or logged.
 
-Fixture tests cover the parsers, account cap, secret exclusion, and the light, dark, and compact board mockups in `docs/providers/assets`. Live calls still need the corresponding local login on a Windows machine. Grok's browser gRPC-web fallback and ACP `grok agent stdio` path are not implemented; the CLI billing JSON is the supported fallback.
+The usage panel is a liquid-glass surface. On Windows 11 it asks DWM for acrylic (`DWMWA_SYSTEMBACKDROP_TYPE`) and rounded corners; older Windows falls back to the accent blur policy, and if both are unavailable the panel paints a tinted gradient. Provider groups are frosted cards. Accounts are rows inside those cards, with a collapsible ledger. The taskbar slot draws the tightest remaining quota as a ring.
+
+Fixture tests cover the parsers, account cap, secret exclusion, and the light, dark, compact, and taskbar mockups in `docs/providers/assets`. Live calls still need the corresponding local login on a Windows machine. Grok's browser gRPC-web fallback and ACP `grok agent stdio` path are not implemented; the CLI billing JSON is the supported fallback.

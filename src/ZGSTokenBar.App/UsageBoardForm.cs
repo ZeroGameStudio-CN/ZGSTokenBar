@@ -8,38 +8,44 @@ internal sealed class UsageBoardForm : Form, IPluginPopoverContent
 {
     private readonly float _scale;
     private readonly bool _chinese;
+    private readonly Action? _refresh;
+    private readonly Action? _settings;
+    private readonly HashSet<string> _ledgerClosed = new(StringComparer.Ordinal);
+    private readonly List<(RectangleF Bounds, Action Action)> _hits = [];
     private UsageTheme _theme;
     private UsageBoard _board = UsageBoard.Empty;
     private bool _compact;
-    private RectangleF _themeButton;
+    private bool _backdrop;
     private Font? _titleFont;
     private Font? _bodyFont;
     private Font? _smallFont;
 
-    public UsageBoardForm(float scale, bool chinese, bool light)
+    public UsageBoardForm(float scale, bool chinese, bool light, Action? refresh, Action? settings)
     {
         _scale = scale <= 0 ? 1 : scale;
         _chinese = chinese;
+        _refresh = refresh;
+        _settings = settings;
         _theme = light ? UsageThemes.Light : UsageThemes.Dark;
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
-        Font = new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Pixel);
         MouseClick += (_, args) =>
         {
-            if (_themeButton.Contains(args.Location))
+            var point = new PointF(args.X / _scale, args.Y / _scale);
+            foreach (var hit in _hits)
             {
-                _theme = _theme.Id == "light" ? UsageThemes.Dark : UsageThemes.Light;
-                ApplySize();
-                Invalidate();
+                if (!hit.Bounds.Contains(point)) continue;
+                hit.Action();
+                return;
             }
         };
     }
 
     public bool InteractionOpen => false;
 
-    public bool Light => _theme.Id == "light";
+    public bool Light => _theme.Light;
 
     public void SetPinned(bool pinned)
     {
@@ -53,50 +59,45 @@ internal sealed class UsageBoardForm : Form, IPluginPopoverContent
         Invalidate();
     }
 
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        ApplyBackdrop();
+    }
+
     protected override void OnPaint(PaintEventArgs e)
     {
         var graphics = e.Graphics;
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
         graphics.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
         graphics.ScaleTransform(_scale, _scale);
         EnsureFonts();
+        _hits.Clear();
         var theme = _theme;
-        using var canvas = new SolidBrush(ColorOf(theme.Canvas));
-        graphics.FillRectangle(canvas, 0, 0, UsageBoardLayout.Width, LogicalHeight());
-        using var title = new SolidBrush(ColorOf(theme.Text));
+        var width = UsageBoardLayout.Width;
+        var height = LogicalHeight();
+        PaintWash(graphics, theme, width, height);
+        using var text = new SolidBrush(ColorOf(theme.Text));
         using var muted = new SolidBrush(ColorOf(theme.Muted));
-        DrawLabel(graphics, _chinese ? "用量" : "Usage", _titleFont!, title, 20, 10, 220, 24);
-        DrawLabel(graphics, _chinese ? "本地只读 · 账号分组" : "Local read-only · grouped accounts", _smallFont!, muted, 20, 34, 260, 16);
-        _themeButton = new RectangleF(UsageBoardLayout.Width - 96, 16, 76, 22);
-        var button = new RectangleF(_themeButton.X * _scale, _themeButton.Y * _scale, _themeButton.Width * _scale, _themeButton.Height * _scale);
-        _themeButton = button;
-        graphics.ResetTransform();
-        using var buttonFill = new SolidBrush(ColorOf(theme.Card));
-        graphics.FillRoundedRectangle(buttonFill, new RectangleF(button.X, button.Y, button.Width, button.Height), 8 * _scale);
-        graphics.ScaleTransform(_scale, _scale);
-        DrawLabel(
-            graphics,
-            _theme.Id == "light" ? (_chinese ? "深色" : "Dark") : (_chinese ? "浅色" : "Light"),
-            _smallFont!,
-            title,
-            UsageBoardLayout.Width - 90,
-            18,
-            64,
-            18);
-        var y = (float)UsageBoardLayout.HeaderHeight;
+        DrawLabel(graphics, _chinese ? "用量" : "Usage", _titleFont!, text, 24, 16, 220, 28);
+        DrawLabel(graphics, UsageFormatting.Overall(_board, _chinese), _smallFont!, muted, 24, 46, 250, 16);
+        var chipY = 22f;
+        AddChip(graphics, theme, width - 168, chipY, 46, _chinese ? "刷新" : "Refresh", () => _refresh?.Invoke());
+        AddChip(graphics, theme, width - 116, chipY, 46, theme.Light ? (_chinese ? "深色" : "Dark") : (_chinese ? "浅色" : "Light"), ToggleTheme);
+        AddChip(graphics, theme, width - 64, chipY, 40, _chinese ? "设置" : "Set", () => _settings?.Invoke());
+        var y = (float)(UsageBoardLayout.Padding + UsageBoardLayout.HeaderHeight);
         foreach (var provider in _board.Providers)
         {
-            using var accent = new SolidBrush(ColorOf(UsageColor.Parse(provider.Accent)));
-            graphics.FillEllipse(accent, 20, y + 6, 8, 8);
-            DrawLabel(graphics, provider.DisplayName, _bodyFont!, title, 34, y + 2, 250, 18);
-            DrawLabel(graphics, provider.Accounts.Count.ToString(), _smallFont!, muted, 360, y + 3, 40, 16);
-            y += UsageBoardLayout.SectionHeight;
-            foreach (var account in provider.Accounts)
+            var cardHeight = UsageBoardLayout.CardHeight(provider, _compact && _ledgerClosed.Count == 0 ? _compact : _compact);
+            if (_compact) cardHeight = UsageBoardLayout.CardHeight(provider, true);
+            else if (_ledgerClosed.Contains(provider.ProviderId) && UsageBoardLayout.HasLedger(provider))
             {
-                var row = _compact ? UsageBoardLayout.CompactRowHeight : UsageBoardLayout.ExpandedCardHeight;
-                DrawAccount(graphics, theme, account, 16, y, UsageBoardLayout.Width - 32, row - 2);
-                y += row + UsageBoardLayout.CardGap;
+                cardHeight -= UsageBoardLayout.LedgerHeight - 22;
             }
+
+            PaintProvider(graphics, theme, provider, 16, y, width - 32, cardHeight);
+            y += cardHeight + UsageBoardLayout.CardGap;
         }
     }
 
@@ -112,74 +113,162 @@ internal sealed class UsageBoardForm : Form, IPluginPopoverContent
         base.Dispose(disposing);
     }
 
-    private void DrawAccount(
-        Graphics graphics,
-        UsageTheme theme,
-        UsageAccountSnapshot account,
-        float x,
-        float y,
-        float width,
-        float height)
+    private void PaintProvider(Graphics graphics, UsageTheme theme, UsageProviderSnapshot provider, float x, float y, float width, float height)
     {
-        using var fill = new SolidBrush(ColorOf(theme.Card));
-        using var border = new Pen(ColorOf(theme.Border));
-        var bounds = new RectangleF(x, y, width, height);
-        graphics.FillRoundedRectangle(fill, bounds, 12);
-        using (var outline = Rounded(bounds, 12)) graphics.DrawPath(border, outline);
+        PaintGlass(graphics, theme, new RectangleF(x, y, width, height), 22, false);
+        var accent = UsageColor.Parse(provider.Accent);
+        using var accentBrush = new SolidBrush(Color.FromArgb(accent.R, accent.G, accent.B));
+        graphics.FillEllipse(accentBrush, x + 16, y + 16, 24, 24);
+        using var white = new SolidBrush(Color.White);
+        using var text = new SolidBrush(ColorOf(theme.Text));
+        using var muted = new SolidBrush(ColorOf(theme.Muted));
+        DrawLabel(graphics, provider.DisplayName[..1], _bodyFont!, white, x + 16, y + 18, 24, 20);
+        DrawLabel(graphics, provider.DisplayName, _bodyFont!, text, x + 48, y + 12, 180, 18);
+        DrawLabel(graphics, _chinese ? $"{provider.Accounts.Count} 个账号" : $"{provider.Accounts.Count} accounts", _smallFont!, muted, x + 48, y + 30, 160, 14);
+        var tight = Tightest(provider);
+        DrawRing(graphics, x + width - 78, y + 16, 14, tight);
+        using var percentBrush = new SolidBrush(tight is { } value ? ColorOf(UsageThemes.ForRemaining(value)) : ColorOf(theme.Muted));
+        DrawLabel(graphics, UsageFormatting.Percent(tight), _bodyFont!, percentBrush, x + width - 58, y + 16, 48, 18);
+        var rowY = y + UsageBoardLayout.CardPad + UsageBoardLayout.CardHeader;
+        var rowHeight = _compact ? UsageBoardLayout.CompactAccountRow : UsageBoardLayout.AccountRow;
+        foreach (var account in provider.Accounts)
+        {
+            PaintAccount(graphics, theme, account, x + 14, rowY, width - 28, rowHeight - 6);
+            rowY += rowHeight;
+        }
+
+        if (_compact || !UsageBoardLayout.HasLedger(provider)) return;
+        var open = !_ledgerClosed.Contains(provider.ProviderId);
+        var ledgerBounds = new RectangleF(x + 14, rowY, 70, 20);
+        _hits.Add((ledgerBounds, () =>
+        {
+            if (!_ledgerClosed.Add(provider.ProviderId)) _ledgerClosed.Remove(provider.ProviderId);
+            ApplySize();
+            Invalidate();
+        }));
+        DrawLabel(graphics, (open ? "▾ " : "▸ ") + (_chinese ? "账本" : "Ledger"), _smallFont!, muted, ledgerBounds.X, ledgerBounds.Y, 80, 16);
+        if (!open) return;
+        var ledger = provider.Accounts.Select(account => account.Ledger).FirstOrDefault(item => item is not null);
+        if (ledger is null) return;
+        DrawLabel(graphics, Period(_chinese ? "今日" : "Today", ledger.Today), _smallFont!, text, x + 96, rowY, 110, 16);
+        DrawLabel(graphics, Period("7d", ledger.SevenDays), _smallFont!, text, x + 206, rowY, 100, 16);
+        DrawLabel(graphics, Period("30d", ledger.ThirtyDays), _smallFont!, text, x + 310, rowY, 110, 16);
+    }
+
+    private void PaintAccount(Graphics graphics, UsageTheme theme, UsageAccountSnapshot account, float x, float y, float width, float height)
+    {
         var window = UsageFormatting.Primary(account);
         var remaining = UsageFormatting.Remaining(window);
         using var text = new SolidBrush(ColorOf(theme.Text));
         using var muted = new SolidBrush(ColorOf(theme.Muted));
-        DrawLabel(graphics, account.Label, _bodyFont!, text, x + 12, y + 6, width - 78, 16);
-        var percent = UsageFormatting.Percent(remaining);
-        using var percentBrush = new SolidBrush(remaining is { } value ? ColorOf(UsageThemes.ForRemaining(value)) : ColorOf(theme.Muted));
-        DrawLabel(graphics, percent, _bodyFont!, percentBrush, x + width - 64, y + 6, 52, 16);
-        var track = new RectangleF(x + 12, y + 26, width - 24, 6);
-        using var trackBrush = new SolidBrush(ColorOf(theme.Track));
-        graphics.FillRoundedRectangle(trackBrush, track, 3);
+        DrawLabel(graphics, account.Label, _bodyFont!, text, x, y, width - 58, 16);
+        if (!_compact)
+        {
+            var caption = window?.Label ?? UsageFormatting.Error(account.ErrorKey, _chinese);
+            DrawLabel(graphics, caption + " · " + UsageFormatting.Reset(window?.ResetsAt, DateTimeOffset.Now, _chinese), _smallFont!, muted, x, y + 16, width - 8, 14);
+        }
+
+        var bar = new RectangleF(x, y + (_compact ? 20 : 34), width - 52, 6);
+        using var track = new SolidBrush(Color.FromArgb(theme.Light ? 36 : 48, theme.Track.R, theme.Track.G, theme.Track.B));
+        graphics.FillRoundedRectangle(track, bar, 3);
         if (remaining is { } left && left > 0)
         {
-            using var active = new SolidBrush(ColorOf(UsageThemes.ForRemaining(left)));
-            graphics.FillRoundedRectangle(active, new RectangleF(track.X, track.Y, Math.Max(4, track.Width * (float)(left / 100)), track.Height), 3);
+            var fill = new RectangleF(bar.X, bar.Y, Math.Max(6, bar.Width * (float)(left / 100)), bar.Height);
+            var end = ColorOf(UsageThemes.ForRemaining(left));
+            var start = ColorOf(UsageThemes.Glow(left));
+            using var glow = new SolidBrush(Color.FromArgb(70, end));
+            graphics.FillRoundedRectangle(glow, new RectangleF(fill.X, fill.Y - 1, fill.Width, fill.Height + 2), 4);
+            using var gradient = new LinearGradientBrush(fill, start, end, LinearGradientMode.Horizontal);
+            graphics.FillRoundedRectangle(gradient, fill, 3);
         }
 
-        if (_compact) return;
-        var caption = window?.Label ?? UsageFormatting.Error(account.ErrorKey, _chinese);
-        DrawLabel(graphics, caption, _smallFont!, muted, x + 12, y + 38, width / 2, 14);
-        DrawLabel(graphics, UsageFormatting.Reset(window?.ResetsAt, DateTimeOffset.Now, _chinese), _smallFont!, muted, x + width / 2, y + 38, width / 2 - 16, 14);
-        var detailY = y + 56;
-        if (account.Credits?.PrepaidBalance is { } prepaid)
+        using var percentBrush = new SolidBrush(remaining is { } shown ? ColorOf(UsageThemes.ForRemaining(shown)) : ColorOf(theme.Muted));
+        DrawLabel(graphics, UsageFormatting.Percent(remaining), _smallFont!, percentBrush, bar.Right + 6, bar.Y - 5, 46, 16);
+        _ = height;
+    }
+
+    private void PaintWash(Graphics graphics, UsageTheme theme, int width, int height)
+    {
+        var bounds = new RectangleF(0, 0, width, height);
+        if (!_backdrop)
         {
-            DrawLabel(graphics, (_chinese ? "预付 " : "Prepaid ") + UsageFormatting.Money(account.Credits.Currency, prepaid), _smallFont!, text, x + 12, detailY, width - 24, 14);
-            detailY += 16;
-        }
-        else if (account.Credits?.OnDemandUsed is { } spent)
-        {
-            var cap = account.Credits.OnDemandCap is { } limit ? " / " + UsageFormatting.Money(account.Credits.Currency, limit) : "";
-            DrawLabel(graphics, (_chinese ? "按量 " : "On-demand ") + UsageFormatting.Money(account.Credits.Currency, spent) + cap, _smallFont!, text, x + 12, detailY, width - 24, 14);
-            detailY += 16;
+            using var wash = new LinearGradientBrush(bounds, ColorOf(theme.Wash), ColorOf(theme.Accent), 35f);
+            graphics.FillRectangle(wash, bounds);
         }
 
-        if (account.Ledger is { } ledger)
+        PaintGlass(graphics, theme, bounds, UsageBoardLayout.Corner, true);
+    }
+
+    private void PaintGlass(Graphics graphics, UsageTheme theme, RectangleF bounds, float radius, bool window)
+    {
+        var alpha = window
+            ? (_backdrop ? (theme.Light ? 70 : 84) : (theme.Light ? 150 : 168))
+            : (theme.Light ? 120 : 96);
+        var fill = theme.Light ? Color.FromArgb(alpha, 255, 255, 255) : Color.FromArgb(alpha, 20, 24, 32);
+        using var brush = new SolidBrush(fill);
+        graphics.FillRoundedRectangle(brush, bounds, radius);
+        using var border = new Pen(Color.FromArgb(theme.Light ? 170 : 90, 255, 255, 255), 1);
+        using var path = Rounded(bounds, radius);
+        graphics.DrawPath(border, path);
+        var shine = new RectangleF(bounds.X + 1, bounds.Y + 1, bounds.Width - 2, 14);
+        using var highlight = new SolidBrush(Color.FromArgb(theme.Light ? 90 : 40, 255, 255, 255));
+        graphics.FillRoundedRectangle(highlight, shine, Math.Max(8, radius - 8));
+    }
+
+    private void AddChip(Graphics graphics, UsageTheme theme, float x, float y, float width, string label, Action action)
+    {
+        var bounds = new RectangleF(x, y, width, 26);
+        using var fill = new SolidBrush(Color.FromArgb(48, theme.Accent.R, theme.Accent.G, theme.Accent.B));
+        graphics.FillRoundedRectangle(fill, bounds, 13);
+        using var border = new Pen(Color.FromArgb(120, 255, 255, 255), 1);
+        using var path = Rounded(bounds, 13);
+        graphics.DrawPath(border, path);
+        using var text = new SolidBrush(ColorOf(theme.Text));
+        DrawLabel(graphics, label, _smallFont!, text, x + 8, y + 4, width - 12, 16);
+        _hits.Add((bounds, action));
+    }
+
+    private static void DrawRing(Graphics graphics, float x, float y, float radius, double? remaining)
+    {
+        var bounds = new RectangleF(x, y, radius * 2, radius * 2);
+        using var track = new Pen(Color.FromArgb(70, 255, 255, 255), 2.4f);
+        graphics.DrawArc(track, bounds, 0, 360);
+        if (remaining is not { } value || value <= 0) return;
+        using var pen = new Pen(ColorOf(UsageThemes.ForRemaining(value)), 2.4f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        graphics.DrawArc(pen, bounds, -90, (float)(360 * value / 100));
+    }
+
+    private static double? Tightest(UsageProviderSnapshot provider)
+    {
+        double? tightest = null;
+        foreach (var account in provider.Accounts)
         {
-            DrawLabel(graphics, Period(_chinese ? "今日" : "Today", ledger.Today), _smallFont!, muted, x + 12, detailY, 120, 14);
-            DrawLabel(graphics, Period("7d", ledger.SevenDays), _smallFont!, muted, x + 132, detailY, 100, 14);
-            DrawLabel(graphics, Period("30d", ledger.ThirtyDays), _smallFont!, muted, x + 240, detailY, 120, 14);
-            detailY += 16;
+            var remaining = UsageFormatting.Remaining(UsageFormatting.Primary(account));
+            if (remaining is { } value && (tightest is null || value < tightest)) tightest = value;
         }
 
-        var chipX = x + 12;
-        foreach (var product in account.Products.Take(3))
-        {
-            DrawLabel(graphics, product.Product + " " + product.Percent.ToString("0.#"), _smallFont!, muted, chipX, detailY, 110, 14);
-            chipX += 112;
-        }
+        return tightest;
     }
 
     private static string Period(string label, UsageLedgerPeriod period)
     {
         var cost = period.ApiEquivalentCost is { } value ? " " + UsageFormatting.Money("USD", value) : "";
         return label + " " + UsageFormatting.Tokens(period.Tokens) + cost;
+    }
+
+    private void ToggleTheme()
+    {
+        _theme = _theme.Light ? UsageThemes.Dark : UsageThemes.Light;
+        ApplyBackdrop();
+        ApplySize();
+        Invalidate();
+    }
+
+    private void ApplyBackdrop()
+    {
+        if (!IsHandleCreated) return;
+        _backdrop = WindowBackdrop.TryApply(Handle, _theme.Light, transient: true);
+        BackColor = _theme.Light ? Color.FromArgb(244, 246, 251) : Color.FromArgb(16, 18, 24);
     }
 
     private static void DrawLabel(Graphics graphics, string value, Font font, Brush brush, float x, float y, float width, float height) =>
@@ -191,30 +280,66 @@ internal sealed class UsageBoardForm : Form, IPluginPopoverContent
 
     private void ApplySize()
     {
-        var logical = UsageBoardLayout.Height(_board, _compact);
+        var logical = LogicalHeight();
         var width = (int)Math.Ceiling(UsageBoardLayout.Width * _scale);
         var height = (int)Math.Ceiling(logical * _scale);
         var screen = IsHandleCreated
             ? Screen.FromControl(this).WorkingArea
             : Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1280, 800);
-        if (height > screen.Height - 24)
+        if (height > screen.Height - 24 && !_compact)
         {
             _compact = true;
-            logical = UsageBoardLayout.Height(_board, true);
+            logical = LogicalHeight();
             height = Math.Min((int)Math.Ceiling(logical * _scale), screen.Height - 24);
         }
 
         ClientSize = new Size(width, height);
-        BackColor = ColorOf(_theme.Canvas);
+        using var path = Rounded(new RectangleF(0, 0, width, height), UsageBoardLayout.Corner * _scale);
+        var previous = Region;
+        Region = new Region(path);
+        previous?.Dispose();
     }
 
-    private int LogicalHeight() => UsageBoardLayout.Height(_board, _compact);
+    private int LogicalHeight()
+    {
+        if (!_compact && _ledgerClosed.Count == 0) return UsageBoardLayout.Height(_board, false);
+        var height = UsageBoardLayout.Padding + UsageBoardLayout.HeaderHeight;
+        foreach (var provider in _board.Providers)
+        {
+            var card = UsageBoardLayout.CardHeight(provider, _compact);
+            if (!_compact && _ledgerClosed.Contains(provider.ProviderId) && UsageBoardLayout.HasLedger(provider))
+            {
+                card -= UsageBoardLayout.LedgerHeight - 22;
+            }
+
+            height += card + UsageBoardLayout.CardGap;
+        }
+
+        return Math.Max(height + UsageBoardLayout.Padding - UsageBoardLayout.CardGap, 188);
+    }
 
     private void EnsureFonts()
     {
-        _titleFont ??= new Font("Segoe UI", 18, FontStyle.Bold, GraphicsUnit.Pixel);
-        _bodyFont ??= new Font("Segoe UI", 12, FontStyle.Bold, GraphicsUnit.Pixel);
-        _smallFont ??= new Font("Segoe UI", 11, FontStyle.Regular, GraphicsUnit.Pixel);
+        _titleFont ??= UiFont(22, FontStyle.Bold);
+        _bodyFont ??= UiFont(13, FontStyle.Bold);
+        _smallFont ??= UiFont(11, FontStyle.Regular);
+    }
+
+    private static Font UiFont(float pixels, FontStyle style)
+    {
+        foreach (var name in new[] { "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI" })
+        {
+            try
+            {
+                return new Font(name, pixels, style, GraphicsUnit.Pixel);
+            }
+            catch (ArgumentException)
+            {
+                continue;
+            }
+        }
+
+        return new Font(FontFamily.GenericSansSerif, pixels, style, GraphicsUnit.Pixel);
     }
 
     private static Color ColorOf(UsageColor color) => Color.FromArgb(color.R, color.G, color.B);
@@ -223,6 +348,12 @@ internal sealed class UsageBoardForm : Form, IPluginPopoverContent
     {
         var path = new GraphicsPath();
         var diameter = Math.Min(radius * 2, Math.Min(bounds.Width, bounds.Height));
+        if (diameter <= 0)
+        {
+            path.AddRectangle(bounds);
+            return path;
+        }
+
         var arc = new RectangleF(bounds.X, bounds.Y, diameter, diameter);
         path.AddArc(arc, 180, 90);
         arc.X = bounds.Right - diameter;

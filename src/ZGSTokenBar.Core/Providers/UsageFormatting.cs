@@ -16,6 +16,35 @@ public static class UsageFormatting
         account.Windows.FirstOrDefault(window => window.UsedPercent is not null || window.Unlimited)
         ?? account.Windows.FirstOrDefault();
 
+    public static string Overall(UsageBoard board, bool chinese)
+    {
+        string? name = null;
+        double? tightest = null;
+        foreach (var provider in board.Providers)
+        {
+            foreach (var account in provider.Accounts)
+            {
+                var remaining = Remaining(Primary(account));
+                if (remaining is not { } value) continue;
+                if (tightest is null || value < tightest)
+                {
+                    tightest = value;
+                    name = provider.DisplayName;
+                }
+            }
+        }
+
+        if (tightest is null || name is null)
+        {
+            return chinese ? "暂无读数" : "No reading";
+        }
+
+        var providers = board.Providers.Count;
+        return chinese
+            ? $"最紧 {Percent(tightest)} · {name} · {providers} 个工具"
+            : $"Tightest {Percent(tightest)} · {name} · {providers} tools";
+    }
+
     public static string Percent(double? remaining) =>
         remaining is { } value
             ? value.ToString("0.#", CultureInfo.InvariantCulture) + "%"

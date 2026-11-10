@@ -29,6 +29,8 @@ public static class UsageProviderFixtureTests
         File.WriteAllText(Path.Combine(directory, "usage-after-dark.svg"), UsageBoardSvg.Render(board, UsageThemes.Dark, false, true));
         File.WriteAllText(Path.Combine(directory, "usage-after-light.svg"), UsageBoardSvg.Render(board, UsageThemes.Light, false, true));
         File.WriteAllText(Path.Combine(directory, "usage-after-compact.svg"), UsageBoardSvg.Render(board, UsageThemes.Dark, true, true));
+        File.WriteAllText(Path.Combine(directory, "usage-taskbar-dark.svg"), UsageBoardSvg.Taskbar(board, UsageThemes.Dark, true));
+        File.WriteAllText(Path.Combine(directory, "usage-taskbar-light.svg"), UsageBoardSvg.Taskbar(board, UsageThemes.Light, true));
     }
 
     private static void VerifyParsers()

@@ -203,6 +203,12 @@ internal sealed class OtherToolsModule : IDisposable
         }
     }
 
+    private void RequestRefresh()
+    {
+        if (_disposed) return;
+        _ = RefreshAsync();
+    }
+
     private void Publish()
     {
         var merged = UsageProviderEngine.Merge(_fetched, _external);
@@ -226,7 +232,7 @@ internal sealed class OtherToolsModule : IDisposable
     {
         if (!ProviderCatalog.StartsCollapsed(request.PluginId)) return;
         _popup?.Dispose();
-        _popup = new UsageBoardForm(request.Scale, _chinese, _light);
+        _popup = new UsageBoardForm(request.Scale, _chinese, _light, RequestRefresh, () => _bar.RequestUsageSettings());
         UsageBoard board;
         lock (_gate) board = _board;
         _popup.ShowBoard(board);

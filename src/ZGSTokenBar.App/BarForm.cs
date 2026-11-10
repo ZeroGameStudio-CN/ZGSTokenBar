@@ -199,6 +199,8 @@ internal sealed partial class BarForm : Form
 
     public event EventHandler? RefreshRequested;
     public event EventHandler? SettingsRequested;
+
+    internal void RequestUsageSettings() => SettingsRequested?.Invoke(this, EventArgs.Empty);
     public event EventHandler<string>? PluginActivated;
     public event EventHandler<WindowPlacementCommit>? PlacementCommitted;
     public event EventHandler<RadarPreviewRequest>? RadarPreviewRequested;
@@ -1525,7 +1527,16 @@ internal sealed partial class BarForm : Form
         var iconBounds = collapsed
             ? new RectangleF(bounds.X + 3, bounds.Y + 3, 15, 15)
             : new RectangleF(bounds.X + 5, bounds.Y + 6, 24, 24);
-        if (_pluginIcons.TryGetValue(view.PluginId, out var image))
+        var usageSummary = view.Card.Summary.FirstOrDefault();
+        var usageRemaining = usageSummary?.Status == "usage-remaining" ? usageSummary.Value.Number : null;
+        if (collapsed && usageRemaining is { } ringValue)
+        {
+            using var trackPen = new Pen(Color.FromArgb(90, 255, 255, 255), 2f);
+            graphics.DrawEllipse(trackPen, iconBounds);
+            using var ringPen = new Pen(QuotaColorScale.ForRemaining(ringValue), 2f);
+            graphics.DrawArc(ringPen, iconBounds, -90, (float)(360 * Math.Clamp(ringValue, 0, 100) / 100));
+        }
+        else if (_pluginIcons.TryGetValue(view.PluginId, out var image))
         {
             graphics.DrawImage(image, iconBounds);
         }
