@@ -150,6 +150,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             : null);
         _bar.RefreshRequested += (_, _) => _ = RefreshAsync(userInitiated: true);
         _bar.SettingsRequested += (_, _) => OpenSettings();
+        _bar.OverviewRequested += (_, _) => _otherToolsModule.ShowOverview();
         _bar.PlacementCommitted += (_, commit) => SavePlacement(commit);
         _bar.RadarPreviewRequested += (_, request) =>
             RequestRadarPreview(request.Provider, request.SurfaceId);

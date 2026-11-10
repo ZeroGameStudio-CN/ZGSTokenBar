@@ -16,6 +16,7 @@ public static class UsageProviderFixtureTests
         VerifyEndpoints();
         VerifyEngine().GetAwaiter().GetResult();
         VerifyProjectionAndSvg();
+        VerifyGlassDock();
         if (args is { Length: 1 }) WriteGallery(args[0]);
         Console.WriteLine("PASS usage provider fixtures");
         return 0;
@@ -31,7 +32,21 @@ public static class UsageProviderFixtureTests
         File.WriteAllText(Path.Combine(directory, "usage-after-compact.svg"), UsageBoardSvg.Render(board, UsageThemes.Dark, true, true));
         File.WriteAllText(Path.Combine(directory, "usage-taskbar-dark.svg"), UsageBoardSvg.Taskbar(board, UsageThemes.Dark, true));
         File.WriteAllText(Path.Combine(directory, "usage-taskbar-light.svg"), UsageBoardSvg.Taskbar(board, UsageThemes.Light, true));
+        var dock = GlassDockLayout.Plan(GalleryRings());
+        File.WriteAllText(Path.Combine(directory, "glass-dock-dark.svg"), GlassDockSvg.Pill(dock, false, 85, true));
+        File.WriteAllText(Path.Combine(directory, "glass-dock-light.svg"), GlassDockSvg.Pill(dock, true, 85, false));
+        File.WriteAllText(Path.Combine(directory, "glass-dock-flyout.svg"), GlassDockSvg.Flyout(GlassDockComposer.Groups(GalleryRings(), DateTimeOffset.Parse("2026-11-10T12:00:00Z"), true), false, null));
     }
+
+    private static GlassDockRing[] GalleryRings() =>
+    [
+        new(UsageProviderIds.Codex, "Codex", "账号1", 1, 16, DateTimeOffset.Parse("2026-11-10T14:14:00Z"), null, "#10a37f"),
+        new(UsageProviderIds.Codex, "Codex", "账号2", 2, 7, DateTimeOffset.Parse("2026-11-10T14:14:00Z"), null, "#10a37f"),
+        new(UsageProviderIds.Codex, "Codex", "账号3", 3, 5, DateTimeOffset.Parse("2026-11-10T14:14:00Z"), null, "#10a37f"),
+        new(UsageProviderIds.Claude, "Claude", "Claude", 0, 72, DateTimeOffset.Parse("2026-11-16T00:00:00Z"), null, "#d97757"),
+        new(UsageProviderIds.Grok, "Grok", "Grok", 0, 40, DateTimeOffset.Parse("2026-11-10T23:20:00Z"), null, "#111113"),
+        new("deepseek", "DeepSeek", "DeepSeek", 0, null, null, "¥23.5", "#1aa89a"),
+    ];
 
     private static void VerifyParsers()
     {
@@ -294,6 +309,50 @@ public static class UsageProviderFixtureTests
             provider.DisplayName + " " + account.Label + " " + account.Plan + " " + account.ErrorKey + " " + account.SourceKind)));
 
     private static string Temp() => Path.Combine(Path.GetTempPath(), "zgstokenbar-usage-" + Guid.NewGuid().ToString("N"));
+
+    private static void VerifyGlassDock()
+    {
+        var board = SampleBoard();
+        var rings = GlassDockComposer.FromBoard(board);
+        Check(rings.Count == 3, "board rings include every account");
+        Check(rings.Count(ring => ring.AccountNumber > 0) == 2, "multi-account provider badges each account");
+        var plan = GlassDockLayout.Plan(rings);
+        Check(plan.Width == GlassDockLayout.Width && plan.Height == GlassDockLayout.Height, "dock size is fixed");
+        Check(plan.Visible[0].RemainingPercent == 30, "tightest remaining leads");
+        Check(plan.OverflowCount == 0, "three accounts fit");
+        var many = Enumerable.Range(0, 12).Select(index => new GlassDockRing(
+            "p" + index.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "P" + index.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "a",
+            0,
+            80 - index,
+            null,
+            null,
+            "#10a37f")).ToArray();
+        var bounded = GlassDockLayout.Plan(many);
+        var single = GlassDockLayout.Plan(many.Take(1).ToArray());
+        Check(bounded.Width == single.Width && bounded.Width == 294, "width does not grow with providers");
+        Check(bounded.Visible.Count == 4 && bounded.OverflowCount == 8, "four rings then +N");
+        Check(bounded.Visible[0].RemainingPercent == 80 - 11, "tightest of the long list is first");
+        Check(bounded.Slots.Count == 5 && bounded.Slots[^1].Chip, "overflow chip is laid out");
+        Check(bounded.Slots.All(slot => slot.Bounds.Right <= GlassDockLayout.SystemLeft - GlassDockLayout.DividerGap), "rings stay left of the system cluster");
+        var limited = GlassDockLayout.Plan(many, 2);
+        Check(limited.Visible.Count == 2 && limited.OverflowCount == 10 && limited.Width == 294, "ring limit is configurable");
+        Check(GlassDockLayout.Band(19) == "red" && GlassDockLayout.Band(20) == "amber" && GlassDockLayout.Band(50) == "amber" && GlassDockLayout.Band(51) == "green", "quota bands");
+        var quota = GlassDockComposer.FromQuota(
+            [
+                new QuotaCard("claude", ProviderKind.Claude, "Claude", null, "#d97757", true, [new QuotaWindow("5h", 28, null, TimeSpan.FromHours(5))]),
+            ],
+            [
+                new CodexAccountQuota("one", [new QuotaWindow("5h", 84, null, TimeSpan.FromHours(5))]),
+                new CodexAccountQuota("two", [new QuotaWindow("5h", 95, null, TimeSpan.FromHours(5))]),
+            ]);
+        var codexPlan = GlassDockLayout.Plan(quota);
+        Check(codexPlan.Visible[0].ProviderId == UsageProviderIds.Codex && codexPlan.Visible[0].RemainingPercent == 5, "codex accounts are separate rings");
+        Check(codexPlan.Visible.Count(ring => ring.AccountNumber > 0) == 2, "both codex accounts keep a badge");
+        var groups = GlassDockComposer.Groups(rings, DateTimeOffset.Parse("2026-11-10T12:00:00Z"), true);
+        Check(groups[0].Title == "Grok" && groups[0].Accounts.Count == 2 && groups[0].Accounts[0].Label == "账号1", "flyout keeps provider groups");
+    }
 
     private static void VerifyEndpoints()
     {

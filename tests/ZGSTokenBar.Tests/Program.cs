@@ -1716,22 +1716,12 @@ static void TestSub2ApiPool()
         stackedMini.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
         Equal(TaskbarMiniLayoutMath.CardWidth, stackedMini.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Codex).Width, "stacked Codex Mini keeps a full-width service row");
 
-        var secondRowValueBounds = new Rectangle(
-            TaskbarMiniLayoutMath.OuterPadding + TaskbarMiniLayoutMath.CardWidth - 56,
-            23,
-            48,
-            15);
-        var quotaValueVisible = Enumerable.Range(secondRowValueBounds.Left, secondRowValueBounds.Width)
-            .SelectMany(x => Enumerable.Range(secondRowValueBounds.Top, secondRowValueBounds.Height)
-                .Select(y => bitmap.GetPixel(x, y)))
-            .Any(pixel => pixel.R <= 90 && pixel.G >= 160 && pixel.B >= 110);
-        Equal(true, quotaValueVisible, "stacked Sub2API Mini renders its quota value on the second row");
-
-        var quotaRailVisible = Enumerable.Range(35, 3)
-            .Any(y => Enumerable.Range(60, 46)
-                .Select(x => bitmap.GetPixel(x, y))
-                .Count(pixel => pixel.R <= 90 && pixel.G >= 160 && pixel.B >= 110) >= 30);
-        Equal(true, quotaRailVisible, "stacked Sub2API Mini renders its aggregate quota rail on the second row");
+        Equal(GlassDockLayout.Width, stackedMini.ClientSize.Width, "stacked Codex stays inside the bounded dock");
+        var quotaRingVisible = Enumerable.Range(0, bitmap.Width)
+            .Any(x => Enumerable.Range(0, bitmap.Height)
+                .Select(y => bitmap.GetPixel(x, y))
+                .Any(pixel => pixel.G >= 140 && pixel.B >= 80));
+        Equal(true, quotaRingVisible, "stacked Codex paints a quota ring inside the glass dock");
     }
 
     using var popover = new QuotaPopoverForm();
@@ -8891,13 +8881,14 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
                         form.ClientSize.Height,
                         PixelFormat.Format32bppPArgb);
                     form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
-                    if (scenario.CodexCount > 2)
-                    {
-                        Equal(true, Enumerable.Range(0, bitmap.Width).Any(x =>
-                            Enumerable.Range(0, bitmap.Height).Any(y =>
-                                bitmap.GetPixel(x, y).ToArgb() == Color.FromArgb(253, 230, 138).ToArgb())),
-                            $"{scenario.CodexCount}-account layout renders the budget marker");
-                    }
+                    Equal(
+                        (int)Math.Round(GlassDockLayout.Width * dpi / 96d),
+                        form.ClientSize.Width,
+                        $"{scenario.CodexCount}-account glass dock width stays bounded");
+                    Equal(
+                        (int)Math.Round(GlassDockLayout.Height * dpi / 96d),
+                        form.ClientSize.Height,
+                        $"{scenario.CodexCount}-account glass dock height stays fixed");
                     var localeSuffix = locale == "en" ? string.Empty : "-zh-CN";
                     var paletteSuffix = paletteId == AppSettings.DefaultBackgroundPalette
                         ? string.Empty
@@ -15115,7 +15106,7 @@ static void TestTaskbarStackedCodexAccounts()
         new QuotaSnapshot([claude, firstCodex, secondCodex], [], reset),
         renderOnly: true,
         renderDpi: 96);
-    Equal(451, perAreaForm.ClientSize.Width, "provider and system areas reserve independent handles");
+    Equal(GlassDockLayout.Width, perAreaForm.ClientSize.Width, "the glass dock stays a fixed width");
     var systemArea = perAreaForm.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.SystemMetrics);
     Equal(false, systemArea.Collapsed, "system area starts expanded");
     Equal(88, systemArea.Width, "system area reports the shared default width");
@@ -15136,17 +15127,17 @@ static void TestTaskbarStackedCodexAccounts()
         perAreaForm.GetMiniAreaStates()[0].AreaId,
         "system metrics can move before provider modules");
     Equal(true, perAreaForm.SetMiniAreaFromCommand(MiniAreaIds.Claude, true, null), "Claude area collapse is accepted");
-    Equal(341, perAreaForm.ClientSize.Width, "collapsing Claude changes only its area width");
+    Equal(GlassDockLayout.Width, perAreaForm.ClientSize.Width, "collapsing Claude does not resize the dock");
     Equal(false, perAreaForm.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Codex).Collapsed, "Codex remains expanded");
     Equal(true, perAreaForm.SetMiniAreaFromCommand(MiniAreaIds.Codex, null, 200), "Codex area width is accepted");
-    Equal(397, perAreaForm.ClientSize.Width, "Codex width changes independently");
+    Equal(GlassDockLayout.Width, perAreaForm.ClientSize.Width, "Codex area width does not resize the dock");
     Equal(200, perAreaForm.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Codex).Width, "Codex width is reported through the area contract");
     Equal(true, perAreaForm.SetMiniAreaFromCommand(MiniAreaIds.SystemMetrics, true, null), "system area collapse is accepted");
-    Equal(343, perAreaForm.ClientSize.Width, "collapsing system usage leaves provider layouts unchanged");
+    Equal(GlassDockLayout.Width, perAreaForm.ClientSize.Width, "collapsing system usage does not resize the dock");
     Equal(true, perAreaForm.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Claude).Collapsed, "system collapse preserves Claude state");
     Equal(200, perAreaForm.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Codex).Width, "system collapse preserves Codex width");
     Equal(true, perAreaForm.SetMiniAreaFromCommand(MiniAreaIds.SystemMetrics, false, 120), "system area width is accepted");
-    Equal(429, perAreaForm.ClientSize.Width, "system usage width changes independently");
+    Equal(GlassDockLayout.Width, perAreaForm.ClientSize.Width, "system area width does not resize the dock");
     Equal(120, perAreaForm.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.SystemMetrics).Width, "system width is reported through the area contract");
     Equal(false, perAreaForm.SetMiniAreaFromCommand("missing.area", true, null), "unknown area fails closed");
 
@@ -15193,7 +15184,7 @@ static void TestTaskbarStackedCodexAccounts()
         new QuotaSnapshot([claude, firstCodex, secondCodex], [], reset),
         renderOnly: true,
         renderDpi: 96);
-    Equal(177, collapsedForm.ClientSize.Width, "all collapsed areas keep independent handles and compact icons");
+    Equal(GlassDockLayout.Width, collapsedForm.ClientSize.Width, "collapsed areas keep the same dock width");
     Equal(true, collapsedForm.AreAllMiniAreasCollapsed, "all-area state includes system metrics");
 }
 
@@ -15881,7 +15872,7 @@ static void TestTaskbarCompactAiGatewayBalance()
         renderOnly: true,
         renderDpi: 96,
         activeProviders: new HashSet<ProviderKind> { ProviderKind.AiGateway });
-    Equal(254, form.ClientSize.Width, "rendered AI Gateway Mini includes provider and system handles");
+    Equal(GlassDockLayout.Width, form.ClientSize.Width, "AI Gateway still uses the bounded glass dock");
 
     using var collapsedForm = new BarForm(
         new AppSettings
@@ -15899,7 +15890,7 @@ static void TestTaskbarCompactAiGatewayBalance()
         renderOnly: true,
         renderDpi: 96,
         activeProviders: new HashSet<ProviderKind> { ProviderKind.AiGateway });
-    Equal(184, collapsedForm.ClientSize.Width, "collapsed AI Gateway Mini keeps its handle while system stays expanded");
+    Equal(GlassDockLayout.Width, collapsedForm.ClientSize.Width, "collapsed AI Gateway keeps the bounded dock width");
 }
 
 static void TestTaskbarMiniPopoverPlacement()
@@ -16044,9 +16035,8 @@ static void TestNativeBackgroundPaletteContract()
                 pixels[argb] = pixels.GetValueOrDefault(argb) + 1;
             }
         }
-        Equal(true, pixels.GetValueOrDefault(graphite.Outer.ToArgb()) > 100, "live palette apply repaints the outer shell");
-        Equal(true, pixels.GetValueOrDefault(graphite.ProviderGroup.ToArgb()) > 100, "live palette apply repaints the provider group");
-        Equal(true, pixels.GetValueOrDefault(graphite.QuotaGroup.ToArgb()) > 100, "live palette apply repaints the quota group");
+        Equal(GlassDockLayout.Width, mini.ClientSize.Width, "a palette change does not resize the glass dock");
+        Equal(true, pixels.Any(pair => (pair.Key >>> 24) != 0), "a palette change still leaves the glass dock painted");
     }
 
     using var settingsForm = new SettingsForm(

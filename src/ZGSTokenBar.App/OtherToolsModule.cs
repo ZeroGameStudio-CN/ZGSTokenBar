@@ -219,13 +219,39 @@ internal sealed class OtherToolsModule : IDisposable
             _bar.BeginInvoke(() =>
             {
                 _changed();
+                _bar.SetUsageBoard(merged);
                 _popup?.ShowBoard(merged);
             });
             return;
         }
 
         _changed();
+        _bar.SetUsageBoard(merged);
         _popup?.ShowBoard(merged);
+    }
+
+    public void ShowOverview()
+    {
+        if (_disposed || _bar.IsDisposed) return;
+        _popup?.Dispose();
+        _popup = new UsageBoardForm(
+            Math.Max(1, _bar.DeviceDpi / 96f),
+            _chinese,
+            _light,
+            RequestRefresh,
+            () => _bar.RequestUsageSettings());
+        UsageBoard board;
+        lock (_gate) board = _board;
+        _popup.ShowBoard(board);
+        var anchor = _bar.RectangleToScreen(_bar.ClientRectangle);
+        var screen = Screen.FromRectangle(anchor).WorkingArea;
+        var x = Math.Clamp(anchor.Left, screen.Left, Math.Max(screen.Left, screen.Right - _popup.Width));
+        var y = anchor.Top - _popup.Height >= screen.Top
+            ? anchor.Top - _popup.Height
+            : anchor.Bottom;
+        _popup.Location = new Point(x, y);
+        _popup.FormClosed += (_, _) => _light = _popup?.Light == true;
+        _popup.Show(_bar);
     }
 
     private void OnPopoverRequested(object? sender, PluginPopoverRequest request)

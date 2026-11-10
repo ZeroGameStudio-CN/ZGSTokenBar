@@ -33,6 +33,7 @@ public sealed class AppSettings
     public bool OpenAtLogin { get; set; }
     public bool EnableAlerts { get; set; } = true;
     public bool UseTaskbarRings { get; set; }
+    public int GlassDockMaxRings { get; set; } = GlassDockLayout.MaxVisibleRings;
     public bool TaskbarDocked { get; set; } = true;
     public bool EnableAnimations { get; set; } = true;
     public bool EnableRadar { get; set; }
