@@ -33,6 +33,11 @@
     <EmbeddedResource Include="Assets\openai-official-ios-icon.png" LogicalName="ZGSTokenBar.App.Assets.openai-official-ios-icon.png" />
     <EmbeddedResource Include="Assets\deepseek-whale-icon.png" LogicalName="ZGSTokenBar.App.Assets.deepseek-whale-icon.png" />
     <EmbeddedResource Include="Assets\fluent-clock-20-regular.png" LogicalName="ZGSTokenBar.App.Assets.fluent-clock-20-regular.png" />
+    <EmbeddedResource Include="Assets\antigravity-official-icon.png" LogicalName="ZGSTokenBar.App.Assets.antigravity-official-icon.png" />
+    <EmbeddedResource Include="Assets\cursor-official-icon.png" LogicalName="ZGSTokenBar.App.Assets.cursor-official-icon.png" />
+    <EmbeddedResource Include="Assets\opencode-official-icon.png" LogicalName="ZGSTokenBar.App.Assets.opencode-official-icon.png" />
+    <EmbeddedResource Include="Assets\openrouter-official-icon.png" LogicalName="ZGSTokenBar.App.Assets.openrouter-official-icon.png" />
+    <EmbeddedResource Include="Assets\xai-official-icon.png" LogicalName="ZGSTokenBar.App.Assets.xai-official-icon.png" />
   </ItemGroup>
   <ItemGroup Condition="'$(BundledPluginPackage)' != ''">
     <EmbeddedResource Include="$(BundledPluginPackage)"

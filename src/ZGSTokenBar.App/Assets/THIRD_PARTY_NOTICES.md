@@ -3,9 +3,14 @@
 - `claude-icon-rounded.png` is the unmodified Claude icon from Anthropic's official press kit: <https://www.anthropic.com/news>
 - `openai-official-ios-icon.png` is the unmodified official OpenAI/ChatGPT app icon published by OpenAI: <https://help.openai.com/en/articles/7905742-what-does-the-official-chatgpt-ios-app-icon-look-like>
 - `deepseek-whale-icon.png` is the DeepSeek whale mark downloaded from DeepSeek's official site favicon: <https://www.deepseek.com/favicon.ico>
+- `xai-official-icon.png` is the xAI mark from xAI's official site favicon (<https://x.ai/favicon.ico>), also used for Grok.
+- `antigravity-official-icon.png` is Google Antigravity's official site icon (<https://antigravity.google/apple-touch-icon.png>).
+- `cursor-official-icon.png` is Cursor's official site icon (<https://cursor.com/apple-touch-icon.png>).
+- `opencode-official-icon.png` is OpenCode's official site icon (<https://opencode.ai/apple-touch-icon.png>).
+- `openrouter-official-icon.png` is OpenRouter's official site favicon (<https://openrouter.ai/favicon.ico>).
 - `fluent-clock-20-regular.png` is a rasterized copy of `ic_fluent_clock_20_regular` from Microsoft's Fluent UI System Icons: <https://github.com/microsoft/fluentui-system-icons>
 
-The provider marks are used only to identify the services whose quota data is displayed. Anthropic, Claude, OpenAI, ChatGPT, DeepSeek, and their marks are trademarks of their respective owners and do not imply endorsement.
+The provider marks are used only to identify the services whose quota data is displayed. Anthropic, Claude, OpenAI, ChatGPT, DeepSeek, xAI, Grok, Google, Antigravity, Cursor, OpenCode, OpenRouter, and their marks are trademarks of their respective owners and do not imply endorsement.
 
 Fluent UI System Icons are licensed under the MIT License:
 
