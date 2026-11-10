@@ -36,6 +36,8 @@ public sealed class AppSettings
     public int GlassDockMaxRings { get; set; } = GlassDockLayout.MaxVisibleRings;
     public bool TaskbarDocked { get; set; } = true;
     public bool EnableAnimations { get; set; } = true;
+    /// <summary>Experimental: host the docked bar inside the Windows taskbar (falls back to the overlay).</summary>
+    public bool EmbedInTaskbar { get; set; }
     public bool EnableRadar { get; set; }
     public bool EnableRadarAlerts { get; set; }
     public Dictionary<string, bool> RadarModelGroups { get; set; } = new(StringComparer.OrdinalIgnoreCase);

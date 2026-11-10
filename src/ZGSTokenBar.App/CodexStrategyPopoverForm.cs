@@ -106,13 +106,13 @@ internal sealed class CodexStrategyPopoverForm : Form
             _entranceStarted = DateTime.UtcNow;
             Opacity = .01;
             Location = _entranceLocation;
-            Show(owner);
+            Show(BarForm.PopoverOwnerFor(owner));
             TaskbarPlacement.ShowAt(Handle, _entranceLocation, placement.WindowSize);
             _entranceTimer.Start();
             return;
         }
         Opacity = 1;
-        if (!wasVisible) Show(owner);
+        if (!wasVisible) Show(BarForm.PopoverOwnerFor(owner));
         if (!TaskbarPlacement.ShowAt(Handle, _restingLocation, placement.WindowSize))
             Bounds = new Rectangle(_restingLocation, placement.WindowSize);
         UpdateRowTip(PointToClient(Cursor.Position));

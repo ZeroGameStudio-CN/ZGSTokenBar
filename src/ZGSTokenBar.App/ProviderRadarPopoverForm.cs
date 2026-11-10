@@ -206,14 +206,14 @@ internal sealed partial class ProviderRadarPopoverForm : Form
             _motionStarted = DateTime.UtcNow;
             Opacity = .01;
             Location = _motionFrom;
-            Show((Form?)_extensionOwner ?? owner);
+            Show((IWin32Window?)_extensionOwner ?? BarForm.PopoverOwnerFor(owner));
             if (!TaskbarPlacement.ShowAt(Handle, _motionFrom, placement.WindowSize)) Location = _motionFrom;
             _motionTimer.Start();
         }
         else
         {
             Opacity = 1;
-            if (!wasVisible) Show((Form?)_extensionOwner ?? owner);
+            if (!wasVisible) Show((IWin32Window?)_extensionOwner ?? BarForm.PopoverOwnerFor(owner));
             if ((!wasVisible || Location != placement.Location)
                 && !TaskbarPlacement.ShowAt(Handle, placement.Location, placement.WindowSize))
             {

@@ -302,6 +302,7 @@ internal sealed partial class BarForm : Form
 
         ApplySnapshotLayout();
         if (!_renderOnly) RestorePosition(settings);
+        ApplyTaskbarEmbedSetting(settings.EmbedInTaskbar);
     }
 
     protected override bool ShowWithoutActivation => true;
@@ -533,7 +534,7 @@ internal sealed partial class BarForm : Form
     {
         var next = AppSettings.CopyMiniAreaOrder(order);
         if (_miniAreaOrder.SequenceEqual(next, StringComparer.Ordinal)) return;
-        var anchor = Location;
+        var anchor = ScreenLocation;
         _miniAreaOrder = next;
         ApplySnapshotLayout();
         if (preserveAnchor && !_renderOnly) PreserveMiniProviderAreaAnchor(anchor);
@@ -546,7 +547,7 @@ internal sealed partial class BarForm : Form
     {
         var next = AppSettings.CopyMiniAreaLayouts(layouts);
         if (MiniAreaLayoutsEqual(_miniAreaLayouts, next)) return;
-        var anchor = Location;
+        var anchor = ScreenLocation;
         _miniAreaLayouts = next;
         ApplySnapshotLayout();
         if (preserveAnchor && !_renderOnly) PreserveMiniProviderAreaAnchor(anchor);
@@ -579,7 +580,7 @@ internal sealed partial class BarForm : Form
     {
         var areaIds = VisibleMiniAreaIds();
         if (areaIds.Count == 0 || areaIds.All(areaId => AreaLayout(areaId).Collapsed == collapsed)) return;
-        var anchor = Location;
+        var anchor = ScreenLocation;
         HidePopovers();
         foreach (var areaId in areaIds)
         {
@@ -607,7 +608,7 @@ internal sealed partial class BarForm : Form
                 : previous.Width,
         };
         if (next == previous) return false;
-        var anchor = Location;
+        var anchor = ScreenLocation;
         HidePopovers();
         _miniAreaLayouts[areaId] = next;
         ApplySnapshotLayout();
@@ -641,7 +642,7 @@ internal sealed partial class BarForm : Form
             .ToArray();
         if (reordered.SequenceEqual(_taskbarContentAreas.Select(area => area.AreaId), StringComparer.Ordinal)) return false;
 
-        var anchor = Location;
+        var anchor = ScreenLocation;
         HidePopovers();
         _miniAreaOrder = working.ToArray();
         ApplySnapshotLayout();
@@ -830,6 +831,7 @@ internal sealed partial class BarForm : Form
         }
         ApplySnapshotLayout();
         RepositionPopovers();
+        ApplyTaskbarEmbedSetting(settings.EmbedInTaskbar);
         if (_taskbarDocked) SyncTaskbarPlacement();
         else
         {
@@ -843,6 +845,7 @@ internal sealed partial class BarForm : Form
 
     public void SyncTaskbarPlacement()
     {
+        if (!_taskbarDocked && _embedParent != 0) DetachFromTaskbar("undocked");
         if (_hiddenToTray
             || !_taskbarDocked
             || _taskbarDragging
@@ -903,7 +906,8 @@ internal sealed partial class BarForm : Form
             _resolvedTaskbarMonitor = resolvedMonitor;
             if (WindowState != FormWindowState.Normal) WindowState = FormWindowState.Normal;
             if (!Visible) Show();
-            if (!TaskbarPlacement.ShowAt(Handle, location, placementSize)) Location = location;
+            EnsureTaskbarEmbedding(resolvedMonitor);
+            if (!TaskbarPlacement.ShowAt(Handle, location, placementSize) && !EmbeddedInTaskbar) Location = location;
             RepositionPopovers();
             return;
         }
@@ -943,6 +947,9 @@ internal sealed partial class BarForm : Form
 
     protected override void OnHandleCreated(EventArgs e)
     {
+        // A recreated handle is always a fresh top-level window.
+        _embedParent = 0;
+        _embedOriginalStyle = null;
         base.OnHandleCreated(e);
         _glassFrameSize = Size.Empty;
         if (!_renderOnly)
@@ -968,6 +975,7 @@ internal sealed partial class BarForm : Form
             QueueGlassRender();
         }
         if (!_renderOnly) RequestTopologyRefresh(topologyMayHaveChanged: false);
+        StartHoverCaptureIfRequested();
     }
 
     protected override void OnHandleDestroyed(EventArgs e)
@@ -4084,7 +4092,9 @@ internal sealed partial class BarForm : Form
 
         _taskbarDragging = true;
         _taskbarDragMoved = false;
-        _taskbarDragStartLocation = Location;
+        // Drag as a top-level overlay; docking re-embeds when the drag ends.
+        if (_embedParent != 0) DetachFromTaskbar("dragging");
+        _taskbarDragStartLocation = ScreenLocation;
         _taskbarDragCurrentLocation = _taskbarDragStartLocation;
         _taskbarDragStartScreen = Cursor.Position;
         _dragTopologyKey = _placementCoordinator.ActiveTopology?.Key;
@@ -4263,7 +4273,7 @@ internal sealed partial class BarForm : Form
             return;
         }
         if (!moved || AreaLayout(areaId) == previous) return;
-        if (!_renderOnly) PreserveMiniProviderAreaAnchor(Location);
+        if (!_renderOnly) PreserveMiniProviderAreaAnchor(ScreenLocation);
         _suppressClickUntil = DateTime.UtcNow.AddMilliseconds(120);
         MiniAreaLayoutChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -4535,6 +4545,7 @@ internal sealed partial class BarForm : Form
 
     protected override void WndProc(ref Message message)
     {
+        NoteEmbeddedDestroy(message.Msg);
         base.WndProc(ref message);
         if (message.Msg == TaskbarCreatedMessage
             || message.Msg is WmSettingChange or WmDisplayChange)
@@ -5000,20 +5011,7 @@ internal sealed partial class BarForm : Form
         _quotaPopover.ShowFor(
             this,
             anchor,
-            new QuotaPopoverContent(
-                target.Card,
-                target.Window,
-                QuotaDisplayFormatting.WeeklyBlockReset(
-                    target.Card,
-                    target.Window,
-                    DateTimeOffset.UtcNow),
-                target.Card.CapturedAt ?? _snapshot.CapturedAt,
-                _quotaPaceEstimates.GetValueOrDefault(target.PaceKey),
-                pinned,
-                target.Card.Provider == ProviderKind.AiGateway ? _aiGatewayUsage : null,
-                target.Card.Provider == ProviderKind.Codex
-                    ? _codexQuotaTokenSummaries.GetValueOrDefault(target.PaceKey)
-                    : null),
+            QuotaPopoverContentFor(target, pinned, DateTimeOffset.UtcNow),
             _text,
             logo,
             _resetClockIcon,
@@ -5026,6 +5024,74 @@ internal sealed partial class BarForm : Form
         _popoverEscapeWasDown = IsEscapeDown();
         _popoverStateTimer.Start();
         Invalidate();
+    }
+
+    /// <summary>Content of the shared quota card for one ring (live hover and offscreen captures).</summary>
+    private QuotaPopoverContent QuotaPopoverContentFor(MiniQuotaTarget target, bool pinned, DateTimeOffset now) => new(
+        target.Card,
+        target.Window,
+        QuotaDisplayFormatting.WeeklyBlockReset(target.Card, target.Window, now),
+        target.Card.CapturedAt ?? _snapshot.CapturedAt,
+        _quotaPaceEstimates.GetValueOrDefault(target.PaceKey),
+        pinned,
+        target.Card.Provider == ProviderKind.AiGateway ? _aiGatewayUsage : null,
+        target.Card.Provider == ProviderKind.Codex
+            ? _codexQuotaTokenSummaries.GetValueOrDefault(target.PaceKey)
+            : null);
+
+    /// <summary>Set from ZGSTOKENBAR_CAPTURE_HOVERS: render each ring's hover card offscreen once live data arrives.</summary>
+    internal static string? PendingHoverCaptureDirectory { get; set; }
+    private System.Windows.Forms.Timer? _hoverCaptureTimer;
+    private DateTime _hoverCaptureDeadline;
+
+    private void StartHoverCaptureIfRequested()
+    {
+        if (_renderOnly || PendingHoverCaptureDirectory is null || _hoverCaptureTimer is not null) return;
+        _hoverCaptureDeadline = DateTime.UtcNow.AddMinutes(3);
+        _hoverCaptureTimer = new System.Windows.Forms.Timer { Interval = 5000 };
+        _hoverCaptureTimer.Tick += (_, _) =>
+        {
+            var items = BuildGlassItems().Where(item => item.Card is not null && item.Window is not null).ToArray();
+            var codex = items.Any(item => item.Card!.Provider == ProviderKind.Codex);
+            var other = items.Any(item => item.Card!.Provider != ProviderKind.Codex);
+            if (!(codex && other) && DateTime.UtcNow < _hoverCaptureDeadline) return;
+            _hoverCaptureTimer!.Stop();
+            try
+            {
+                WriteHoverCaptures(PendingHoverCaptureDirectory!, items);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException)
+            {
+                System.Diagnostics.Trace.WriteLine("ZGSTokenBar: hover capture failed: " + error.Message);
+            }
+            PendingHoverCaptureDirectory = null;
+        };
+        _hoverCaptureTimer.Start();
+    }
+
+    private void WriteHoverCaptures(string directory, IReadOnlyList<GlassItem> items)
+    {
+        Directory.CreateDirectory(directory);
+        var now = DateTimeOffset.UtcNow;
+        var written = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in items)
+        {
+            var name = item.Card!.Provider == ProviderKind.Codex ? "codex" : item.Ring.ProviderId.Split('.', ':').Last();
+            if (!written.Add(name)) continue;
+            var hint = item.Card.AccountHint;
+            var card = hint?.Contains('@') == true ? item.Card with { AccountHint = CodexAccountFormatting.MaskEmail(hint) } : item.Card;
+            var target = new MiniQuotaTarget(RectangleF.Empty, card, item.Window!, null, item.Logo);
+            using var popover = new QuotaPopoverForm();
+            using var bitmap = popover.RenderForTest(
+                QuotaPopoverContentFor(target, pinned: false, now) with { Card = card },
+                _text,
+                item.Logo ?? ProviderLogo(card.Provider),
+                _resetClockIcon,
+                192,
+                now);
+            bitmap.Save(Path.Combine(directory, $"hover-{name}.png"), System.Drawing.Imaging.ImageFormat.Png);
+        }
+        File.WriteAllText(Path.Combine(directory, "hover-done.txt"), string.Join(",", written));
     }
 
     private void MonitorQuotaPopover()
@@ -5528,7 +5594,10 @@ internal sealed partial class BarForm : Form
                 [quotaWindow])
             {
                 CapturedAt = account.SampledAt,
-                AccountHint = string.Equals(account.Label, view.Title, StringComparison.OrdinalIgnoreCase) ? null : account.Label,
+                // Same masked "a***b@domain" form the Codex rings show.
+                AccountHint = string.Equals(account.Label, view.Title, StringComparison.OrdinalIgnoreCase)
+                    ? null
+                    : account.Label?.Contains('@') == true ? CodexAccountFormatting.MaskEmail(account.Label) : account.Label,
             };
             return (card, quotaWindow);
         }
@@ -5696,7 +5765,7 @@ internal sealed partial class BarForm : Form
             || (_pluginPopover?.Visible == true && _pluginPopover.Bounds.Contains(cursor))
             || (_hintPopover?.Visible == true && _hintPopover.Bounds.Contains(cursor))
             || (_systemUsagePopover?.Visible == true && _systemUsagePopover.Bounds.Contains(cursor));
-        if (Bounds.Contains(cursor) || overPopover || _popoverPinned)
+        if (ScreenBounds.Contains(cursor) || overPopover || _popoverPinned)
         {
             _glassLeftAt = null;
             return;
@@ -6389,6 +6458,7 @@ internal sealed partial class BarForm : Form
     {
         if (disposing)
         {
+            DisposeTaskbarEmbedding();
             lock (_topologyCaptureSync)
             {
                 _topologyCaptureDisposed = true;

@@ -523,6 +523,8 @@ var tests = new (string Name, Action Run)[]
     ("Taskbar monitor selection", TestTaskbarMonitorSelection),
     ("Taskbar Mini collapse anchor", TestTaskbarMiniCollapseAnchor),
     ("Taskbar Mini popover placement", TestTaskbarMiniPopoverPlacement),
+    ("Taskbar embed attach, detach and parent loss", TestTaskbarEmbeddingWithFakeTaskbar),
+    ("Glass dock rate and router slots are layout-stable", TestGlassDockStableSlots),
     ("Quota remaining color gradient", TestQuotaRemainingColorGradient),
     ("Native background palette contract", TestNativeBackgroundPaletteContract),
     ("Native settings panel contract", TestNativeSettingsPanelContract),
@@ -11642,10 +11644,11 @@ static void TestQuotaPacePopoverPresentation()
         {
             using var missing = popover.RenderForTest(content, zh, logo, clock, dpi, now);
             using var observed = popover.RenderForTest(content with { CodexQuotaTokens = capacity }, en, logo, clock, dpi, now);
-            Equal(new Size(240 * dpi / 96, 132 * dpi / 96), missing.Size,
-                $"{dpi} DPI quota without observations has no empty token area");
-            Equal(new Size(240 * dpi / 96, 164 * dpi / 96), observed.Size,
-                $"{dpi} DPI observed usage reserves its amount and coverage note");
+            var unified = new Size(240 * dpi / 96, (QuotaPopoverForm.LogicalUnifiedQuotaBodyHeight + 8) * dpi / 96);
+            Equal(unified, missing.Size,
+                $"{dpi} DPI quota without observations keeps the shared card geometry");
+            Equal(unified, observed.Size,
+                $"{dpi} DPI observed usage uses the same card geometry as every provider");
         }
     }
     Equal("Click to pin", en.PinHint, "English pin hint stays concise");
@@ -16340,6 +16343,107 @@ static void TestTaskbarCompactAiGatewayBalance()
     Equal(true, collapsedForm.ClientSize.Width <= GlassDockLayout.Width, "collapsed AI Gateway keeps the bounded dock width");
 }
 
+static void TestTaskbarEmbeddingWithFakeTaskbar()
+{
+    // A cross-thread top-level window stands in for Shell_TrayWnd, so the embed path (SetParent,
+    // client-space placement, detach, and the parent vanishing like an Explorer restart) is
+    // exercised without touching the real taskbar.
+    using var ready = new ManualResetEventSlim();
+    System.Windows.Forms.Form? fakeTaskbar = null;
+    var thread = new Thread(() =>
+    {
+        fakeTaskbar = new System.Windows.Forms.Form
+        {
+            FormBorderStyle = System.Windows.Forms.FormBorderStyle.None,
+            ShowInTaskbar = false,
+            StartPosition = System.Windows.Forms.FormStartPosition.Manual,
+            Location = new Point(40, 60),
+            Size = new Size(600, 48),
+            Opacity = .01,
+        };
+        fakeTaskbar.Shown += (_, _) => ready.Set();
+        System.Windows.Forms.Application.Run(fakeTaskbar);
+    });
+    thread.SetApartmentState(ApartmentState.STA);
+    thread.IsBackground = true;
+    thread.Start();
+    Check(ready.Wait(TimeSpan.FromSeconds(10)), "fake taskbar starts");
+    var parent = (nint)fakeTaskbar!.Invoke(() => fakeTaskbar.Handle);
+    using var child = new System.Windows.Forms.Form
+    {
+        FormBorderStyle = System.Windows.Forms.FormBorderStyle.None,
+        ShowInTaskbar = false,
+        StartPosition = System.Windows.Forms.FormStartPosition.Manual,
+        Location = new Point(10, 10),
+        Size = new Size(120, 30),
+        Opacity = .01,
+    };
+    child.Show();
+    System.Windows.Forms.Application.DoEvents();
+    var original = TaskbarEmbedding.Attach(child.Handle, parent, out var failure);
+    Check(original is not null, "attach succeeds against a responsive parent: " + failure);
+    Check(TaskbarEmbedding.ParentOf(child.Handle) == parent && TaskbarEmbedding.IsChild(child.Handle), "child is re-parented with WS_CHILD");
+    Check(TaskbarPlacement.ShowAt(child.Handle, new Point(140, 69), child.Size), "embedded placement accepts screen coordinates");
+    System.Windows.Forms.Application.DoEvents();
+    var screen = child.PointToScreen(Point.Empty);
+    Check(screen == new Point(140, 69), $"embedded child lands at the requested screen point (got {screen})");
+    TaskbarEmbedding.Detach(child.Handle, original!.Value);
+    Check(!TaskbarEmbedding.IsChild(child.Handle) && TaskbarEmbedding.ParentOf(child.Handle) != parent, "detach restores a top-level window");
+
+    original = TaskbarEmbedding.Attach(child.Handle, parent, out failure);
+    Check(original is not null, "re-attach succeeds: " + failure);
+    var childHandle = child.Handle;
+    // Destroying a cross-thread parent sends WM_DESTROY to this thread's child, so keep pumping
+    // here instead of blocking in Invoke (that would deadlock exactly like a hung bar would).
+    fakeTaskbar.BeginInvoke(() => fakeTaskbar.Close());
+    var exitDeadline = DateTime.UtcNow.AddSeconds(10);
+    while (!thread.Join(10) && DateTime.UtcNow < exitDeadline) System.Windows.Forms.Application.DoEvents();
+    Check(!thread.IsAlive, "fake taskbar exits");
+    System.Windows.Forms.Application.DoEvents();
+    Check(!child.IsHandleCreated || !TaskbarEmbedding.IsAlive(childHandle), "losing the parent destroys the embedded window like an Explorer restart");
+    child.Visible = false;
+    child.Visible = true;
+    System.Windows.Forms.Application.DoEvents();
+    Check(child.IsHandleCreated && !TaskbarEmbedding.IsChild(child.Handle), "the window is rebuilt as a top-level overlay after the parent is gone");
+    Check(TaskbarEmbedding.Attach(child.Handle, parent, out failure) is null && failure == "taskbar-missing", "attaching to a dead taskbar falls back");
+}
+
+static void TestGlassDockStableSlots()
+{
+    Check(GlassDockPainter.FixedRateText(null) == "—" && GlassDockPainter.FixedRateText(0) == "0.0"
+        && GlassDockPainter.FixedRateText(8.44) == "8.4" && GlassDockPainter.FixedRateText(106.25) == "106.3"
+        && GlassDockPainter.FixedRateText(1234) == "1.2K" && GlassDockPainter.FixedRateText(999.99) == "1.0K",
+        "rate text always carries one fixed decimal");
+    using var bitmap = new Bitmap(80, 40);
+    using var graphics = Graphics.FromImage(bitmap);
+    using var font = new Font("Segoe UI", GlassDockPainter.RateFontSize, FontStyle.Bold, GraphicsUnit.Pixel);
+    var box = GlassDockPainter.RateNumberBox(graphics, GlassDockLayout.RateBounds, font);
+    foreach (var value in new double?[] { null, 0, 8.4, 106.2, 888.8, 1234, 88_800 })
+    {
+        var width = graphics.MeasureString(GlassDockPainter.FixedRateText(value), font, PointF.Empty, StringFormat.GenericTypographic).Width;
+        Check(width <= box.Width + .5f, $"rate {value} fits the fixed number box");
+    }
+    // Router icon must not move with the queue count: compare the icon's left half across counts.
+    byte[] Router(long queued, string state)
+    {
+        using var image = new Bitmap(52, 52);
+        using var g = Graphics.FromImage(image);
+        g.Clear(Color.Black);
+        g.ScaleTransform(2, 2);
+        using var badge = new Font("Segoe UI", 8f, FontStyle.Bold, GraphicsUnit.Pixel);
+        RouterCardRenderer.Draw(g, new RectangleF(0, 0, 26, 26), RouterModuleTests.Card(state, queued), badge, collapsed: true);
+        using var left = image.Clone(new Rectangle(0, 0, 18, 52), image.PixelFormat);
+        using var stream = new MemoryStream();
+        left.Save(stream, ImageFormat.Png);
+        return stream.ToArray();
+    }
+    foreach (var state in new[] { "running", "idle", "waiting" })
+    {
+        Check(Router(0, state).SequenceEqual(Router(3, state)) && Router(3, state).SequenceEqual(Router(42, state)),
+            $"router {state} icon stays put whether or not tasks are queued");
+    }
+}
+
 static void TestTaskbarMiniPopoverPlacement()
 {
     var body = new Size(
@@ -17017,6 +17121,11 @@ static void Equal<T>(T expected, T actual, string label)
     {
         throw new InvalidOperationException($"{label}: expected {expected}, got {actual}");
     }
+}
+
+static void Check(bool condition, string label)
+{
+    if (!condition) throw new InvalidOperationException(label);
 }
 
 static void Throws<TException>(Action action, string label)

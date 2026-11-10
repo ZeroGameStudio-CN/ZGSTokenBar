@@ -576,7 +576,7 @@ internal static class RouterModuleTests
     private static IEnumerable<System.Windows.Forms.Control> AllControls(System.Windows.Forms.Control parent) =>
         parent.Controls.Cast<System.Windows.Forms.Control>().SelectMany(child => new[] { child }.Concat(AllControls(child)));
 
-    private static MiniCardContribution Card(string status, long queued = 0) => new("card.router", RouterPlugin.Id,
+    internal static MiniCardContribution Card(string status, long queued = 0) => new("card.router", RouterPlugin.Id,
         "router", ContributionKind.Metric, 0, "Router", "router.icon", "accent.router",
         [new("router.state", new("text", Text: "状态说明只在弹层出现"), status), new("router.queued", new("integer", Integer: queued)),
          new("router.project", new("text", Text: "POB")), new("router.phase", new("text", Text: status switch { "idle" => "空闲", "cleanup" => "清理", _ => "测试" })),

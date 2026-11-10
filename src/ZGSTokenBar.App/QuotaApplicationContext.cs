@@ -1321,6 +1321,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             && previous.EnableAlerts == next.EnableAlerts
             && previous.TaskbarDocked == next.TaskbarDocked
             && previous.EnableAnimations == next.EnableAnimations
+            && previous.EmbedInTaskbar == next.EmbedInTaskbar
             && previous.EnableRadar == next.EnableRadar
             && previous.EnableRadarAlerts == next.EnableRadarAlerts
             && PluginEnabledEqual(previous.RadarModelGroups, next.RadarModelGroups)

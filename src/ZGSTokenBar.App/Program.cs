@@ -48,6 +48,13 @@ internal static class Program
             return;
         }
 
+        // Developer capture mode: offscreen-render each ring's hover card from live data. An
+        // environment variable (not an argument) so it survives the job-isolation relaunch.
+        if (Environment.GetEnvironmentVariable("ZGSTOKENBAR_CAPTURE_HOVERS") is { } captureDirectory
+            && Path.IsPathFullyQualified(captureDirectory))
+        {
+            BarForm.PendingHoverCaptureDirectory = captureDirectory;
+        }
         var bundledPluginInstallFailed = BundledPluginWarning.ShouldWarn(
             store.DataDirectory,
             BundledPluginInstaller.EnsureInstalled(store.DataDirectory),

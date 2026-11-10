@@ -73,6 +73,10 @@ internal sealed class NativeText
         "启用细微过渡与刷新动画",
         "Enable subtle transitions and refresh animation");
     public string AnimationsTitle => T("动画效果", "Animation effects");
+    public string EmbedTaskbarTitle => T("嵌入任务栏（实验）", "Embed in taskbar (experimental)");
+    public string EmbedTaskbarHint => T(
+        "吸附在主任务栏时把 Bar 放进任务栏内部；失败、资源管理器无响应或重启时自动回到悬浮模式",
+        "While docked on the primary taskbar, host the Bar inside it; falls back to the overlay if Explorer refuses, hangs or restarts");
     public string RadarSectionTitle => "Codex Radar";
     public string RadarNavigation => T("雷达", "Radar");
     public string RadarPreviewBadge => T("预览", "PREVIEW");

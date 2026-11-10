@@ -19,6 +19,8 @@ internal sealed class QuotaPopoverForm : Form
     internal const int LogicalBodyHeight = 144;
     internal const int LogicalQuotaBodyHeight = 124;
     internal const int LogicalCodexTokenBodyHeight = 156;
+    /// <summary>One card layout for every provider's quota ring (Codex, Claude, Grok, …).</summary>
+    internal const int LogicalUnifiedQuotaBodyHeight = 184;
     internal const int LogicalSub2ApiQuotaBodyHeight = 164;
     internal const int LogicalSub2ApiAccountAvailabilityBodyHeight = 164;
     private const int AccountAvailabilityFirstRowY = 76;
@@ -37,6 +39,12 @@ internal sealed class QuotaPopoverForm : Form
     private readonly Font _valueFont = new("Segoe UI", 16.5f, FontStyle.Bold, GraphicsUnit.Pixel);
     private readonly Font _metricFont = new("Segoe UI", 9.5f, FontStyle.Bold, GraphicsUnit.Pixel);
     private readonly Font _detailFont = new("Segoe UI Semibold", 10f, FontStyle.Regular, GraphicsUnit.Pixel);
+    private readonly Font _cardTitleFont = new("Segoe UI", 12.5f, FontStyle.Bold, GraphicsUnit.Pixel);
+    private readonly Font _cardChipFont = new("Segoe UI", 8.5f, FontStyle.Bold, GraphicsUnit.Pixel);
+    private readonly Font _cardHeroFont = new("Segoe UI", 25f, FontStyle.Bold, GraphicsUnit.Pixel);
+    private readonly Font _cardRowFont = new("Segoe UI", 10.5f, FontStyle.Regular, GraphicsUnit.Pixel);
+    private readonly Font _cardRowStrongFont = new("Segoe UI Semibold", 10.5f, FontStyle.Regular, GraphicsUnit.Pixel);
+    private readonly Font _cardSmallFont = new("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Pixel);
     private readonly AlignedStringFormats _textFormats = new();
     private readonly System.Windows.Forms.Timer _clockTimer = new() { Interval = 30_000 };
     private readonly System.Windows.Forms.Timer _entranceTimer = new() { Interval = 16 };
@@ -68,10 +76,7 @@ internal sealed class QuotaPopoverForm : Form
         get
         {
             if (_content is not { } content) return LogicalQuotaBodyHeight;
-            if (content.Card.Provider == ProviderKind.Codex && !content.Card.IsService)
-            {
-                return QuotaTokenUsage is not null ? LogicalCodexTokenBodyHeight : LogicalQuotaBodyHeight;
-            }
+            if (!content.Card.IsService) return LogicalUnifiedQuotaBodyHeight;
             if (Sub2ApiServicePresentation.IsSub2ApiService(content.Card))
             {
                 var presentation = Sub2ApiServicePresentation.Resolve(
@@ -97,7 +102,7 @@ internal sealed class QuotaPopoverForm : Form
                     : content.Card.Sub2ApiQuota is { } quota
                     && Sub2ApiQuotaFormatting.PreferredWindow(quota) is not null
                         ? LogicalSub2ApiQuotaBodyHeight
-                        : content.Card.IsService ? LogicalBodyHeight : LogicalQuotaBodyHeight;
+                        : LogicalBodyHeight;
         }
     }
 
@@ -161,7 +166,7 @@ internal sealed class QuotaPopoverForm : Form
     internal void ApplyTheme(QuotaBackgroundTheme theme)
     {
         _backgroundTheme = theme;
-        BackColor = theme.Popover;
+        BackColor = CardSurface;
         Invalidate();
     }
 
@@ -207,14 +212,14 @@ internal sealed class QuotaPopoverForm : Form
             _entranceStarted = DateTime.UtcNow;
             Opacity = .01;
             Location = _entranceLocation;
-            Show(owner);
+            Show(BarForm.PopoverOwnerFor(owner));
             if (!TaskbarPlacement.ShowAt(Handle, _entranceLocation, placement.WindowSize)) Location = _entranceLocation;
             _entranceTimer.Start();
         }
         else
         {
             Opacity = 1;
-            if (!wasVisible) Show(owner);
+            if (!wasVisible) Show(BarForm.PopoverOwnerFor(owner));
             if (!TaskbarPlacement.ShowAt(Handle, _restingLocation, placement.WindowSize)) Location = _restingLocation;
         }
         _clockTimer.Start();
@@ -315,7 +320,8 @@ internal sealed class QuotaPopoverForm : Form
         surfacePath.FillMode = FillMode.Winding;
         surfacePath.AddPath(bodyPath, false);
         surfacePath.AddPolygon(tail);
-        using var fill = new SolidBrush(_backgroundTheme.Popover);
+        // Solid graphite card in every theme, matching the dock and the overview panel.
+        using var fill = new SolidBrush(CardSurface);
         // Hairline like the taskbar dock's card.
         using var border = new Pen(Color.FromArgb(40, 255, 255, 255), 1);
         graphics.FillPath(fill, surfacePath);
@@ -351,142 +357,165 @@ internal sealed class QuotaPopoverForm : Form
             return;
         }
 
+        DrawQuotaCard(graphics, body, content);
+    }
+
+    internal static readonly Color CardSurface = Color.FromArgb(19, 21, 28);
+    private static readonly Color CardTitle = Color.FromArgb(243, 245, 249);
+    private static readonly Color CardValue = Color.FromArgb(226, 232, 240);
+    private static readonly Color CardMuted = Color.FromArgb(148, 157, 176);
+    private static readonly Color CardDim = Color.FromArgb(100, 110, 130);
+    private static readonly Color CardTeal = Color.FromArgb(94, 234, 212);
+    private static readonly Color CardHairline = Color.FromArgb(22, 255, 255, 255);
+
+    /// <summary>
+    /// The single quota card used by every provider ring: header (logo, name, window chip, plan
+    /// pill + account), hero remaining % with reset countdown, progress rail, then fixed rows in a
+    /// fixed order (pace, tokens + detail) and a footer (freshness, pin hint). Missing data keeps
+    /// its row and shows a dash so all providers share one geometry.
+    /// </summary>
+    private void DrawQuotaCard(Graphics graphics, RectangleF body, QuotaPopoverContent content)
+    {
         var used = content.Window.UsedPercent is null
             ? (double?)null
             : Math.Clamp(content.Window.UsedPercent.Value, 0, 100);
         var remaining = used is null ? (double?)null : 100 - used.Value;
         var now = _renderNow ?? DateTimeOffset.UtcNow;
-        var valueColor = content.WeeklyBlockResetAt is not null || remaining is null
-            ? Color.FromArgb(100, 116, 139)
-            : QuotaColorScale.ForRemaining(remaining.Value);
-        var x = body.X;
+        var blocked = content.WeeklyBlockResetAt is not null;
+        var valueColor = blocked || remaining is null ? CardDim : QuotaColorScale.ForRemaining(remaining.Value);
+        var left = body.X + 14;
+        var right = body.Right - 14;
         var y = body.Y;
+        using var titleBrush = new SolidBrush(CardTitle);
+        using var valueBrush = new SolidBrush(CardValue);
+        using var mutedBrush = new SolidBrush(CardMuted);
+        using var dimBrush = new SolidBrush(CardDim);
+        using var tealBrush = new SolidBrush(CardTeal);
+        using var hairline = new Pen(CardHairline, 1f);
 
-        DrawLogo(graphics, _providerLogo, new RectangleF(x + 12, y + 10, 24, 24));
-        using var titleBrush = new SolidBrush(Color.FromArgb(241, 245, 249));
-        using var mutedBrush = new SolidBrush(Color.FromArgb(148, 163, 184));
-        using var resetValueBrush = new SolidBrush(
-            content.WeeklyBlockResetAt is not null || content.Window.ResetsAt is null
-                ? Color.FromArgb(100, 116, 139)
-                : Color.FromArgb(226, 232, 240));
-        using var paceValueBrush = new SolidBrush(Color.FromArgb(94, 234, 212));
-        using var detailValueBrush = new SolidBrush(Color.FromArgb(203, 213, 225));
-        var titleWidth = body.Width - 44 - (content.Pinned ? 34 : 12);
-        DrawString(
-            graphics,
-            $"{content.Card.Label} · {QuotaDisplayFormatting.FormatWindowShort(content.Window)}",
-            _titleFont,
-            titleBrush,
-            new RectangleF(x + 44, y + 8, titleWidth, 14),
-            StringAlignment.Near);
-        DrawAccountSubtitle(
-            graphics,
-            content.Card,
-            _text,
-            mutedBrush,
-            new RectangleF(x + 44, y + 22, titleWidth, 13));
+        // Header.
+        DrawLogo(graphics, _providerLogo!, new RectangleF(left, y + 13, 28, 28));
+        var window = QuotaDisplayFormatting.FormatWindowShort(content.Window);
+        var chipWidth = graphics.MeasureString(window, _cardChipFont, PointF.Empty, StringFormat.GenericTypographic).Width + 12;
+        var chip = new RectangleF(right - chipWidth, y + 14, chipWidth, 16);
+        using (var chipPath = RoundedRectangle(chip, 8))
+        using (var chipFill = new SolidBrush(Color.FromArgb(14, 255, 255, 255)))
+        using (var chipEdge = new Pen(Color.FromArgb(40, 255, 255, 255), 1f))
+        {
+            graphics.FillPath(chipFill, chipPath);
+            graphics.DrawPath(chipEdge, chipPath);
+        }
+        DrawString(graphics, window, _cardChipFont, mutedBrush, chip, StringAlignment.Center);
+        var titleRight = chip.X - 6;
         if (content.Pinned)
-            DrawPinIcon(graphics, new RectangleF(body.Right - 25, y + 12, 12, 12));
+        {
+            DrawPinIcon(graphics, new RectangleF(chip.X - 17, y + 16, 12, 12));
+            titleRight -= 16;
+        }
+        DrawString(graphics, content.Card.Label, _cardTitleFont, titleBrush,
+            new RectangleF(left + 38, y + 12, Math.Max(1, titleRight - left - 38), 18), StringAlignment.Near);
+        DrawPlanAndAccount(graphics, content.Card, new RectangleF(left + 38, y + 31, right - left - 38, 14));
 
-        using var valueBrush = new SolidBrush(valueColor);
-        DrawString(
-            graphics,
-            _text.Left(remaining is null ? "--" : FormatPercent(remaining.Value)),
-            _valueFont,
-            valueBrush,
-            new RectangleF(x + 12, y + 38, body.Width - 24, 23),
-            StringAlignment.Near);
+        // Hero: remaining % on the left, reset countdown on the right.
+        var percent = remaining is null ? "--" : FormatPercent(remaining.Value);
+        using var heroBrush = new SolidBrush(valueColor);
+        DrawString(graphics, percent, _cardHeroFont, heroBrush, new RectangleF(left - 1, y + 50, 110, 32), StringAlignment.Near);
+        var heroWidth = graphics.MeasureString(percent, _cardHeroFont, PointF.Empty, StringFormat.GenericTypographic).Width;
+        DrawString(graphics, _text.IsChinese ? "剩余" : "left", _cardRowFont, mutedBrush,
+            new RectangleF(left + heroWidth + 4, y + 65, 40, 14), StringAlignment.Near);
+        var countdown = blocked
+            ? _text.FormatResetCountdown(content.WeeklyBlockResetAt!.Value, now)
+            : content.Window.ResetsAt is { } reset ? _text.FormatResetCountdown(reset, now) : "—";
+        DrawString(graphics, countdown, _cardRowStrongFont, blocked || content.Window.ResetsAt is null ? dimBrush : valueBrush,
+            new RectangleF(right - 120, y + 54, 120, 15), StringAlignment.Far);
+        var resetText = blocked
+            ? _text.WeeklyQuotaBlocked
+            : content.Window.ResetsAt is { } resetAt ? _text.ResetAt(resetAt, now) : _text.ResetUnavailable;
+        DrawString(graphics, resetText, _cardSmallFont, mutedBrush,
+            new RectangleF(right - 140, y + 70, 140, 12), StringAlignment.Far);
 
-        var trough = new RectangleF(x + 12, y + 65, body.Width - 24, 6);
-        using var troughBrush = new SolidBrush(Color.FromArgb(30, 41, 59));
-        graphics.FillRoundedRectangle(troughBrush, trough, 3);
-        var track = new RectangleF(x + 12, y + 66, body.Width - 24, 4);
-        using var trackBrush = new SolidBrush(Color.FromArgb(71, 85, 105));
-        graphics.FillRoundedRectangle(trackBrush, track, 2);
+        // Progress rail.
+        var rail = new RectangleF(left, y + 88, right - left, 6);
+        using (var railBrush = new SolidBrush(Color.FromArgb(18, 255, 255, 255)))
+            graphics.FillRoundedRectangle(railBrush, rail, 3);
         if (remaining is > 0)
         {
             using var activeBrush = new SolidBrush(valueColor);
-            graphics.FillRoundedRectangle(
-                activeBrush,
-                new RectangleF(track.X, track.Y, track.Width * (float)(remaining.Value / 100), track.Height),
-                2);
+            graphics.FillRoundedRectangle(activeBrush,
+                new RectangleF(rail.X, rail.Y, Math.Max(6, rail.Width * (float)(remaining.Value / 100)), rail.Height), 3);
         }
-        var currentPace = content.Pace?.ForDisplay(now);
-        var pace = _text.QuotaPace(currentPace, now, content.Window.ResetsAt);
-        var paceColor = pace.Right.Length == 0
-            ? Color.FromArgb(148, 163, 184)
-            : Color.FromArgb(94, 234, 212);
-        DrawTrendPaceIcon(
-            graphics,
-            new RectangleF(x + 12, y + 77, 10, 10),
-            paceColor);
-        DrawString(
-            graphics,
-            pace.Left,
-            _detailFont,
-            pace.Right.Length == 0 ? mutedBrush : paceValueBrush,
-            new RectangleF(x + 30, y + 74, pace.Right.Length == 0 ? body.Width - 42 : 102, 16),
-            StringAlignment.Near);
-        if (pace.Right.Length > 0)
-        {
-            DrawString(
-                graphics,
-                pace.Right,
-                _detailFont,
-                paceValueBrush,
-                new RectangleF(body.Right - 104, y + 74, 92, 16),
-                StringAlignment.Far);
-        }
+        graphics.DrawLine(hairline, left, y + 104.5f, right, y + 104.5f);
 
-        var tokenUsage = QuotaTokenUsage;
-        var quotaTokenOffset = tokenUsage is not null ? LogicalCodexTokenBodyHeight - LogicalQuotaBodyHeight : 0;
-        if (tokenUsage is { } usage)
-        {
-            DrawQuotaTokenUsage(
-                graphics,
-                new RectangleF(x + 12, y + 93, body.Width - 24, quotaTokenOffset),
-                usage,
-                mutedBrush,
-                detailValueBrush);
-        }
+        // Row 1: pace.
+        var pace = _text.QuotaPace(content.Pace?.ForDisplay(now), now, content.Window.ResetsAt);
+        var hasPace = pace.Right.Length > 0;
+        DrawTrendPaceIcon(graphics, new RectangleF(left, y + 115, 10, 10), hasPace ? CardTeal : CardMuted);
+        DrawString(graphics, pace.Left, _cardRowFont, hasPace ? tealBrush : mutedBrush,
+            new RectangleF(left + 16, y + 112, hasPace ? 110 : right - left - 16, 16), StringAlignment.Near);
+        DrawString(graphics, hasPace ? pace.Right : "—", _cardRowStrongFont, hasPace ? tealBrush : dimBrush,
+            new RectangleF(right - 96, y + 112, 96, 16), StringAlignment.Far);
 
-        graphics.DrawImage(_resetClockIcon, new RectangleF(x + 12, y + 97 + quotaTokenOffset, 10, 10));
-        DrawString(
-            graphics,
-            content.WeeklyBlockResetAt is not null
-                ? _text.WeeklyQuotaBlocked
-                : content.Window.ResetsAt is { } resetAt
-                    ? _text.ResetAt(resetAt, now)
-                : _text.ResetUnavailable,
-            _detailFont,
-            mutedBrush,
-            new RectangleF(x + 28, y + 94 + quotaTokenOffset, 126, 16),
-            StringAlignment.Near);
-        DrawString(
-            graphics,
-            content.WeeklyBlockResetAt is { } weeklyReset
-                ? _text.FormatResetCountdown(weeklyReset, now)
-                : content.Window.ResetsAt is { } reset
-                    ? _text.FormatResetCountdown(reset, now)
-                : string.Empty,
-            _detailFont,
-            resetValueBrush,
-            new RectangleF(body.Right - 82, y + 94 + quotaTokenOffset, 70, 16),
-            StringAlignment.Far);
-        DrawString(
-            graphics,
-            _text.Freshness(content.CapturedAt, now),
-            _subtitleFont,
-            mutedBrush,
-            new RectangleF(x + 12, y + 112 + quotaTokenOffset, 100, 10),
-            StringAlignment.Near);
-        DrawString(
-            graphics,
-            content.Pinned ? _text.ClosePinnedHint : _text.PinHint,
-            _subtitleFont,
-            mutedBrush,
-            new RectangleF(body.Right - 112, y + 112 + quotaTokenOffset, 100, 10),
-            StringAlignment.Far);
+        // Row 2: tokens (label, value) + detail line.
+        var tokens = QuotaTokenUsage;
+        DrawTokenIcon(graphics, new RectangleF(left, y + 135, 10, 10), tokens is null ? CardMuted : CardValue);
+        DrawString(graphics, tokens?.Label ?? (_text.IsChinese ? "Token 用量" : "Tokens"), _cardRowFont, mutedBrush,
+            new RectangleF(left + 16, y + 132, 120, 16), StringAlignment.Near);
+        DrawString(graphics, tokens?.Value ?? "—", _cardRowStrongFont, tokens is null ? dimBrush : valueBrush,
+            new RectangleF(right - 96, y + 132, 96, 16), StringAlignment.Far);
+        DrawString(graphics, tokens?.Detail ?? (_text.IsChinese ? "该服务未提供 Token 统计" : "No token stats for this service"),
+            _cardSmallFont, dimBrush, new RectangleF(left + 16, y + 149, right - left - 16, 12), StringAlignment.Near);
+
+        // Footer.
+        graphics.DrawLine(hairline, left, y + 166.5f, right, y + 166.5f);
+        DrawString(graphics, _text.Freshness(content.CapturedAt, now), _cardSmallFont, mutedBrush,
+            new RectangleF(left, y + 170, 110, 12), StringAlignment.Near);
+        DrawString(graphics, content.Pinned ? _text.ClosePinnedHint : _text.PinHint, _cardSmallFont, mutedBrush,
+            new RectangleF(right - 110, y + 170, 110, 12), StringAlignment.Far);
+    }
+
+    /// <summary>Plan pill (any provider) followed by the account hint.</summary>
+    private void DrawPlanAndAccount(Graphics graphics, QuotaCard card, RectangleF bounds)
+    {
+        var plan = CardPlanLabel(card);
+        var x = bounds.X;
+        if (plan is not null)
+        {
+            var style = PlanBadgePresentation.TryGetStyle(plan, out var known)
+                ? known
+                : new PlanBadgeStyle(Color.FromArgb(34, 38, 50), Color.FromArgb(70, 78, 98), Color.FromArgb(214, 220, 232));
+            var width = graphics.MeasureString(plan, _statusFont, PointF.Empty, StringFormat.GenericTypographic).Width + 10;
+            var pill = new RectangleF(x, bounds.Y, width, 13);
+            using var path = RoundedRectangle(pill, 4);
+            using var fill = new SolidBrush(style.Fill);
+            using var edge = new Pen(style.Border, 1);
+            using var ink = new SolidBrush(style.Text);
+            graphics.FillPath(fill, path);
+            graphics.DrawPath(edge, path);
+            DrawString(graphics, plan, _statusFont, ink, pill, StringAlignment.Center);
+            x = pill.Right + 6;
+        }
+        var account = HasAccountHint(card) ? card.AccountHint! : plan is null ? _text.LiveQuota : null;
+        if (account is null) return;
+        using var brush = new SolidBrush(Color.FromArgb(190, 198, 212));
+        DrawString(graphics, account, _subtitleFont, brush,
+            new RectangleF(x, bounds.Y, Math.Max(1, bounds.Right - x), bounds.Height), StringAlignment.Near);
+    }
+
+    /// <summary>Plan label for the header pill: shared Codex labels, otherwise the provider's own plan name.</summary>
+    internal static string? CardPlanLabel(QuotaCard card)
+    {
+        if (string.IsNullOrWhiteSpace(card.Badge)) return null;
+        if (card.Provider == ProviderKind.Codex) return PlanBadgePresentation.Label(card.Badge);
+        var label = card.Badge.Trim().ToUpperInvariant();
+        return label.Length > 14 ? label[..14] : label;
+    }
+
+    private static void DrawTokenIcon(Graphics graphics, RectangleF bounds, Color color)
+    {
+        using var brush = new SolidBrush(color);
+        graphics.FillRectangle(brush, bounds.Left + 1, bounds.Top + 6, 2, 4);
+        graphics.FillRectangle(brush, bounds.Left + 4.5f, bounds.Top + 3, 2, 7);
+        graphics.FillRectangle(brush, bounds.Left + 8, bounds.Top, 2, 10);
     }
 
     private void DrawQuotaTokenUsage(
@@ -1555,6 +1584,12 @@ internal sealed class QuotaPopoverForm : Form
             _valueFont.Dispose();
             _metricFont.Dispose();
             _detailFont.Dispose();
+            _cardTitleFont.Dispose();
+            _cardChipFont.Dispose();
+            _cardHeroFont.Dispose();
+            _cardRowFont.Dispose();
+            _cardRowStrongFont.Dispose();
+            _cardSmallFont.Dispose();
             _textFormats.Dispose();
         }
         base.Dispose(disposing);

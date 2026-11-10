@@ -561,19 +561,65 @@ internal static class GlassDockPainter
         }
     }
 
+    /// <summary>
+    /// tok/s in a fixed slot: constant font size, tabular Segoe UI digits, one fixed decimal and a
+    /// right-aligned number box sized for the widest value, so changing rates never move the
+    /// number's decimal point or anything next to it. The estimate marker has its own fixed spot.
+    /// </summary>
     private static void DrawRate(Graphics graphics, Rectangle bounds, GlassDockScene scene)
     {
-        var rate = BarForm.CompactOutputRate(scene.TokensPerSecond);
-        if (scene.RateEstimated && scene.TokensPerSecond is not null) rate = "~" + rate;
-        using var font = FitFont(graphics, rate, bounds.Width, 13f, 9f, FontStyle.Bold);
+        var rate = FixedRateText(scene.TokensPerSecond);
+        using var font = new Font("Segoe UI", RateFontSize, FontStyle.Bold, GraphicsUnit.Pixel);
         using var small = new Font("Segoe UI", 8f, FontStyle.Regular, GraphicsUnit.Pixel);
         var color = scene.TokensPerSecond is null
             ? Muted(scene.Light)
             : scene.Light ? Color.FromArgb(15, 23, 42) : Color.FromArgb(248, 250, 252);
         using var text = new SolidBrush(color);
         using var muted = new SolidBrush(Muted(scene.Light));
-        graphics.DrawString(rate, font, text, new RectangleF(bounds.X - 2, bounds.Y, bounds.Width + 4, 15), Format(StringAlignment.Center));
-        graphics.DrawString("tok/s", small, muted, new RectangleF(bounds.X - 2, bounds.Y + 15, bounds.Width + 4, 11), Format(StringAlignment.Center));
+        var box = RateNumberBox(graphics, bounds, font);
+        using (var numberFormat = new StringFormat(StringFormat.GenericTypographic)
+        {
+            Alignment = rate == "—" ? StringAlignment.Center : StringAlignment.Far,
+            LineAlignment = StringAlignment.Near,
+            FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.NoClip,
+        })
+        {
+            graphics.DrawString(rate, font, text, box, numberFormat);
+        }
+        var label = new RectangleF(bounds.X - 2, bounds.Y + 15, bounds.Width + 4, 11);
+        graphics.DrawString("tok/s", small, muted, label, Format(StringAlignment.Center));
+        if (scene.RateEstimated && scene.TokensPerSecond is not null)
+        {
+            graphics.DrawString("≈", small, muted, new RectangleF(bounds.X - 2, label.Y, 8, label.Height), Format(StringAlignment.Near));
+        }
+    }
+
+    internal const float RateFontSize = 12.5f;
+
+    /// <summary>Fixed number box for the rate: the widest value ("888.8" / "88.8K") at the rate font, centred in the slot.</summary>
+    internal static RectangleF RateNumberBox(Graphics graphics, Rectangle bounds, Font font)
+    {
+        var widest = Math.Max(graphics.MeasureString("888.8", font, PointF.Empty, StringFormat.GenericTypographic).Width,
+            graphics.MeasureString("88.8K", font, PointF.Empty, StringFormat.GenericTypographic).Width);
+        var width = Math.Min(bounds.Width + 4f, widest + 1f);
+        return new RectangleF(bounds.X + (bounds.Width - width) / 2f, bounds.Y, width, 15);
+    }
+
+    /// <summary>One fixed decimal (and K/M/G above 1000) so the text length only changes with magnitude.</summary>
+    internal static string FixedRateText(double? value)
+    {
+        if (value is not { } number || !double.IsFinite(number) || number < 0) return "—";
+        var (divisor, suffix) = number switch
+        {
+            >= 999.95e6 => (1e9, "G"),
+            >= 999.95e3 => (1e6, "M"),
+            >= 999.95 => (1e3, "K"),
+            _ => (1d, ""),
+        };
+        var scaled = number / divisor;
+        return (suffix.Length > 0 && scaled >= 99.95
+            ? scaled.ToString("0", System.Globalization.CultureInfo.InvariantCulture)
+            : scaled.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)) + suffix;
     }
 
     private static void DrawHover(Graphics graphics, RectangleF bounds, bool light)

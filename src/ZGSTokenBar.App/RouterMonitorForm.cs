@@ -206,7 +206,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     internal void ShowFor(BarForm owner, Rectangle anchor, bool pinned, float scale, QuotaBackgroundTheme theme)
     {
         ConfigureFor(anchor, pinned, scale, theme, Screen.FromRectangle(anchor).WorkingArea);
-        if (!Visible) Show(owner);
+        if (!Visible) Show(BarForm.PopoverOwnerFor(owner));
         // Creating/showing a native window can rescale fonts after ConfigureFor ran.
         ApplyLogicalFonts();
         ApplyPalette(theme);

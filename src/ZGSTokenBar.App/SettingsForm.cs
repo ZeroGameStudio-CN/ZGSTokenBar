@@ -50,6 +50,7 @@ internal sealed class SettingsForm : Form
     private readonly ToggleSwitch _openAtLogin;
     private readonly ToggleSwitch _usageAlerts;
     private readonly ToggleSwitch _animations;
+    private readonly ToggleSwitch _embedTaskbar;
     private readonly ToggleSwitch _radar;
     private readonly ToggleSwitch _radarAlerts;
     private readonly ToggleSwitch _refreshClaudeOAuth;
@@ -196,6 +197,7 @@ internal sealed class SettingsForm : Form
             settings.OpenAtLogin);
         _usageAlerts = CreateToggle(_text.UsageAlertsTitle, _text.UsageAlerts, settings.EnableAlerts);
         _animations = CreateToggle(_text.AnimationsTitle, _text.Animations, settings.EnableAnimations);
+        _embedTaskbar = CreateToggle(_text.EmbedTaskbarTitle, _text.EmbedTaskbarHint, settings.EmbedInTaskbar);
         _radar = CreateToggle(_text.ShowRadarTitle, _text.ShowRadar, settings.EnableRadar);
         _radarAlerts = CreateToggle(_text.RadarAlertsTitle, _text.RadarAlerts, settings.EnableRadarAlerts);
         _refreshClaudeOAuth = CreateToggle(_text.AllowClaudeRefresh, _text.ClaudeRefreshHint, settings.AutoRefreshClaudeOAuth);
@@ -343,6 +345,7 @@ internal sealed class SettingsForm : Form
                  {
                      _usageAlerts,
                      _animations,
+                     _embedTaskbar,
                      _refreshClaudeOAuth,
                  })
         {
@@ -462,6 +465,7 @@ internal sealed class SettingsForm : Form
         general.Add(new SectionNote(_text.IsChinese ? "任务栏固定：按住 Bar 的空白或拖动区域拖近任务栏，自动吸附；拖离可浮动，位置会保存。独立速率模块收起显示合计输出，展开显示状态和网络上下行；悬浮可看已记录与估算部分。" : "Dock to taskbar: drag the Bar's empty/drag area close to the taskbar to snap; drag away to float. Placement is saved. Collapsed live rates show summed output; expand for activity/network, hover for recorded versus estimated output.", _theme, _scale));
         general.Add(new ToggleSettingRow(_openAtLogin, _text.StartWithWindows, _text.StartWithWindowsHint, _theme, _scale));
         general.Add(new ToggleSettingRow(_animations, _text.AnimationsTitle, _text.Animations, _theme, _scale));
+        general.Add(new ToggleSettingRow(_embedTaskbar, _text.EmbedTaskbarTitle, _text.EmbedTaskbarHint, _theme, _scale));
 
         var providers = AddPage("providers", _text.Modules);
         providers.Add(new ToggleSettingRow(
@@ -902,6 +906,8 @@ internal sealed class SettingsForm : Form
             EnableAlerts = _usageAlerts.Checked,
             UseTaskbarRings = true,
             EnableAnimations = _animations.Checked,
+            EmbedInTaskbar = _embedTaskbar.Checked,
+            GlassDockMaxRings = _original.GlassDockMaxRings,
             EnableRadar = _radar.Checked,
             EnableRadarAlerts = _radar.Checked && _radarAlerts.Checked,
             EnableAiGatewayBalance = _externalPluginToggles.TryGetValue(
@@ -964,6 +970,7 @@ internal sealed class SettingsForm : Form
         && left.OpenAtLogin == right.OpenAtLogin
         && left.EnableAlerts == right.EnableAlerts
         && left.EnableAnimations == right.EnableAnimations
+        && left.EmbedInTaskbar == right.EmbedInTaskbar
         && left.EnableRadar == right.EnableRadar
         && left.EnableRadarAlerts == right.EnableRadarAlerts
         && left.EnableAiGatewayBalance == right.EnableAiGatewayBalance
@@ -990,6 +997,8 @@ internal sealed class SettingsForm : Form
             EnableAlerts = settings.EnableAlerts,
             UseTaskbarRings = true,
             EnableAnimations = settings.EnableAnimations,
+            EmbedInTaskbar = settings.EmbedInTaskbar,
+            GlassDockMaxRings = settings.GlassDockMaxRings,
             EnableRadar = settings.EnableRadar,
             EnableRadarAlerts = settings.EnableRadarAlerts,
             EnableAiGatewayBalance = settings.EnableAiGatewayBalance,

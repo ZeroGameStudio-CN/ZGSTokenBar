@@ -17,7 +17,9 @@ internal static class RouterCardRenderer
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
         var iconArea = collapsed ? bounds : new RectangleF(bounds.X, bounds.Y, 34, bounds.Height);
         var size = Math.Min(19, bounds.Height - 10);
-        var icon = new RectangleF(iconArea.X + (iconArea.Width - size) / 2 - (queued > 0 ? 3 : 0), bounds.Y + (bounds.Height - size) / 2, size, size);
+        // Collapsed (taskbar dock): the icon never moves with the queue count, so the slot is
+        // pixel-stable across idle/running/queued states.
+        var icon = new RectangleF(iconArea.X + (iconArea.Width - size) / 2 - (!collapsed && queued > 0 ? 3 : 0), bounds.Y + (bounds.Height - size) / 2, size, size);
         using var halo = new SolidBrush(Color.FromArgb(10, color));
         graphics.FillEllipse(halo, RectangleF.Inflate(icon, 4, 4));
         using var pen = new Pen(color, 1.6f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
@@ -47,8 +49,18 @@ internal static class RouterCardRenderer
         if (queued > 0)
         {
             var text = queued > 99 ? "99+" : queued.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var badgeWidth = Math.Max(13, graphics.MeasureString(text, badgeFont).Width + 4);
-            var badge = new RectangleF(iconArea.Right - badgeWidth - 1, bounds.Top + 3, badgeWidth, 12);
+            RectangleF badge;
+            if (collapsed)
+            {
+                // Fixed-size pill on the icon's lower-right corner, sized for "99+".
+                var fixedWidth = Math.Max(13, graphics.MeasureString("99+", badgeFont).Width + 2);
+                badge = new RectangleF(icon.Right - fixedWidth / 2 - 2, icon.Bottom - 7, fixedWidth, 12);
+            }
+            else
+            {
+                var badgeWidth = Math.Max(13, graphics.MeasureString(text, badgeFont).Width + 4);
+                badge = new RectangleF(iconArea.Right - badgeWidth - 1, bounds.Top + 3, badgeWidth, 12);
+            }
             using var background = new SolidBrush(RouterVisualPalette.Mix(Color.FromArgb(22, 28, 37), color, .14f));
             graphics.FillRoundedRectangle(background, badge, 5);
             using var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center, FormatFlags = StringFormatFlags.NoWrap };
