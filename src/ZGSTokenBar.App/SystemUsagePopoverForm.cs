@@ -3,7 +3,14 @@ using ZGSTokenBar.Core;
 
 namespace ZGSTokenBar.App;
 
-internal sealed record SystemUsagePopoverContent(SystemUsageSnapshot Snapshot, bool Pinned, bool LiveRates = false);
+internal sealed record SystemUsagePopoverContent(SystemUsageSnapshot Snapshot, bool Pinned, bool LiveRates = false)
+{
+    /// <summary>
+    /// Per-conversation rows for the rate surface (the former Codex usage card's speed table):
+    /// null hides the section, an empty list shows that no conversation is active.
+    /// </summary>
+    public IReadOnlyList<CodexConversationTurn>? Conversations { get; init; }
+}
 
 internal sealed class SystemUsagePopoverForm : Form
 {
@@ -37,6 +44,12 @@ internal sealed class SystemUsagePopoverForm : Form
     private ProcessRow[] _processes = [];
     private string _capturedAt = string.Empty;
     private int _logicalBodyHeight = LogicalBodyHeight;
+    private CodexConversationTurn[] _sessions = [];
+    private bool _sessionsVisible;
+    private bool _sessionsRecent;
+    private const int MaximumSessionRows = 6;
+    private const int SessionRowHeight = 34;
+    private const int SessionHeaderHeight = 30;
     private NativeText _text = NativeText.For("zh-CN");
     private PopoverTailSide _tailSide = PopoverTailSide.Bottom;
     private float _tailOffset = LogicalBodyWidth / 2f;
@@ -133,14 +146,31 @@ internal sealed class SystemUsagePopoverForm : Form
                 FormatProcessMemory(process.PrivateWorkingSetBytes),
                 FormatUsage(process.GpuPercent))).ToArray();
         }
+        _sessionsVisible = content.LiveRates && content.Conversations is not null;
+        var conversations = content.Conversations ?? [];
+        var active = conversations
+            .Where(turn => turn.LiveRate is { Total: > 0 } || turn.State == "running")
+            .OrderByDescending(turn => turn.LiveRate?.Total ?? 0)
+            .ThenByDescending(turn => turn.ObservedAt)
+            .Take(MaximumSessionRows)
+            .ToArray();
+        _sessionsRecent = active.Length == 0;
+        _sessions = _sessionsVisible
+            ? active.Length > 0 ? active : conversations.OrderByDescending(turn => turn.ObservedAt).Take(3).ToArray()
+            : [];
         _logicalBodyHeight = content.LiveRates
-            ? LiveRateBodyHeight
+            ? LiveRateBodyHeight + SessionSectionHeight
             : Math.Clamp(282 + Math.Max(0, _processes.Length - 1) * 18, 282, LogicalBodyHeight);
         _capturedAt = _text.SystemUsageCapturedAt(snapshot.CapturedAt);
         Invalidate();
     }
 
     internal bool LiveRatesContentForAcceptance => _content?.LiveRates == true;
+
+    internal int SessionRowCountForAcceptance => _sessions.Length;
+
+    private int SessionSectionHeight => !_sessionsVisible ? 0
+        : SessionHeaderHeight + Math.Max(1, _sessions.Length) * SessionRowHeight + 8;
 
     internal int CurrentLogicalBodyHeight => _logicalBodyHeight;
 
@@ -372,7 +402,8 @@ internal sealed class SystemUsagePopoverForm : Form
         using var receive = new SolidBrush(ReceiveAccent);
         using var send = new SolidBrush(SendAccent);
         using var divider = new Pen(Color.FromArgb(42, 100, 116, 139), 1);
-        RectangleF At(float x, float y, float width, float height) => new(body.X + x, body.Y + y, width, height);
+        var dy = 0f;
+        RectangleF At(float x, float y, float width, float height) => new(body.X + x, body.Y + y + dy, width, height);
         void TextAt(string value, Font font, Brush brush, float x, float y, float width, float height,
             StringAlignment align = StringAlignment.Near) => DrawString(graphics, value, font, brush, At(x, y, width, height), align);
         void Panel(float y, float height)
@@ -412,6 +443,14 @@ internal sealed class SystemUsagePopoverForm : Form
         TextAt(live?.Generating.ToString() ?? "—", _metricValueFont, primary, 114, 170, 28, 14, StringAlignment.Far);
         TextAt(live?.Tools.ToString() ?? "—", _metricValueFont, primary, 248, 170, 28, 14, StringAlignment.Far);
 
+        if (_sessionsVisible)
+        {
+            var height = SessionSectionHeight - 8;
+            Panel(206, height);
+            DrawSessions(graphics, At(12, 206, body.Width - 24, height), primary, muted);
+            dy = SessionSectionHeight;
+        }
+
         Panel(206, 58);
         TextAt(zh ? "本机网络" : "System network", _metricLabelFont, muted, 24, 215, 130, 13);
         TextAt(zh ? $"默认接口 · {snapshot.NetworkInterfaces}" : $"Default NICs · {snapshot.NetworkInterfaces}",
@@ -443,6 +482,66 @@ internal sealed class SystemUsagePopoverForm : Form
             _subtitleFont, muted, 190, 372, 94, 12, StringAlignment.Far);
         TextAt(zh ? "流量仅统计 Bar 运行时 · 与 Token 独立" : "Traffic while Bar runs · independent of tokens", _subtitleFont, muted, 16, 389, 210, 12);
         TextAt(snapshot.CapturedAt.ToLocalTime().ToString("HH:mm:ss"), _subtitleFont, muted, 230, 389, 54, 12, StringAlignment.Far);
+    }
+
+    /// <summary>
+    /// Active Codex conversations with their own live tok/s, model, state, output and average
+    /// speed: the per-conversation view that used to live on the Codex usage card.
+    /// </summary>
+    private void DrawSessions(Graphics graphics, RectangleF panel, Brush primary, Brush muted)
+    {
+        var zh = _text.IsChinese;
+        var title = _sessionsRecent
+            ? (zh ? "最近会话" : "Recent chats")
+            : (zh ? $"活跃会话 · {_sessions.Length}" : $"Active chats · {_sessions.Length}");
+        DrawString(graphics, title, _metricLabelFont, muted,
+            new RectangleF(panel.X + 12, panel.Y + 9, 150, 13), StringAlignment.Near);
+        DrawString(graphics, zh ? "实时 tok/s" : "live tok/s", _subtitleFont, muted,
+            new RectangleF(panel.Right - 112, panel.Y + 9, 100, 13), StringAlignment.Far);
+        if (_sessions.Length == 0)
+        {
+            DrawString(graphics, zh ? "暂无 Codex 会话读数" : "No Codex chat data yet", _detailFont, muted,
+                new RectangleF(panel.X + 12, panel.Y + SessionHeaderHeight + 6, panel.Width - 24, 15), StringAlignment.Near);
+            return;
+        }
+
+        using var recorded = new SolidBrush(RecordedAccent);
+        using var estimated = new SolidBrush(EstimateAccent);
+        using var idle = new SolidBrush(Color.FromArgb(100, 116, 139));
+        using var rowDivider = new Pen(Color.FromArgb(28, 148, 163, 184), 1);
+        using var trimmed = new StringFormat(StringFormatFlags.NoWrap)
+        {
+            Trimming = StringTrimming.EllipsisCharacter,
+            LineAlignment = StringAlignment.Center,
+        };
+        for (var index = 0; index < _sessions.Length; index++)
+        {
+            var turn = _sessions[index];
+            var top = panel.Y + SessionHeaderHeight + index * SessionRowHeight;
+            if (index > 0) graphics.DrawLine(rowDivider, panel.X + 12, top - 1, panel.Right - 12, top - 1);
+            var live = turn.LiveRate is { Total: > 0 } rate ? rate : null;
+            var accent = live is null ? (turn.State == "running" ? recorded : idle)
+                : live.Estimated > 0 ? estimated : recorded;
+            graphics.FillEllipse(accent, panel.X + 12, top + 8, 5, 5);
+            graphics.DrawString(_text.CodexTurnName(turn), _detailFont, primary,
+                new RectangleF(panel.X + 21, top + 2, panel.Width - 112, 15), trimmed);
+            DrawString(graphics, live is null ? "—" : _text.CodexTurnLiveSpeed(turn), _metricValueFont,
+                live is null ? muted : accent, new RectangleF(panel.Right - 88, top + 2, 76, 15), StringAlignment.Far);
+
+            var meta = string.Join(" · ", new[]
+            {
+                string.Join(' ', new[] { turn.Model, turn.Effort }.Where(part => !string.IsNullOrWhiteSpace(part))),
+                _text.CodexTurnState(turn),
+                _text.CodexTurnTime(turn),
+            }.Where(part => !string.IsNullOrWhiteSpace(part)));
+            graphics.DrawString(meta, _subtitleFont, muted,
+                new RectangleF(panel.X + 21, top + 17, panel.Width - 128, 13), trimmed);
+            var output = !turn.UsageComplete && turn.OutputTokens == 0 ? "—"
+                : NativeText.FormatTokenCount(turn.OutputTokens) + (turn.UsageComplete ? "" : "+");
+            var average = turn.OutputTokensPerSecond is { } speed && double.IsFinite(speed) ? $" · ≈{speed:0.#}/s" : "";
+            DrawString(graphics, (zh ? "输出 " : "out ") + output + average, _subtitleFont, muted,
+                new RectangleF(panel.Right - 116, top + 17, 104, 13), StringAlignment.Far);
+        }
     }
 
     private void DrawMetricRow(

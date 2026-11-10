@@ -436,7 +436,7 @@ internal sealed class SystemUsageSampler : IDisposable
         ReadMemory(out var usedMemory, out var availableMemory, out var totalMemory);
         var (diskCounter, gpuCounter) = AvailableCounters();
         var disk = diskCounter?.Read() ?? new DiskUsage(null, null, null);
-        var gpu = gpuCounter?.Read(includeProcesses) ?? new GpuUsage(null, null, 0);
+        var gpu = ReadGpu(gpuCounter, includeProcesses);
         var topProcesses = includeProcesses
             ? ReadTopProcesses(totalMemory, gpu.ProcessEngines)
             : ResetProcessSampling();
@@ -461,6 +461,22 @@ internal sealed class SystemUsageSampler : IDisposable
             DiskWriteBytesPerSecond = disk.WriteBytesPerSecond,
             TopProcesses = topProcesses,
         };
+    }
+
+    private GpuUsage _lastGpu = new(null, null, 0);
+    private long _lastGpuAt;
+    // The wildcard GPU Engine query expands to ~1.5k instances on busy desktops and was the
+    // costliest per-second read. The bar shows a 2 s average; the process popover stays live.
+    private const long OverviewGpuIntervalMs = 2_000;
+
+    private GpuUsage ReadGpu(GpuUsageCounter? counter, bool includeProcesses)
+    {
+        if (counter is null) return new GpuUsage(null, null, 0);
+        var now = Environment.TickCount64;
+        if (!includeProcesses && now - _lastGpuAt < OverviewGpuIntervalMs - 100) return _lastGpu with { ProcessEngines = null };
+        _lastGpu = counter.Read(includeProcesses);
+        _lastGpuAt = now;
+        return _lastGpu;
     }
 
     private IReadOnlyList<SystemProcessUsage> ReadTopProcesses(

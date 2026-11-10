@@ -85,6 +85,10 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
     private HashSet<ProviderKind> _activeProviders;
     private CodexTokenUsageSummary? _cachedCodexTokenUsage;
     private IReadOnlyList<CodexAccountInfo> _codexAccounts = [];
+    private (long, long, long, long) _codexAccountStamp;
+    private long _codexAccountsReadAt;
+    // Account activity needs a process snapshot; poll it slowly unless Cockpit's files change.
+    private const long CodexAccountPollMs = 30_000;
     private RadarAlertState _radarState;
     private RadarViewState _radarViewState;
     private SettingsForm? _settingsDialog;
@@ -837,6 +841,23 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         _refreshTimer.Enabled = true;
     }
 
+    private static (long, long, long, long) CodexAccountFilesStamp()
+    {
+        var home = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".antigravity_cockpit");
+        static (long, long) Stamp(string path)
+        {
+            try
+            {
+                var file = new FileInfo(path);
+                return file.Exists ? (file.Length, file.LastWriteTimeUtc.Ticks) : (-1, 0);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { return (-1, 0); }
+        }
+        var accounts = Stamp(Path.Combine(home, "codex_accounts.json"));
+        var instances = Stamp(Path.Combine(home, "codex_instances.json"));
+        return (accounts.Item1, accounts.Item2, instances.Item1, instances.Item2);
+    }
+
     private void UpdateProviderActivity(bool requestRefresh)
     {
         if (_quitting || _bar.IsDisposed) return;
@@ -846,11 +867,18 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             return;
         }
 
-        var nextAccounts = CockpitCodexAccountDirectory.Read();
-        if (!AccountsEqual(_codexAccounts, nextAccounts))
+        var stamp = CodexAccountFilesStamp();
+        var tick = Environment.TickCount64;
+        if (!requestRefresh || stamp != _codexAccountStamp || tick - _codexAccountsReadAt >= CodexAccountPollMs)
         {
-            _codexAccounts = nextAccounts;
-            _bar.SetCodexAccounts(_codexAccounts);
+            _codexAccountStamp = stamp;
+            _codexAccountsReadAt = tick;
+            var nextAccounts = CockpitCodexAccountDirectory.Read();
+            if (!AccountsEqual(_codexAccounts, nextAccounts))
+            {
+                _codexAccounts = nextAccounts;
+                _bar.SetCodexAccounts(_codexAccounts);
+            }
         }
 
         var nextProviders = ActiveProviders(_settings);

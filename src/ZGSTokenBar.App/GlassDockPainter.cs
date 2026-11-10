@@ -18,6 +18,17 @@ internal enum GlassRingStyle
     IconPercentBelow,
 }
 
+/// <summary>Where the icon-in-ring layout puts its % label.</summary>
+internal enum GlassPercentPosition
+{
+    /// <summary>A compact pill on the ring's lower-left, mirroring the index badge (default).</summary>
+    BottomLeft,
+    /// <summary>Centred under the ring.</summary>
+    Below,
+    /// <summary>Centred above the ring.</summary>
+    Above,
+}
+
 internal sealed record GlassDockScene(
     bool Light,
     int Width,
@@ -38,13 +49,17 @@ internal sealed record GlassDockScene(
     bool RateHovered,
     GlassRingStyle RingStyle = GlassRingStyle.IconPercentBelow,
     float IconRingSize = GlassDockPainter.DefaultIconRingSize,
-    float LabelSize = GlassDockPainter.DefaultLabelSize);
+    float LabelSize = GlassDockPainter.DefaultLabelSize,
+    GlassPercentPosition PercentPosition = GlassPercentPosition.BottomLeft);
 
 internal static class GlassDockPainter
 {
-    /// <summary>Icon-in-ring layout: ring diameter and the % label size beneath it (logical px).</summary>
+    /// <summary>Icon-in-ring layout: ring diameter and the % label size above it (logical px).</summary>
     internal const float DefaultIconRingSize = 28f;
-    internal const float DefaultLabelSize = 10.5f;
+    internal const float DefaultLabelSize = 9.5f;
+    /// <summary>Ring and label sizes for the stacked (above/below) label positions.</summary>
+    internal const float StackedIconRingSize = 25f;
+    internal const float StackedLabelSize = 10f;
 
     public static void Draw(Graphics graphics, GlassDockScene scene, Font badgeFont)
     {
@@ -65,7 +80,7 @@ internal static class GlassDockPainter
                 continue;
             }
 
-            if (index < scene.Items.Count) DrawItem(graphics, slot.Bounds, scene.Items[index], scene.Light, scene.RingStyle, scene.IconRingSize, scene.LabelSize);
+            if (index < scene.Items.Count) DrawItem(graphics, slot.Bounds, scene.Items[index], scene.Light, scene.RingStyle, scene.IconRingSize, scene.LabelSize, scene.PercentPosition);
         }
 
         var systemLeft = GlassDockLayout.SystemLeftFor(scene.Width);
@@ -139,17 +154,19 @@ internal static class GlassDockPainter
     /// as a watermark, the bold remaining percentage is drawn on top, and the account ordinal is a
     /// small badge on the lower-right.
     /// </summary>
-    private static void DrawItem(Graphics graphics, Rectangle slot, GlassDockItemVisual item, bool light, GlassRingStyle style, float iconRingSize, float labelSize)
+    private static void DrawItem(Graphics graphics, Rectangle slot, GlassDockItemVisual item, bool light, GlassRingStyle style,
+        float iconRingSize, float labelSize, GlassPercentPosition position = GlassPercentPosition.BottomLeft)
     {
         var ring = item.Ring;
         var below = style == GlassRingStyle.IconPercentBelow;
-        // Icon-in-ring layout: a slightly smaller ring sits high so the % label fits beneath it
-        // inside the 44px dock (ring 2..32, label 32..42).
+        var stacked = below && position != GlassPercentPosition.BottomLeft;
         var size = below ? iconRingSize : GlassDockLayout.RingSize;
         var labelHeight = labelSize * 1.22f;
-        var ringTop = below
-            ? (GlassDockLayout.Height - (size + labelHeight - 1.5f)) / 2f
-            : (GlassDockLayout.Height - size) / 2f;
+        // Stacked layouts centre label + ring as one unit; the corner pill keeps the ring centred.
+        var stackTop = (GlassDockLayout.Height - (labelHeight + size - 1.5f)) / 2f;
+        var ringTop = !stacked
+            ? (GlassDockLayout.Height - size) / 2f
+            : position == GlassPercentPosition.Above ? stackTop + labelHeight - 1.5f : stackTop;
         var ringBounds = new RectangleF(slot.X + (slot.Width - size) / 2f, ringTop, size, size);
         if (item.Hovered)
         {
@@ -182,14 +199,22 @@ internal static class GlassDockPainter
         {
             DrawWatermark(graphics, core, item, light, 1f, .86f);
             var text = balanceOnly ? ring.BalanceText! : GlassDockLayout.PercentText(ring.RemainingPercent);
-            using var label = FitFont(graphics, text, slot.Width + 3, labelSize, labelSize - 2f, FontStyle.Bold);
-            var labelBounds = new RectangleF(slot.X - 4, ringBounds.Bottom - 1.5f, slot.Width + 8, labelHeight);
-            using (var halo = new SolidBrush(light ? Color.FromArgb(140, 255, 255, 255) : Color.FromArgb(150, 0, 0, 0)))
+            if (!stacked)
             {
-                DrawCentered(graphics, text, label, halo, new RectangleF(labelBounds.X, labelBounds.Y + .7f, labelBounds.Width, labelBounds.Height));
+                DrawCornerPercent(graphics, slot, ringBounds, text, labelSize, ring.AccountNumber > 0, valueBrush, light);
             }
+            else
+            {
+                using var label = FitFont(graphics, text, slot.Width + 3, labelSize, labelSize - 2f, FontStyle.Bold);
+                var labelTop = position == GlassPercentPosition.Above ? stackTop : ringBounds.Bottom - 1.5f;
+                var labelBounds = new RectangleF(slot.X - 4, labelTop, slot.Width + 8, labelHeight);
+                using (var halo = new SolidBrush(light ? Color.FromArgb(140, 255, 255, 255) : Color.FromArgb(150, 0, 0, 0)))
+                {
+                    DrawCentered(graphics, text, label, halo, new RectangleF(labelBounds.X, labelBounds.Y + .7f, labelBounds.Width, labelBounds.Height));
+                }
 
-            DrawCentered(graphics, text, label, valueBrush, labelBounds);
+                DrawCentered(graphics, text, label, valueBrush, labelBounds);
+            }
         }
         else
         {
@@ -223,6 +248,34 @@ internal static class GlassDockPainter
             using var badgeText = new SolidBrush(light ? Color.White : Color.FromArgb(15, 23, 42));
             DrawCentered(graphics, ring.AccountNumber.ToString(CultureInfo.InvariantCulture), badgeFont, badgeText, RectangleF.Inflate(badge, 1, 0));
         }
+    }
+
+    /// <summary>
+    /// The % as a small dark pill on the ring's lower-left, mirroring the index badge on the
+    /// lower-right. Low arcs start at 12 o'clock, so they never sit under the label.
+    /// </summary>
+    private static void DrawCornerPercent(Graphics graphics, Rectangle slot, RectangleF ringBounds, string text,
+        float labelSize, bool hasBadge, Brush valueBrush, bool light)
+    {
+        var left = Math.Max(slot.X - 2f, ringBounds.X - 4.5f);
+        // The index badge (11 px, lower-right) is drawn afterwards and may tuck over the pill's
+        // rounded end by a few pixels; the text itself stays clear of it.
+        var maximumWidth = (hasBadge ? ringBounds.Right - 11f + 4f : ringBounds.Right + 2f) - left;
+        var textRoom = hasBadge ? maximumWidth - 7.5f : maximumWidth - 3.5f;
+        using var font = FitFont(graphics, text, textRoom, labelSize, 7.5f, FontStyle.Bold);
+        var textWidth = graphics.MeasureString(text, font, PointF.Empty, StringFormat.GenericTypographic).Width;
+        var height = labelSize + 2.5f;
+        var width = Math.Min(maximumWidth, textWidth + (hasBadge && textWidth + 4f > maximumWidth - 4f ? 8f : 4f));
+        var pill = new RectangleF(left, ringBounds.Bottom - height + 2f, width, height);
+        using (var path = Rounded(pill, height / 2f))
+        using (var fill = new SolidBrush(light ? Color.FromArgb(245, 255, 255, 255) : Color.FromArgb(245, 17, 19, 25)))
+        using (var edge = new Pen(light ? Color.FromArgb(60, 15, 23, 42) : Color.FromArgb(70, 255, 255, 255), 1f))
+        {
+            graphics.FillPath(fill, path);
+            graphics.DrawPath(edge, path);
+        }
+        var textSlot = new RectangleF(pill.X, pill.Y - .2f, Math.Min(pill.Width, textWidth + 4f), pill.Height);
+        DrawCentered(graphics, text, font, valueBrush, new RectangleF(textSlot.X - 2, textSlot.Y, textSlot.Width + 4, textSlot.Height));
     }
 
     /// <summary>Bold number with a smaller % sign, centred as one unit inside the ring.</summary>
@@ -263,26 +316,26 @@ internal static class GlassDockPainter
     {
         var side = core.Width * fraction;
         var bounds = new RectangleF(core.X + (core.Width - side) / 2f, core.Y + (core.Height - side) / 2f, side, side);
-        using var clip = new GraphicsPath();
-        clip.AddEllipse(bounds);
-        var state = graphics.Save();
-        graphics.SetClip(clip, CombineMode.Intersect);
         if (item.Icon is { } original)
         {
             // Watermarks use the icon's mark only (its plate removed and tinted to the theme ink) so
             // dark-plated marks such as Grok stay visible; the full-colour icon is kept for opaque use.
             var icon = opacity >= .99f ? original : WatermarkGlyph(original, light);
-            using var attributes = new System.Drawing.Imaging.ImageAttributes();
-            attributes.SetColorMatrix(new System.Drawing.Imaging.ColorMatrix { Matrix33 = opacity });
+            // Source icons are up to 1280px; resampling them every frame dominated idle render cost.
+            // The circular, opacity-applied icon is baked once per device size and blitted 1:1.
             var target = RectangleF.Inflate(bounds, .5f, .5f);
-            graphics.DrawImage(
-                icon,
-                [target.Location, new PointF(target.Right, target.Top), new PointF(target.Left, target.Bottom)],
-                new RectangleF(0, 0, icon.Width, icon.Height),
-                GraphicsUnit.Pixel,
-                attributes);
+            var deviceScale = DeviceScale(graphics);
+            var baked = BakedIcon(icon, Math.Max(1, (int)MathF.Round(target.Width * deviceScale)), .5f * deviceScale, opacity);
+            var interpolation = graphics.InterpolationMode;
+            graphics.InterpolationMode = InterpolationMode.HighQualityBilinear;
+            graphics.DrawImage(baked, target);
+            graphics.InterpolationMode = interpolation;
+            return;
         }
-        else
+        using var clip = new GraphicsPath();
+        clip.AddEllipse(bounds);
+        var state = graphics.Save();
+        graphics.SetClip(clip, CombineMode.Intersect);
         {
             using var fill = new SolidBrush(Color.FromArgb((int)(255 * opacity), Accent(item.Ring.Accent, light)));
             graphics.FillEllipse(fill, bounds);
@@ -296,6 +349,56 @@ internal static class GlassDockPainter
         }
 
         graphics.Restore(state);
+    }
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Image, Dictionary<(int Pixels, int Inset, int Opacity), Bitmap>> BakedIcons = new();
+
+    private static float DeviceScale(Graphics graphics)
+    {
+        using var matrix = graphics.Transform;
+        var elements = matrix.Elements;
+        return Math.Max(.01f, MathF.Sqrt(elements[0] * elements[0] + elements[1] * elements[1]));
+    }
+
+    /// <summary>
+    /// Returns the icon resampled once to <paramref name="pixels"/> square, masked to an
+    /// anti-aliased circle inset by <paramref name="inset"/> device pixels, at the given opacity.
+    /// </summary>
+    internal static Bitmap BakedIcon(Image icon, int pixels, float inset, float opacity)
+    {
+        var cache = BakedIcons.GetValue(icon, _ => []);
+        var key = (pixels, (int)MathF.Round(inset * 100), (int)MathF.Round(Math.Clamp(opacity, 0f, 1f) * 255));
+        lock (cache)
+        {
+            if (cache.TryGetValue(key, out var cached)) return cached;
+            using var scaled = new Bitmap(pixels, pixels, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+            using (var g = Graphics.FromImage(scaled))
+            {
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                g.CompositingQuality = CompositingQuality.HighQuality;
+                using var attributes = new System.Drawing.Imaging.ImageAttributes();
+                attributes.SetColorMatrix(new System.Drawing.Imaging.ColorMatrix { Matrix33 = key.Item3 / 255f });
+                attributes.SetWrapMode(WrapMode.TileFlipXY);
+                g.DrawImage(icon, new Rectangle(0, 0, pixels, pixels), 0, 0, icon.Width, icon.Height, GraphicsUnit.Pixel, attributes);
+            }
+            var baked = new Bitmap(pixels, pixels, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+            using (var g = Graphics.FromImage(baked))
+            using (var brush = new TextureBrush(scaled, WrapMode.Clamp))
+            {
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                g.FillEllipse(brush, inset, inset, pixels - inset * 2, pixels - inset * 2);
+            }
+            // A handful of sizes per icon (DPI changes, hover states); bound it so it never grows.
+            if (cache.Count >= 16)
+            {
+                foreach (var bitmap in cache.Values) bitmap.Dispose();
+                cache.Clear();
+            }
+            cache[key] = baked;
+            return baked;
+        }
     }
 
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Image, Bitmap[]> Glyphs = new();

@@ -18,7 +18,14 @@
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <PublishReadyToRun>false</PublishReadyToRun>
     <PublishTrimmed>false</PublishTrimmed>
+    <!-- A taskbar app is idle almost always: no background GC thread, and compact the LOH eagerly. -->
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
   </PropertyGroup>
+  <ItemGroup>
+    <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="7" />
+    <!-- Workstation GC sizes gen0 from the L3 cache (96 MB+ on X3D parts); an idle bar needs far less. -->
+    <RuntimeHostConfigurationOption Include="System.GC.Gen0MaxBudget" Value="8388608" />
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\ZGSTokenBar.Core\ZGSTokenBar.Core.csproj" />
     <ProjectReference Include="..\ZGSTokenBar.PluginAdapters\ZGSTokenBar.PluginAdapters.csproj" />

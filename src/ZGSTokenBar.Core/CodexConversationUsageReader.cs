@@ -47,6 +47,10 @@ public sealed class CodexConversationUsageReader
 {
     internal const int ScanBudgetBytes = 8 * 1024 * 1024;
     private const int BootstrapBytes = 2 * 1024 * 1024;
+    // Sessions untouched for a while are only re-stated on a slower cadence; a resumed old
+    // session is still picked up within ColdRecheckMs.
+    private static readonly long ColdFileAgeTicks = TimeSpan.FromMinutes(10).Ticks;
+    private const long ColdRecheckMs = 15_000;
     private readonly Dictionary<string, FileState> _cache = new(StringComparer.OrdinalIgnoreCase);
     internal long ParsedFiles { get; private set; }
     internal long ScannedBytes { get; private set; }
@@ -64,10 +68,28 @@ public sealed class CodexConversationUsageReader
             cancellationToken.ThrowIfCancellationRequested();
             retained.Add(path);
             _cache.TryGetValue(path, out var state);
+            var checkedAt = Environment.TickCount64;
+            if (state is { CaughtUp: true, ReadFailed: false } && state.Offset >= state.Length
+                && DateTime.UtcNow.Ticks - state.WriteTicks > ColdFileAgeTicks
+                && checkedAt - state.CheckedAt < ColdRecheckMs)
+            {
+                if (state.ToTurn(now) is { } cold) turns.Add(cold);
+                continue;
+            }
             try
             {
                 var file = new FileInfo(path);
+                if (state is not null) state.CheckedAt = checkedAt;
                 if (!file.Exists) continue;
+                // Idle sessions are the common case: an unchanged, fully read file needs no open,
+                // checkpoint hash or scan, only its cached turn.
+                if (state is { CaughtUp: true, ReadFailed: false }
+                    && file.Length == state.Length && state.Offset >= state.Length
+                    && file.LastWriteTimeUtc.Ticks == state.WriteTicks)
+                {
+                    if (state.ToTurn(now) is { } unchanged) turns.Add(unchanged);
+                    continue;
+                }
                 using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
                     FileShare.ReadWrite | FileShare.Delete);
                 var length = stream.Length;
@@ -102,6 +124,7 @@ public sealed class CodexConversationUsageReader
                 }
                 state.CaughtUp = state.Offset >= length;
                 state.ReadFailed = false;
+                state.CheckedAt = checkedAt;
                 if (state.Offset < length)
                 {
                     PendingSessions++;
@@ -137,26 +160,30 @@ public sealed class CodexConversationUsageReader
             cancellationToken.ThrowIfCancellationRequested();
             var read = stream.Read(buffer, 0, Math.Min(buffer.Length, remaining));
             if (read == 0) break;
-            for (var index = 0; index < read; index++)
+            var start = 0;
+            while (start < read)
             {
-                var value = buffer[index];
-                if (value == '\n')
+                var newline = buffer.AsSpan(start, read - start).IndexOf((byte)'\n');
+                var end = newline < 0 ? read : start + newline;
+                var chunk = buffer.AsMemory(start, end - start);
+                if (newline < 0)
                 {
-                    if (!state.LineTooLong && state.Line.Count > 0)
-                        state.ProcessLine(Encoding.UTF8.GetString(state.Line.ToArray()), now);
-                    state.Line.Clear();
-                    state.LineTooLong = false;
+                    state.AppendLine(chunk.Span);
+                    break;
                 }
-                else if (!state.LineTooLong)
+                if (!state.LineTooLong)
                 {
-                    if (state.Line.Count < CodexTokenUsageReader.MaximumLineBytes) state.Line.Add(value);
+                    // Complete lines inside the read buffer are parsed in place; only lines that
+                    // straddle reads are copied into the session's bounded line buffer.
+                    if (state.LineLength == 0) { if (chunk.Length > 0) state.ProcessLine(chunk, now); }
                     else
                     {
-                        // Oversized tool output is skipped without allocating an unbounded string.
-                        state.LineTooLong = true;
-                        state.Line.Clear();
+                        state.AppendLine(chunk.Span);
+                        if (!state.LineTooLong && state.LineLength > 0) state.ProcessLine(state.LineMemory, now);
                     }
                 }
+                state.ResetLine();
+                start = end + 1;
             }
             state.Offset += read;
             consumed += read;
@@ -181,8 +208,36 @@ public sealed class CodexConversationUsageReader
         public long Offset;
         public long Length;
         public long WriteTicks;
-        public List<byte> Line = [];
+        public long CheckedAt;
+        private byte[] _line = [];
+        public int LineLength { get; private set; }
         public bool LineTooLong;
+        public ReadOnlyMemory<byte> LineMemory => _line.AsMemory(0, LineLength);
+
+        public void AppendLine(ReadOnlySpan<byte> bytes)
+        {
+            if (LineTooLong || bytes.IsEmpty) return;
+            if (LineLength + bytes.Length > CodexTokenUsageReader.MaximumLineBytes)
+            {
+                // Oversized tool output is skipped without allocating an unbounded string.
+                LineTooLong = true;
+                LineLength = 0;
+                return;
+            }
+            if (_line.Length < LineLength + bytes.Length)
+                Array.Resize(ref _line, Math.Min(CodexTokenUsageReader.MaximumLineBytes,
+                    Math.Max(LineLength + bytes.Length, Math.Max(4096, _line.Length * 2))));
+            bytes.CopyTo(_line.AsSpan(LineLength));
+            LineLength += bytes.Length;
+        }
+
+        public void ResetLine()
+        {
+            LineLength = 0;
+            LineTooLong = false;
+            // Idle sessions should not each pin a large carry-over buffer.
+            if (_line.Length > 64 * 1024) _line = [];
+        }
         public bool CaughtUp;
         public bool ReadFailed;
         public TurnState? Active;
@@ -224,17 +279,19 @@ public sealed class CodexConversationUsageReader
             return SHA256.HashData(bytes);
         }
 
-        public void ProcessLine(string line, DateTimeOffset now)
+        public void ProcessLine(ReadOnlyMemory<byte> utf8, DateTimeOffset now)
         {
-            if (!line.Contains("\"event_msg\"", StringComparison.Ordinal)
-                && !line.Contains("\"turn_context\"", StringComparison.Ordinal)
-                && !line.Contains("\"session_meta\"", StringComparison.Ordinal)
-                && !line.Contains("\"response_item\"", StringComparison.Ordinal)
-                && !line.Contains("\"response.completed\"", StringComparison.Ordinal)
-                && !line.Contains("\"model/rerouted\"", StringComparison.Ordinal)) return;
+            var bytes = utf8.Span;
+            if (bytes.IndexOf("\"event_msg\""u8) < 0
+                && bytes.IndexOf("\"turn_context\""u8) < 0
+                && bytes.IndexOf("\"session_meta\""u8) < 0
+                && bytes.IndexOf("\"response_item\""u8) < 0
+                && bytes.IndexOf("\"response.completed\""u8) < 0
+                && bytes.IndexOf("\"model/rerouted\""u8) < 0) return;
             try
             {
-                using var document = JsonDocument.Parse(line);
+                // Parsed straight from UTF-8: large tool-output lines never become strings.
+                using var document = JsonDocument.Parse(utf8);
                 var root = document.RootElement;
                 if (Date(root, "timestamp") is not { } at || at > now.AddMinutes(5)) return;
                 var payload = root.ObjectProperty("payload") ?? root.ObjectProperty("params") ?? root;
@@ -294,7 +351,7 @@ public sealed class CodexConversationUsageReader
                         }
                         break;
                     case "token_count":
-                        if (!CodexTokenUsageReader.TryParseLine(line, out var usage)
+                        if (!CodexTokenUsageReader.TryParseLine(Encoding.UTF8.GetString(bytes), out var usage)
                             || usage?.OutputTokens is not { } output) break;
                         if (_previousUsage is { } prior && usage.CapturedAt < prior.CapturedAt) break;
                         if (Active is { } current && usage.CapturedAt >= current.StartedAt)

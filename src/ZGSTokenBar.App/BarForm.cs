@@ -118,6 +118,9 @@ internal sealed partial class BarForm : Form
     private bool _glassExpanded;
     private bool _glassChipHovered;
     private bool _glassRenderQueued;
+    private byte[] _glassFrame = [];
+    private byte[] _glassFrameScratch = [];
+    private Size _glassFrameSize;
     private RectangleF _glassChipBounds;
     private DateTime? _glassLeftAt;
     private readonly System.Windows.Forms.Timer _glassChipTimer = new() { Interval = 320 };
@@ -693,6 +696,21 @@ internal sealed partial class BarForm : Form
         Invalidate();
     }
 
+    private SystemUsagePopoverContent SystemPopoverContent(SystemUsageSnapshot snapshot, bool pinned) =>
+        new(snapshot, pinned, _systemAnchorIsLive)
+        {
+            Conversations = _systemAnchorIsLive ? LiveConversationRows(snapshot) : null,
+        };
+
+    /// <summary>Codex conversations joined with their live per-conversation output rates.</summary>
+    private IReadOnlyList<CodexConversationTurn> LiveConversationRows(SystemUsageSnapshot snapshot)
+    {
+        if (_codexTokenUsage is not { } usage || !_activeProviders.Contains(ProviderKind.Codex)) return [];
+        var now = DateTimeOffset.UtcNow;
+        return CodexConversationDisplay.Select(usage.ConversationTurns,
+            snapshot.CurrentOutputRate is not null ? snapshot.LiveRate : null, now);
+    }
+
     public void SetSystemUsage(SystemUsageSnapshot snapshot)
     {
         snapshot = snapshot with { ObservedOutputTokensPerSecond = _systemUsage.ObservedOutputTokensPerSecond, OutputRateCapturedAt = _systemUsage.OutputRateCapturedAt, LiveRate = _systemUsage.LiveRate, CumulativeTokens = _codexTokenUsage?.LocalTokens };
@@ -700,7 +718,7 @@ internal sealed partial class BarForm : Form
         if (_systemUsagePopover?.Visible == true)
         {
             var previousHeight = _systemUsagePopover.CurrentLogicalBodyHeight;
-            _systemUsagePopover.UpdateContent(new SystemUsagePopoverContent(snapshot, _popoverPinned, _systemAnchorIsLive), _text);
+            _systemUsagePopover.UpdateContent(SystemPopoverContent(snapshot, _popoverPinned), _text);
             if (previousHeight != _systemUsagePopover.CurrentLogicalBodyHeight)
             {
                 RepositionPopovers();
@@ -926,6 +944,7 @@ internal sealed partial class BarForm : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
+        _glassFrameSize = Size.Empty;
         if (!_renderOnly)
         {
             _foregroundChangedHook = SetWinEventHook(
@@ -4787,7 +4806,7 @@ internal sealed partial class BarForm : Form
         _systemUsagePopover.ShowFor(
             this,
             QuotaTargetScreenBounds(SystemUsageAnchorBounds),
-            new SystemUsagePopoverContent(_systemUsage, pinned, _systemAnchorIsLive),
+            SystemPopoverContent(_systemUsage, pinned),
             _text,
             _scale,
             _animationsEnabled);
@@ -5729,7 +5748,32 @@ internal sealed partial class BarForm : Form
             }
         }
 
-        LayeredWindow.Update(Handle, bitmap);
+        // Most ticks repaint identical pixels; skipping the HBITMAP/UpdateLayeredWindow round trip
+        // for unchanged frames removes the bulk of the bar's idle kernel time.
+        if (!CaptureGlassFrame(bitmap)) return;
+        if (!LayeredWindow.Update(Handle, bitmap)) _glassFrameSize = Size.Empty;
+    }
+
+    /// <summary>Returns true when the rendered frame differs from the last one handed to the window.</summary>
+    private bool CaptureGlassFrame(Bitmap bitmap)
+    {
+        var rectangle = new Rectangle(Point.Empty, bitmap.Size);
+        var data = bitmap.LockBits(rectangle, System.Drawing.Imaging.ImageLockMode.ReadOnly,
+            System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        try
+        {
+            var length = Math.Abs(data.Stride) * data.Height;
+            if (_glassFrameScratch.Length != length) _glassFrameScratch = new byte[length];
+            System.Runtime.InteropServices.Marshal.Copy(data.Scan0, _glassFrameScratch, 0, length);
+        }
+        finally
+        {
+            bitmap.UnlockBits(data);
+        }
+        if (_glassFrameSize == bitmap.Size && _glassFrame.AsSpan().SequenceEqual(_glassFrameScratch)) return false;
+        (_glassFrame, _glassFrameScratch) = (_glassFrameScratch, _glassFrame);
+        _glassFrameSize = bitmap.Size;
+        return true;
     }
 
     private void ShowGlassMenu(Point location)
