@@ -20,9 +20,13 @@
     <PublishTrimmed>false</PublishTrimmed>
     <!-- A taskbar app is idle almost always: no background GC thread, and compact the LOH eagerly. -->
     <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <!-- PGO instrumentation costs CPU and memory in a process that never runs hot paths long. -->
+    <TieredPGO>false</TieredPGO>
   </PropertyGroup>
   <ItemGroup>
     <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="7" />
+    <!-- Windows NLS globalization instead of mapping the ~30 MB ICU data library. -->
+    <RuntimeHostConfigurationOption Include="System.Globalization.UseNls" Value="true" />
     <!-- Workstation GC sizes gen0 from the L3 cache (96 MB+ on X3D parts); an idle bar needs far less. -->
     <RuntimeHostConfigurationOption Include="System.GC.Gen0MaxBudget" Value="8388608" />
   </ItemGroup>

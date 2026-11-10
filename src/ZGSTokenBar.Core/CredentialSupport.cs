@@ -97,6 +97,49 @@ internal static class CredentialSupport
         return next.Result;
     }
 
+    /// <summary>Takes the same cross-process write lock <see cref="AtomicUpdate{T}"/> uses.</summary>
+    internal static FileStream? AcquireWriteLockFor(string path)
+    {
+        var directory = Path.GetDirectoryName(path);
+        if (string.IsNullOrWhiteSpace(directory)) throw new IOException("Atomic update requires a parent directory.");
+        Directory.CreateDirectory(directory);
+        return AcquireWriteLock(Path.Combine(directory, $".{Path.GetFileName(path)}.wmt.lock"));
+    }
+
+    /// <summary>Atomic replace with UTF-8 bytes; the caller must hold <see cref="AcquireWriteLockFor"/>.</summary>
+    internal static void AtomicWriteLockedBytes(string path, byte[] contents)
+    {
+        var directory = Path.GetDirectoryName(path)!;
+        var temporaryPath = Path.Combine(
+            directory,
+            $".{Path.GetFileName(path)}.{Environment.ProcessId}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            using (var stream = new FileStream(
+                temporaryPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                4096,
+                FileOptions.WriteThrough))
+            {
+                stream.Write(contents);
+                stream.Flush(true);
+            }
+
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(temporaryPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            }
+
+            File.Move(temporaryPath, path, true);
+        }
+        finally
+        {
+            try { File.Delete(temporaryPath); } catch { }
+        }
+    }
+
     private static bool AtomicWriteLocked(string path, string contents, string? expectedContents = null)
     {
         var directory = Path.GetDirectoryName(path)!;

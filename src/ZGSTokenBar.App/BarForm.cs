@@ -5553,19 +5553,7 @@ internal sealed partial class BarForm : Form
     {
         if (_pluginIcons.TryGetValue(view.PluginId, out var pluginIcon)) return pluginIcon;
         if (_glassIcons.TryGetValue(view.PluginId, out var cached)) return cached;
-        var resource = view.PluginId switch
-        {
-            UsageProviderIds.Grok => "grok-official-icon.png",
-            UsageProviderIds.Xai => "xai-official-icon.png",
-            UsageProviderIds.Antigravity => "antigravity-official-icon.png",
-            UsageProviderIds.Cursor => "cursor-official-icon.png",
-            UsageProviderIds.OpenCode => "opencode-official-icon.png",
-            UsageProviderIds.OpenRouter => "openrouter-official-icon.png",
-            UsageProviderIds.DeepSeek => "deepseek-whale-icon.png",
-            UsageProviderIds.Claude => "claude-icon-rounded.png",
-            UsageProviderIds.Codex => "openai-official-ios-icon.png",
-            _ => null,
-        };
+        var resource = ProviderIcons.Resource(view.PluginId);
         Image? image = null;
         if (resource is not null)
         {
@@ -6139,12 +6127,25 @@ internal sealed partial class BarForm : Form
         _ => Color.FromArgb(52, 211, 153),
     };
 
-    private static Image LoadEmbeddedImage(string logicalName)
+    /// <summary>Largest edge kept for embedded icons; the biggest on-screen use is ~64 device px.</summary>
+    internal const int EmbeddedIconMaxPixels = 160;
+
+    internal static Image LoadEmbeddedImage(string logicalName)
     {
         using var stream = typeof(BarForm).Assembly.GetManifestResourceStream(logicalName)
             ?? throw new InvalidOperationException($"Missing embedded image resource: {logicalName}");
         using var source = Image.FromStream(stream);
-        return new Bitmap(source);
+        // Official icons ship at 1024-1280 px (4-6.5 MB decoded each); keep a small copy only.
+        var longest = Math.Max(source.Width, source.Height);
+        if (longest <= EmbeddedIconMaxPixels) return new Bitmap(source);
+        var scale = EmbeddedIconMaxPixels / (float)longest;
+        var bitmap = new Bitmap(Math.Max(1, (int)Math.Round(source.Width * scale)), Math.Max(1, (int)Math.Round(source.Height * scale)), System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+        using var graphics = Graphics.FromImage(bitmap);
+        graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+        graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+        graphics.CompositingQuality = System.Drawing.Drawing2D.CompositingQuality.HighQuality;
+        graphics.DrawImage(source, new Rectangle(0, 0, bitmap.Width, bitmap.Height));
+        return bitmap;
     }
 
     private int TaskbarGroupWidth(TaskbarMiniCardGroup group)

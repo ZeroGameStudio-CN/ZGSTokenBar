@@ -48,9 +48,10 @@ internal static class Program
             return;
         }
 
-        var bundledPluginInstallFailed = BundledPluginInstaller
-            .EnsureInstalled(store.DataDirectory)
-            .Any(status => !status.Valid);
+        var bundledPluginInstallFailed = BundledPluginWarning.ShouldWarn(
+            store.DataDirectory,
+            BundledPluginInstaller.EnsureInstalled(store.DataDirectory),
+            settingsAvailable ? settings : null);
         if (settingsAvailable) ApplyProviderAutoDiscovery(store, settings);
 
         ApplicationConfiguration.Initialize();

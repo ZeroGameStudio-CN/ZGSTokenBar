@@ -34,8 +34,8 @@ internal sealed class QuotaPopoverForm : Form
     private readonly Font _titleFont = new("Segoe UI", 10.5f, FontStyle.Bold, GraphicsUnit.Pixel);
     private readonly Font _subtitleFont = new("Segoe UI", 8f, FontStyle.Regular, GraphicsUnit.Pixel);
     private readonly Font _statusFont = new("Segoe UI", 7f, FontStyle.Bold, GraphicsUnit.Pixel);
-    private readonly Font _valueFont = new("Cascadia Mono", 15f, FontStyle.Bold, GraphicsUnit.Pixel);
-    private readonly Font _metricFont = new("Cascadia Mono", 8.5f, FontStyle.Bold, GraphicsUnit.Pixel);
+    private readonly Font _valueFont = new("Segoe UI", 16.5f, FontStyle.Bold, GraphicsUnit.Pixel);
+    private readonly Font _metricFont = new("Segoe UI", 9.5f, FontStyle.Bold, GraphicsUnit.Pixel);
     private readonly Font _detailFont = new("Segoe UI Semibold", 10f, FontStyle.Regular, GraphicsUnit.Pixel);
     private readonly AlignedStringFormats _textFormats = new();
     private readonly System.Windows.Forms.Timer _clockTimer = new() { Interval = 30_000 };
@@ -316,7 +316,8 @@ internal sealed class QuotaPopoverForm : Form
         surfacePath.AddPath(bodyPath, false);
         surfacePath.AddPolygon(tail);
         using var fill = new SolidBrush(_backgroundTheme.Popover);
-        using var border = new Pen(Color.FromArgb(86, 100, 116, 139), 1);
+        // Hairline like the taskbar dock's card.
+        using var border = new Pen(Color.FromArgb(40, 255, 255, 255), 1);
         graphics.FillPath(fill, surfacePath);
         graphics.DrawPath(border, bodyPath);
         graphics.DrawLines(border, tail);
@@ -361,7 +362,7 @@ internal sealed class QuotaPopoverForm : Form
         var x = body.X;
         var y = body.Y;
 
-        graphics.DrawImage(_providerLogo, new RectangleF(x + 12, y + 10, 24, 24));
+        DrawLogo(graphics, _providerLogo, new RectangleF(x + 12, y + 10, 24, 24));
         using var titleBrush = new SolidBrush(Color.FromArgb(241, 245, 249));
         using var mutedBrush = new SolidBrush(Color.FromArgb(148, 163, 184));
         using var resetValueBrush = new SolidBrush(
@@ -1422,6 +1423,17 @@ internal sealed class QuotaPopoverForm : Form
     private static bool HasAccountHint(QuotaCard card) =>
         !string.IsNullOrWhiteSpace(card.AccountHint)
         && !string.Equals(card.AccountHint, "Codex account", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Official icon clipped to a circle, as on the dock rings.</summary>
+    private static void DrawLogo(Graphics graphics, Image logo, RectangleF bounds)
+    {
+        var state = graphics.Save();
+        using var clip = new GraphicsPath();
+        clip.AddEllipse(bounds);
+        graphics.SetClip(clip, CombineMode.Intersect);
+        graphics.DrawImage(logo, bounds);
+        graphics.Restore(state);
+    }
 
     private static void DrawPinIcon(Graphics graphics, RectangleF bounds)
     {

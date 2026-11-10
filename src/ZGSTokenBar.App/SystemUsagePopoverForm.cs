@@ -29,9 +29,9 @@ internal sealed class SystemUsagePopoverForm : Form
     private readonly Font _subtitleFont = new("Segoe UI", 8.5f, FontStyle.Regular, GraphicsUnit.Pixel);
     private readonly Font _metricLabelFont = new("Segoe UI Semibold", 9.5f, FontStyle.Regular, GraphicsUnit.Pixel);
     private readonly Font _detailFont = new("Segoe UI", 9.5f, FontStyle.Regular, GraphicsUnit.Pixel);
-    private readonly Font _metricValueFont = new("Cascadia Mono", 10.5f, FontStyle.Regular, GraphicsUnit.Pixel);
-    private readonly Font _liveValueFont = new("Cascadia Mono", 22f, FontStyle.Bold, GraphicsUnit.Pixel);
-    private readonly Font _tableValueFont = new("Cascadia Mono", 9f, FontStyle.Regular, GraphicsUnit.Pixel);
+    private readonly Font _metricValueFont = new("Segoe UI", 11.5f, FontStyle.Bold, GraphicsUnit.Pixel);
+    private readonly Font _liveValueFont = new("Segoe UI", 25f, FontStyle.Bold, GraphicsUnit.Pixel);
+    private readonly Font _tableValueFont = new("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Pixel);
     private static readonly Color RecordedAccent = Color.FromArgb(110, 231, 183);
     private static readonly Color EstimateAccent = Color.FromArgb(251, 191, 36);
     private static readonly Color ReceiveAccent = Color.FromArgb(125, 211, 252);

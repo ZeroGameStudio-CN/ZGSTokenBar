@@ -647,7 +647,7 @@ public sealed class CodexTokenUsageReader
             CodexForkMetadata? metadata;
             try
             {
-                metadata = TryReadForkMetadata(pair.Value.FullName, now.AddMinutes(5), cancellationToken);
+                metadata = ForkScanCache.Metadata(pair.Value, () => TryReadForkMetadata(pair.Value.FullName, now.AddMinutes(5), cancellationToken));
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
             {
@@ -656,10 +656,10 @@ public sealed class CodexTokenUsageReader
             if (metadata is null) continue;
 
             resolved[pair.Key] = new CodexForkBaseline(true, null);
-            var replayBaseline = TryReadForkReplayBaseline(
+            var replayBaseline = ForkScanCache.Replay(pair.Value, () => TryReadForkReplayBaseline(
                 pair.Value.FullName,
                 pair.Value.Length,
-                cancellationToken);
+                cancellationToken));
             if (replayBaseline is not null)
             {
                 resolved[pair.Key] = new CodexForkBaseline(true, replayBaseline);
@@ -764,10 +764,12 @@ public sealed class CodexTokenUsageReader
         CancellationToken cancellationToken)
     {
         parent.Refresh();
-        var events = ScanRange(parent.FullName, 0, parent.Length, false, cancellationToken)
+        // A forked child that never records its own usage asks for the same parent baseline on
+        // every refresh; the parent's ordered token events are cached by its size and write time.
+        var events = ForkScanCache.ParentEvents(parent, () => ScanRange(parent.FullName, 0, parent.Length, false, cancellationToken)
             .Where(item => item.CapturedAt <= now.AddMinutes(5))
             .OrderBy(item => item.CapturedAt)
-            .ToArray();
+            .ToArray());
         var orderedRequests = requests.OrderBy(item => item.ForkedAt).ToArray();
         var resolved = new List<(string Key, CodexTokenUsageEvent? InheritedUsage)>(orderedRequests.Length);
         var eventIndex = 0;
@@ -2090,5 +2092,64 @@ public sealed class CodexTokenUsageReader
         public long? LastCacheWriteInputTokens { get; set; }
         public long? LastOutputTokens { get; set; }
         public bool AwaitingForkBaseline { get; set; }
+    }
+}
+
+/// <summary>
+/// Process-wide memo of fork-baseline reads. Readers are rebuilt on every ledger refresh, and
+/// a fork child without token data of its own is re-resolved each time; these reads are pure
+/// functions of the file's content, so they are cached by path, length and write time. Entries
+/// also expire after a few minutes so time-dependent filters are re-applied eventually.
+/// </summary>
+internal static class ForkScanCache
+{
+    private const long TimeToLiveMs = 10 * 60_000;
+    private const int MaximumEntries = 256;
+    private static readonly object Gate = new();
+    private static readonly Dictionary<string, Entry> Entries = new(StringComparer.OrdinalIgnoreCase);
+
+    private sealed record Entry(long Length, long WriteTicks, long CachedAt, object? Value);
+
+    internal static CodexForkMetadata? Metadata(FileInfo file, Func<CodexForkMetadata?> read) =>
+        Get("m|", file, read);
+
+    internal static CodexTokenUsageEvent? Replay(FileInfo file, Func<CodexTokenUsageEvent?> read) =>
+        Get("r|", file, read);
+
+    internal static CodexTokenUsageEvent[] ParentEvents(FileInfo file, Func<CodexTokenUsageEvent[]> read) =>
+        Get("p|", file, read) ?? [];
+
+    internal static void Clear()
+    {
+        lock (Gate) Entries.Clear();
+    }
+
+    private static T? Get<T>(string kind, FileInfo file, Func<T?> read) where T : class
+    {
+        var key = kind + file.FullName;
+        var length = file.Length;
+        var writeTicks = file.LastWriteTimeUtc.Ticks;
+        var now = Environment.TickCount64;
+        lock (Gate)
+        {
+            if (Entries.TryGetValue(key, out var hit)
+                && hit.Length == length
+                && hit.WriteTicks == writeTicks
+                && now - hit.CachedAt < TimeToLiveMs)
+                return (T?)hit.Value;
+        }
+
+        var value = read();
+        lock (Gate)
+        {
+            if (Entries.Count >= MaximumEntries)
+            {
+                foreach (var stale in Entries.Where(pair => now - pair.Value.CachedAt >= TimeToLiveMs).Select(pair => pair.Key).ToArray())
+                    Entries.Remove(stale);
+                if (Entries.Count >= MaximumEntries) Entries.Clear();
+            }
+            Entries[key] = new Entry(length, writeTicks, now, value);
+        }
+        return value;
     }
 }

@@ -924,32 +924,78 @@ public sealed class AppSettingsStore
         }
     }
 
+    // The ledger index is many MB and is read-modify-written on every quota refresh. The parsed
+    // index this process last read or wrote is kept with the file's size and write time and is
+    // reused while the file is untouched; any other writer changes the stamp and forces a re-read.
+    private (long Length, long WriteTicks, CodexTokenUsageIndex Index)? _codexTokenUsageIndexCache;
+
     internal CodexTokenUsageReadResult UpdateCodexTokenUsageIndex(
-        Func<CodexTokenUsageIndex, CodexTokenUsageReadResult> refresh) =>
-        CredentialSupport.AtomicUpdate(
-            CodexTokenUsageIndexPath,
-            contents =>
+        Func<CodexTokenUsageIndex, CodexTokenUsageReadResult> refresh)
+    {
+        var path = CodexTokenUsageIndexPath;
+        using var writeLock = CredentialSupport.AcquireWriteLockFor(path)
+            ?? throw new IOException("File is busy. Please retry.");
+        var file = new FileInfo(path);
+        var cached = _codexTokenUsageIndexCache;
+        _codexTokenUsageIndexCache = null;
+        CodexTokenUsageIndex current;
+        if (file.Exists && cached is { } hit && hit.Length == file.Length && hit.WriteTicks == file.LastWriteTimeUtc.Ticks)
+        {
+            current = hit.Index;
+        }
+        else
+        {
+            byte[]? contents;
+            try { contents = file.Exists ? File.ReadAllBytes(path) : null; }
+            catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
             {
-                CodexTokenUsageIndex current;
-                try
-                {
-                    current = contents is null ? new() : ParseCodexTokenUsageIndex(contents);
-                }
-                catch (Exception exception) when (exception is JsonException or InvalidOperationException)
-                {
-                    throw new IOException("Token ledger must be recovered before it can be updated.", exception);
-                }
-                ClearWriteProtection(CodexTokenUsageIndexPath);
-                var result = refresh(current);
-                return (
-                    result.Changed ? JsonSerializer.Serialize(result.Index, SettingsJsonContext.CodexTokenUsageIndex) : null,
-                    result);
-            });
+                contents = null;
+            }
+            try
+            {
+                current = contents is null ? new() : ParseCodexTokenUsageIndex(contents);
+            }
+            catch (Exception exception) when (exception is JsonException or InvalidOperationException)
+            {
+                throw new IOException("Token ledger must be recovered before it can be updated.", exception);
+            }
+        }
+        ClearWriteProtection(path);
+        var result = refresh(current);
+        if (result.Changed)
+        {
+            CredentialSupport.AtomicWriteLockedBytes(
+                path,
+                JsonSerializer.SerializeToUtf8Bytes(result.Index, SettingsJsonContext.CodexTokenUsageIndex));
+            file.Refresh();
+            if (file.Exists) _codexTokenUsageIndexCache = (file.Length, file.LastWriteTimeUtc.Ticks, result.Index);
+        }
+        else if (file.Exists)
+        {
+            file.Refresh();
+            if (file.Exists) _codexTokenUsageIndexCache = (file.Length, file.LastWriteTimeUtc.Ticks, current);
+        }
+        return result;
+    }
+
+    private static CodexTokenUsageIndex ParseCodexTokenUsageIndex(byte[] utf8)
+    {
+        ReadOnlySpan<byte> json = utf8;
+        if (json.StartsWith((ReadOnlySpan<byte>)[0xEF, 0xBB, 0xBF])) json = json[3..];
+        var index = JsonSerializer.Deserialize(json, SettingsJsonContext.CodexTokenUsageIndex)
+            ?? throw new JsonException("Invalid Codex token usage index.");
+        return ValidateCodexTokenUsageIndex(index);
+    }
 
     private static CodexTokenUsageIndex ParseCodexTokenUsageIndex(string json)
     {
         var index = JsonSerializer.Deserialize(json, SettingsJsonContext.CodexTokenUsageIndex)
             ?? throw new JsonException("Invalid Codex token usage index.");
+        return ValidateCodexTokenUsageIndex(index);
+    }
+
+    private static CodexTokenUsageIndex ValidateCodexTokenUsageIndex(CodexTokenUsageIndex index)
+    {
         // Validate the deserialized header without building a second full DOM.
         // A missing legacy header still normalizes to the current in-memory schema.
         if (index.SchemaVersion is < 1 or > CodexTokenUsageIndex.CurrentSchemaVersion)

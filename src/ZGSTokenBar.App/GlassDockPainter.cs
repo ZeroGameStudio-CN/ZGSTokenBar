@@ -55,8 +55,8 @@ internal sealed record GlassDockScene(
 internal static class GlassDockPainter
 {
     /// <summary>Icon-in-ring layout: ring diameter and the % label size above it (logical px).</summary>
-    internal const float DefaultIconRingSize = 28f;
-    internal const float DefaultLabelSize = 9.5f;
+    internal const float DefaultIconRingSize = 26f;
+    internal const float DefaultLabelSize = 12f;
     /// <summary>Ring and label sizes for the stacked (above/below) label positions.</summary>
     internal const float StackedIconRingSize = 25f;
     internal const float StackedLabelSize = 10f;
@@ -195,13 +195,15 @@ internal static class GlassDockPainter
         var inner = RectangleF.Inflate(ringBounds, -stroke - 2.5f, -stroke - 2.5f);
         using var valueBrush = new SolidBrush(ValueColor(ring, light));
         var core = RectangleF.Inflate(ringBounds, -stroke - 1f, -stroke - 1f);
+        var chipRight = float.NaN;
         if (below)
         {
             DrawWatermark(graphics, core, item, light, 1f, .86f);
             var text = balanceOnly ? ring.BalanceText! : GlassDockLayout.PercentText(ring.RemainingPercent);
             if (!stacked)
             {
-                DrawCornerPercent(graphics, slot, ringBounds, text, labelSize, ring.AccountNumber > 0, valueBrush, light);
+                DrawCornerPercent(graphics, slot, ringBounds, text, labelSize, ring.AccountNumber > 0,
+                    !balanceOnly && GlassDockLayout.Band(ring.RemainingPercent) == "red", light, out chipRight);
             }
             else
             {
@@ -238,8 +240,11 @@ internal static class GlassDockPainter
 
         if (ring.AccountNumber > 0)
         {
-            var badgeSide = below ? 11f : 12f;
-            var badge = new RectangleF(ringBounds.Right - badgeSide + .5f, ringBounds.Bottom - badgeSide + 1.5f, badgeSide, badgeSide);
+            var corner = below && !stacked;
+            var badgeSide = corner ? 10.5f : below ? 11f : 12f;
+            var badge = corner
+                ? new RectangleF(Math.Max(ringBounds.Right - badgeSide + 2f, float.IsNaN(chipRight) ? 0f : chipRight - 1.5f), ringBounds.Bottom - badgeSide + 2.5f, badgeSide, badgeSide)
+                : new RectangleF(ringBounds.Right - badgeSide + .5f, ringBounds.Bottom - badgeSide + 1.5f, badgeSide, badgeSide);
             using var badgeFill = new SolidBrush(light ? Color.FromArgb(255, 30, 41, 59) : Color.FromArgb(255, 241, 245, 249));
             using var badgeEdge = new Pen(Separator(light), 1.4f);
             graphics.FillEllipse(badgeFill, badge);
@@ -250,32 +255,84 @@ internal static class GlassDockPainter
         }
     }
 
+    /// <summary>Look of the corner % chip; <see cref="ChipStyle"/> holds the shipped one.</summary>
+    internal sealed record CornerChipStyle(
+        string Name,
+        int FillAlpha,
+        Color CriticalText,
+        Color? CriticalFill,
+        int CriticalOutlineAlpha);
+
+    internal static readonly CornerChipStyle[] ChipStyleOptions =
+    [
+        new("A 55% 暗底 · 珊瑚字 + 描边", 140, Color.FromArgb(242, 119, 122), null, 150),
+        new("B 65% 暗底 · 浅玫瑰字", 166, Color.FromArgb(255, 150, 150), null, 0),
+        new("C 55% 暗底 · 半透珊瑚底白字", 140, Color.White, Color.FromArgb(158, 214, 88, 96), 0),
+    ];
+
+    internal static CornerChipStyle ChipStyle { get; set; } = ChipStyleOptions[0];
+
     /// <summary>
-    /// The % as a small dark pill on the ring's lower-left, mirroring the index badge on the
-    /// lower-right. Low arcs start at 12 o'clock, so they never sit under the label.
+    /// The % as a chip on the ring's lower-left, mirroring the index badge on the lower-right.
+    /// Low arcs start at 12 o'clock, so they never sit under it. The chip is a translucent dark
+    /// pill so the provider logo still shows through; the text carries a soft shadow instead of
+    /// an opaque fill. The font size is fixed for every value and the chip grows with the text;
+    /// the index badge moves right to clear it (the ring gap leaves room for 100%).
     /// </summary>
     private static void DrawCornerPercent(Graphics graphics, Rectangle slot, RectangleF ringBounds, string text,
-        float labelSize, bool hasBadge, Brush valueBrush, bool light)
+        float labelSize, bool hasBadge, bool critical, bool light, out float chipRight)
     {
-        var left = Math.Max(slot.X - 2f, ringBounds.X - 4.5f);
-        // The index badge (11 px, lower-right) is drawn afterwards and may tuck over the pill's
-        // rounded end by a few pixels; the text itself stays clear of it.
-        var maximumWidth = (hasBadge ? ringBounds.Right - 11f + 4f : ringBounds.Right + 2f) - left;
-        var textRoom = hasBadge ? maximumWidth - 7.5f : maximumWidth - 3.5f;
-        using var font = FitFont(graphics, text, textRoom, labelSize, 7.5f, FontStyle.Bold);
-        var textWidth = graphics.MeasureString(text, font, PointF.Empty, StringFormat.GenericTypographic).Width;
-        var height = labelSize + 2.5f;
-        var width = Math.Min(maximumWidth, textWidth + (hasBadge && textWidth + 4f > maximumWidth - 4f ? 8f : 4f));
-        var pill = new RectangleF(left, ringBounds.Bottom - height + 2f, width, height);
+        var style = ChipStyle;
+        var left = Math.Max(8f, slot.X - 1.5f);
+        var number = text.EndsWith('%') ? text[..^1] : text;
+        var hasSign = text.EndsWith('%') && number.Length > 0;
+        using var format = new StringFormat(StringFormat.GenericTypographic) { FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces };
+        using var numberFont = new Font("Segoe UI", labelSize, FontStyle.Bold, GraphicsUnit.Pixel);
+        using var signFont = new Font("Segoe UI", Math.Max(6.5f, labelSize * .66f), FontStyle.Bold, GraphicsUnit.Pixel);
+        var numberWidth = graphics.MeasureString(number, numberFont, PointF.Empty, format).Width;
+        var signWidth = hasSign ? graphics.MeasureString("%", signFont, PointF.Empty, format).Width + .2f : 0f;
+        var height = Math.Max(11.5f, labelSize + 1.5f);
+        var width = numberWidth + signWidth + 4.5f;
+        var pill = new RectangleF(left, ringBounds.Bottom - height + 2.5f, width, height);
+        chipRight = pill.Right;
         using (var path = Rounded(pill, height / 2f))
-        using (var fill = new SolidBrush(light ? Color.FromArgb(245, 255, 255, 255) : Color.FromArgb(245, 17, 19, 25)))
-        using (var edge = new Pen(light ? Color.FromArgb(60, 15, 23, 42) : Color.FromArgb(70, 255, 255, 255), 1f))
         {
-            graphics.FillPath(fill, path);
-            graphics.DrawPath(edge, path);
+            var fill = critical && style.CriticalFill is { } criticalFill
+                ? criticalFill
+                : light ? Color.FromArgb(style.FillAlpha, 255, 255, 255) : Color.FromArgb(style.FillAlpha, 10, 12, 17);
+            using (var brush = new SolidBrush(fill)) graphics.FillPath(brush, path);
+            var outline = critical && style.CriticalOutlineAlpha > 0
+                ? Color.FromArgb(style.CriticalOutlineAlpha, style.CriticalText)
+                : light ? Color.FromArgb(70, 15, 23, 42) : Color.FromArgb(70, 255, 255, 255);
+            if (!(critical && style.CriticalFill is not null))
+            {
+                using var edge = new Pen(outline, 1f);
+                graphics.DrawPath(edge, path);
+            }
         }
-        var textSlot = new RectangleF(pill.X, pill.Y - .2f, Math.Min(pill.Width, textWidth + 4f), pill.Height);
-        DrawCentered(graphics, text, font, valueBrush, new RectangleF(textSlot.X - 2, textSlot.Y, textSlot.Width + 4, textSlot.Height));
+
+        var ink = critical
+            ? (light && style.CriticalFill is null ? Color.FromArgb(200, 38, 48) : style.CriticalText)
+            : light ? Color.FromArgb(15, 23, 42) : Color.FromArgb(250, 250, 252);
+        var x = pill.X + 2.2f;
+        var numberHeight = numberFont.GetHeight(graphics);
+        var centerY = pill.Y + pill.Height / 2f;
+        var numberTop = centerY - numberHeight / 2f + .4f;
+        var baseline = numberTop + numberFont.FontFamily.GetCellAscent(numberFont.Style) * numberFont.Size / numberFont.FontFamily.GetEmHeight(numberFont.Style);
+        var signTop = baseline - signFont.FontFamily.GetCellAscent(signFont.Style) * signFont.Size / signFont.FontFamily.GetEmHeight(signFont.Style);
+        // Soft shadow keeps the text readable over the logo showing through the chip.
+        if (!light)
+        {
+            using var shadow = new SolidBrush(Color.FromArgb(150, 0, 0, 0));
+            foreach (var (dx, dy) in new[] { (0f, .8f), (.6f, .5f), (-.6f, .5f) })
+            {
+                graphics.DrawString(number, numberFont, shadow, x + dx, numberTop + dy, format);
+                if (hasSign) graphics.DrawString("%", signFont, shadow, x + numberWidth + .2f + dx, signTop + dy, format);
+            }
+        }
+        using var inkBrush = new SolidBrush(ink);
+        graphics.DrawString(number, numberFont, inkBrush, x, numberTop, format);
+        if (hasSign) graphics.DrawString("%", signFont, inkBrush, x + numberWidth + .2f, signTop, format);
     }
 
     /// <summary>Bold number with a smaller % sign, centred as one unit inside the ring.</summary>

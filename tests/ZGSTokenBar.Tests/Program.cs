@@ -8974,7 +8974,7 @@ static void RenderPercentPositionCapture(string outputDirectory)
     (GlassPercentPosition Position, float Ring, float Label, string Name)[] layouts =
     [
         (GlassPercentPosition.Below, GlassDockPainter.StackedIconRingSize, GlassDockPainter.StackedLabelSize, "A  环下居中（环 25）"),
-        (GlassPercentPosition.BottomLeft, GlassDockPainter.DefaultIconRingSize, GlassDockPainter.DefaultLabelSize, "B  环左下角（环 28，默认）"),
+        (GlassPercentPosition.BottomLeft, GlassDockPainter.DefaultIconRingSize, GlassDockPainter.DefaultLabelSize, "B  环左下角（环 26，默认）"),
     ];
     const int scale = 3;
     const int labelWidth = 190;
@@ -9013,6 +9013,126 @@ static void RenderPercentPositionCapture(string outputDirectory)
     var path = Path.Combine(outputDirectory, "pct-position.png");
     bitmap.Save(path, System.Drawing.Imaging.ImageFormat.Png);
     Console.WriteLine($"{path} {bitmap.Width}x{bitmap.Height}");
+}
+
+static void RenderChipOptionsCapture(string outputDirectory)
+{
+    static Image Asset(string name)
+    {
+        using var stream = typeof(BarForm).Assembly.GetManifestResourceStream("ZGSTokenBar.App.Assets." + name)
+            ?? throw new InvalidOperationException("missing asset " + name);
+        using var source = Image.FromStream(stream);
+        return new Bitmap(source);
+    }
+
+    using var openAi = Asset("openai-official-ios-icon.png");
+    using var claude = Asset("claude-icon-rounded.png");
+    using var grokIcon = Asset("grok-official-icon.png");
+    (string Name, (GlassDockRing Ring, Image Icon)[] Rings)[] sets =
+    [
+        ("低值", [
+            (new GlassDockRing(UsageProviderIds.Codex, "Codex", "a", 1, 4, null, null, "#10a37f"), openAi),
+            (new GlassDockRing(UsageProviderIds.Codex, "Codex", "b", 2, 12, null, null, "#10a37f"), openAi),
+            (new GlassDockRing(UsageProviderIds.Codex, "Codex", "c", 3, 0, null, null, "#10a37f"), openAi),
+            (new GlassDockRing(UsageProviderIds.Claude, "Claude", "d", 0, 9, null, null, "#d97757"), claude),
+        ]),
+        ("高值", [
+            (new GlassDockRing(UsageProviderIds.Codex, "Codex", "e", 1, 100, null, null, "#10a37f"), openAi),
+            (new GlassDockRing(UsageProviderIds.Codex, "Codex", "f", 2, 74, null, null, "#10a37f"), openAi),
+            (new GlassDockRing(UsageProviderIds.Claude, "Claude", "g", 0, 52, null, null, "#d97757"), claude),
+            (new GlassDockRing(UsageProviderIds.Grok, "Grok", "h", 0, 82, null, null, "#111111"), grokIcon),
+        ]),
+    ];
+    var shipped = GlassDockPainter.ChipStyle;
+    var layouts = GlassDockPainter.ChipStyleOptions
+        .Select(style => (Position: GlassPercentPosition.BottomLeft, Ring: GlassDockPainter.DefaultIconRingSize, Label: GlassDockPainter.DefaultLabelSize,
+            Name: style.Name + (ReferenceEquals(style, shipped) ? "（默认）" : ""), Style: style))
+        .ToArray();
+    const int scale = 3;
+    const int labelWidth = 250;
+    var plan0 = GlassDockLayout.Plan(sets[0].Rings.Select(item => item.Ring).ToArray());
+    var rowHeight = GlassDockLayout.Height + 14;
+    using var bitmap = new Bitmap((labelWidth + (plan0.Width + 24) * sets.Length + 10) * scale, (layouts.Length * rowHeight + 34) * scale);
+    using var graphics = Graphics.FromImage(bitmap);
+    graphics.Clear(Color.FromArgb(24, 24, 28));
+    using var labelFont = new Font("Microsoft YaHei UI", 11f, FontStyle.Bold, GraphicsUnit.Pixel);
+    using var labelBrush = new SolidBrush(Color.FromArgb(235, 240, 245));
+    using var taskbar = new SolidBrush(Color.FromArgb(32, 32, 32));
+    using var badgeFont = new Font("Segoe UI", 8f, FontStyle.Bold, GraphicsUnit.Pixel);
+    graphics.ScaleTransform(scale, scale);
+    for (var set = 0; set < sets.Length; set++)
+        graphics.DrawString(sets[set].Name, labelFont, labelBrush, labelWidth + set * (plan0.Width + 24), 6);
+    for (var row = 0; row < layouts.Length; row++)
+    {
+        var top = 26 + row * rowHeight;
+        graphics.DrawString(layouts[row].Name, labelFont, labelBrush, 8, top + 14);
+        for (var set = 0; set < sets.Length; set++)
+        {
+            var rings = sets[set].Rings;
+            var plan = GlassDockLayout.Plan(rings.Select(item => item.Ring).ToArray());
+            var visuals = plan.Visible.Select(ring => new GlassDockItemVisual(ring, rings.First(item => ReferenceEquals(item.Ring, ring)).Icon, ring.Title, false)).ToArray();
+            var left = labelWidth + set * (plan0.Width + 24);
+            graphics.FillRectangle(taskbar, left - 6, top - 4, plan.Width + 12, GlassDockLayout.Height + 8);
+            var state = graphics.Save();
+            graphics.TranslateTransform(left, top);
+            GlassDockPainter.ChipStyle = layouts[row].Style;
+            var scene = new GlassDockScene(false, plan.Width, 1f / scale, plan, visuals, false, false, null, false,
+                18, 46, 7, 13, false, 122.5, false, false, GlassRingStyle.IconPercentBelow, layouts[row].Ring, layouts[row].Label, layouts[row].Position);
+            GlassDockPainter.Draw(graphics, scene, badgeFont);
+            graphics.Restore(state);
+        }
+    }
+
+    GlassDockPainter.ChipStyle = shipped;
+    var path = Path.Combine(outputDirectory, "chip-options.png");
+    bitmap.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+    Console.WriteLine($"{path} {bitmap.Width}x{bitmap.Height}");
+}
+
+static void RenderUsageBoardCapture(string outputDirectory)
+{
+    var reset = DateTimeOffset.Now.AddDays(2).AddHours(5);
+    UsageAccountSnapshot Account(string label, double used, string plan, UsageLedger? ledger = null) => new(
+        label, label, plan, "sample",
+        [new UsageWindow("weekly", "每周", used, reset, TimeSpan.FromDays(7))],
+        null, ledger, [], UsageFreshness.Current, DateTimeOffset.Now, null);
+    var ledger = new UsageLedger(new UsageLedgerPeriod(1_240_000, 0.42m), new UsageLedgerPeriod(8_400_000, 2.1m), new UsageLedgerPeriod(24_000_000, 6.4m));
+    UsageProviderSnapshot Provider(string id, params UsageAccountSnapshot[] accounts)
+    {
+        var definition = ProviderCatalog.Find(id)!;
+        return new UsageProviderSnapshot(definition.Id, definition.DisplayName, definition.Accent, definition.Order, accounts);
+    }
+    var board = new UsageBoard(
+    [
+        Provider(UsageProviderIds.Grok, Account("ada@example.com", 18, "SuperGrok", ledger), Account("work@example.com", 62, "SuperGrok")),
+        Provider(UsageProviderIds.Cursor, Account("Cursor", 91, "Pro")),
+        Provider(UsageProviderIds.Antigravity, Account("Antigravity", 40, "Free")),
+    ]);
+    const float scale = 2f;
+    var images = new List<Bitmap>();
+    foreach (var light in new[] { false, true })
+    {
+        using var form = new UsageBoardForm(scale, true, light, null, null);
+        form.ShowBoard(board);
+        var bitmap = new Bitmap(form.ClientSize.Width, form.ClientSize.Height);
+        form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, form.ClientSize));
+        images.Add(bitmap);
+    }
+    using var sheet = new Bitmap(images.Sum(image => image.Width) + 60, images.Max(image => image.Height) + 40);
+    using (var graphics = Graphics.FromImage(sheet))
+    {
+        graphics.Clear(Color.FromArgb(52, 56, 64));
+        var x = 20;
+        foreach (var image in images)
+        {
+            graphics.DrawImage(image, x, 20);
+            x += image.Width + 20;
+        }
+    }
+    foreach (var image in images) image.Dispose();
+    var path = Path.Combine(outputDirectory, "usage-board-192dpi.png");
+    sheet.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+    Console.WriteLine($"{path} {sheet.Width}x{sheet.Height}");
 }
 
 static void RenderRouterGlyphCaptures(string outputDirectory)
@@ -9087,6 +9207,8 @@ static void RenderGlassOverflowCaptures(string outputDirectory)
     RenderIconRingSizeCapture(outputDirectory);
     RenderRateSessionsCapture(outputDirectory);
     RenderPercentPositionCapture(outputDirectory);
+    RenderUsageBoardCapture(outputDirectory);
+    RenderChipOptionsCapture(outputDirectory);
     var overflowAccounts = Enumerable.Range(1, 4)
         .Select(index => new CodexAccountInfo($"account-{index}", $"user{index}@example.test", "pro", index == 1))
         .ToArray();

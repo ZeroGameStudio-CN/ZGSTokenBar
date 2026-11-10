@@ -236,6 +236,8 @@ public sealed class CodexTokenUsageLedger
 
         // Unchanged local history needs no full-ledger transaction. New turns,
         // pending saves and due retention still merge the latest index under lock.
+        // This runs every second; the cheap check avoids rebuilding the 500-turn history.
+        if (HistoryAlreadyHolds(summary.ConversationHistory, completed, now)) return summary;
         if (HistoryEquals(summary.ConversationHistory,
                 MergeConversationHistory(summary.ConversationHistory, completed, now)))
             return summary;
@@ -279,6 +281,47 @@ public sealed class CodexTokenUsageLedger
             .OrderByDescending(turn => turn.ObservedAt)
             .Take(CodexTokenUsageIndex.ConversationHistoryLimit)
             .ToList();
+    }
+
+    private IReadOnlyList<CodexConversationTurn>? _heldHistory;
+    private Dictionary<string, CodexConversationTurn>? _heldHistoryByKey;
+    private DateTimeOffset _heldHistoryOldest;
+
+    /// <summary>
+    /// True when merging <paramref name="completed"/> into <paramref name="history"/> would
+    /// return the same list: the history is already canonical (terminal, unique, newest first,
+    /// within the limit), nothing has aged out, and every completed turn is present unchanged.
+    /// </summary>
+    private bool HistoryAlreadyHolds(
+        IReadOnlyList<CodexConversationTurn>? history,
+        IReadOnlyList<CodexConversationTurn> completed,
+        DateTimeOffset now)
+    {
+        if (history is null || history.Count == 0) return false;
+        if (!ReferenceEquals(history, _heldHistory))
+        {
+            _heldHistory = history;
+            _heldHistoryByKey = null;
+            if (history.Count > CodexTokenUsageIndex.ConversationHistoryLimit) return false;
+            var byKey = new Dictionary<string, CodexConversationTurn>(history.Count, StringComparer.Ordinal);
+            for (var index = 0; index < history.Count; index++)
+            {
+                var turn = history[index];
+                if (!turn.IsTerminal || turn.Stale) return false;
+                if (index > 0 && history[index - 1].ObservedAt < turn.ObservedAt) return false;
+                if (!byKey.TryAdd(TurnKey(turn), turn)) return false;
+            }
+            _heldHistoryByKey = byKey;
+            _heldHistoryOldest = history[^1].ObservedAt;
+        }
+        if (_heldHistoryByKey is null) return false;
+        if (_heldHistoryOldest < now.AddDays(-CodexTokenUsageIndex.ConversationHistoryRetentionDays)) return false;
+        foreach (var turn in completed)
+        {
+            if (!_heldHistoryByKey.TryGetValue(TurnKey(turn), out var held)) return false;
+            if (held != (turn.Stale ? turn with { Stale = false } : turn)) return false;
+        }
+        return true;
     }
 
     private static bool HistoryEquals(

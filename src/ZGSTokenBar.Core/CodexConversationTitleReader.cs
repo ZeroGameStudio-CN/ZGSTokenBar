@@ -11,7 +11,7 @@ internal sealed class CodexConversationTitleReader
     internal CodexTokenUsageSummary Apply(CodexTokenUsageSummary summary, IReadOnlyList<string> homes,
         CancellationToken cancellationToken = default)
     {
-        var titles = new Dictionary<string, TitleEntry>(StringComparer.Ordinal);
+        var sources = new List<IndexSnapshot>(4);
         var retained = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var home in homes.Distinct(StringComparer.OrdinalIgnoreCase))
         {
@@ -61,22 +61,63 @@ internal sealed class CodexConversationTitleReader
                 }
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
-            if (cached is null) continue;
-            foreach (var (id, entry) in cached.Titles)
-                if (!titles.TryGetValue(id, out var prior) || entry.UpdatedAt >= prior.UpdatedAt)
-                    titles[id] = entry;
+            if (cached is not null) sources.Add(cached);
+        }
+        // The merged title map only changes when one of the per-home snapshots does.
+        var titles = _mergedTitles;
+        if (titles is null || !sources.SequenceEqual(_mergedSources, ReferenceEqualityComparer.Instance))
+        {
+            titles = new Dictionary<string, TitleEntry>(StringComparer.Ordinal);
+            foreach (var source in sources)
+                foreach (var (id, entry) in source.Titles)
+                    if (!titles.TryGetValue(id, out var prior) || entry.UpdatedAt >= prior.UpdatedAt)
+                        titles[id] = entry;
+            _mergedTitles = titles;
+            _mergedSources = sources.ToArray();
         }
         foreach (var path in _cache.Keys.Where(path => !retained.Contains(path)).ToArray()) _cache.Remove(path);
-        CodexConversationTurn WithTitle(CodexConversationTurn turn) => turn with
+        CodexConversationTurn WithTitle(CodexConversationTurn turn)
         {
-            Title = titles.GetValueOrDefault(turn.SessionId)?.Title,
-        };
+            var title = titles.GetValueOrDefault(turn.SessionId)?.Title;
+            return string.Equals(turn.Title, title, StringComparison.Ordinal) ? turn : turn with { Title = title };
+        }
         return summary with
         {
-            RecentTurns = summary.RecentTurns.Select(WithTitle).ToArray(),
-            ConversationHistory = summary.ConversationHistory.Select(WithTitle).ToArray(),
+            RecentTurns = WithTitles(summary.RecentTurns, WithTitle, 0),
+            ConversationHistory = WithTitles(summary.ConversationHistory, WithTitle, 1),
         };
     }
+
+    /// <summary>
+    /// Runs every second over up to 500 history turns, so an already-titled list is returned
+    /// as-is (or reused from the previous call) instead of being copied.
+    /// </summary>
+    private IReadOnlyList<CodexConversationTurn> WithTitles(
+        IReadOnlyList<CodexConversationTurn> turns,
+        Func<CodexConversationTurn, CodexConversationTurn> withTitle,
+        int slot)
+    {
+        CodexConversationTurn[]? copy = null;
+        for (var index = 0; index < turns.Count; index++)
+        {
+            var titled = withTitle(turns[index]);
+            if (copy is null)
+            {
+                if (ReferenceEquals(titled, turns[index])) continue;
+                copy = new CodexConversationTurn[turns.Count];
+                for (var prior = 0; prior < index; prior++) copy[prior] = turns[prior];
+            }
+            copy[index] = titled;
+        }
+        if (copy is null) return turns;
+        if (_lastTitled[slot] is { } last && last.Length == copy.Length && last.AsSpan().SequenceEqual(copy)) return last;
+        return _lastTitled[slot] = copy;
+    }
+
+    private readonly CodexConversationTurn[]?[] _lastTitled = new CodexConversationTurn[]?[2];
+
+    private Dictionary<string, TitleEntry>? _mergedTitles;
+    private IndexSnapshot[] _mergedSources = [];
 
     private sealed record TitleEntry(string Title, DateTimeOffset UpdatedAt);
     private sealed record IndexSnapshot(long Length, long WriteTicks, IReadOnlyDictionary<string, TitleEntry> Titles);

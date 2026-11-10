@@ -45,7 +45,8 @@ public static class GlassDockLayout
     public const int MaxVisibleRings = 4;
     public const int RingSize = 34;
     public const int ItemWidth = 36;
-    public const int RingGap = 3;
+    // Room for the corner % chip of a neighbour showing 100% plus its index badge.
+    public const int RingGap = 6;
     public const int PadLeft = 6;
     public const int PadRight = 10;
     public const int ChipWidth = 24;
