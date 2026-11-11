@@ -449,11 +449,13 @@ internal sealed partial class BarForm
     {
         if (_renderOnly || PendingHoverCaptureDirectory is null || _hoverCaptureTimer is not null) return;
         _hoverCaptureDeadline = DateTime.UtcNow.AddMinutes(3);
+        var startedAt = DateTimeOffset.UtcNow.AddSeconds(-5);
         _hoverCaptureTimer = new System.Windows.Forms.Timer { Interval = 5000 };
         _hoverCaptureTimer.Tick += (_, _) =>
         {
             var items = BuildGlassItems().Where(item => item.Card is not null && item.Window is not null).ToArray();
-            var codex = items.Any(item => item.Card!.Provider == ProviderKind.Codex);
+            // Wait for a live Codex fetch from this process, not the cached snapshot shown at start.
+            var codex = items.Any(item => item.Card!.Provider == ProviderKind.Codex && item.Card.CapturedAt >= startedAt);
             var other = items.Any(item => item.Card!.Provider != ProviderKind.Codex);
             if (!(codex && other) && DateTime.UtcNow < _hoverCaptureDeadline) return;
             _hoverCaptureTimer!.Stop();

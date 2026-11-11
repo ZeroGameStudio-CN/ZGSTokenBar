@@ -3899,6 +3899,9 @@ static void TestProviderExhaustedRefreshCadence()
     var bothExhausted = mixed with { Cards = [exhausted.Cards.Single(), exhaustedCodexCard] };
     Equal(true, QuotaCoordinator.ShouldDeferProviderRefresh(bothExhausted, ProviderKind.Claude, now), "exhausted Claude defers when both are exhausted");
     Equal(true, QuotaCoordinator.ShouldDeferProviderRefresh(bothExhausted, ProviderKind.Codex, now), "exhausted Codex defers when both are exhausted");
+    var withResetCards = bothExhausted with { CodexAccounts = [new CodexAccountQuota("acct", exhaustedCodexCard.Windows) { ResetCreditsAvailable = 2 }] };
+    Equal(false, QuotaCoordinator.ShouldDeferProviderRefresh(withResetCards, ProviderKind.Codex, now), "exhausted Codex with reset cards keeps the normal cadence");
+    Equal(true, QuotaCoordinator.ShouldDeferProviderRefresh(withResetCards, ProviderKind.Claude, now), "Codex reset cards do not change Claude's cadence");
 
     var secondCodexAccount = exhaustedCodexCard with
     {
