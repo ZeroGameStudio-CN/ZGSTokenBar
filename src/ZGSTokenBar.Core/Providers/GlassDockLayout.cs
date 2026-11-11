@@ -12,7 +12,8 @@ public sealed record GlassDockRing(
     string? BalanceText,
     string Accent);
 
-public readonly record struct GlassDockSlot(Rectangle Bounds, bool Chip);
+/// <summary>A dock slot: a ring, the +N/collapse chip, or (expanded only) the show/hide chip.</summary>
+public readonly record struct GlassDockSlot(Rectangle Bounds, bool Chip, bool Visibility = false);
 
 public sealed record GlassDockPlan(
     IReadOnlyList<GlassDockRing> Visible,
@@ -158,12 +159,48 @@ public static class GlassDockLayout
             Slots(visible.Length, hidden.Length > 0));
     }
 
-    /// <summary>Plan that shows every ring, used while the +N chip is expanded.</summary>
-    public static GlassDockPlan PlanExpanded(IReadOnlyList<GlassDockRing> rings)
+    /// <summary>
+    /// Plan that shows every ring while the +N chip is expanded. The collapsed rings and the chip
+    /// keep their exact positions (the chip stays under the cursor that clicked it); the overflow
+    /// rings open to its right, followed by the show/hide chip.
+    /// </summary>
+    public static GlassDockPlan PlanExpanded(IReadOnlyList<GlassDockRing> rings, int maxVisible = MaxVisibleRings)
     {
         var ordered = Order(rings);
-        var width = WidthFor(ordered.Length, chip: true);
-        return new GlassDockPlan(ordered, 0, false, width, Height, Slots(ordered.Length, true));
+        var slots = ExpandedSlots(ordered.Length, Math.Min(VisibleCapacity(maxVisible), ordered.Length), out var width);
+        return new GlassDockPlan(ordered, 0, false, width, Height, slots);
+    }
+
+    /// <summary>Width of the expanded pill for <paramref name="items"/> rings (both chips included).</summary>
+    public static int ExpandedWidthFor(int items, int maxVisible = MaxVisibleRings)
+    {
+        _ = ExpandedSlots(items, Math.Min(VisibleCapacity(maxVisible), items), out var width);
+        return width;
+    }
+
+    private static List<GlassDockSlot> ExpandedSlots(int count, int lead, out int width)
+    {
+        var slots = new List<GlassDockSlot>(count + 2);
+        var x = PadLeft;
+        void Chip(bool visibility)
+        {
+            if (slots.Count > 0) x += ChipGap - RingGap;
+            slots.Add(new GlassDockSlot(new Rectangle(x, (Height - 22) / 2, ChipWidth, 22), true, visibility));
+            x += ChipWidth + RingGap;
+        }
+
+        for (var index = 0; index < count; index++)
+        {
+            if (index == lead) Chip(visibility: false);
+            if (slots.Count > 0 && slots[^1].Chip) x += ChipGap - RingGap;
+            slots.Add(new GlassDockSlot(new Rectangle(x, (Height - RingSize) / 2 - 1, ItemWidth, RingSize + 2), false));
+            x += ItemWidth + RingGap;
+        }
+
+        if (lead >= count) Chip(visibility: false);
+        Chip(visibility: true);
+        width = x - RingGap + DividerGap + SystemWidth + PadRight;
+        return slots;
     }
 
     private static GlassDockRing[] Order(IReadOnlyList<GlassDockRing> rings) => rings

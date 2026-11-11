@@ -141,8 +141,17 @@ public static class UsageProviderFixtureTests
         var rows = UsageParsers.AntigravityRows(
             "Gemini Models\tWeekly Limit Remaining\t100%\t2026-11-14T17:41:52Z\n" +
             "Claude and GPT models\tWeekly Limit Remaining\t0%\t2026-11-08T03:50:06Z\n");
-        Check(rows[0] == "Gemini Models 100%", "antigravity text keeps remaining scale");
+        Check(rows[0] == "Gemini · 7d 100%", "antigravity text keeps remaining scale");
         Check(UsageParsers.AntigravityRows("invalid").Length == 0, "malformed antigravity output is empty");
+        var codexCredits = CodexUsageParser.Parse("""{"plan_type":"plus","rate_limit":{},"credits":{"has_credits":true,"unlimited":false,"balance":"12.5"}}""").Credits;
+        Check(codexCredits is { HasCredits: true, Unlimited: false, Balance: 12.5 }, "codex credits balance (string form, as CodexBar reads it)");
+        Check(CodexUsageParser.Parse("""{"rate_limit":{}}""").Credits is null, "codex without credits");
+        var grokPeriod = UsageParsers.ParseGrok("""{"config":{"currentPeriod":{"start":"2026-11-01T00:00:00Z","end":"2026-12-01T00:00:00Z"}},"usage":{"used":1,"limit":10}}""")?.Period;
+        Check(grokPeriod is null || grokPeriod is { Kind: "billing", End: not null }, "grok billing period when present");
+        var cursorPeriod = UsageParsers.ParseCursor("""{"billingCycleStart":"2026-11-03T00:00:00Z","billingCycleEnd":"2026-12-03T00:00:00Z","individualUsage":{"plan":{"used":10,"limit":100}}}""")?.Period;
+        Check(cursorPeriod is null || cursorPeriod is { Kind: "billing", Source: "billingCycleStart/End" }, "cursor billing cycle period");
+        var copilotPeriod = UsageParsers.ParseCopilot("""{"quota_reset_date":"2026-12-01T00:00:00Z","quota_snapshots":{"chat":{"unlimited":true}}}""")?.Period;
+        Check(copilotPeriod is { Kind: "quota-reset", Source: "quota_reset_date" }, "copilot quota reset date");
         var gemini = UsageParsers.ParseAntigravity("""{"buckets":[{"model":"Gemini Models","remainingFraction":0.25,"resetTime":"2026-11-14T17:41:52Z"}]}""");
         Check(gemini?.Windows[0].UsedPercent == 75, "antigravity json fraction");
     }
@@ -383,7 +392,13 @@ public static class UsageProviderFixtureTests
         var limited = GlassDockLayout.Plan(many, 2);
         Check(limited.Visible.Count == 2 && limited.OverflowCount == 10 && limited.Width == GlassDockLayout.WidthFor(2, true), "ring limit is configurable");
         var expanded = GlassDockLayout.PlanExpanded(many);
-        Check(expanded.Visible.Count == 12 && expanded.OverflowCount == 0 && expanded.Width == GlassDockLayout.WidthFor(12, true) && expanded.Slots[^1].Chip, "+N expands to every ring");
+        Check(expanded.Visible.Count == 12 && expanded.OverflowCount == 0 && expanded.Width == GlassDockLayout.ExpandedWidthFor(12)
+            && expanded.Slots[^1] is { Chip: true, Visibility: true }, "+N expands to every ring and ends with the show/hide chip");
+        var collapsedFour = GlassDockLayout.Plan(many);
+        var lead = collapsedFour.Visible.Count;
+        Check(expanded.Slots[lead] is { Chip: true, Visibility: false } && expanded.Slots[lead].Bounds == collapsedFour.Slots[^1].Bounds
+            && expanded.Slots.Take(lead).Select(slot => slot.Bounds).SequenceEqual(collapsedFour.Slots.Take(lead).Select(slot => slot.Bounds)),
+            "expanding keeps the collapsed rings and the chip in place under the cursor");
         Check(GlassDockLayout.RingSweep(4) >= 22f && GlassDockLayout.RingSweep(0) == 0f && GlassDockLayout.RingSweep(null) == 0f && GlassDockLayout.PercentText(4.4) == "4%", "small remaining stays legible");
         Check(GlassDockLayout.Band(19) == "red" && GlassDockLayout.Band(20) == "amber" && GlassDockLayout.Band(50) == "amber" && GlassDockLayout.Band(51) == "green", "quota bands");
         var quota = GlassDockComposer.FromQuota(

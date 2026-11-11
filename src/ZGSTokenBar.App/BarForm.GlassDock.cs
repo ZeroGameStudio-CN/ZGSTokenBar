@@ -14,11 +14,18 @@ internal sealed partial class BarForm
     private ContextMenuStrip? _glassMenu;
     private bool _glassExpanded;
     private bool _glassChipHovered;
+    private bool _glassVisibilityHovered;
     private bool _glassRenderQueued;
     private byte[] _glassFrame = [];
     private byte[] _glassFrameScratch = [];
     private Size _glassFrameSize;
     private RectangleF _glassChipBounds;
+    private RectangleF _glassVisibilityBounds;
+    /// <summary>When the hover timer (not a click) opened the overflow; a click right after keeps it open.</summary>
+    private DateTime? _glassHoverExpandedAt;
+    private HashSet<string> _hiddenDockItems = new(StringComparer.Ordinal);
+    private DockVisibilityPopoverForm? _dockVisibilityPopover;
+    public event EventHandler<DockItemVisibilityChange>? DockItemVisibilityChanged;
     private DateTime? _glassLeftAt;
     private readonly System.Windows.Forms.Timer _glassChipTimer = new() { Interval = 320 };
     private readonly System.Windows.Forms.Timer _glassCollapseTimer = new() { Interval = 200 };
@@ -35,6 +42,7 @@ internal sealed partial class BarForm
         value <= 0 ? GlassDockLayout.MaxVisibleRings : Math.Clamp(value, 1, 8);
 
     private sealed record GlassItem(
+        string Id,
         GlassDockRing Ring,
         string Name,
         Image? Icon,
@@ -82,7 +90,7 @@ internal sealed partial class BarForm
                 remaining is null ? balance : null,
                 string.IsNullOrWhiteSpace(card.Accent) ? "#10a37f" : card.Accent);
             var name = multi ? GlassAccountName(card, ordinal) : card.DisplayLabel;
-            items.Add(new GlassItem(ring, name, ProviderLogo(card.Provider), card, window, null));
+            items.Add(new GlassItem("card:" + card.Key, ring, name, ProviderLogo(card.Provider), card, window, null));
         }
 
         foreach (var view in _pluginMiniCards)
@@ -106,8 +114,8 @@ internal sealed partial class BarForm
             var quota = remaining is not null ? GlassPluginQuota(view) : null;
             var ring = new GlassDockRing(view.PluginId, view.Title, view.Title, 0, remaining, quota?.Window.ResetsAt, balance, accent);
             items.Add(quota is { } scoped
-                ? new GlassItem(ring, view.Title, icon, scoped.Card, scoped.Window, null, icon)
-                : new GlassItem(ring, view.Title, icon, null, null, view));
+                ? new GlassItem(view.PluginId, ring, view.Title, icon, scoped.Card, scoped.Window, null, icon)
+                : new GlassItem(view.PluginId, ring, view.Title, icon, null, null, view));
         }
 
         return items;
@@ -124,11 +132,18 @@ internal sealed partial class BarForm
         if (provider is null) return null;
         foreach (var account in provider.Accounts)
         {
-            var window = account.Windows.Where(item => item.UsedPercent is not null && !item.Unlimited)
-                .OrderByDescending(item => item.UsedPercent)
-                .FirstOrDefault();
+            // The headline is the provider's primary window, the same one the ring's % comes from
+            // (UsageProjection.MiniCard), so ring and hover always agree; every window is listed below it.
+            var window = UsageFormatting.Primary(account) is { UsedPercent: not null, Unlimited: false } primary
+                ? primary
+                : account.Windows.Where(item => item.UsedPercent is not null && !item.Unlimited)
+                    .OrderByDescending(item => item.UsedPercent)
+                    .FirstOrDefault();
             if (window is null) continue;
-            var quotaWindow = new QuotaWindow(window.Label, window.UsedPercent, window.ResetsAt, window.Duration ?? TimeSpan.Zero);
+            static QuotaWindow Project(UsageWindow item) => new(item.Label, item.UsedPercent, item.ResetsAt, item.Duration ?? TimeSpan.Zero);
+            var quotaWindow = Project(window);
+            var windows = new List<QuotaWindow> { quotaWindow };
+            windows.AddRange(account.Windows.Where(item => !ReferenceEquals(item, window) && !item.Unlimited && item.UsedPercent is not null).Select(Project));
             var card = new QuotaCard(
                 "usage:" + provider.ProviderId + ":" + account.AccountId,
                 ProviderKind.Claude,
@@ -136,9 +151,10 @@ internal sealed partial class BarForm
                 account.Plan,
                 string.IsNullOrWhiteSpace(provider.Accent) ? "#8b5cf6" : provider.Accent,
                 true,
-                [quotaWindow])
+                windows)
             {
                 CapturedAt = account.SampledAt,
+                Subscription = account.Period,
                 // Same masked "a***b@domain" form the Codex rings show.
                 AccountHint = string.Equals(account.Label, view.Title, StringComparison.OrdinalIgnoreCase)
                     ? null
@@ -186,12 +202,12 @@ internal sealed partial class BarForm
 
     private (GlassDockPlan Plan, IReadOnlyList<GlassItem> Items) CurrentGlassLayout()
     {
-        var items = BuildGlassItems();
+        var items = BuildGlassItems().Where(item => !_hiddenDockItems.Contains(item.Id)).ToArray();
         var rings = items.Select(item => item.Ring).ToArray();
         var plan = GlassDockLayout.Plan(rings, _glassMaxRings);
         if (_glassExpanded)
         {
-            if (plan.OverflowCount > 0) plan = GlassDockLayout.PlanExpanded(rings);
+            if (plan.OverflowCount > 0) plan = GlassDockLayout.PlanExpanded(rings, _glassMaxRings);
             else _glassExpanded = false;
         }
         var byRing = new Dictionary<GlassDockRing, GlassItem>(ReferenceEqualityComparer.Instance);
@@ -217,19 +233,26 @@ internal sealed partial class BarForm
         _refreshBounds = RectangleF.Empty;
         _settingsBounds = RectangleF.Empty;
         _glassChipBounds = RectangleF.Empty;
+        _glassVisibilityBounds = RectangleF.Empty;
         var width = plan.Width;
         var visuals = new List<GlassDockItemVisual>(items.Count);
+        var itemIndex = 0;
         for (var index = 0; index < plan.Slots.Count; index++)
         {
             var slot = plan.Slots[index];
             RectangleF bounds = slot.Bounds;
+            if (slot.Visibility)
+            {
+                _glassVisibilityBounds = RectangleF.Inflate(bounds, 2, 6);
+                continue;
+            }
             if (slot.Chip)
             {
                 _glassChipBounds = RectangleF.Inflate(bounds, 2, 6);
                 continue;
             }
-            if (index >= items.Count) continue;
-            var item = items[index];
+            if (itemIndex >= items.Count) continue;
+            var item = items[itemIndex++];
             var hovered = false;
             if (item.Card is { } card && item.Window is { } window)
             {
@@ -270,15 +293,20 @@ internal sealed partial class BarForm
             _hoverSystemUsage && !_systemAnchorIsLive,
             _systemUsage.CurrentOutputRate,
             _systemUsage.CurrentOutputRate is not null && _systemUsage.LiveRate?.HasEstimate == true,
-            _hoverSystemUsage && _systemAnchorIsLive);
+            _hoverSystemUsage && _systemAnchorIsLive)
+        {
+            VisibilityHovered = _glassVisibilityHovered,
+        };
         GlassDockPainter.Draw(graphics, scene, _badgeFont);
     }
 
-    private void SetGlassExpanded(bool expanded)
+    private void SetGlassExpanded(bool expanded, bool byHover = false)
     {
         _glassChipTimer.Stop();
         if (_glassExpanded == expanded) return;
         _glassExpanded = expanded;
+        _glassHoverExpandedAt = expanded && byHover ? DateTime.UtcNow : null;
+        if (!expanded) HideDockVisibilityPopover();
         if (expanded)
         {
             _glassLeftAt = null;
@@ -297,7 +325,7 @@ internal sealed partial class BarForm
         _glassChipTimer.Stop();
         if (!_glassChipHovered || _glassExpanded || _taskbarDragging) return;
         if (!QuotaTargetScreenBounds(_glassChipBounds).Contains(Cursor.Position)) return;
-        SetGlassExpanded(true);
+        SetGlassExpanded(true, byHover: true);
     }
 
     private void HandleGlassCollapseTick()
@@ -311,7 +339,8 @@ internal sealed partial class BarForm
         var overPopover = (_quotaPopover?.Visible == true && _quotaPopover.Bounds.Contains(cursor))
             || (_pluginPopover?.Visible == true && _pluginPopover.Bounds.Contains(cursor))
             || (_hintPopover?.Visible == true && _hintPopover.Bounds.Contains(cursor))
-            || (_systemUsagePopover?.Visible == true && _systemUsagePopover.Bounds.Contains(cursor));
+            || (_systemUsagePopover?.Visible == true && _systemUsagePopover.Bounds.Contains(cursor))
+            || (_dockVisibilityPopover?.Visible == true);
         if (ScreenBounds.Contains(cursor) || overPopover || _popoverPinned)
         {
             _glassLeftAt = null;
@@ -394,6 +423,7 @@ internal sealed partial class BarForm
         _glassMenu.Items.Add(_text.IsChinese ? "刷新" : "Refresh", null, (_, _) => RefreshRequested?.Invoke(this, EventArgs.Empty));
         _glassMenu.Items.Add(_text.IsChinese ? "设置" : "Settings", null, (_, _) => SettingsRequested?.Invoke(this, EventArgs.Empty));
         _glassMenu.Items.Add(_text.IsChinese ? "用量面板" : "Usage panel", null, (_, _) => OverviewRequested?.Invoke(this, EventArgs.Empty));
+        _glassMenu.Items.Add(_text.IsChinese ? "显示/隐藏项目…" : "Show/hide items…", null, (_, _) => ShowDockVisibilityPopover(ScreenBounds));
         _glassMenu.Show(this, location);
     }
 }

@@ -18,6 +18,9 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     private readonly ContextMenuStrip _projectMenu = new() { ShowImageMargin = false };
     private string _projectMenuRevision = "";
     private readonly Label _freshness = Label("连接中", 350);
+    private readonly RouterBrandMark _brand = new() { Width = 110, Height = 30, Margin = Padding.Empty };
+    private float _appliedScale = -1;
+    private QuotaBackgroundTheme? _appliedTheme;
     private readonly RouterStatusBadge _headline = new() { Text = "读取中", Margin = Padding.Empty };
     private readonly Label _metrics = Label("", 420);
     private readonly Label _task = Label("", 760);
@@ -74,7 +77,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         Text = "Router";
         AutoScaleMode = AutoScaleMode.None;
         SetLogicalFont(this, "Microsoft YaHei UI", RouterVisualGeometry.LogicalFontPixels);
-        BackColor = Color.FromArgb(17, 21, 29);
+        BackColor = UiTokens.CardSurface;
         ForeColor = Color.FromArgb(229, 234, 243);
         FormBorderStyle = FormBorderStyle.None;
         ClientSize = PreferredBodySize;
@@ -93,7 +96,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _kind.Width = _outcome.Width = 92; _day.Width = 112; _query.Width = 160;
         _kind.AccessibleName = "任务类型"; _outcome.AccessibleName = "结果"; _day.AccessibleName = "日期"; _query.AccessibleName = "搜索任务或对话";
         _pin = IconButton(RouterButtonIcon.Pin, "固定弹层", () => { PinChanged?.Invoke(this, !_pinned); return Task.CompletedTask; });
-        var brand = Label("ROUTER", 70); SetLogicalFont(brand, "Segoe UI Semibold", 11);
+        var brand = _brand;
         var header = Header(Flow(brand), Flow(_freshness, IconButton(RouterButtonIcon.Refresh, "刷新", async () => { await RefreshViewAsync(); await HistoryAsync(forceRefresh: true); }), _pin,
             IconButton(RouterButtonIcon.Close, "收起弹层", () => { CloseRequested?.Invoke(this, EventArgs.Empty); return Task.CompletedTask; })), 240);
         var navigation = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 1, RowCount = 2 };
@@ -112,7 +115,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         foreach (var label in new[] { _metrics, _detail, _source, _freshness, _notice, _historySummary })
             SetLogicalFont(label, Font.FontFamily.Name, 10.5f);
         foreach (var label in new[] { _currentHeading, _queueHeading, _historyHeading })
-            SetLogicalFont(label, Font.FontFamily.Name, 11.5f, FontStyle.Bold);
+            SetLogicalFont(label, "Segoe UI", UiTokens.FontBody, FontStyle.Bold);
         _currentHeading.Height = 24; _queueHeading.Height = _historyHeading.Height = _historySummary.Height = 30;
         _currentHeading.Margin = _queueHeading.Margin = _historyHeading.Margin = _historySummary.Margin = Padding.Empty;
         _metrics.TextAlign = ContentAlignment.MiddleRight;
@@ -206,10 +209,14 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     internal void ShowFor(BarForm owner, Rectangle anchor, bool pinned, float scale, QuotaBackgroundTheme theme)
     {
         ConfigureFor(anchor, pinned, scale, theme, Screen.FromRectangle(anchor).WorkingArea);
+        var firstShow = !IsHandleCreated;
         if (!Visible) this.ShowPopover(BarForm.PopoverOwnerFor(owner));
-        // Creating/showing a native window can rescale fonts after ConfigureFor ran.
-        ApplyLogicalFonts();
-        ApplyPalette(theme);
+        // Creating the native window can rescale fonts after ConfigureFor ran; only then re-apply.
+        if (firstShow)
+        {
+            ApplyLogicalFonts();
+            ApplyPalette(theme);
+        }
         if (pinned) Activate();
     }
     internal void ConfigureFor(Rectangle anchor, bool pinned, float scale, QuotaBackgroundTheme theme, Rectangle area)
@@ -223,8 +230,14 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
             ResumeLayout(true);
         }
         _popoverScale = nextScale;
-        ApplyLogicalFonts();
-        ApplyPalette(theme);
+        // Fonts and palette walk every child control; skip it when nothing changed since the last show.
+        if (Math.Abs(_appliedScale - _popoverScale) > .001 || !Equals(_appliedTheme, theme))
+        {
+            ApplyLogicalFonts();
+            ApplyPalette(theme);
+            _appliedScale = _popoverScale;
+            _appliedTheme = theme;
+        }
         _bodySize = new(Math.Min((int)(PreferredBodySize.Width * _popoverScale), area.Width - (int)(16 * _popoverScale)),
             Math.Min((int)(PreferredBodySize.Height * _popoverScale), area.Height - (int)(28 * _popoverScale)));
         var tail = (int)(8 * _popoverScale);
@@ -261,7 +274,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         var tail = 8 * _popoverScale;
         var body = TaskbarPopoverMath.BodyBounds(_tailSide, _bodySize.Width, _bodySize.Height, tail);
         var path = new GraphicsPath { FillMode = FillMode.Winding };
-        var d = 14 * _popoverScale;
+        var d = UiTokens.RadiusPanel * 2 * _popoverScale;
         path.AddArc(body.Left, body.Top, d, d, 180, 90); path.AddArc(body.Right - d, body.Top, d, d, 270, 90);
         path.AddArc(body.Right - d, body.Bottom - d, d, d, 0, 90); path.AddArc(body.Left, body.Bottom - d, d, d, 90, 90); path.CloseFigure();
         path.AddPolygon(TaskbarPopoverMath.TailPoints(_tailSide, body, _tailOffset, tail));
@@ -270,7 +283,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        using var path = SurfacePath(); using var border = new Pen(UiPalette.Slate500.WithAlpha(86));
+        using var path = SurfacePath(); using var border = new Pen(UiTokens.Hairline);
         e.Graphics.DrawPath(border, path);
     }
     protected override void OnMouseWheel(MouseEventArgs e)
@@ -285,7 +298,8 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
 
     private void ApplyPalette(QuotaBackgroundTheme theme)
     {
-        _palette = new(theme.Popover); BackColor = _palette.Background;
+        // One graphite surface for every hover/panel (UiTokens.CardSurface), whatever the bar theme.
+        _palette = new(UiTokens.CardSurface); BackColor = _palette.Background;
         Color SurfaceFor(Control control)
         {
             for (var parent = control.Parent; parent is not null; parent = parent.Parent)
@@ -366,6 +380,11 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         ApplyProjectTabs(snapshot);
         _headline.Text = RouterJson.Text(snapshot.View, "headline", "状态未确认");
         _headline.Accent = RouterVisualPalette.State(RouterJson.Text(snapshot.View, "tone")); _headline.Invalidate();
+        _brand.State = RouterJson.Text(snapshot.View, "tone") switch
+        {
+            "running" => "running", "warning" => "cleanup", "failed" => "attention", "waiting" => "waiting", _ => "idle",
+        };
+        _brand.Invalidate();
         var task = RouterJson.Text(snapshot.View, "task");
         var heading = RouterTaskPresentation.Heading(task);
         _task.Text = heading.Title;

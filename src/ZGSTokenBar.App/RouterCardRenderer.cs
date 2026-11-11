@@ -20,32 +20,7 @@ internal static class RouterCardRenderer
         // Collapsed (taskbar dock): the icon never moves with the queue count, so the slot is
         // pixel-stable across idle/running/queued states.
         var icon = new RectangleF(iconArea.X + (iconArea.Width - size) / 2 - (!collapsed && queued > 0 ? 3 : 0), bounds.Y + (bounds.Height - size) / 2, size, size);
-        using var halo = new SolidBrush(Color.FromArgb(10, color));
-        graphics.FillEllipse(halo, RectangleF.Inflate(icon, 4, 4));
-        using var pen = new Pen(color, 1.6f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
-        using var fill = new SolidBrush(color);
-        switch (state)
-        {
-            case "running":
-                graphics.FillPolygon(fill, [new PointF(icon.Left + 5, icon.Top + 2), new PointF(icon.Right - 2, icon.Top + size / 2), new PointF(icon.Left + 5, icon.Bottom - 2)]);
-                break;
-            case "cleanup":
-                graphics.DrawArc(pen, icon, 25, 125); graphics.DrawArc(pen, icon, 205, 125);
-                graphics.FillEllipse(fill, icon.Right - 5, icon.Top + 2, 4, 4);
-                break;
-            case "attention":
-                graphics.DrawPolygon(pen, [new PointF(icon.Left + size / 2, icon.Top), new PointF(icon.Right, icon.Bottom), new PointF(icon.Left, icon.Bottom)]);
-                DrawCenteredGlyph(graphics, "!", new RectangleF(icon.Left, icon.Top + size * .36f, size, size * .6f), fill);
-                break;
-            default:
-                graphics.DrawEllipse(pen, icon);
-                if (state == "waiting")
-                { graphics.DrawLine(pen, icon.Left + size / 2, icon.Top + 4, icon.Left + size / 2, icon.Top + size / 2); graphics.DrawLine(pen, icon.Left + size / 2, icon.Top + size / 2, icon.Right - 4, icon.Top + size / 2); }
-                else if (state == "offline") graphics.DrawLine(pen, icon.Left + 3, icon.Bottom - 3, icon.Right - 3, icon.Top + 3);
-                else if (state != "idle")
-                    DrawCenteredGlyph(graphics, "?", icon, fill);
-                break;
-        }
+        DrawRouterGlyph(graphics, icon, state, color);
         if (queued > 0)
         {
             var text = queued > 99 ? "99+" : queued.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -61,10 +36,12 @@ internal static class RouterCardRenderer
                 var badgeWidth = Math.Max(13, graphics.MeasureString(text, badgeFont).Width + 4);
                 badge = new RectangleF(iconArea.Right - badgeWidth - 1, bounds.Top + 3, badgeWidth, 12);
             }
-            using var background = new SolidBrush(RouterVisualPalette.Mix(Color.FromArgb(22, 28, 37), color, .14f));
-            graphics.FillRoundedRectangle(background, badge, 5);
+            // Neutral UiKit pill (no outline, so it never bleeds into the icon's half): the count reads at every DPI without competing with the state dot.
+            using var background = new SolidBrush(UiPalette.Slate700);
+            using (var path = UiPaint.RoundedPath(badge, badge.Height / 2)) graphics.FillPath(background, path);
+            using var ink = new SolidBrush(UiPalette.Slate100);
             using var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center, FormatFlags = StringFormatFlags.NoWrap };
-            graphics.DrawString(text, badgeFont, fill, badge, format);
+            graphics.DrawString(text, badgeFont, ink, badge, format);
         }
         if (!collapsed)
         {
@@ -82,6 +59,65 @@ internal static class RouterCardRenderer
                 detailFont ?? badgeFont, muted, textBounds, format);
         }
         graphics.Restore(saved);
+    }
+
+    /// <summary>
+    /// The Router mark: one input node fanning out to three outputs (a routing/branching glyph in the
+    /// style of the provider logos). Strokes stay neutral Slate; only the input node and the active
+    /// route carry the state colour, so the icon reads as "Router" first and the state second.
+    /// Geometry is in fractions of the icon box and pixel-snapped strokes keep it crisp at every DPI.
+    /// </summary>
+    internal static void DrawRouterGlyph(Graphics graphics, RectangleF icon, string state, Color stateColor)
+    {
+        var dim = state is "offline" or "unknown";
+        var stroke = dim ? UiPalette.Slate500 : UiPalette.Slate300;
+        var s = icon.Width;
+        var root = new PointF(icon.Left + s * .2f, icon.Top + s * .5f);
+        var outX = icon.Left + s * .84f;
+        PointF[] outs = [new(outX, icon.Top + s * .18f), new(outX, icon.Top + s * .5f), new(outX, icon.Top + s * .82f)];
+        var active = state switch { "running" => 1, "cleanup" => 2, "waiting" => 0, _ => -1 };
+        var width = Math.Max(1.3f, s / 12f);
+        using var pen = new Pen(stroke, width) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+        using var activePen = new Pen(stateColor, width + .2f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+        var fork = new PointF(icon.Left + s * .44f, root.Y);
+        for (var index = 0; index < outs.Length; index++)
+        {
+            var target = outs[index];
+            using var path = new GraphicsPath();
+            path.AddLine(root, fork);
+            if (index == 1) path.AddLine(fork, target);
+            else path.AddBezier(fork, new PointF(fork.X + s * .16f, fork.Y), new PointF(target.X - s * .2f, target.Y), new PointF(target.X - s * .04f, target.Y));
+            graphics.DrawPath(index == active ? activePen : pen, path);
+        }
+        var node = Math.Max(3f, s * .2f);
+        var outNode = Math.Max(2.4f, s * .15f);
+        using var outFill = new SolidBrush(stroke);
+        using var activeFill = new SolidBrush(stateColor);
+        for (var index = 0; index < outs.Length; index++)
+        {
+            var target = outs[index];
+            graphics.FillEllipse(index == active ? activeFill : outFill, target.X - outNode / 2, target.Y - outNode / 2, outNode, outNode);
+        }
+        var rootBounds = new RectangleF(root.X - node / 2, root.Y - node / 2, node, node);
+        using (var surface = new SolidBrush(UiTokens.CardSurface)) graphics.FillEllipse(surface, RectangleF.Inflate(rootBounds, 1, 1));
+        if (state is "unknown")
+        {
+            using var hollow = new Pen(stroke, width);
+            graphics.DrawEllipse(hollow, rootBounds);
+        }
+        else
+        {
+            graphics.FillEllipse(dim ? outFill : activeFill, rootBounds);
+        }
+        if (state == "attention")
+        {
+            // Small alert dot on the upper-right, like an app-icon notification.
+            var alert = Math.Max(4.5f, s * .3f);
+            var dot = new RectangleF(icon.Right - alert * .7f, icon.Top - alert * .25f, alert, alert);
+            using var ring = new SolidBrush(UiTokens.CardSurface);
+            graphics.FillEllipse(ring, RectangleF.Inflate(dot, 1, 1));
+            graphics.FillEllipse(activeFill, dot);
+        }
     }
 
     /// <summary>

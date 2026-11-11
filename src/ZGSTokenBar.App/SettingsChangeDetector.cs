@@ -34,6 +34,7 @@ internal static class SettingsChangeDetector
             && PluginEnabledEqual(previous.PluginEnabled, next.PluginEnabled)
             && MiniAreaLayoutsEqual(previous.MiniAreaLayouts, next.MiniAreaLayouts)
             && previous.MiniAreaOrder.SequenceEqual(next.MiniAreaOrder, StringComparer.Ordinal)
+            && previous.HiddenDockItems.SequenceEqual(next.HiddenDockItems, StringComparer.Ordinal)
             && string.Equals(previous.CodexMiniDisplayMode, next.CodexMiniDisplayMode, StringComparison.Ordinal)
             && previous.WindowX == next.WindowX
             && previous.WindowY == next.WindowY

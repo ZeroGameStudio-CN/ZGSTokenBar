@@ -70,6 +70,7 @@ public sealed record CodexUsageData(
     public int? ResetCreditsAvailable { get; init; }
     public int? ApplicableResetCredits { get; init; }
     public IReadOnlyList<CodexResetCreditBatch>? ResetCreditBatches { get; init; }
+    public CodexCreditBalance? Credits { get; init; }
 }
 
 public static class CodexUsageParser
@@ -100,7 +101,28 @@ public static class CodexUsageParser
         {
             ResetCreditsAvailable = count,
             ApplicableResetCredits = count is { } total && applicable > total ? null : applicable,
+            Credits = ParseCredits(root.ObjectProperty("credits") ?? source.ObjectProperty("credits")),
         };
+    }
+
+    /// <summary>"credits": { "has_credits": bool, "unlimited": bool, "balance": number | "12.34" }.</summary>
+    internal static CodexCreditBalance? ParseCredits(JsonElement? credits)
+    {
+        if (credits is not { ValueKind: JsonValueKind.Object } node) return null;
+        static bool Flag(JsonElement element, string name) =>
+            element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.True;
+        double? balance = node.NumberProperty("balance");
+        if (balance is null
+            && node.StringProperty("balance") is { } text
+            && double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsed))
+        {
+            balance = parsed;
+        }
+        if (balance is { } value && (!double.IsFinite(value) || value < 0)) balance = null;
+        var hasCredits = Flag(node, "has_credits");
+        var unlimited = Flag(node, "unlimited");
+        if (!hasCredits && !unlimited && balance is null) return new CodexCreditBalance(false, false, null);
+        return new CodexCreditBalance(hasCredits, unlimited, balance);
     }
 
     private static int? CreditCount(double? value) => value is >= 0 and <= int.MaxValue

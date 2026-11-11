@@ -118,7 +118,7 @@ internal sealed class SystemUsagePopoverForm : Form
             var zh = _text.IsChinese;
             _metrics =
             [
-                new(zh ? "合计输出" : "Output total", null, snapshot.CurrentOutputRate is { } rate ? $"{(live?.HasEstimate == true ? "≈" : "")}{rate:0.#} tok/s" : "—"),
+                new(zh ? "合计输出" : "Output total", null, snapshot.CurrentOutputRate is { } rate ? $"{rate:0.0} tok/s" : "—"),
                 new(zh ? "已记录" : "Recorded", null, live is null ? "—" : $"{live.Measured:0.#} tok/s"),
                 new(zh ? "生成中估算" : "In-flight estimate", null, live is null ? "—" : $"{live.Estimated:0.#} tok/s"),
                 new(zh ? "网络接收" : "Network receive", null, NetworkUsageSampler.Compact(snapshot.CurrentNetworkReceive) + "/s"),

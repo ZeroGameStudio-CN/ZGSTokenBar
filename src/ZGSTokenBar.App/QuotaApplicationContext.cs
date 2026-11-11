@@ -145,6 +145,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _bar.SystemUsageDetailsRequested += (_, _) => _ = RefreshSystemUsageDetailsAsync();
         _bar.MiniAreaLayoutChanged += (_, _) => SaveMiniAreaLayout();
         _bar.MiniAreaOrderChanged += (_, _) => SaveMiniAreaOrder();
+        _bar.DockItemVisibilityChanged += (_, _) => SaveHiddenDockItems();
         _bar.RadarModelGroupsChanged += (_, _) => SaveRadarModelGroups();
         _bar.FormClosing += BarFormClosing;
         _bar.FormClosed += (_, _) => Quit();

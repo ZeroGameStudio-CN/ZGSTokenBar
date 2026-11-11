@@ -50,7 +50,8 @@ internal sealed record GlassDockScene(
     GlassRingStyle RingStyle = GlassRingStyle.IconPercentBelow,
     float IconRingSize = GlassDockPainter.DefaultIconRingSize,
     float LabelSize = GlassDockPainter.DefaultLabelSize,
-    GlassPercentPosition PercentPosition = GlassPercentPosition.BottomLeft);
+    GlassPercentPosition PercentPosition = GlassPercentPosition.BottomLeft,
+    bool VisibilityHovered = false);
 
 internal static class GlassDockPainter
 {
@@ -71,16 +72,24 @@ internal static class GlassDockPainter
         // Content is laid out against the full dock height; lift it so it centres on the card.
         graphics.TranslateTransform(0, -ShadowDepth / 2f);
 
+        // Chips sit between rings (the "‹" chip keeps the collapsed chip's spot), so rings use their own index.
+        var itemIndex = 0;
         for (var index = 0; index < scene.Plan.Slots.Count; index++)
         {
             var slot = scene.Plan.Slots[index];
+            if (slot.Visibility)
+            {
+                DrawVisibilityChip(graphics, slot.Bounds, scene);
+                continue;
+            }
             if (slot.Chip)
             {
                 DrawChip(graphics, slot.Bounds, scene);
                 continue;
             }
 
-            if (index < scene.Items.Count) DrawItem(graphics, slot.Bounds, scene.Items[index], scene.Light, scene.RingStyle, scene.IconRingSize, scene.LabelSize, scene.PercentPosition);
+            if (itemIndex < scene.Items.Count) DrawItem(graphics, slot.Bounds, scene.Items[itemIndex], scene.Light, scene.RingStyle, scene.IconRingSize, scene.LabelSize, scene.PercentPosition);
+            itemIndex++;
         }
 
         var systemLeft = GlassDockLayout.SystemLeftFor(scene.Width);
@@ -537,6 +546,35 @@ internal static class GlassDockPainter
         graphics.FillEllipse(dot, rect.Right - 5, rect.Top - 1, 6, 6);
     }
 
+    /// <summary>The show/hide chip at the end of the expanded overflow: the same pill with an eye glyph.</summary>
+    private static void DrawVisibilityChip(Graphics graphics, Rectangle bounds, GlassDockScene scene)
+    {
+        var light = scene.Light;
+        var rect = new RectangleF(bounds.X, bounds.Y, bounds.Width, bounds.Height);
+        using (var path = Rounded(rect, rect.Height / 2))
+        using (var fill = new SolidBrush(scene.VisibilityHovered
+            ? light ? UiPalette.Slate900.WithAlpha(70) : Color.FromArgb(70, 255, 255, 255)
+            : light ? UiPalette.Slate900.WithAlpha(34) : Color.FromArgb(36, 255, 255, 255)))
+        {
+            graphics.FillPath(fill, path);
+        }
+        var ink = light ? UiPalette.Slate900.WithAlpha(235) : Color.FromArgb(240, 255, 255, 255);
+        var cx = rect.X + rect.Width / 2f;
+        var cy = rect.Y + rect.Height / 2f;
+        var w = Math.Min(rect.Width - 4, 11f);
+        var h = w * .62f;
+        using var pen = new Pen(ink, 1.3f) { LineJoin = LineJoin.Round };
+        using (var eye = new GraphicsPath())
+        {
+            eye.AddBezier(cx - w / 2, cy, cx - w / 4, cy - h, cx + w / 4, cy - h, cx + w / 2, cy);
+            eye.AddBezier(cx + w / 2, cy, cx + w / 4, cy + h, cx - w / 4, cy + h, cx - w / 2, cy);
+            eye.CloseFigure();
+            graphics.DrawPath(pen, eye);
+        }
+        using var pupil = new SolidBrush(ink);
+        graphics.FillEllipse(pupil, cx - 1.8f, cy - 1.8f, 3.6f, 3.6f);
+    }
+
     /// <summary>The four classic system metrics as labelled rows: CPU, RAM, I/O (disk) and GPU.</summary>
     private static void DrawMetrics(Graphics graphics, Rectangle bounds, GlassDockScene scene)
     {
@@ -562,37 +600,39 @@ internal static class GlassDockPainter
     }
 
     /// <summary>
-    /// tok/s in a fixed slot: constant font size, tabular Segoe UI digits, one fixed decimal and a
-    /// right-aligned number box sized for the widest value, so changing rates never move the
-    /// number's decimal point or anything next to it. The estimate marker has its own fixed spot.
+    /// tok/s in a fixed slot: the number (constant size, one fixed decimal, right-aligned in a box sized
+    /// for the widest value so the decimal point never moves) over a small "tok/s" caption, the pair
+    /// centred vertically. No estimate marker: the live total is a sum of per-session rates either way.
     /// </summary>
     private static void DrawRate(Graphics graphics, Rectangle bounds, GlassDockScene scene)
     {
         var rate = FixedRateText(scene.TokensPerSecond);
         using var font = new Font("Segoe UI", RateFontSize, FontStyle.Bold, GraphicsUnit.Pixel);
-        using var small = new Font("Segoe UI", 8f, FontStyle.Regular, GraphicsUnit.Pixel);
+        using var small = new Font("Segoe UI", RateCaptionSize, FontStyle.Regular, GraphicsUnit.Pixel);
+        var active = scene.TokensPerSecond is > 0;
         var color = scene.TokensPerSecond is null
             ? Muted(scene.Light)
             : scene.Light ? UiPalette.Slate900 : UiPalette.Slate50;
-        using var text = new SolidBrush(color);
+        using var text = new SolidBrush(active ? color : Color.FromArgb(scene.TokensPerSecond is null ? color.A : 170, color));
         using var muted = new SolidBrush(Muted(scene.Light));
         var box = RateNumberBox(graphics, bounds, font);
         using (var numberFormat = new StringFormat(StringFormat.GenericTypographic)
         {
             Alignment = rate == "—" ? StringAlignment.Center : StringAlignment.Far,
-            LineAlignment = StringAlignment.Near,
+            LineAlignment = StringAlignment.Center,
             FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.NoClip,
         })
         {
             graphics.DrawString(rate, font, text, box, numberFormat);
         }
-        var label = new RectangleF(bounds.X - 2, bounds.Y + 15, bounds.Width + 4, 11);
+        var label = new RectangleF(box.X - 2, box.Bottom + RateCaptionGap, box.Width + 4, RateCaptionHeight);
         graphics.DrawString("tok/s", small, muted, label, Format(StringAlignment.Center));
-        if (scene.RateEstimated && scene.TokensPerSecond is not null)
-        {
-            graphics.DrawString("≈", small, muted, new RectangleF(bounds.X - 2, label.Y, 8, label.Height), Format(StringAlignment.Near));
-        }
     }
+
+    internal const float RateCaptionSize = 8f;
+    private const float RateNumberHeight = 14f;
+    private const float RateCaptionGap = 1f;
+    private const float RateCaptionHeight = 10f;
 
     internal const float RateFontSize = 12.5f;
 
@@ -602,7 +642,8 @@ internal static class GlassDockPainter
         var widest = Math.Max(graphics.MeasureString("888.8", font, PointF.Empty, StringFormat.GenericTypographic).Width,
             graphics.MeasureString("88.8K", font, PointF.Empty, StringFormat.GenericTypographic).Width);
         var width = Math.Min(bounds.Width + 4f, widest + 1f);
-        return new RectangleF(bounds.X + (bounds.Width - width) / 2f, bounds.Y, width, 15);
+        var top = bounds.Y + (bounds.Height - (RateNumberHeight + RateCaptionGap + RateCaptionHeight)) / 2f;
+        return new RectangleF(bounds.X + (bounds.Width - width) / 2f, top, width, RateNumberHeight);
     }
 
     /// <summary>One fixed decimal (and K/M/G above 1000) so the text length only changes with magnitude.</summary>

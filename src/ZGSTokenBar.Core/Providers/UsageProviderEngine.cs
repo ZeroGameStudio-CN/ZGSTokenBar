@@ -255,7 +255,10 @@ public static class UsageProviderEngine
             parsed?.Products ?? [],
             freshness,
             now,
-            errorKey);
+            errorKey)
+        {
+            Period = parsed?.Period,
+        };
     }
 
     private static UsageFreshness Freshness(UsageHttpResult result) => result.ErrorKey switch

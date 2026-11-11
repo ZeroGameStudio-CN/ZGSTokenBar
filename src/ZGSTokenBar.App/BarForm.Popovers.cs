@@ -445,7 +445,7 @@ internal sealed partial class BarForm
 
     /// <summary>Content of the shared quota card for one ring (live hover and offscreen captures).</summary>
     private QuotaPopoverContent QuotaPopoverContentFor(MiniQuotaTarget target, bool pinned, DateTimeOffset now) => new(
-        target.Card,
+        WithSubscription(target.Card),
         target.Window,
         QuotaDisplayFormatting.WeeklyBlockReset(target.Card, target.Window, now),
         target.Card.CapturedAt ?? _snapshot.CapturedAt,
@@ -455,6 +455,21 @@ internal sealed partial class BarForm
         target.Card.Provider == ProviderKind.Codex
             ? _codexQuotaTokenSummaries.GetValueOrDefault(target.PaceKey)
             : null);
+
+    /// <summary>
+    /// Codex subscription end comes from the Cockpit account metadata (subscription_active_until) already
+    /// read for the strategy; other providers carry their billing period on the card itself.
+    /// </summary>
+    private QuotaCard WithSubscription(QuotaCard card)
+    {
+        if (card.Subscription is not null || card.Provider != ProviderKind.Codex || card.IsService) return card;
+        var until = _snapshot.CodexAccounts
+            .FirstOrDefault(account => string.Equals(account.CardKey, card.Key, StringComparison.Ordinal))
+            ?.SubscriptionActiveUntil;
+        return until is { } end
+            ? card with { Subscription = new UsageSubscriptionPeriod(null, end, "active-until", "cockpit subscription_active_until") }
+            : card;
+    }
 
     /// <summary>Set from ZGSTOKENBAR_CAPTURE_HOVERS: render each ring's hover card offscreen once live data arrives.</summary>
     internal static string? PendingHoverCaptureDirectory { get; set; }

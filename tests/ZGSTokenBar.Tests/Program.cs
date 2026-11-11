@@ -11514,7 +11514,7 @@ static void TestRadarPersistentResetMini()
                 900 + index, id, $"{id}.icon", $"accent.{id}", []),
             new Dictionary<string, string>(StringComparer.Ordinal)))
         .ToArray();
-    Equal("Gemini Models 100%", OtherToolsModule.ParseAntigravity(
+    Equal("Gemini · 7d 100%", OtherToolsModule.ParseAntigravity(
         "Gemini Models\tWeekly Limit Remaining\t100%\t2026-11-14T17:41:52Z\n" +
         "Claude and GPT models\tWeekly Limit Remaining\t0%\t2026-11-08T03:50:06Z\n")[0],
         "Antigravity retains the remaining quota scale");
@@ -11689,7 +11689,7 @@ static void TestQuotaPacePopoverPresentation()
         {
             using var missing = popover.RenderForTest(content, zh, logo, clock, dpi, now);
             using var observed = popover.RenderForTest(content with { CodexQuotaTokens = capacity }, en, logo, clock, dpi, now);
-            var unified = new Size(240 * dpi / 96, (QuotaPopoverForm.LogicalUnifiedQuotaBodyHeight + 8) * dpi / 96);
+            var unified = new Size(240 * dpi / 96, (QuotaPopoverForm.UnifiedBodyHeight(content) + 8) * dpi / 96);
             Equal(unified, missing.Size,
                 $"{dpi} DPI quota without observations keeps the shared card geometry");
             Equal(unified, observed.Size,
@@ -16630,10 +16630,13 @@ static void TestLocalProviderSourcesAutoDetected()
             + "Gemini 4 Argon\tGemini 4 Argon Weekly Limit\t100%\t2026-11-16T15:41:46Z\n";
         var parsed = UsageParsers.ParseAntigravity(usage);
         Check(parsed is not null && parsed.Windows.Count == 5, "agy weekly and five-hour rows are all read");
-        Check(parsed!.Windows.Take(3).All(window => window.Duration == TimeSpan.FromDays(7))
-            && parsed.Windows.Any(window => window.Label == "Claude and GPT models" && Math.Abs(window.UsedPercent!.Value - 96) < .01)
-            && parsed.Windows.Any(window => window.Label == "Gemini Models · 5h" && window.Duration == TimeSpan.FromHours(5)),
-            "weekly limits lead and five-hour windows are labelled");
+        // agy's numbers are "remaining"; the parser stores used = 100 - remaining, never inverted.
+        Check(string.Join("|", parsed!.Windows.Select(window => window.Label))
+                == "Gemini · 7d|Gemini · 5h|Gemini 4 Argon · 7d|Claude/GPT · 7d|Claude/GPT · 5h"
+            && parsed.Windows.Single(window => window.Label == "Claude/GPT · 7d").UsedPercent is { } claudeUsed && Math.Abs(claudeUsed - 96) < .01
+            && parsed.Windows.Single(window => window.Label == "Claude/GPT · 7d").ResetsAt == DateTimeOffset.Parse("2026-11-16T15:42:01Z")
+            && parsed.Windows.Single(window => window.Label == "Gemini · 5h").Duration == TimeSpan.FromHours(5),
+            "the most usable model group leads, the binding window leads each group, every window keeps its reset");
     }
     finally
     {

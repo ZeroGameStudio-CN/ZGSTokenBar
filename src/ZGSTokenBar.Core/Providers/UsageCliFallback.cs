@@ -64,7 +64,10 @@ public sealed class UsageCliFallback(UsageCliRunner? runner = null)
             parsed?.Products ?? [],
             parsed is null ? UsageFreshness.Unavailable : UsageFreshness.Current,
             now,
-            parsed is null ? "unavailable" : parsed.ErrorKey);
+            parsed is null ? "unavailable" : parsed.ErrorKey)
+        {
+            Period = parsed?.Period,
+        };
         var others = board.Providers.Where(provider => !string.Equals(provider.ProviderId, definition.Id, StringComparison.Ordinal)).ToArray();
         return UsageProviderEngine.Merge(new UsageBoard(others), [UsageProviderEngine.Snapshot(definition, [account])]);
     }

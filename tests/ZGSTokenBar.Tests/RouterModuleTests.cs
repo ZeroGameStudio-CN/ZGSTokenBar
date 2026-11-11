@@ -424,6 +424,7 @@ internal static class RouterModuleTests
     {
         Directory.CreateDirectory(directory);
         CaptureIcons(directory);
+        CaptureHoverAndCloseUp(directory);
         foreach (var dpi in new[] { 96, 144, 192 })
         {
             using var form = new RouterMonitorForm(new RouterMonitorClient(new Fixture()), observe: false)
@@ -700,6 +701,33 @@ internal static class RouterModuleTests
             Check(!Render(10).SequenceEqual(Render(11)), $"Two-digit queue counts retain their final digit at {dpi} DPI");
             Check(Render(100).SequenceEqual(Render(101)), $"Queue badge overflow remains capped at 99+ at {dpi} DPI");
         }
+    }
+
+    private static void CaptureHoverAndCloseUp(string directory)
+    {
+        foreach (var dpi in new[] { 96, 144, 192 })
+        {
+            using var hover = new RouterHoverCardForm();
+            using var image = hover.RenderForTest(Card("running", 3), chinese: true, dpi);
+            Check(image.Width == (int)Math.Round(248 * dpi / 96f), $"Router hover uses the shared card width at {dpi} DPI");
+            image.Save(Path.Combine(directory, $"router-hover-{dpi}.png"), ImageFormat.Png);
+        }
+        // Close-up: the dock icon (26 px slot) for every state at 6x, with and without a queue.
+        var states = new[] { "idle", "running", "waiting", "cleanup", "attention", "offline", "unknown" };
+        const float zoom = 6;
+        using var sheet = new Bitmap((int)(states.Length * 30 * zoom), (int)(64 * zoom));
+        using var g = Graphics.FromImage(sheet);
+        g.Clear(UiTokens.CardSurface);
+        g.ScaleTransform(zoom, zoom);
+        using var badge = new Font("Segoe UI", 8f, FontStyle.Bold, GraphicsUnit.Pixel);
+        using var caption = new Font("Segoe UI", 4.5f, FontStyle.Regular, GraphicsUnit.Pixel);
+        for (var i = 0; i < states.Length; i++)
+        {
+            RouterCardRenderer.Draw(g, new RectangleF(i * 30 + 2, 2, 26, 26), Card(states[i]), badge, collapsed: true);
+            RouterCardRenderer.Draw(g, new RectangleF(i * 30 + 2, 30, 26, 26), Card(states[i], i == 0 ? 1 : i * 7), badge, collapsed: true);
+            g.DrawString(states[i], caption, Brushes.LightSlateGray, i * 30 + 3, 57);
+        }
+        sheet.Save(Path.Combine(directory, "router-icon-closeup.png"), ImageFormat.Png);
     }
 
     private static void CaptureIcons(string directory)

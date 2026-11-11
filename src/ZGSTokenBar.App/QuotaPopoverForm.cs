@@ -76,7 +76,7 @@ internal sealed class QuotaPopoverForm : Form
         get
         {
             if (_content is not { } content) return LogicalQuotaBodyHeight;
-            if (!content.Card.IsService) return LogicalUnifiedQuotaBodyHeight;
+            if (!content.Card.IsService) return UnifiedBodyHeight(content);
             if (Sub2ApiServicePresentation.IsSub2ApiService(content.Card))
             {
                 var presentation = Sub2ApiServicePresentation.Resolve(
@@ -105,6 +105,25 @@ internal sealed class QuotaPopoverForm : Form
                         : LogicalBodyHeight;
         }
     }
+
+    private const int DetailRowHeight = 18;
+    private const int DetailSectionPadding = 6;
+
+    /// <summary>Shared quota card height: the fixed core plus one row per detail (windows, credits, subscription).</summary>
+    internal static int UnifiedBodyHeight(QuotaPopoverContent content)
+    {
+        var rows = DetailRowCount(content);
+        return LogicalUnifiedQuotaBodyHeight + (rows == 0 ? 0 : rows * DetailRowHeight + DetailSectionPadding);
+    }
+
+    /// <summary>Windows listed under the hero: every window when there is more than one (each with its reset).</summary>
+    internal static IReadOnlyList<QuotaWindow> DetailWindows(QuotaCard card) =>
+        card.Windows.Count >= 2 ? card.Windows.Take(6).ToArray() : [];
+
+    private static int DetailRowCount(QuotaPopoverContent content) =>
+        DetailWindows(content.Card).Count
+        + (content.Card.Provider == ProviderKind.Codex && content.Card.Credits is not null ? 1 : 0)
+        + 1; // subscription row (a dash when the source has no dates)
 
     internal static int AccountAvailabilityBodyHeight(
         int accountCount,
@@ -444,12 +463,123 @@ internal sealed class QuotaPopoverForm : Form
         DrawString(graphics, tokens?.Detail ?? (_text.IsChinese ? "该服务未提供 Token 统计" : "No token stats for this service"),
             _cardSmallFont, dimBrush, new RectangleF(left + 16, y + 149, right - left - 16, 12), StringAlignment.Near);
 
+        // Detail rows (CodexBar-style): every window with its own reset, credits, subscription dates.
+        var rowY = y + 166 + DetailSectionPadding / 2f;
+        var rows = 0;
+        if (DetailRowCount(content) > 0) graphics.DrawLine(hairline, left, y + 166.5f, right, y + 166.5f);
+        foreach (var detail in DetailWindows(content.Card))
+        {
+            var detailUsed = detail.UsedPercent is { } value ? Math.Clamp(value, 0, 100) : (double?)null;
+            var detailRemaining = detailUsed is null ? (double?)null : 100 - detailUsed.Value;
+            var current = string.Equals(detail.Label, content.Window.Label, StringComparison.Ordinal)
+                && detail.Duration == content.Window.Duration;
+            var tone = detailRemaining is null ? CardDim : QuotaColorScale.ForRemaining(detailRemaining.Value);
+            using (var dot = new SolidBrush(current ? tone : Color.FromArgb(120, tone)))
+                graphics.FillEllipse(dot, left + 1, rowY + 6, 6, 6);
+            DrawString(graphics, DetailWindowLabel(detail), _cardRowFont, current ? valueBrush : mutedBrush,
+                new RectangleF(left + 13, rowY, 100, DetailRowHeight), StringAlignment.Near);
+            DrawString(graphics, detail.ResetsAt is { } at ? CompactResetTime(at, now) : "—", _cardSmallFont, dimBrush,
+                new RectangleF(right - 140, rowY + 1, 96, DetailRowHeight), StringAlignment.Far);
+            using (var percentBrush = new SolidBrush(detailRemaining is null ? CardDim : tone))
+                DrawString(graphics, detailRemaining is null ? "—" : FormatPercent(detailRemaining.Value), _cardRowStrongFont, percentBrush,
+                    new RectangleF(right - 42, rowY, 42, DetailRowHeight), StringAlignment.Far);
+            rowY += DetailRowHeight;
+            rows++;
+        }
+        if (content.Card.Provider == ProviderKind.Codex && content.Card.Credits is { } credits)
+        {
+            DrawCreditsIcon(graphics, new RectangleF(left, rowY + 4, 10, 10), credits.HasCredits || credits.Unlimited ? CardValue : CardMuted);
+            DrawString(graphics, _text.IsChinese ? "积分" : "Credits", _cardRowFont, mutedBrush,
+                new RectangleF(left + 16, rowY, 90, DetailRowHeight), StringAlignment.Near);
+            DrawString(graphics, CreditsText(credits, _text.IsChinese), _cardRowStrongFont,
+                credits.HasCredits || credits.Unlimited ? valueBrush : dimBrush,
+                new RectangleF(right - 120, rowY, 120, DetailRowHeight), StringAlignment.Far);
+            rowY += DetailRowHeight;
+            rows++;
+        }
+        {
+            var (label, value) = SubscriptionText(content.Card.Subscription, now, _text.IsChinese);
+            DrawCalendarIcon(graphics, new RectangleF(left, rowY + 4, 10, 10), value is null ? CardMuted : CardValue);
+            DrawString(graphics, label, _cardRowFont, mutedBrush,
+                new RectangleF(left + 16, rowY, 90, DetailRowHeight), StringAlignment.Near);
+            DrawString(graphics, value ?? (_text.IsChinese ? "来源未提供" : "Not provided"), _cardRowStrongFont,
+                value is null ? dimBrush : valueBrush,
+                new RectangleF(right - 140, rowY, 140, DetailRowHeight), StringAlignment.Far);
+            rows++;
+        }
+        var footerY = y + (UnifiedBodyHeight(content) - LogicalUnifiedQuotaBodyHeight);
+
         // Footer.
-        graphics.DrawLine(hairline, left, y + 166.5f, right, y + 166.5f);
+        graphics.DrawLine(hairline, left, footerY + 166.5f, right, footerY + 166.5f);
         DrawString(graphics, _text.Freshness(content.CapturedAt, now), _cardSmallFont, mutedBrush,
-            new RectangleF(left, y + 170, 110, 12), StringAlignment.Near);
+            new RectangleF(left, footerY + 170, 110, 12), StringAlignment.Near);
         DrawString(graphics, content.Pinned ? _text.ClosePinnedHint : _text.PinHint, _cardSmallFont, mutedBrush,
-            new RectangleF(right - 110, y + 170, 110, 12), StringAlignment.Far);
+            new RectangleF(right - 110, footerY + 170, 110, 12), StringAlignment.Far);
+    }
+
+    /// <summary>"Gemini · 7d" stays as the provider named it; plain windows use the short chip text (5h / 7d).</summary>
+    internal static string DetailWindowLabel(QuotaWindow window) =>
+        window.Label.Contains(" · ", StringComparison.Ordinal) ? window.Label : QuotaDisplayFormatting.FormatWindowShort(window);
+
+    /// <summary>Local reset time: "HH:mm" inside a day, "M/d HH:mm" beyond.</summary>
+    internal static string CompactResetTime(DateTimeOffset reset, DateTimeOffset now)
+    {
+        var local = reset.ToLocalTime();
+        var format = reset - now < TimeSpan.FromHours(20) ? "HH:mm" : "M/d HH:mm";
+        return local.ToString(format, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    internal static string CreditsText(CodexCreditBalance credits, bool chinese)
+    {
+        if (credits.Unlimited) return chinese ? "无限" : "Unlimited";
+        if (credits.Balance is { } balance)
+        {
+            var amount = balance.ToString(balance >= 1000 ? "N0" : "0.##", System.Globalization.CultureInfo.InvariantCulture);
+            return chinese ? $"剩余 {amount}" : $"{amount} left";
+        }
+        return credits.HasCredits ? (chinese ? "有积分" : "Available") : (chinese ? "无" : "None");
+    }
+
+    /// <summary>Label and value of the subscription row; value is null when the source has no dates.</summary>
+    internal static (string Label, string? Value) SubscriptionText(UsageSubscriptionPeriod? period, DateTimeOffset now, bool chinese)
+    {
+        var culture = System.Globalization.CultureInfo.InvariantCulture;
+        string Days(DateTimeOffset end)
+        {
+            var days = (int)Math.Ceiling((end - now).TotalDays);
+            return days <= 0 ? (chinese ? "今天" : "today") : chinese ? $"剩{days}天" : $"{days}d";
+        }
+        switch (period)
+        {
+            case { Kind: "active-until", End: { } until }:
+                return (chinese ? "订阅有效期" : "Subscription",
+                    (chinese ? "至 " : "until ") + until.ToLocalTime().ToString("yyyy/M/d", culture) + " · " + Days(until));
+            case { Kind: "quota-reset", End: { } reset }:
+                return (chinese ? "额度周期" : "Allowance",
+                    (chinese ? "重置 " : "resets ") + reset.ToLocalTime().ToString("M/d", culture) + " · " + Days(reset));
+            case { End: { } end }:
+                var start = period.Start is { } from ? from.ToLocalTime().ToString("M/d", culture) + "–" : "";
+                return (chinese ? "计费周期" : "Billing period",
+                    start + end.ToLocalTime().ToString("M/d", culture) + " · " + (chinese ? "续费" : "renews ") + (chinese ? Days(end) : Days(end)));
+            default:
+                return (chinese ? "订阅" : "Subscription", null);
+        }
+    }
+
+    private static void DrawCreditsIcon(Graphics graphics, RectangleF bounds, Color color)
+    {
+        using var pen = new Pen(color, 1.2f);
+        graphics.DrawEllipse(pen, bounds.X + .5f, bounds.Y + .5f, bounds.Width - 1, bounds.Height - 1);
+        graphics.DrawLine(pen, bounds.X + bounds.Width / 2, bounds.Y + 2.5f, bounds.X + bounds.Width / 2, bounds.Bottom - 2.5f);
+    }
+
+    private static void DrawCalendarIcon(Graphics graphics, RectangleF bounds, Color color)
+    {
+        using var pen = new Pen(color, 1.2f);
+        graphics.DrawRectangle(pen, bounds.X + .5f, bounds.Y + 1.5f, bounds.Width - 1, bounds.Height - 2);
+        graphics.DrawLine(pen, bounds.X + .5f, bounds.Y + 4.5f, bounds.Right - .5f, bounds.Y + 4.5f);
+        graphics.DrawLine(pen, bounds.X + 3, bounds.Y, bounds.X + 3, bounds.Y + 2.5f);
+        graphics.DrawLine(pen, bounds.Right - 3, bounds.Y, bounds.Right - 3, bounds.Y + 2.5f);
     }
 
     /// <summary>Plan pill (any provider) followed by the account hint.</summary>

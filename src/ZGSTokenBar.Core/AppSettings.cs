@@ -46,6 +46,8 @@ public sealed class AppSettings
     public bool MiniProviderAreaCollapsed { get; set; }
     public Dictionary<string, MiniAreaLayout> MiniAreaLayouts { get; set; } = new(StringComparer.Ordinal);
     public string[] MiniAreaOrder { get; set; } = [];
+    /// <summary>Bar rings the user hid from the dock (provider id or Codex/Claude card key).</summary>
+    public string[] HiddenDockItems { get; set; } = [];
     // Legacy read-only migration fields from the per-card collapse prototypes.
     public bool AiGatewayMiniCollapsed { get; set; }
     public string[] CollapsedMiniGroups { get; set; } = [];
@@ -351,6 +353,14 @@ public sealed class AppSettings
         }
         return result;
     }
+
+    public static string[] CopyHiddenDockItems(IEnumerable<string>? source) =>
+        (source ?? [])
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
 
     public static string[] CopyMiniAreaOrder(IEnumerable<string>? source) =>
         (source ?? [])

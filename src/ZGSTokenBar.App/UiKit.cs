@@ -290,6 +290,18 @@ internal static class UiPaint
     }
 
     /// <summary>Hairline section divider.</summary>
+    /// <summary>The on/off switch shared by owner-drawn cards (Settings uses the same proportions).</summary>
+    internal static void Switch(Graphics g, RectangleF bounds, bool on, bool hover)
+    {
+        var track = on ? UiTokens.AccentFill : hover ? UiPalette.Slate600 : UiPalette.Slate700;
+        using (var brush = new SolidBrush(track)) FillRounded(g, brush, bounds, bounds.Height / 2);
+        var inset = Math.Max(2f, bounds.Height / 7f);
+        var knob = bounds.Height - inset * 2;
+        var x = on ? bounds.Right - knob - inset : bounds.X + inset;
+        using var knobBrush = new SolidBrush(on ? Color.White : UiPalette.Slate300);
+        g.FillEllipse(knobBrush, x, bounds.Y + inset, knob, knob);
+    }
+
     internal static void Divider(Graphics g, float left, float right, float y, Color color)
     {
         using var pen = new Pen(color, 1);

@@ -42,6 +42,14 @@ public sealed record UsageLedger(
 
 public sealed record UsageProductShare(string Product, double Percent);
 
+/// <summary>
+/// Subscription/billing dates read from the same usage response (never from credentials).
+/// <see cref="Kind"/>: "billing" = paid period that renews at <see cref="End"/>; "quota-reset" = the
+/// plan's monthly allowance reset; "active-until" = paid access ends at <see cref="End"/>.
+/// <see cref="Source"/> names the response field the dates came from.
+/// </summary>
+public sealed record UsageSubscriptionPeriod(DateTimeOffset? Start, DateTimeOffset? End, string Kind, string Source);
+
 public sealed record UsageAccountSnapshot(
     string AccountId,
     string Label,
@@ -53,7 +61,10 @@ public sealed record UsageAccountSnapshot(
     IReadOnlyList<UsageProductShare> Products,
     UsageFreshness Freshness,
     DateTimeOffset? SampledAt,
-    string? ErrorKey);
+    string? ErrorKey)
+{
+    public UsageSubscriptionPeriod? Period { get; init; }
+}
 
 public sealed record UsageProviderSnapshot(
     string ProviderId,

@@ -190,6 +190,22 @@ internal sealed partial class QuotaApplicationContext
         }
     }
 
+    private void SaveHiddenDockItems()
+    {
+        if (_quitting) return;
+        var previous = AppSettings.CopyHiddenDockItems(_settings.HiddenDockItems);
+        _settings.HiddenDockItems = AppSettings.CopyHiddenDockItems(_bar.HiddenDockItems);
+        if (!TrySaveSettings(_settings))
+        {
+            _settings.HiddenDockItems = previous;
+            _bar.SetHiddenDockItems(previous);
+        }
+        else if (!previous.SequenceEqual(_settings.HiddenDockItems, StringComparer.Ordinal))
+        {
+            _uiRevision++;
+        }
+    }
+
     private void SaveMiniAreaOrder()
     {
         if (_quitting) return;

@@ -124,6 +124,32 @@ internal sealed class RouterStatusBadge : Control
     }
 }
 
+/// <summary>Panel header mark: the Router glyph on a tile plus the "Router" title, as on the hover card.</summary>
+internal sealed class RouterBrandMark : Control
+{
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    internal string State { get; set; } = "idle";
+    internal RouterBrandMark()
+    {
+        SetStyle(ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.SupportsTransparentBackColor, true);
+        AccessibleName = "Router";
+    }
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var s = RouterVisualGeometry.Scale(this);
+        var g = e.Graphics;
+        g.Clear(Parent?.BackColor ?? UiTokens.CardSurface);
+        UiPaint.PrepareQuality(g);
+        var tile = new RectangleF(1 * s, (Height - 24 * s) / 2, 24 * s, 24 * s);
+        using (var fill = new SolidBrush(Color.White.WithAlpha(10))) UiPaint.FillRounded(g, fill, tile, UiTokens.RadiusControl * s);
+        var tone = State is "cleanup" ? "warning" : State is "attention" ? "failed" : State is "idle" or "offline" or "unknown" ? "idle" : State;
+        RouterCardRenderer.DrawRouterGlyph(g, RectangleF.Inflate(tile, -4 * s, -4 * s), State, UiTokens.State(tone));
+        using var title = new Font("Segoe UI", UiTokens.FontTitle * s, FontStyle.Bold, GraphicsUnit.Pixel);
+        using var brush = new SolidBrush(UiTokens.TextStrong);
+        UiPaint.Text(g, "Router", title, brush, new RectangleF(tile.Right + 8 * s, 0, Width - tile.Right - 8 * s, Height), StringAlignment.Near);
+    }
+}
+
 internal sealed class RouterSurface : Panel
 {
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -136,7 +162,8 @@ internal sealed class RouterSurface : Panel
     protected override void OnPaintBackground(PaintEventArgs e)
     {
         e.Graphics.Clear(Parent?.BackColor ?? Palette.Background);
-        var border = EmphasizedBorder ? RouterVisualPalette.Mix(Palette.Background, Color.White, .18f) : Palette.Border;
+        // Sections are the shared card shell: a raised surface with the same white hairline as the hover cards.
+        var border = EmphasizedBorder ? UiTokens.Hairline : Palette.Border;
         UiPaint.CardShell(e.Graphics, new RectangleF(.5f, .5f, Width - 1, Height - 1), Input ? Palette.Input : Palette.Surface, border,
             UiTokens.RadiusCard * RouterVisualGeometry.Scale(this));
     }

@@ -898,6 +898,7 @@ public sealed class CodexQuotaService
             usage.Windows)
         {
             AccountHint = CodexAccountFormatting.MaskEmail(account.Credential.Email),
+            Credits = usage.Credits,
         };
         return account.CapturedAt is { } capturedAt
             ? card with { CapturedAt = capturedAt }

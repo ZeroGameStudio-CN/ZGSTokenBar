@@ -253,6 +253,7 @@ internal sealed partial class BarForm : Form
         _codexMiniDisplayMode = CodexMiniDisplayModes.Normalize(settings.CodexMiniDisplayMode);
         _showSystemMetrics = settings.IsPluginEnabled("zgstokenbar.metrics.system", true);
         _glassMaxRings = NormalizeGlassMax(settings.GlassDockMaxRings);
+        _hiddenDockItems = new HashSet<string>(AppSettings.CopyHiddenDockItems(settings.HiddenDockItems), StringComparer.Ordinal);
         _animationsEnabled = settings.EnableAnimations && SystemInformation.IsMenuAnimationEnabled;
         _radarProviders = settings.EnableRadar
             ? new HashSet<ProviderKind>(radarProviders ?? [])
@@ -333,7 +334,7 @@ internal sealed partial class BarForm : Form
         if (item?.Card is not { } card || item.Window is not { } window) return null;
         using var popover = new QuotaPopoverForm();
         return popover.RenderForTest(
-            new QuotaPopoverContent(card, window, null, card.CapturedAt ?? now, null, false),
+            new QuotaPopoverContent(WithSubscription(card), window, null, card.CapturedAt ?? now, null, false),
             _text,
             item.Logo ?? ProviderLogo(card.Provider),
             _resetClockIcon,
@@ -477,6 +478,8 @@ internal sealed partial class BarForm : Form
         Invalidate();
     }
 
+    internal MiniCardContribution? RouterCard => _pluginMiniCards.FirstOrDefault(card => card.PluginId == MiniAreaIds.Router)?.Card;
+    internal bool IsChinese => _text.IsChinese;
     internal long? DisplayedRouterQueuedCount => _pluginMiniCards.FirstOrDefault(card => card.PluginId == MiniAreaIds.Router)
         ?.Card.Summary.FirstOrDefault(item => item.LabelKey == "router.queued")?.Value.Integer;
     internal string? DisplayedRouterState => _pluginMiniCards.FirstOrDefault(card => card.PluginId == MiniAreaIds.Router)
@@ -603,6 +606,7 @@ internal sealed partial class BarForm : Form
         _codexMiniDisplayMode = CodexMiniDisplayModes.Normalize(settings.CodexMiniDisplayMode);
         _showSystemMetrics = settings.IsPluginEnabled("zgstokenbar.metrics.system", true);
         _glassMaxRings = NormalizeGlassMax(settings.GlassDockMaxRings);
+        _hiddenDockItems = new HashSet<string>(AppSettings.CopyHiddenDockItems(settings.HiddenDockItems), StringComparer.Ordinal);
         _placementCoordinator.Reload(settings);
         WindowPlacementActivation? activation = null;
         if (_placementCoordinator.ActiveTopology is { } topology)

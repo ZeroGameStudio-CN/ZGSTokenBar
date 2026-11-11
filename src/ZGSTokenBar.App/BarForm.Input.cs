@@ -39,7 +39,13 @@ internal sealed partial class BarForm
                 else _glassChipTimer.Stop();
                 Invalidate();
             }
-            if (onChip)
+            var onVisibility = !_glassVisibilityBounds.IsEmpty && _glassVisibilityBounds.Contains(logical);
+            if (onVisibility != _glassVisibilityHovered)
+            {
+                _glassVisibilityHovered = onVisibility;
+                Invalidate();
+            }
+            if (onChip || onVisibility)
             {
                 UpdateSystemUsageHover(false);
                 UpdateRadarHover(null);
@@ -171,6 +177,7 @@ internal sealed partial class BarForm
         if (_glassDock)
         {
             _glassChipHovered = false;
+            _glassVisibilityHovered = false;
             _glassChipTimer.Stop();
             if (_glassExpanded)
             {
@@ -202,6 +209,9 @@ internal sealed partial class BarForm
             BeginMiniAreaReorder(reorderTarget, e.Location);
             return;
         }
+        // The overflow and show/hide chips are buttons: pressing them never starts a bar drag
+        // (which used to detach the bar from the taskbar and re-embed it on release).
+        if (_glassDock && (_glassChipBounds.Contains(logical) || _glassVisibilityBounds.Contains(logical))) return;
         var pressedTarget = ControlTargetAt(logical);
         if (pressedTarget != HoverTarget.None)
         {
@@ -227,18 +237,15 @@ internal sealed partial class BarForm
 
         _taskbarDragging = true;
         _taskbarDragMoved = false;
-        // Drag as a top-level overlay; docking re-embeds when the drag ends.
-        if (_embedParent != 0) DetachFromTaskbar("dragging");
+        // Detaching from the taskbar (to drag as a top-level overlay) waits until the pointer really
+        // moves past the drag threshold, so a plain click never reparents the window.
         _taskbarDragStartLocation = ScreenLocation;
         _taskbarDragCurrentLocation = _taskbarDragStartLocation;
         _taskbarDragStartScreen = Cursor.Position;
         _dragTopologyKey = _placementCoordinator.ActiveTopology?.Key;
         _topologyChangedDuringDrag = false;
         _deferredTopologyDuringDrag = null;
-        if (!_popoverPinned) HidePopovers();
-        ClearHoverStateForTaskbarDrag();
         Capture = true;
-        Cursor = Cursors.SizeAll;
     }
 
     protected override void OnMouseUp(MouseEventArgs e)
@@ -309,9 +316,20 @@ internal sealed partial class BarForm
         if (e.Button != MouseButtons.Left) return;
         if (DateTime.UtcNow <= _suppressClickUntil) return;
         var logical = ToLogical(e.Location);
+        if (_glassDock && !_glassVisibilityBounds.IsEmpty && _glassVisibilityBounds.Contains(logical))
+        {
+            if (_dockVisibilityPopover?.Visible == true) HideDockVisibilityPopover();
+            else ShowDockVisibilityPopover(QuotaTargetScreenBounds(_glassVisibilityBounds));
+            return;
+        }
         if (_glassDock && !_glassChipBounds.IsEmpty && _glassChipBounds.Contains(logical))
         {
-            SetGlassExpanded(!_glassExpanded);
+            // The hover timer may already have opened the overflow under this very click; the
+            // click then confirms it instead of snapping it shut again.
+            var hoverOpenedJustNow = _glassExpanded && _glassHoverExpandedAt is { } at
+                && DateTime.UtcNow - at < TimeSpan.FromMilliseconds(1200);
+            if (!hoverOpenedJustNow) SetGlassExpanded(!_glassExpanded);
+            _glassHoverExpandedAt = null;
             return;
         }
         if (TaskbarReorderTargetAt(logical) is not null) return;

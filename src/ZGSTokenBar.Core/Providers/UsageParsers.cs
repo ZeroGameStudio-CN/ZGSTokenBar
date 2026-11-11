@@ -8,7 +8,10 @@ public sealed record UsageParseResult(
     UsageCredits? Credits,
     IReadOnlyList<UsageProductShare> Products,
     string? Plan,
-    string? ErrorKey);
+    string? ErrorKey)
+{
+    public UsageSubscriptionPeriod? Period { get; init; }
+}
 
 public static class UsageParsers
 {
@@ -74,7 +77,12 @@ public static class UsageParsers
             credits,
             products,
             plan,
-            used is null ? "usage_unknown" : null);
+            used is null ? "usage_unknown" : null)
+        {
+            Period = start is not null || end is not null
+                ? new UsageSubscriptionPeriod(start, end, "billing", period is not null ? "currentPeriod.start/end" : "billingPeriodStart/End")
+                : null,
+        };
     }
 
     public static UsageParseResult FromClaude(ClaudeUsageData usage)
@@ -145,7 +153,12 @@ public static class UsageParsers
             Cents(onDemand.Value, "limit"));
         var membership = String(body, "membershipType");
         if (windows.Count == 0 && credits?.OnDemandUsed is null && credits?.OnDemandCap is null) return null;
-        return new UsageParseResult(windows, credits, [], membership, windows.Count == 0 ? "usage_unknown" : null);
+        return new UsageParseResult(windows, credits, [], membership, windows.Count == 0 ? "usage_unknown" : null)
+        {
+            Period = start is not null || reset is not null
+                ? new UsageSubscriptionPeriod(start, reset, "billing", "billingCycleStart/End")
+                : null,
+        };
     }
 
     public static UsageParseResult? ParseCopilot(string? json)
@@ -176,7 +189,10 @@ public static class UsageParsers
         }
 
         if (windows.Count == 0) return null;
-        return new UsageParseResult(windows, null, [], String(body, "copilot_plan", "plan_type"), null);
+        return new UsageParseResult(windows, null, [], String(body, "copilot_plan", "plan_type"), null)
+        {
+            Period = reset is null ? null : new UsageSubscriptionPeriod(null, reset, "quota-reset", "quota_reset_date"),
+        };
     }
 
     public static UsageParseResult? ParseDeepSeek(string? json)
@@ -320,26 +336,65 @@ public static class UsageParsers
             {
                 var remaining = ParseLoosePercent(parts[2]);
                 var (suffix, duration) = AntigravityWindow(parts[1])!.Value;
+                var group = AntigravityGroup(parts[0]);
                 return remaining is null
                     ? null
                     : new UsageWindow(
                         parts[0] + suffix,
-                        parts[0] + suffix,
+                        group + suffix,
                         JsonSupport.ClampPercent(100 - remaining.Value),
                         Time(parts.Length > 3 ? parts[3] : null),
                         duration);
             })
             .OfType<UsageWindow>()
-            // Weekly limits first: they are the binding constraint the ring should reflect.
-            .OrderByDescending(window => window.Duration)
-            .Take(8)
             .ToArray();
-        return windows.Length == 0 ? null : new UsageParseResult(windows, null, [], null, null);
+        var ordered = OrderAntigravity(windows).Take(8).ToArray();
+        return ordered.Length == 0 ? null : new UsageParseResult(ordered, null, [], null, null);
+    }
+
+    /// <summary>
+    /// agy reports one pool per model group (Gemini, Claude/GPT, preview models), each with its own
+    /// weekly and 5-hour limit. The groups are independent, so the headline (first window, which the
+    /// ring shows) is the group the user can still use the most: groups are ordered by their binding
+    /// (lowest) remaining, highest first, and inside a group the binding window leads (weekly on a tie).
+    /// Every window stays in the list so the hover shows all of them with their own reset.
+    /// </summary>
+    internal static IEnumerable<UsageWindow> OrderAntigravity(IReadOnlyList<UsageWindow> windows)
+    {
+        static double Remaining(UsageWindow window) => 100 - (window.UsedPercent ?? 100);
+        static string Group(UsageWindow window)
+        {
+            var dot = window.Label.LastIndexOf(" · ", StringComparison.Ordinal);
+            return dot > 0 ? window.Label[..dot] : window.Label;
+        }
+        return windows
+            .Select((window, index) => (window, index))
+            .GroupBy(item => Group(item.window), StringComparer.Ordinal)
+            .Select(group => (
+                Binding: group.Min(item => Remaining(item.window)),
+                First: group.Min(item => item.index),
+                Windows: group
+                    .OrderBy(item => Remaining(item.window))
+                    .ThenByDescending(item => item.window.Duration)
+                    .ThenBy(item => item.index)
+                    .Select(item => item.window)))
+            .OrderByDescending(group => group.Binding)
+            .ThenBy(group => group.First)
+            .SelectMany(group => group.Windows);
+    }
+
+    /// <summary>Short display names for agy's model groups ("Claude and GPT models" → "Claude/GPT").</summary>
+    internal static string AntigravityGroup(string group)
+    {
+        var name = group.Trim();
+        if (name.EndsWith(" models", StringComparison.OrdinalIgnoreCase)) name = name[..^" models".Length];
+        name = name.Replace(" and ", "/", StringComparison.OrdinalIgnoreCase);
+        return name.Length == 0 ? group : name;
     }
 
     /// <summary>agy rows: "&lt;group&gt;\t&lt;Weekly|Five Hour&gt; Limit Remaining\t&lt;n&gt;%\t&lt;reset&gt;".</summary>
     private static (string Suffix, TimeSpan Duration)? AntigravityWindow(string label) =>
-        label.Contains("Weekly Limit", StringComparison.Ordinal) ? ("", TimeSpan.FromDays(7))
+        label.Contains("Weekly Limit", StringComparison.Ordinal) ? (" · 7d", TimeSpan.FromDays(7))
         : label.Contains("Five Hour Limit", StringComparison.Ordinal) ? (" · 5h", TimeSpan.FromHours(5))
         : null;
 
@@ -406,7 +461,7 @@ public static class UsageParsers
                     TimeSpan.FromDays(7)));
             }
 
-            return windows.Count == 0 ? null : new UsageParseResult(windows, null, [], null, null);
+            return windows.Count == 0 ? null : new UsageParseResult(OrderAntigravity(windows).ToArray(), null, [], null, null);
         }
     }
 
@@ -441,7 +496,12 @@ public static class UsageParsers
             null,
             [],
             null,
-            null);
+            null)
+        {
+            Period = start is not null || end is not null
+                ? new UsageSubscriptionPeriod(start, end, "billing", "billingCycle.billingPeriodStart/End")
+                : null,
+        };
         return true;
     }
 

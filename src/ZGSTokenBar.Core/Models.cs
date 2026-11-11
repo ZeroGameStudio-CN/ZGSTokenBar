@@ -169,6 +169,9 @@ public sealed record QuotaWindow(
     DateTimeOffset? ResetsAt,
     TimeSpan Duration);
 
+/// <summary>Codex credits from the usage response's "credits" object (has_credits / unlimited / balance), as CodexBar reads them.</summary>
+public sealed record CodexCreditBalance(bool HasCredits, bool Unlimited, double? Balance);
+
 public sealed record QuotaCard(
     string Key,
     ProviderKind Provider,
@@ -188,6 +191,10 @@ public sealed record QuotaCard(
     public Sub2ApiUsageSummary? Sub2ApiUsage { get; init; }
     public Sub2ApiQuotaSummary? Sub2ApiQuota { get; init; }
     public Sub2ApiAccountAvailabilitySummary? Sub2ApiAccountAvailability { get; init; }
+    /// <summary>Codex credits balance, when the usage response carried one.</summary>
+    public CodexCreditBalance? Credits { get; init; }
+    /// <summary>Subscription/billing dates from the provider's own usage metadata (never credentials).</summary>
+    public UsageSubscriptionPeriod? Subscription { get; init; }
     public string DisplayLabel => IsService && !string.IsNullOrWhiteSpace(ServiceDisplayName)
         ? ServiceDisplayName
         : Label;

@@ -45,6 +45,9 @@ internal sealed class SettingsForm : Form
     private readonly ToggleSwitch _codex;
     private readonly ToggleSwitch _grok;
     private readonly ToggleSwitch _antigravity;
+    /// <summary>On/off for the other built-in usage providers (Cursor, Copilot, keyed APIs), by provider id.</summary>
+    private readonly Dictionary<string, ToggleSwitch> _usageProviderToggles = new(StringComparer.Ordinal);
+    private readonly ToggleSwitch? _restoreHiddenDockItems;
     private readonly ToggleSwitch _codexLocalUsage;
     private readonly ToggleSwitch _sub2ApiPool;
     private readonly ToggleSwitch _openAtLogin;
@@ -183,6 +186,20 @@ internal sealed class SettingsForm : Form
             settings.IsPluginEnabled(OtherToolsModule.GrokId, true));
         _antigravity = CreateToggle("Antigravity", _text.IsChinese ? "读取本机 Antigravity 配额" : "Read local Antigravity quota",
             settings.IsPluginEnabled(OtherToolsModule.AntigravityId, true));
+        foreach (var definition in UsageProviderRegistry.All
+                     .Select(provider => provider.Definition)
+                     .Where(definition => definition.Surface == UsageSurface.Mini
+                         && definition.Id is not (UsageProviderIds.Grok or UsageProviderIds.Antigravity)))
+        {
+            _usageProviderToggles.Add(definition.Id, CreateToggle(
+                definition.DisplayName,
+                UsageProviderHint(definition.DisplayName),
+                settings.IsPluginEnabled(definition.Id, true)));
+        }
+        if (settings.HiddenDockItems.Length > 0)
+        {
+            _restoreHiddenDockItems = CreateToggle(HiddenDockItemsTitle(settings.HiddenDockItems.Length), HiddenDockItemsHint, true);
+        }
         _codexLocalUsage = CreateToggle(
             _text.CodexLocalUsageModule,
             _text.CodexLocalUsageModuleHint,
@@ -311,6 +328,8 @@ internal sealed class SettingsForm : Form
         _codex.CheckedChanged += (_, _) => UpdateCodexDependencies();
         _grok.CheckedChanged += (_, _) => RefreshDirtyState();
         _antigravity.CheckedChanged += (_, _) => RefreshDirtyState();
+        foreach (var toggle in _usageProviderToggles.Values) toggle.CheckedChanged += (_, _) => RefreshDirtyState();
+        if (_restoreHiddenDockItems is not null) _restoreHiddenDockItems.CheckedChanged += (_, _) => RefreshDirtyState();
         _codexLocalUsage.CheckedChanged += (_, _) =>
         {
             if (!_updatingCodexDependency && _codex.Checked)
@@ -480,6 +499,16 @@ internal sealed class SettingsForm : Form
             _text.IsChinese ? "读取本机 Grok 登录的套餐额度和预付余额" : "Reads the local Grok sign-in for plan quota and prepaid balance", _theme, _scale));
         providers.Add(new ToggleSettingRow(_antigravity, "Antigravity",
             _text.IsChinese ? "复用本机登录，读取模型剩余额度" : "Uses the local sign-in to read model quota", _theme, _scale));
+        foreach (var (id, toggle) in _usageProviderToggles)
+        {
+            var name = UsageProviderRegistry.Find(id)?.Definition.DisplayName ?? id;
+            providers.Add(new ToggleSettingRow(toggle, name, UsageProviderHint(name), _theme, _scale));
+        }
+        if (_restoreHiddenDockItems is not null)
+        {
+            providers.Add(new ToggleSettingRow(_restoreHiddenDockItems, HiddenDockItemsTitle(_original.HiddenDockItems.Length),
+                HiddenDockItemsHint, _theme, _scale));
+        }
         providers.Add(new ToggleSettingRow(
             _codexLocalUsage,
             _text.CodexLocalUsageModule,
@@ -724,6 +753,16 @@ internal sealed class SettingsForm : Form
         AccessibleDescription = accessibleDescription,
     };
 
+    private string UsageProviderHint(string name) => _text.IsChinese
+        ? $"读取本机 {name} 登录或密钥的额度；关闭后不再读取，也不显示在 Bar 上"
+        : $"Reads the local {name} sign-in or key; off stops reading it and hides it from the Bar";
+
+    private string HiddenDockItemsTitle(int count) => _text.IsChinese ? $"保持隐藏 {count} 个 Bar 项目" : $"Keep {count} Bar item(s) hidden";
+
+    private string HiddenDockItemsHint => _text.IsChinese
+        ? "单个账号可在 Bar 的 +N 展开后点眼睛图标开关；关闭此项可一次恢复全部"
+        : "Toggle single accounts from the eye chip after expanding +N on the Bar; turn this off to show them all again";
+
     private ToggleSwitch CreateToggle(string name, string description, bool value) => new(_theme, _scale)
     {
         Checked = value,
@@ -918,6 +957,7 @@ internal sealed class SettingsForm : Form
             EnableSub2ApiPool = _codex.Checked && _sub2ApiPool.Checked,
             MiniAreaLayouts = AppSettings.CopyMiniAreaLayouts(_original.MiniAreaLayouts),
             MiniAreaOrder = AppSettings.CopyMiniAreaOrder(_original.MiniAreaOrder),
+            HiddenDockItems = _restoreHiddenDockItems is { Checked: false } ? [] : AppSettings.CopyHiddenDockItems(_original.HiddenDockItems),
             RadarModelGroups = AppSettings.CopyRadarModelGroups(_original.RadarModelGroups),
             CodexMiniDisplayMode = (_codexDisplayMode.SelectedItem as CodexMiniDisplayModeChoice)?.Mode
                 ?? _original.CodexMiniDisplayMode,
@@ -934,6 +974,10 @@ internal sealed class SettingsForm : Form
             ApplyPluginToggle(settings, OtherToolsModule.GrokId, _grok.Checked, true);
         if (_original.IsPluginEnabled(OtherToolsModule.AntigravityId, true) != _antigravity.Checked)
             ApplyPluginToggle(settings, OtherToolsModule.AntigravityId, _antigravity.Checked, true);
+        foreach (var (id, toggle) in _usageProviderToggles)
+        {
+            if (_original.IsPluginEnabled(id, true) != toggle.Checked) ApplyPluginToggle(settings, id, toggle.Checked, true);
+        }
         ApplyPluginToggle(
             settings,
             "zgstokenbar.usage.codex-local",
@@ -981,6 +1025,7 @@ internal sealed class SettingsForm : Form
             == right.IsPluginEnabled("zgstokenbar.usage.codex-local", right.IsEnabled(ProviderKind.Codex))
         && MiniAreaLayoutsEqual(left.MiniAreaLayouts, right.MiniAreaLayouts)
         && left.MiniAreaOrder.SequenceEqual(right.MiniAreaOrder, StringComparer.Ordinal)
+        && left.HiddenDockItems.SequenceEqual(right.HiddenDockItems, StringComparer.Ordinal)
         && DictionaryEqual(left.PluginEnabled, right.PluginEnabled)
         && string.Equals(left.CodexMiniDisplayMode, right.CodexMiniDisplayMode, StringComparison.Ordinal)
         && string.Equals(left.BackgroundPalette, right.BackgroundPalette, StringComparison.Ordinal)
@@ -1005,6 +1050,7 @@ internal sealed class SettingsForm : Form
             EnableSub2ApiPool = settings.EnableSub2ApiPool,
             MiniAreaLayouts = AppSettings.CopyMiniAreaLayouts(settings.MiniAreaLayouts),
             MiniAreaOrder = AppSettings.CopyMiniAreaOrder(settings.MiniAreaOrder),
+            HiddenDockItems = AppSettings.CopyHiddenDockItems(settings.HiddenDockItems),
             RadarModelGroups = AppSettings.CopyRadarModelGroups(settings.RadarModelGroups),
             CodexMiniDisplayMode = CodexMiniDisplayModes.Normalize(settings.CodexMiniDisplayMode),
             BackgroundPalette = AppSettings.NormalizeBackgroundPalette(settings.BackgroundPalette),

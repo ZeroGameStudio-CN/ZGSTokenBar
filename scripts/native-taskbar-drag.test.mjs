@@ -72,7 +72,9 @@ test('taskbar Mini separates desired placement from resolved fallback', () => {
     'topology activation is deferred before it can replace the active drag profile',
   );
   assert.match(barForm, /TaskbarPlacement\.TryGetDockTarget\(/);
-  assert.match(barForm, /if \(!_popoverPinned\) HidePopovers\(\);\s+ClearHoverStateForTaskbarDrag\(\);/);
+  // A press alone never reparents the embedded bar: detaching waits for the drag threshold.
+  assert.match(barForm, /if \(_embedParent != 0\) DetachFromTaskbar\("dragging"\);\s+HidePopovers\(\);\s+ClearHoverStateForTaskbarDrag\(\);\s+TaskbarPlacement\.InvalidateCache\(\);/);
+  assert.doesNotMatch(barForm, /_taskbarDragMoved = false;\s+\/\/ Drag as a top-level overlay[^\n]*\n\s+if \(_embedParent != 0\) DetachFromTaskbar/);
   assert.match(barForm, /ClearHoverStateForTaskbarDrag\(\);\s+TaskbarPlacement\.InvalidateCache\(\);\s+_taskbarDragMoved = true/);
   assert.match(barForm, /var currentScreen = Cursor\.Position/);
   assert.match(barForm, /private void ClearHoverStateForTaskbarDrag\(\)/);
