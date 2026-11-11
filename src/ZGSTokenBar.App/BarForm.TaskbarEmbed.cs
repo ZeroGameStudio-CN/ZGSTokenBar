@@ -4,8 +4,8 @@ namespace ZGSTokenBar.App;
 /// Optional "embed in taskbar" mode. While docked on the primary taskbar the bar becomes a child
 /// of Shell_TrayWnd, positioned with the same track/relative position as the overlay. Anything
 /// unexpected (setting off, undocked, secondary monitor, Explorer hung, DPI-awareness mismatch,
-/// SetParent refused, Explorer restarted) drops back to the top-level topmost overlay, which is
-/// also the default.
+/// SetParent refused, Explorer restarted, Remote Desktop session) drops back to the top-level
+/// topmost overlay, which is also the default.
 /// </summary>
 internal sealed partial class BarForm
 {
@@ -79,6 +79,15 @@ internal sealed partial class BarForm
             if (_embedParent != 0) DetachFromTaskbar(_embedRequested ? "undocked" : "off");
             return;
         }
+        if (RemoteSession())
+        {
+            // Over Remote Desktop the bar's layered child window is never composited into
+            // Explorer's taskbar (the window exists, is visible and on top, yet the remote frame
+            // shows only the taskbar), so a remote session always uses the top-level overlay.
+            if (_embedParent != 0) DetachFromTaskbar("remote-session");
+            TaskbarEmbedStatus = "fallback:remote-session";
+            return;
+        }
         var tray = TaskbarEmbedding.FindPrimaryTaskbar();
         var onPrimary = tray != 0 && (resolvedMonitor is null
             || string.Equals(Screen.FromHandle(tray).DeviceName, resolvedMonitor, StringComparison.OrdinalIgnoreCase));
@@ -146,6 +155,13 @@ internal sealed partial class BarForm
         }
         if (_embedParent != 0)
         {
+            if (RemoteSession())
+            {
+                // A console session was taken over by Remote Desktop: leave the taskbar now; the
+                // watchdog re-embeds once the session is back on the console.
+                DetachFromTaskbar("remote-session");
+                return;
+            }
             if (!TaskbarEmbedding.IsAlive(_embedParent) || TaskbarEmbedding.ParentOf(Handle) != _embedParent)
             {
                 DetachFromTaskbar("taskbar-lost");
@@ -167,8 +183,18 @@ internal sealed partial class BarForm
             TaskbarEmbedding.RaiseChild(Handle);
             return;
         }
-        if (_taskbarDocked && Visible && DateTime.UtcNow >= _embedRetryAfter) SyncTaskbarPlacement();
+        if (_taskbarDocked && Visible && DateTime.UtcNow >= _embedRetryAfter
+            && (TaskbarEmbedStatus != "fallback:remote-session" || !RemoteSession()))
+        {
+            SyncTaskbarPlacement();
+        }
     }
+
+    /// <summary>
+    /// True while this session is shown over Remote Desktop. Asked live (SM_REMOTESESSION), so a
+    /// console session taken over by RDP, or handed back, is noticed by the next watchdog tick.
+    /// </summary>
+    private static bool RemoteSession() => SystemInformation.TerminalServerSession;
 
     private void OnTaskbarRecreated()
     {
