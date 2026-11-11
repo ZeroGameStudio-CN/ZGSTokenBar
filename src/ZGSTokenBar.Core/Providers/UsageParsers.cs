@@ -315,19 +315,33 @@ public static class UsageParsers
         var windows = trimmed
             .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(line => line.Split('\t'))
-            .Where(parts => parts.Length >= 3 && parts[1].Contains("Weekly Limit Remaining", StringComparison.Ordinal))
+            .Where(parts => parts.Length >= 3 && AntigravityWindow(parts[1]) is not null)
             .Select(parts =>
             {
                 var remaining = ParseLoosePercent(parts[2]);
+                var (suffix, duration) = AntigravityWindow(parts[1])!.Value;
                 return remaining is null
                     ? null
-                    : new UsageWindow(parts[0], parts[0], JsonSupport.ClampPercent(100 - remaining.Value), Time(parts.Length > 3 ? parts[3] : null), TimeSpan.FromDays(7));
+                    : new UsageWindow(
+                        parts[0] + suffix,
+                        parts[0] + suffix,
+                        JsonSupport.ClampPercent(100 - remaining.Value),
+                        Time(parts.Length > 3 ? parts[3] : null),
+                        duration);
             })
             .OfType<UsageWindow>()
+            // Weekly limits first: they are the binding constraint the ring should reflect.
+            .OrderByDescending(window => window.Duration)
             .Take(8)
             .ToArray();
         return windows.Length == 0 ? null : new UsageParseResult(windows, null, [], null, null);
     }
+
+    /// <summary>agy rows: "&lt;group&gt;\t&lt;Weekly|Five Hour&gt; Limit Remaining\t&lt;n&gt;%\t&lt;reset&gt;".</summary>
+    private static (string Suffix, TimeSpan Duration)? AntigravityWindow(string label) =>
+        label.Contains("Weekly Limit", StringComparison.Ordinal) ? ("", TimeSpan.FromDays(7))
+        : label.Contains("Five Hour Limit", StringComparison.Ordinal) ? (" · 5h", TimeSpan.FromHours(5))
+        : null;
 
     public static string? GrokRemainingText(string? json)
     {

@@ -277,7 +277,38 @@ public static class UsageAccountDirectory
             if (parsed is { } account) return [account];
         }
 
+        // OpenCode's "GitHub Copilot" sign-in stores the GitHub OAuth token from Copilot's own
+        // device flow, which is exactly what copilot_internal/user accepts (newer gh CLIs keep
+        // their token in the OS keyring, so hosts.yml often has none).
+        foreach (var candidate in new[]
+        {
+            Path.Combine(paths.Home, ".local", "share", "opencode", "auth.json"),
+            Path.Combine(paths.Home, ".config", "opencode", "auth.json"),
+        })
+        {
+            if (ReadOpenCodeCopilot(candidate) is { } account) return [account];
+        }
+
         return [];
+    }
+
+    internal static UsageCredential? ReadOpenCodeCopilot(string path)
+    {
+        var document = Read(path);
+        if (document is null) return null;
+        using (document)
+        {
+            if (document.RootElement.ValueKind != JsonValueKind.Object
+                || document.RootElement.ObjectProperty("github-copilot") is not { } node)
+            {
+                return null;
+            }
+
+            var token = new[] { StringOf(node, "refresh"), StringOf(node, "access") }
+                .FirstOrDefault(value => value is not null
+                    && (value.StartsWith("gho_", StringComparison.Ordinal) || value.StartsWith("ghu_", StringComparison.Ordinal)));
+            return token is null ? null : new UsageCredential("opencode-copilot", "GitHub Copilot", "opencode-copilot", token);
+        }
     }
 
     public static UsageCredential? ReadGitHubToken(string path)
@@ -367,13 +398,48 @@ public static class UsageAccountDirectory
 
     private static IReadOnlyList<UsageCredential> Antigravity(UsagePaths paths)
     {
-        var token = ReadTokenFile(
+        foreach (var candidate in new[]
+        {
             Path.Combine(paths.Home, ".gemini", "antigravity-cli", "antigravity-oauth-token"),
-            "access_token",
-            "accessToken");
-        return token is null
-            ? []
-            : [new UsageCredential("antigravity", "Antigravity", "google-oauth", token)];
+            Path.Combine(paths.Home, ".gemini", "jetski-standalone-oauth-token"),
+        })
+        {
+            if (ReadAntigravityToken(candidate) is { } credential) return [credential];
+        }
+
+        return [];
+    }
+
+    /// <summary>
+    /// agy keeps <c>{ token: { access_token, refresh_token, expiry }, auth_method }</c> (older builds
+    /// wrote the token fields at the root). The Google access token lives about an hour and agy
+    /// refreshes it in memory only, so an expired file token is reported as such and the
+    /// <c>agy /usage</c> fallback supplies the reading instead.
+    /// </summary>
+    internal static UsageCredential? ReadAntigravityToken(string path)
+    {
+        var document = Read(path);
+        if (document is null) return null;
+        using (document)
+        {
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return null;
+            var node = root.ObjectProperty("token") ?? root;
+            var token = StringOf(node, "access_token", "accessToken");
+            if (token is null) return null;
+            var expired = node.TryGetProperty("expiry", out var expiry)
+                && expiry.ValueKind == JsonValueKind.String
+                && DateTimeOffset.TryParse(expiry.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var at)
+                && at <= DateTimeOffset.UtcNow.AddMinutes(1)
+                || IsExpired(node);
+            return new UsageCredential(
+                "antigravity",
+                "Antigravity",
+                "google-oauth",
+                expired ? null : token,
+                null,
+                expired ? "credential_expired" : null);
+        }
     }
 
     private static IReadOnlyList<UsageCredential> Keyed(

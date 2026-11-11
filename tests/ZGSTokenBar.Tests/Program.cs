@@ -561,6 +561,7 @@ var tests = new (string Name, Action Run)[]
     ("Grok plan comes from the settings cache, never the sign-in type", TestGrokPlanFromSettingsCache),
     ("Expired Grok CLI session is renewed with its refresh token", TestGrokExpiredSessionIsRenewed),
     ("Popovers never get a cyclic or self owner", TestPopoverOwnerNeverCyclic),
+    ("Local provider sources are auto-detected", TestLocalProviderSourcesAutoDetected),
     ("Quota remaining color gradient", TestQuotaRemainingColorGradient),
     ("Native background palette contract", TestNativeBackgroundPaletteContract),
     ("Native settings panel contract", TestNativeSettingsPanelContract),
@@ -16569,6 +16570,45 @@ static void TestPopoverOwnerNeverCyclic()
     {
         AppDiagnostics.LogPath = previous;
         File.Delete(log);
+    }
+}
+
+static void TestLocalProviderSourcesAutoDetected()
+{
+    var root = Path.Combine(Path.GetTempPath(), "zgs-providers-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(root);
+    try
+    {
+        var agy = Path.Combine(root, "antigravity-oauth-token");
+        File.WriteAllText(agy, """{"token":{"access_token":"ya29.test","token_type":"Bearer","refresh_token":"r","expiry":"2020-01-01T00:00:00Z"},"auth_method":"consumer"}""");
+        var expired = UsageAccountDirectory.ReadAntigravityToken(agy);
+        Check(expired is { Secret: null, UnavailableReason: "credential_expired" }, "agy's nested token file is found and an expired token is not sent");
+        File.WriteAllText(agy, """{"token":{"access_token":"ya29.test","expiry":"2999-01-01T00:00:00Z"}}""");
+        Check(UsageAccountDirectory.ReadAntigravityToken(agy)?.Secret == "ya29.test", "a live agy token is used");
+        File.WriteAllText(agy, """{"access_token":"ya29.flat"}""");
+        Check(UsageAccountDirectory.ReadAntigravityToken(agy)?.Secret == "ya29.flat", "the older flat agy layout still works");
+
+        var opencode = Path.Combine(root, "auth.json");
+        File.WriteAllText(opencode, """{"openai":{"type":"oauth","access":"x"},"github-copilot":{"type":"oauth","refresh":"gho_abc","access":"gho_abc","expires":0}}""");
+        Check(UsageAccountDirectory.ReadOpenCodeCopilot(opencode) is { Secret: "gho_abc", SourceKind: "opencode-copilot" }, "OpenCode's Copilot sign-in is reused for Copilot usage");
+        File.WriteAllText(opencode, """{"github-copilot":{"type":"oauth","access":"tid=short-lived"}}""");
+        Check(UsageAccountDirectory.ReadOpenCodeCopilot(opencode) is null, "a short-lived Copilot API token is not mistaken for a GitHub token");
+
+        var usage = "Gemini Models\tWeekly Limit Remaining\t100%\t2026-11-16T15:46:23Z\n"
+            + "Gemini Models\tFive Hour Limit Remaining\t100%\t2026-11-11T15:29:13Z\n"
+            + "Claude and GPT models\tWeekly Limit Remaining\t4%\t2026-11-16T15:42:01Z\n"
+            + "Claude and GPT models\tFive Hour Limit Remaining\t100%\t2026-11-11T15:29:13Z\n"
+            + "Gemini 4 Argon\tGemini 4 Argon Weekly Limit\t100%\t2026-11-16T15:41:46Z\n";
+        var parsed = UsageParsers.ParseAntigravity(usage);
+        Check(parsed is not null && parsed.Windows.Count == 5, "agy weekly and five-hour rows are all read");
+        Check(parsed!.Windows.Take(3).All(window => window.Duration == TimeSpan.FromDays(7))
+            && parsed.Windows.Any(window => window.Label == "Claude and GPT models" && Math.Abs(window.UsedPercent!.Value - 96) < .01)
+            && parsed.Windows.Any(window => window.Label == "Gemini Models · 5h" && window.Duration == TimeSpan.FromHours(5)),
+            "weekly limits lead and five-hour windows are labelled");
+    }
+    finally
+    {
+        Directory.Delete(root, true);
     }
 }
 

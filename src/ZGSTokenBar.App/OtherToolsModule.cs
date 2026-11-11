@@ -122,6 +122,9 @@ internal sealed class OtherToolsModule : IDisposable
         }
     }
 
+    private static readonly TimeSpan AntigravityCliInterval = TimeSpan.FromMinutes(10);
+    private (DateTimeOffset At, UsageParseResult? Parsed)? _antigravityCli;
+
     private async Task<UsageBoard> WithCliAsync(UsageBoard board)
     {
         if (_enabled(GrokId) && !HasReading(board, GrokId) && UsageProbes.GrokExecutable(_paths, ProcessUsageEnvironment.Instance) is { } grok)
@@ -133,10 +136,18 @@ internal sealed class OtherToolsModule : IDisposable
             && !HasReading(board, AntigravityId)
             && UsageProbes.AntigravityExecutable(_paths) is { } antigravity)
         {
-            var output = await RunAsync(antigravity, "-p", "/usage", "--print-timeout", "20s");
-            var parsed = UsageParsers.ParseAntigravity(output)
-                ?? UsageParsers.ParseAntigravity(await RunAsync(antigravity, "-p", "/quota", "--output-format", "json"));
-            board = Replace(board, AntigravityId, parsed, "agy-cli");
+            // agy spends ~10 s of CPU starting up; its limits move slowly, so reuse a fresh reading
+            // instead of spawning it on every 2-minute refresh.
+            if (_antigravityCli is not { } cached || DateTimeOffset.UtcNow - cached.At > AntigravityCliInterval)
+            {
+                var output = await RunAsync(antigravity, "-p", "/usage", "--print-timeout", "20s");
+                var parsed = UsageParsers.ParseAntigravity(output)
+                    ?? UsageParsers.ParseAntigravity(await RunAsync(antigravity, "-p", "/quota", "--output-format", "json"));
+                cached = (DateTimeOffset.UtcNow, parsed);
+                _antigravityCli = cached;
+            }
+
+            board = Replace(board, AntigravityId, cached.Parsed, "agy-cli");
         }
 
         return board;
