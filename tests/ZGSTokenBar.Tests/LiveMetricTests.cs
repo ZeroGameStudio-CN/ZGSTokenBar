@@ -139,7 +139,8 @@ internal static class LiveMetricTests
                 form.SetMiniAreaFromCommand(MiniAreaIds.LiveMetrics, true, null);
                 using var bitmap = new System.Drawing.Bitmap(form.ClientSize.Width, form.ClientSize.Height);
                 form.DrawToBitmap(bitmap, new System.Drawing.Rectangle(System.Drawing.Point.Empty, bitmap.Size));
-                Check(form.ClientSize.Width < expandedWidth, "Output magnitude cannot expand the collapsed slot.");
+                // The glass dock keeps a fixed window width, so collapsing never widens it and magnitude never does either.
+                Check(form.ClientSize.Width <= expandedWidth, "Output magnitude cannot expand the collapsed slot.");
                 bitmap.Save(Path.Combine(directory, $"live-rates-narrow-{(value?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown")}-{dpi}dpi.png"), System.Drawing.Imaging.ImageFormat.Png);
             }
             form.SetLiveOutputRate(new(at, 53.2, 33.2, 20, 2, 1, 4, 0));
