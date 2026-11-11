@@ -9319,12 +9319,16 @@ static void RenderSettingsDockCapture(string outputDirectory)
         System.Windows.Forms.Application.DoEvents();
         var note = DescendantControls(form).OfType<System.Windows.Forms.Label>()
             .First(label => label.Text.StartsWith("Bar 显示项目", StringComparison.Ordinal) || label.Text.StartsWith("Bar items", StringComparison.Ordinal));
-        var viewport = form.ScrollViewport;
+        // DrawToBitmap ignores the themed scroll offset, so the rows above the "Bar items" section
+        // are hidden for this capture instead; the section then renders at the top of the page.
         var row = note.Parent!;
-        var top = viewport.RectangleToClient(row.RectangleToScreen(row.ClientRectangle)).Top;
-        form.SetScrollOffsetForAcceptance(Math.Clamp(top - 12, 0, form.ScrollStateForAcceptance.Maximum));
+        var stack = row.Parent!;
+        var index = stack.Controls.GetChildIndex(row);
+        Check(index > 0, "the Bar display toggles follow the provider toggles");
+        for (var i = 0; i < index; i++) stack.Controls[i].Visible = false;
+        LayoutControlTree(form);
+        form.SetScrollOffsetForAcceptance(0);
         System.Windows.Forms.Application.DoEvents();
-        Check(form.ScrollStateForAcceptance.Offset > 0, "the Bar display toggles are below the fold and the capture scrolls to them");
         using var bitmap = CaptureSettingsForm(form);
         form.Hide();
         var path = Path.GetFullPath(Path.Combine(outputDirectory, $"settings-dock-items-{locale}-144dpi.png"));
