@@ -45,6 +45,13 @@ internal sealed partial class BarForm
                     using (PerfTrace.Measure("probe.collapse")) SetGlassExpanded(false);
                     break;
                 case 2:
+                    if (capture is not null)
+                    {
+                        _systemAnchorIsLive = true;
+                        using (PerfTrace.Measure("probe.rate-hover")) ShowSystemUsagePopover(pinned: false);
+                        SaveProbeImage(capture, "rate-hover.png", FormBitmap(_systemUsagePopover));
+                        HideSystemUsagePopover();
+                    }
                     using (PerfTrace.Measure("probe.router-hover"))
                         RequestPluginPopover(MiniAreaIds.Router, RouterProbeAnchor(), pinned: false);
                     break;

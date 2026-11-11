@@ -509,7 +509,39 @@ internal sealed partial class BarForm : Form
         new(snapshot, pinned, _systemAnchorIsLive)
         {
             Conversations = _systemAnchorIsLive ? LiveConversationRows(snapshot) : null,
+            TodayTokens = _systemAnchorIsLive ? _codexTokenUsage?.TodayTokens : null,
+            HourlyTokens = _systemAnchorIsLive ? HourlyTokens(DateTimeOffset.Now) : null,
         };
+
+    private (DateTimeOffset Hour, CodexTokenUsageSummary? Usage, long[] Buckets)? _hourlyTokensCache;
+
+    /// <summary>
+    /// Tokens per local hour for the last 24 hours from the retained Codex turns (input + output),
+    /// oldest first. Cached per hour and turn count, so hover refreshes cost nothing.
+    /// </summary>
+    private long[] HourlyTokens(DateTimeOffset now)
+    {
+        var hour = new DateTimeOffset(now.Year, now.Month, now.Day, now.Hour, 0, 0, now.Offset);
+        if (_hourlyTokensCache is { } cached && cached.Hour == hour && ReferenceEquals(cached.Usage, _codexTokenUsage))
+            return cached.Buckets;
+        var buckets = BucketHourlyTokens(_codexTokenUsage?.ConversationTurns ?? [], hour);
+        _hourlyTokensCache = (hour, _codexTokenUsage, buckets);
+        return buckets;
+    }
+
+    internal static long[] BucketHourlyTokens(IReadOnlyList<CodexConversationTurn> turns, DateTimeOffset currentHour)
+    {
+        var buckets = new long[24];
+        var start = currentHour.AddHours(-23);
+        foreach (var turn in turns)
+        {
+            if (turn.ObservedAt < start || turn.ObservedAt >= currentHour.AddHours(1)) continue;
+            var index = (int)Math.Floor((turn.ObservedAt - start).TotalHours);
+            if (index is < 0 or > 23) continue;
+            buckets[index] += Math.Max(0, turn.OutputTokens) + Math.Max(0, turn.InputTokens ?? 0);
+        }
+        return buckets;
+    }
 
     /// <summary>Codex conversations joined with their live per-conversation output rates.</summary>
     private IReadOnlyList<CodexConversationTurn> LiveConversationRows(SystemUsageSnapshot snapshot)

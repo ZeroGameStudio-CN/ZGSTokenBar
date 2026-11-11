@@ -10,6 +10,10 @@ internal sealed record SystemUsagePopoverContent(SystemUsageSnapshot Snapshot, b
     /// null hides the section, an empty list shows that no conversation is active.
     /// </summary>
     public IReadOnlyList<CodexConversationTurn>? Conversations { get; init; }
+    /// <summary>Codex tokens counted today (local day), from the token ledger.</summary>
+    public long? TodayTokens { get; init; }
+    /// <summary>Tokens per hour for the last 24 hours (oldest first, current hour last).</summary>
+    public IReadOnlyList<long>? HourlyTokens { get; init; }
 }
 
 internal sealed class SystemUsagePopoverForm : Form
@@ -159,7 +163,7 @@ internal sealed class SystemUsagePopoverForm : Form
             ? active.Length > 0 ? active : conversations.OrderByDescending(turn => turn.ObservedAt).Take(3).ToArray()
             : [];
         _logicalBodyHeight = content.LiveRates
-            ? LiveRateBodyHeight + SessionSectionHeight
+            ? LiveRateBodyHeight + TokenSectionHeight + SessionSectionHeight
             : Math.Clamp(282 + Math.Max(0, _processes.Length - 1) * 18, 282, LogicalBodyHeight);
         _capturedAt = _text.SystemUsageCapturedAt(snapshot.CapturedAt);
         Invalidate();
@@ -168,6 +172,8 @@ internal sealed class SystemUsagePopoverForm : Form
     internal bool LiveRatesContentForAcceptance => _content?.LiveRates == true;
 
     internal int SessionRowCountForAcceptance => _sessions.Length;
+
+    private const int TokenSectionHeight = 100;
 
     private int SessionSectionHeight => !_sessionsVisible ? 0
         : SessionHeaderHeight + Math.Max(1, _sessions.Length) * SessionRowHeight + 8;
@@ -432,12 +438,26 @@ internal sealed class SystemUsagePopoverForm : Form
         TextAt(live?.Generating.ToString() ?? "—", _metricValueFont, primary, 114, 170, 28, 14, StringAlignment.Far);
         TextAt(live?.Tools.ToString() ?? "—", _metricValueFont, primary, 248, 170, 28, 14, StringAlignment.Far);
 
+        // Today's tokens and the last 24 hours, hour by hour (UiKit area curve; never on the bar itself).
+        Panel(206, TokenSectionHeight - 8);
+        TextAt(zh ? "今日 Token" : "Today tokens", _metricLabelFont, muted, 24, 215, 120, 13);
+        TextAt(_content?.TodayTokens is { } today ? NativeText.FormatTokenCount(today) : "—", _metricValueFont, primary, 150, 213, 126, 16, StringAlignment.Far);
+        var hourly = _content?.HourlyTokens;
+        var peak = hourly is { Count: > 0 } ? hourly.Max() : 0;
+        TextAt(zh ? "近 24 小时 · 每小时" : "Last 24 h · hourly", _subtitleFont, muted, 24, 231, 150, 12);
+        TextAt(peak > 0 ? (zh ? $"峰值 {NativeText.FormatTokenCount(peak)}/时" : $"peak {NativeText.FormatTokenCount(peak)}/h") : "",
+            _subtitleFont, muted, 150, 231, 126, 12, StringAlignment.Far);
+        DrawHourlyCurve(graphics, At(24, 247, 252, 38), hourly);
+        TextAt("-24h", _subtitleFont, muted, 24, 287, 60, 11);
+        TextAt(zh ? "现在" : "now", _subtitleFont, muted, 216, 287, 60, 11, StringAlignment.Far);
+        dy = TokenSectionHeight;
+
         if (_sessionsVisible)
         {
             var height = SessionSectionHeight - 8;
             Panel(206, height);
             DrawSessions(graphics, At(12, 206, body.Width - 24, height), primary, muted);
-            dy = SessionSectionHeight;
+            dy += SessionSectionHeight;
         }
 
         Panel(206, 58);
@@ -471,6 +491,36 @@ internal sealed class SystemUsagePopoverForm : Form
             _subtitleFont, muted, 190, 372, 94, 12, StringAlignment.Far);
         TextAt(zh ? "流量仅统计 Bar 运行时 · 与 Token 独立" : "Traffic while Bar runs · independent of tokens", _subtitleFont, muted, 16, 389, 210, 12);
         TextAt(snapshot.CapturedAt.ToLocalTime().ToString("HH:mm:ss"), _subtitleFont, muted, 230, 389, 54, 12, StringAlignment.Far);
+    }
+
+    /// <summary>Area curve of hourly tokens: shared accent, faint baseline, the current hour marked.</summary>
+    internal static void DrawHourlyCurve(Graphics graphics, RectangleF bounds, IReadOnlyList<long>? hourly)
+    {
+        using (var baseline = new Pen(UiPalette.Slate500.WithAlpha(60), 1))
+            graphics.DrawLine(baseline, bounds.Left, bounds.Bottom - .5f, bounds.Right, bounds.Bottom - .5f);
+        if (hourly is not { Count: > 1 }) return;
+        var peak = Math.Max(1, hourly.Max());
+        var step = bounds.Width / (hourly.Count - 1);
+        var points = hourly.Select((value, index) => new PointF(
+            bounds.Left + index * step,
+            bounds.Bottom - 1 - (float)(value / (double)peak) * (bounds.Height - 3))).ToArray();
+        var smoothing = graphics.SmoothingMode;
+        graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        using (var area = new System.Drawing.Drawing2D.GraphicsPath())
+        {
+            area.AddLine(bounds.Left, bounds.Bottom, points[0].X, points[0].Y);
+            area.AddCurve(points, .35f);
+            area.AddLine(points[^1].X, points[^1].Y, bounds.Right, bounds.Bottom);
+            area.CloseFigure();
+            using var fill = new System.Drawing.Drawing2D.LinearGradientBrush(bounds, UiTokens.Accent.WithAlpha(90), UiTokens.Accent.WithAlpha(8),
+                System.Drawing.Drawing2D.LinearGradientMode.Vertical);
+            graphics.FillPath(fill, area);
+        }
+        using (var line = new Pen(UiTokens.Accent, 1.5f) { LineJoin = System.Drawing.Drawing2D.LineJoin.Round })
+            graphics.DrawCurve(line, points, .35f);
+        using (var dot = new SolidBrush(UiTokens.TextStrong))
+            graphics.FillEllipse(dot, points[^1].X - 2.5f, points[^1].Y - 2.5f, 5, 5);
+        graphics.SmoothingMode = smoothing;
     }
 
     /// <summary>
