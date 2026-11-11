@@ -39,9 +39,6 @@ internal sealed partial class BarForm
                     if (capture is not null)
                     {
                         SaveProbeImage(capture, "bar-expanded.png", RenderGlassBitmap());
-                        using (PerfTrace.Measure("probe.visibility-open")) ShowDockVisibilityPopover(QuotaTargetScreenBounds(_glassVisibilityBounds));
-                        SaveProbeImage(capture, "dock-visibility.png", FormBitmap(_dockVisibilityPopover));
-                        HideDockVisibilityPopover();
                     }
                     using (PerfTrace.Measure("probe.collapse")) SetGlassExpanded(false);
                     break;
@@ -74,7 +71,7 @@ internal sealed partial class BarForm
     }
 
     /// <summary>Raised by the probe to run the real Settings dialog save path (open, Save, close).</summary>
-    internal event EventHandler? ProbeSettingsSaveRequested;
+    internal event EventHandler<bool>? ProbeSettingsSaveRequested;
 
     /// <summary>
     /// Stability phase of the probe: a synthetic left click (down/up at one point, as the mouse
@@ -100,13 +97,22 @@ internal sealed partial class BarForm
             case 2: NoteProbeState("click+0.7s"); HidePopovers(); return true;
             case 3: NoteProbeState("click+1.4s"); return true;
             case 4:
-                using (PerfTrace.Measure("probe.settings-save")) ProbeSettingsSaveRequested?.Invoke(this, EventArgs.Empty);
+                using (PerfTrace.Measure("probe.settings-save")) ProbeSettingsSaveRequested?.Invoke(this, false);
                 NoteProbeState("save+0");
                 return true;
             case 5: NoteProbeState("save+0.7s"); return true;
             case 6: NoteProbeState("save+1.4s"); return true;
             case 7: NoteProbeState("save+2.1s"); return true;
             case 8: NoteProbeState("save+2.8s"); return true;
+            case 9:
+                using (PerfTrace.Measure("probe.settings-edit")) ProbeSettingsSaveRequested?.Invoke(this, true);
+                NoteProbeState("edit+0");
+                return true;
+            case 10: NoteProbeState("edit+0.7s"); return true;
+            case 11: NoteProbeState("edit+1.4s"); return true;
+            case 12: return true;
+            case 13: NoteProbeState("restore+0.7s"); return true;
+            case 14: NoteProbeState("restore+1.4s"); return true;
             default: return false;
         }
     }

@@ -254,6 +254,7 @@ internal sealed partial class BarForm : Form
         _showSystemMetrics = settings.IsPluginEnabled("zgstokenbar.metrics.system", true);
         _glassMaxRings = NormalizeGlassMax(settings.GlassDockMaxRings);
         _hiddenDockItems = new HashSet<string>(AppSettings.CopyHiddenDockItems(settings.HiddenDockItems), StringComparer.Ordinal);
+        _glassExpanded = settings.GlassDockExpanded;
         _animationsEnabled = settings.EnableAnimations && SystemInformation.IsMenuAnimationEnabled;
         _radarProviders = settings.EnableRadar
             ? new HashSet<ProviderKind>(radarProviders ?? [])
@@ -262,8 +263,6 @@ internal sealed partial class BarForm : Form
         _radarResetTimer.Tick += (_, _) => RefreshRadarResetClock();
         _popoverHoverTimer.Tick += (_, _) => ShowHoveredPopover();
         _popoverStateTimer.Tick += (_, _) => MonitorPopover();
-        _glassChipTimer.Tick += (_, _) => HandleGlassChipHoverTick();
-        _glassCollapseTimer.Tick += (_, _) => HandleGlassCollapseTick();
         _shellSettleTimer.Tick += (_, _) =>
         {
             _shellSettleTimer.Stop();
@@ -513,6 +512,7 @@ internal sealed partial class BarForm : Form
             Conversations = _systemAnchorIsLive ? LiveConversationRows(snapshot) : null,
             TodayTokens = _systemAnchorIsLive ? _codexTokenUsage?.TodayTokens : null,
             HourlyTokens = _systemAnchorIsLive ? HourlyTokens(DateTimeOffset.Now) : null,
+            Cache = _systemAnchorIsLive && _codexTokenUsage is { } usage ? CacheStats(usage, DateTimeOffset.Now) : null,
         };
 
     private (DateTimeOffset Hour, CodexTokenUsageSummary? Usage, long[] Buckets)? _hourlyTokensCache;
@@ -529,6 +529,19 @@ internal sealed partial class BarForm : Form
         var buckets = BucketHourlyTokens(_codexTokenUsage?.ConversationTurns ?? [], hour);
         _hourlyTokensCache = (hour, _codexTokenUsage, buckets);
         return buckets;
+    }
+
+    /// <summary>Today's prompt-cache read/write (ledger read, retained turns' writes) and hit rates.</summary>
+    internal static TokenCacheStats CacheStats(CodexTokenUsageSummary usage, DateTimeOffset now)
+    {
+        var today = now.Date;
+        long? write = null;
+        foreach (var turn in usage.ConversationTurns)
+        {
+            if (turn.ObservedAt.ToOffset(now.Offset).Date != today || turn.CacheWriteInputTokens is not { } tokens) continue;
+            write = (write ?? 0) + Math.Max(0, tokens);
+        }
+        return new TokenCacheStats(usage.TodayCachedInputTokens, write, usage.TodayCacheHitPercent, usage.TotalCacheHitPercent);
     }
 
     internal static long[] BucketHourlyTokens(IReadOnlyList<CodexConversationTurn> turns, DateTimeOffset currentHour)
@@ -641,6 +654,7 @@ internal sealed partial class BarForm : Form
         _showSystemMetrics = settings.IsPluginEnabled("zgstokenbar.metrics.system", true);
         _glassMaxRings = NormalizeGlassMax(settings.GlassDockMaxRings);
         _hiddenDockItems = new HashSet<string>(AppSettings.CopyHiddenDockItems(settings.HiddenDockItems), StringComparer.Ordinal);
+        _glassExpanded = settings.GlassDockExpanded;
         _placementCoordinator.Reload(settings);
         WindowPlacementActivation? activation = null;
         if (_placementCoordinator.ActiveTopology is { } topology)
@@ -684,6 +698,41 @@ internal sealed partial class BarForm : Form
         if (activation?.MigrationCommit is { } migration) PlacementCommitted?.Invoke(this, migration);
         RefreshHintPopover();
         Invalidate();
+        ScheduleEmbedHealthCheck("settings");
+    }
+
+    internal string? ProbeFirstDockItemId => BuildGlassItems().Select(item => item.Id).FirstOrDefault(id => !_hiddenDockItems.Contains(id));
+
+    private System.Windows.Forms.Timer? _embedHealthTimer;
+
+    /// <summary>
+    /// After a settings apply (or a click), re-verify the embedded window a moment later: still a
+    /// visible child of the taskbar, raised above Explorer's content, and showing a fresh frame.
+    /// </summary>
+    private void ScheduleEmbedHealthCheck(string reason)
+    {
+        if (_renderOnly || IsDisposed) return;
+        _embedHealthTimer ??= new System.Windows.Forms.Timer { Interval = 450 };
+        _embedHealthTimer.Stop();
+        _embedHealthTimer.Tag = reason;
+        _embedHealthTimer.Tick -= EmbedHealthTick;
+        _embedHealthTimer.Tick += EmbedHealthTick;
+        _embedHealthTimer.Start();
+    }
+
+    private void EmbedHealthTick(object? sender, EventArgs e)
+    {
+        _embedHealthTimer?.Stop();
+        if (IsDisposed || !IsHandleCreated || _hiddenToTray) return;
+        var reason = _embedHealthTimer?.Tag as string ?? "";
+        if (_taskbarDocked && !Visible && !TaskbarPlacement.ShouldHideForFullscreen()) Show();
+        if (_embedRequested && _taskbarDocked && !_taskbarDragging)
+        {
+            if (_embedParent == 0 || TaskbarEmbedding.ParentOf(Handle) != _embedParent) SyncTaskbarPlacement();
+            else TaskbarEmbedding.RaiseChild(Handle);
+        }
+        if (GlassLayered) { _glassFrameSize = Size.Empty; QueueGlassRender(); }
+        PerfTrace.Note($"embed.health {reason} visible={Visible} embedded={EmbeddedInTaskbar} status={TaskbarEmbedStatus}");
     }
 
     private static bool IsEscapeDown() => (GetAsyncKeyState(VkEscape) & 0x8000) != 0;
@@ -720,8 +769,6 @@ internal sealed partial class BarForm : Form
             _radarPopover?.Dispose();
             _systemUsagePopover?.Dispose();
             _glassMenu?.Dispose();
-            _glassChipTimer.Dispose();
-            _glassCollapseTimer.Dispose();
             foreach (var icon in _glassIcons.Values) icon?.Dispose();
             _titleFont.Dispose();
             _subtitleFont.Dispose();

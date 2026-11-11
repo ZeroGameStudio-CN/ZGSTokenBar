@@ -50,8 +50,7 @@ internal sealed record GlassDockScene(
     GlassRingStyle RingStyle = GlassRingStyle.IconPercentBelow,
     float IconRingSize = GlassDockPainter.DefaultIconRingSize,
     float LabelSize = GlassDockPainter.DefaultLabelSize,
-    GlassPercentPosition PercentPosition = GlassPercentPosition.BottomLeft,
-    bool VisibilityHovered = false);
+    GlassPercentPosition PercentPosition = GlassPercentPosition.BottomLeft);
 
 internal static class GlassDockPainter
 {
@@ -77,11 +76,6 @@ internal static class GlassDockPainter
         for (var index = 0; index < scene.Plan.Slots.Count; index++)
         {
             var slot = scene.Plan.Slots[index];
-            if (slot.Visibility)
-            {
-                DrawVisibilityChip(graphics, slot.Bounds, scene);
-                continue;
-            }
             if (slot.Chip)
             {
                 DrawChip(graphics, slot.Bounds, scene);
@@ -544,35 +538,6 @@ internal static class GlassDockPainter
         if (scene.Expanded || !scene.Plan.OverflowUrgent) return;
         using var dot = new SolidBrush(Color.FromArgb(255, 80, 80));
         graphics.FillEllipse(dot, rect.Right - 5, rect.Top - 1, 6, 6);
-    }
-
-    /// <summary>The show/hide chip at the end of the expanded overflow: the same pill with an eye glyph.</summary>
-    private static void DrawVisibilityChip(Graphics graphics, Rectangle bounds, GlassDockScene scene)
-    {
-        var light = scene.Light;
-        var rect = new RectangleF(bounds.X, bounds.Y, bounds.Width, bounds.Height);
-        using (var path = Rounded(rect, rect.Height / 2))
-        using (var fill = new SolidBrush(scene.VisibilityHovered
-            ? light ? UiPalette.Slate900.WithAlpha(70) : Color.FromArgb(70, 255, 255, 255)
-            : light ? UiPalette.Slate900.WithAlpha(34) : Color.FromArgb(36, 255, 255, 255)))
-        {
-            graphics.FillPath(fill, path);
-        }
-        var ink = light ? UiPalette.Slate900.WithAlpha(235) : Color.FromArgb(240, 255, 255, 255);
-        var cx = rect.X + rect.Width / 2f;
-        var cy = rect.Y + rect.Height / 2f;
-        var w = Math.Min(rect.Width - 4, 11f);
-        var h = w * .62f;
-        using var pen = new Pen(ink, 1.3f) { LineJoin = LineJoin.Round };
-        using (var eye = new GraphicsPath())
-        {
-            eye.AddBezier(cx - w / 2, cy, cx - w / 4, cy - h, cx + w / 4, cy - h, cx + w / 2, cy);
-            eye.AddBezier(cx + w / 2, cy, cx + w / 4, cy + h, cx - w / 4, cy + h, cx - w / 2, cy);
-            eye.CloseFigure();
-            graphics.DrawPath(pen, eye);
-        }
-        using var pupil = new SolidBrush(ink);
-        graphics.FillEllipse(pupil, cx - 1.8f, cy - 1.8f, 3.6f, 3.6f);
     }
 
     /// <summary>The four classic system metrics as labelled rows: CPU, RAM, I/O (disk) and GPU.</summary>

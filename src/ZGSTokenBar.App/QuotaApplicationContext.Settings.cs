@@ -27,7 +27,8 @@ internal sealed partial class QuotaApplicationContext
         var dialog = new SettingsForm(
             _settings,
             _bar.DeviceDpi,
-            plugins: pluginStatuses);
+            plugins: pluginStatuses,
+            dockItems: _bar.DockVisibilityEntries());
         _settingsDialog = dialog;
         dialog.RadarTestNotificationRequested += (_, _) => ShowRadarTestNotification();
         dialog.FormClosed += SettingsDialogClosed;
@@ -47,13 +48,51 @@ internal sealed partial class QuotaApplicationContext
         }
     }
 
-    /// <summary>Perf/stability probe: open the real dialog and press Save without edits.</summary>
-    private void ProbeSettingsSave()
+    /// <summary>The Settings "Save" path: persist, apply to the bar, sync plugins, refresh.</summary>
+    private void ApplySavedSettings(AppSettings nextSettings)
     {
-        OpenSettings();
-        if (_settingsDialog is not { IsDisposed: false } dialog) return;
-        PerfTrace.Note($"probe.settings-open location={dialog.Location} size={dialog.Size} loaded={dialog.LoadedBoundsForProbe}");
-        dialog.SaveForProbe();
+        nextSettings.CopyPlacementStateFrom(_settings);
+        nextSettings.CopyMiniAreaLayoutsFrom(_settings);
+        nextSettings.GlassDockExpanded = _settings.GlassDockExpanded;
+        if (!TrySaveSettings(nextSettings, true)) return;
+        var localeOnlyChange = IsLocaleOnlyChange(_settings, nextSettings);
+        ApplySettingsSnapshot(nextSettings);
+        _ = SyncPluginEnablementAsync();
+        if (!localeOnlyChange)
+        {
+            _ = RefreshAsync();
+            if (_settings.EnableRadarAlerts) _ = RefreshRadarAsync();
+        }
+    }
+
+    /// <summary>
+    /// Perf/stability probe. First: open the real dialog and press Save without edits. Second:
+    /// save a layout-changing edit (hide the first dock item), then restore the original settings.
+    /// </summary>
+    private void ProbeSettingsSave(bool layoutChange)
+    {
+        if (!layoutChange)
+        {
+            OpenSettings();
+            if (_settingsDialog is not { IsDisposed: false } dialog) return;
+            PerfTrace.Note($"probe.settings-open location={dialog.Location} size={dialog.Size} loaded={dialog.LoadedBoundsForProbe}");
+            dialog.SaveForProbe();
+            return;
+        }
+        if (!_store.TryLoad(out var original) || !_store.TryLoad(out var edited)) return;
+        var first = _bar.ProbeFirstDockItemId;
+        if (first is null) return;
+        edited.HiddenDockItems = [.. AppSettings.CopyHiddenDockItems(edited.HiddenDockItems), first];
+        PerfTrace.Note($"probe.settings-edit hide={first}");
+        ApplySavedSettings(edited);
+        var restore = new System.Windows.Forms.Timer { Interval = 2100 };
+        restore.Tick += (_, _) =>
+        {
+            restore.Stop(); restore.Dispose();
+            ApplySavedSettings(original);
+            PerfTrace.Note("probe.settings-restored");
+        };
+        restore.Start();
     }
 
     private void SettingsDialogClosed(object? sender, FormClosedEventArgs eventArgs)
@@ -63,18 +102,7 @@ internal sealed partial class QuotaApplicationContext
         try
         {
             if (_quitting || dialog.DialogResult != DialogResult.OK || dialog.ResultSettings is null) return;
-            var nextSettings = dialog.ResultSettings;
-            nextSettings.CopyPlacementStateFrom(_settings);
-            nextSettings.CopyMiniAreaLayoutsFrom(_settings);
-            if (!TrySaveSettings(nextSettings, true)) return;
-            var localeOnlyChange = IsLocaleOnlyChange(_settings, nextSettings);
-            ApplySettingsSnapshot(nextSettings);
-            _ = SyncPluginEnablementAsync();
-            if (!localeOnlyChange)
-            {
-                _ = RefreshAsync();
-                if (_settings.EnableRadarAlerts) _ = RefreshRadarAsync();
-            }
+            ApplySavedSettings(dialog.ResultSettings);
         }
         finally
         {
@@ -199,20 +227,11 @@ internal sealed partial class QuotaApplicationContext
         }
     }
 
-    private void SaveHiddenDockItems()
+    private void SaveGlassExpanded(bool expanded)
     {
-        if (_quitting) return;
-        var previous = AppSettings.CopyHiddenDockItems(_settings.HiddenDockItems);
-        _settings.HiddenDockItems = AppSettings.CopyHiddenDockItems(_bar.HiddenDockItems);
-        if (!TrySaveSettings(_settings))
-        {
-            _settings.HiddenDockItems = previous;
-            _bar.SetHiddenDockItems(previous);
-        }
-        else if (!previous.SequenceEqual(_settings.HiddenDockItems, StringComparer.Ordinal))
-        {
-            _uiRevision++;
-        }
+        if (_quitting || _settings.GlassDockExpanded == expanded) return;
+        _settings.GlassDockExpanded = expanded;
+        if (!TrySaveSettings(_settings)) _settings.GlassDockExpanded = !expanded;
     }
 
     private void SaveMiniAreaOrder()

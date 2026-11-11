@@ -14,7 +14,11 @@ internal sealed record SystemUsagePopoverContent(SystemUsageSnapshot Snapshot, b
     public long? TodayTokens { get; init; }
     /// <summary>Tokens per hour for the last 24 hours (oldest first, current hour last).</summary>
     public IReadOnlyList<long>? HourlyTokens { get; init; }
+    /// <summary>Prompt-cache figures: today's read/write tokens and hit rates (today, all retained).</summary>
+    public TokenCacheStats? Cache { get; init; }
 }
+
+internal sealed record TokenCacheStats(long? TodayRead, long? TodayWrite, double? TodayHitPercent, double? TotalHitPercent);
 
 internal sealed class SystemUsagePopoverForm : Form
 {
@@ -51,8 +55,8 @@ internal sealed class SystemUsagePopoverForm : Form
     private CodexConversationTurn[] _sessions = [];
     private bool _sessionsVisible;
     private bool _sessionsRecent;
-    private const int MaximumSessionRows = 6;
-    private const int SessionRowHeight = 34;
+    private const int MaximumSessionRows = 5;
+    private const int SessionRowHeight = 48;
     private const int SessionHeaderHeight = 30;
     private NativeText _text = NativeText.For("zh-CN");
     private PopoverTailSide _tailSide = PopoverTailSide.Bottom;
@@ -173,7 +177,7 @@ internal sealed class SystemUsagePopoverForm : Form
 
     internal int SessionRowCountForAcceptance => _sessions.Length;
 
-    private const int TokenSectionHeight = 100;
+    private const int TokenSectionHeight = 122;
 
     private int SessionSectionHeight => !_sessionsVisible ? 0
         : SessionHeaderHeight + Math.Max(1, _sessions.Length) * SessionRowHeight + 8;
@@ -450,6 +454,14 @@ internal sealed class SystemUsagePopoverForm : Form
         DrawHourlyCurve(graphics, At(24, 247, 252, 38), hourly);
         TextAt("-24h", _subtitleFont, muted, 24, 287, 60, 11);
         TextAt(zh ? "现在" : "now", _subtitleFont, muted, 216, 287, 60, 11, StringAlignment.Far);
+        // Prompt cache: today's read / write tokens and the hit rate (today, then all retained).
+        var cache = _content?.Cache;
+        TextAt(zh ? "缓存" : "Cache", _metricLabelFont, muted, 24, 305, 40, 13);
+        TextAt((zh ? "读 " : "read ") + Tokens(cache?.TodayRead) + (zh ? " · 写 " : " · write ") + Tokens(cache?.TodayWrite),
+            _subtitleFont, primary, 64, 306, 120, 12);
+        TextAt((zh ? "命中 " : "hit ") + NativeText.FormatCacheHitPercent(cache?.TodayHitPercent)
+                + (zh ? " · 总 " : " · all ") + NativeText.FormatCacheHitPercent(cache?.TotalHitPercent),
+            _subtitleFont, primary, 176, 306, 100, 12, StringAlignment.Far);
         dy = TokenSectionHeight;
 
         if (_sessionsVisible)
@@ -492,6 +504,8 @@ internal sealed class SystemUsagePopoverForm : Form
         TextAt(zh ? "流量仅统计 Bar 运行时 · 与 Token 独立" : "Traffic while Bar runs · independent of tokens", _subtitleFont, muted, 16, 389, 210, 12);
         TextAt(snapshot.CapturedAt.ToLocalTime().ToString("HH:mm:ss"), _subtitleFont, muted, 230, 389, 54, 12, StringAlignment.Far);
     }
+
+    private static string Tokens(long? value) => value is { } tokens ? NativeText.FormatTokenCount(tokens) : "—";
 
     /// <summary>Area curve of hourly tokens: shared accent, faint baseline, the current hour marked.</summary>
     internal static void DrawHourlyCurve(Graphics graphics, RectangleF bounds, IReadOnlyList<long>? hourly)
@@ -574,12 +588,18 @@ internal sealed class SystemUsagePopoverForm : Form
                 _text.CodexTurnTime(turn),
             }.Where(part => !string.IsNullOrWhiteSpace(part)));
             graphics.DrawString(meta, _subtitleFont, muted,
-                new RectangleF(panel.X + 21, top + 17, panel.Width - 128, 13), trimmed);
+                new RectangleF(panel.X + 21, top + 17, panel.Width - 33, 13), trimmed);
+            // Third line: tokens, whole-turn speed, time to first token and prompt-cache hit rate.
             var output = !turn.UsageComplete && turn.OutputTokens == 0 ? "—"
                 : NativeText.FormatTokenCount(turn.OutputTokens) + (turn.UsageComplete ? "" : "+");
-            var average = turn.OutputTokensPerSecond is { } speed && double.IsFinite(speed) ? $" · ≈{speed:0.#}/s" : "";
-            DrawString(graphics, (zh ? "输出 " : "out ") + output + average, _subtitleFont, muted,
-                new RectangleF(panel.Right - 116, top + 17, 104, 13), StringAlignment.Far);
+            var input = turn.InputTokens is { } prompt ? NativeText.FormatTokenCount(prompt) : "—";
+            var average = turn.OutputTokensPerSecond is { } speed && double.IsFinite(speed) ? $"{speed:0.#}/s" : "—";
+            var first = turn.FirstTokenSeconds is { } seconds ? $"{seconds:0.0}s" : "—";
+            var stats = zh
+                ? $"Token {input}→{output} · 均速 {average} · 首字 {first} · 缓存 {NativeText.FormatCacheHitPercent(turn.CacheHitPercent)}"
+                : $"Tok {input}→{output} · avg {average} · TTFT {first} · cache {NativeText.FormatCacheHitPercent(turn.CacheHitPercent)}";
+            graphics.DrawString(stats, _subtitleFont, primary,
+                new RectangleF(panel.X + 21, top + 31, panel.Width - 33, 13), trimmed);
         }
     }
 

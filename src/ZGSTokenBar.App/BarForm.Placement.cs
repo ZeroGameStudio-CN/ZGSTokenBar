@@ -534,6 +534,7 @@ internal sealed partial class BarForm
             // A plain click never detaches any more; if something did, put the bar straight back
             // into the taskbar instead of leaving a top-level window behind it until the watchdog.
             if (_embedRequested && _embedParent == 0 && _taskbarDocked && IsHandleCreated && Visible) SyncTaskbarPlacement();
+            ScheduleEmbedHealthCheck("click");
             return;
         }
 

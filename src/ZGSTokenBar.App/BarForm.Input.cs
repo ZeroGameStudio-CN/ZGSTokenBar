@@ -30,22 +30,13 @@ internal sealed partial class BarForm
         var logical = ToLogical(e.Location);
         if (_glassDock)
         {
-            _glassLeftAt = null;
             var onChip = !_glassChipBounds.IsEmpty && _glassChipBounds.Contains(logical);
             if (onChip != _glassChipHovered)
             {
                 _glassChipHovered = onChip;
-                if (onChip && !_glassExpanded) _glassChipTimer.Start();
-                else _glassChipTimer.Stop();
                 Invalidate();
             }
-            var onVisibility = !_glassVisibilityBounds.IsEmpty && _glassVisibilityBounds.Contains(logical);
-            if (onVisibility != _glassVisibilityHovered)
-            {
-                _glassVisibilityHovered = onVisibility;
-                Invalidate();
-            }
-            if (onChip || onVisibility)
+            if (onChip)
             {
                 UpdateSystemUsageHover(false);
                 UpdateRadarHover(null);
@@ -177,13 +168,6 @@ internal sealed partial class BarForm
         if (_glassDock)
         {
             _glassChipHovered = false;
-            _glassVisibilityHovered = false;
-            _glassChipTimer.Stop();
-            if (_glassExpanded)
-            {
-                _glassLeftAt = DateTime.UtcNow;
-                _glassCollapseTimer.Start();
-            }
         }
         EnsureAnimationTimer();
         Invalidate();
@@ -209,9 +193,8 @@ internal sealed partial class BarForm
             BeginMiniAreaReorder(reorderTarget, e.Location);
             return;
         }
-        // The overflow and show/hide chips are buttons: pressing them never starts a bar drag
-        // (which used to detach the bar from the taskbar and re-embed it on release).
-        if (_glassDock && (_glassChipBounds.Contains(logical) || _glassVisibilityBounds.Contains(logical))) return;
+        // The overflow chip is a button: pressing it never starts a bar drag.
+        if (_glassDock && _glassChipBounds.Contains(logical)) return;
         var pressedTarget = ControlTargetAt(logical);
         if (pressedTarget != HoverTarget.None)
         {
@@ -316,20 +299,9 @@ internal sealed partial class BarForm
         if (e.Button != MouseButtons.Left) return;
         if (DateTime.UtcNow <= _suppressClickUntil) return;
         var logical = ToLogical(e.Location);
-        if (_glassDock && !_glassVisibilityBounds.IsEmpty && _glassVisibilityBounds.Contains(logical))
-        {
-            if (_dockVisibilityPopover?.Visible == true) HideDockVisibilityPopover();
-            else ShowDockVisibilityPopover(QuotaTargetScreenBounds(_glassVisibilityBounds));
-            return;
-        }
         if (_glassDock && !_glassChipBounds.IsEmpty && _glassChipBounds.Contains(logical))
         {
-            // The hover timer may already have opened the overflow under this very click; the
-            // click then confirms it instead of snapping it shut again.
-            var hoverOpenedJustNow = _glassExpanded && _glassHoverExpandedAt is { } at
-                && DateTime.UtcNow - at < TimeSpan.FromMilliseconds(1200);
-            if (!hoverOpenedJustNow) SetGlassExpanded(!_glassExpanded);
-            _glassHoverExpandedAt = null;
+            SetGlassExpanded(!_glassExpanded, notify: true);
             return;
         }
         if (TaskbarReorderTargetAt(logical) is not null) return;

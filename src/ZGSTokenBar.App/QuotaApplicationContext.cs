@@ -138,7 +138,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
             : null);
         _bar.RefreshRequested += (_, _) => _ = RefreshAsync(userInitiated: true);
         _bar.SettingsRequested += (_, _) => OpenSettings();
-        _bar.ProbeSettingsSaveRequested += (_, _) => ProbeSettingsSave();
+        _bar.ProbeSettingsSaveRequested += (_, layoutChange) => ProbeSettingsSave(layoutChange);
         _bar.OverviewRequested += (_, _) => _otherToolsModule.ShowOverview();
         _bar.PlacementCommitted += (_, commit) => SavePlacement(commit);
         _bar.RadarPreviewRequested += (_, request) =>
@@ -146,7 +146,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _bar.SystemUsageDetailsRequested += (_, _) => _ = RefreshSystemUsageDetailsAsync();
         _bar.MiniAreaLayoutChanged += (_, _) => SaveMiniAreaLayout();
         _bar.MiniAreaOrderChanged += (_, _) => SaveMiniAreaOrder();
-        _bar.DockItemVisibilityChanged += (_, _) => SaveHiddenDockItems();
+        _bar.GlassExpandedChanged += (_, expanded) => SaveGlassExpanded(expanded);
         _bar.RadarModelGroupsChanged += (_, _) => SaveRadarModelGroups();
         _bar.FormClosing += BarFormClosing;
         _bar.FormClosed += (_, _) => Quit();

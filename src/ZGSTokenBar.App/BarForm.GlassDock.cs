@@ -14,21 +14,15 @@ internal sealed partial class BarForm
     private ContextMenuStrip? _glassMenu;
     private bool _glassExpanded;
     private bool _glassChipHovered;
-    private bool _glassVisibilityHovered;
     private bool _glassRenderQueued;
     private byte[] _glassFrame = [];
     private byte[] _glassFrameScratch = [];
     private Size _glassFrameSize;
     private RectangleF _glassChipBounds;
-    private RectangleF _glassVisibilityBounds;
     /// <summary>When the hover timer (not a click) opened the overflow; a click right after keeps it open.</summary>
-    private DateTime? _glassHoverExpandedAt;
     private HashSet<string> _hiddenDockItems = new(StringComparer.Ordinal);
-    private DockVisibilityPopoverForm? _dockVisibilityPopover;
-    public event EventHandler<DockItemVisibilityChange>? DockItemVisibilityChanged;
-    private DateTime? _glassLeftAt;
-    private readonly System.Windows.Forms.Timer _glassChipTimer = new() { Interval = 320 };
-    private readonly System.Windows.Forms.Timer _glassCollapseTimer = new() { Interval = 200 };
+    /// <summary>Raised when the user expands or collapses the overflow, so the state is saved.</summary>
+    public event EventHandler<bool>? GlassExpandedChanged;
     private readonly Dictionary<string, Image?> _glassIcons = new(StringComparer.Ordinal);
     private bool GlassLayered => _glassDock && !_renderOnly;
 
@@ -233,7 +227,6 @@ internal sealed partial class BarForm
         _refreshBounds = RectangleF.Empty;
         _settingsBounds = RectangleF.Empty;
         _glassChipBounds = RectangleF.Empty;
-        _glassVisibilityBounds = RectangleF.Empty;
         var width = plan.Width;
         var visuals = new List<GlassDockItemVisual>(items.Count);
         var itemIndex = 0;
@@ -241,11 +234,6 @@ internal sealed partial class BarForm
         {
             var slot = plan.Slots[index];
             RectangleF bounds = slot.Bounds;
-            if (slot.Visibility)
-            {
-                _glassVisibilityBounds = RectangleF.Inflate(bounds, 2, 6);
-                continue;
-            }
             if (slot.Chip)
             {
                 _glassChipBounds = RectangleF.Inflate(bounds, 2, 6);
@@ -293,61 +281,21 @@ internal sealed partial class BarForm
             _hoverSystemUsage && !_systemAnchorIsLive,
             _systemUsage.CurrentOutputRate,
             _systemUsage.CurrentOutputRate is not null && _systemUsage.LiveRate?.HasEstimate == true,
-            _hoverSystemUsage && _systemAnchorIsLive)
-        {
-            VisibilityHovered = _glassVisibilityHovered,
-        };
+            _hoverSystemUsage && _systemAnchorIsLive);
         GlassDockPainter.Draw(graphics, scene, _badgeFont);
     }
 
-    private void SetGlassExpanded(bool expanded, bool byHover = false)
+    /// <summary>Expands or collapses the overflow. Only a click changes it; the state persists.</summary>
+    private void SetGlassExpanded(bool expanded, bool notify = false)
     {
-        _glassChipTimer.Stop();
         if (_glassExpanded == expanded) return;
         _glassExpanded = expanded;
-        _glassHoverExpandedAt = expanded && byHover ? DateTime.UtcNow : null;
-        if (!expanded) HideDockVisibilityPopover();
-        if (expanded)
-        {
-            _glassLeftAt = null;
-            _glassCollapseTimer.Start();
-        }
-        else _glassCollapseTimer.Stop();
         using var total = PerfTrace.Measure(expanded ? "glass.expand" : "glass.collapse");
         using (PerfTrace.Measure("glass.expand.hide-popovers")) HidePopovers();
         using (PerfTrace.Measure("glass.expand.layout")) ApplySnapshotLayout();
         Invalidate();
+        if (notify) GlassExpandedChanged?.Invoke(this, expanded);
         if (PerfTrace.Enabled) BeginInvoke(() => PerfTrace.Note("glass.expand.first-frame-posted"));
-    }
-
-    private void HandleGlassChipHoverTick()
-    {
-        _glassChipTimer.Stop();
-        if (!_glassChipHovered || _glassExpanded || _taskbarDragging) return;
-        if (!QuotaTargetScreenBounds(_glassChipBounds).Contains(Cursor.Position)) return;
-        SetGlassExpanded(true, byHover: true);
-    }
-
-    private void HandleGlassCollapseTick()
-    {
-        if (!_glassExpanded)
-        {
-            _glassCollapseTimer.Stop();
-            return;
-        }
-        var cursor = Cursor.Position;
-        var overPopover = (_quotaPopover?.Visible == true && _quotaPopover.Bounds.Contains(cursor))
-            || (_pluginPopover?.Visible == true && _pluginPopover.Bounds.Contains(cursor))
-            || (_hintPopover?.Visible == true && _hintPopover.Bounds.Contains(cursor))
-            || (_systemUsagePopover?.Visible == true && _systemUsagePopover.Bounds.Contains(cursor))
-            || (_dockVisibilityPopover?.Visible == true);
-        if (ScreenBounds.Contains(cursor) || overPopover || _popoverPinned)
-        {
-            _glassLeftAt = null;
-            return;
-        }
-        _glassLeftAt ??= DateTime.UtcNow;
-        if (DateTime.UtcNow - _glassLeftAt >= TimeSpan.FromMilliseconds(700)) SetGlassExpanded(false);
     }
 
     private void QueueGlassRender()
@@ -423,7 +371,7 @@ internal sealed partial class BarForm
         _glassMenu.Items.Add(_text.IsChinese ? "刷新" : "Refresh", null, (_, _) => RefreshRequested?.Invoke(this, EventArgs.Empty));
         _glassMenu.Items.Add(_text.IsChinese ? "设置" : "Settings", null, (_, _) => SettingsRequested?.Invoke(this, EventArgs.Empty));
         _glassMenu.Items.Add(_text.IsChinese ? "用量面板" : "Usage panel", null, (_, _) => OverviewRequested?.Invoke(this, EventArgs.Empty));
-        _glassMenu.Items.Add(_text.IsChinese ? "显示/隐藏项目…" : "Show/hide items…", null, (_, _) => ShowDockVisibilityPopover(ScreenBounds));
+        _glassMenu.Items.Add(_text.IsChinese ? "显示/隐藏项目（设置）…" : "Show/hide items (Settings)…", null, (_, _) => SettingsRequested?.Invoke(this, EventArgs.Empty));
         _glassMenu.Show(this, location);
     }
 }

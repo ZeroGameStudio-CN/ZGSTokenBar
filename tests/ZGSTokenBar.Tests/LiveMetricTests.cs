@@ -95,7 +95,7 @@ internal static class LiveMetricTests
 
         popover.UpdateContent(new SystemUsagePopoverContent(snapshot, false, true), text);
         Check(popover.LiveRatesContentForAcceptance, "Rate hover switches to the live surface mode.");
-        Check(popover.CurrentLogicalBodyHeight <= 520,
+        Check(popover.CurrentLogicalBodyHeight <= 540,
             "Rates, today's token curve and cumulative history fit in a single unscrolled page.");
         Check(popover.MetricLabelsForAcceptance.Contains("合计输出")
             && popover.MetricLabelsForAcceptance.Contains("网络接收")

@@ -393,12 +393,12 @@ public static class UsageProviderFixtureTests
         Check(limited.Visible.Count == 2 && limited.OverflowCount == 10 && limited.Width == GlassDockLayout.WidthFor(2, true), "ring limit is configurable");
         var expanded = GlassDockLayout.PlanExpanded(many);
         Check(expanded.Visible.Count == 12 && expanded.OverflowCount == 0 && expanded.Width == GlassDockLayout.ExpandedWidthFor(12)
-            && expanded.Slots[^1] is { Chip: true, Visibility: true }, "+N expands to every ring and ends with the show/hide chip");
+            && expanded.Slots[^1].Chip && expanded.Slots.Count(slot => slot.Chip) == 1, "+N expands to every ring and ends with the collapse chip");
         var collapsedFour = GlassDockLayout.Plan(many);
         var lead = collapsedFour.Visible.Count;
-        Check(expanded.Slots[lead] is { Chip: true, Visibility: false } && expanded.Slots[lead].Bounds == collapsedFour.Slots[^1].Bounds
-            && expanded.Slots.Take(lead).Select(slot => slot.Bounds).SequenceEqual(collapsedFour.Slots.Take(lead).Select(slot => slot.Bounds)),
-            "expanding keeps the collapsed rings and the chip in place under the cursor");
+        Check(expanded.Slots.Take(lead).Select(slot => slot.Bounds).SequenceEqual(collapsedFour.Slots.Take(lead).Select(slot => slot.Bounds))
+            && expanded.Slots[^1].Bounds.Left > expanded.Slots[^2].Bounds.Right,
+            "expanding keeps the collapsed rings in place and moves the collapse chip to the far right");
         Check(GlassDockLayout.RingSweep(4) >= 22f && GlassDockLayout.RingSweep(0) == 0f && GlassDockLayout.RingSweep(null) == 0f && GlassDockLayout.PercentText(4.4) == "4%", "small remaining stays legible");
         Check(GlassDockLayout.Band(19) == "red" && GlassDockLayout.Band(20) == "amber" && GlassDockLayout.Band(50) == "amber" && GlassDockLayout.Band(51) == "green", "quota bands");
         var quota = GlassDockComposer.FromQuota(

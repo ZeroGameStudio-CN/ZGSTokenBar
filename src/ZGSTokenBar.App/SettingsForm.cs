@@ -47,7 +47,8 @@ internal sealed class SettingsForm : Form
     private readonly ToggleSwitch _antigravity;
     /// <summary>On/off for the other built-in usage providers (Cursor, Copilot, keyed APIs), by provider id.</summary>
     private readonly Dictionary<string, ToggleSwitch> _usageProviderToggles = new(StringComparer.Ordinal);
-    private readonly ToggleSwitch? _restoreHiddenDockItems;
+    /// <summary>Show-on-Bar switch per dock ring (provider or account), in dock order.</summary>
+    private readonly List<(DockVisibilityEntry Entry, ToggleSwitch Toggle)> _dockItemToggles = [];
     private readonly ToggleSwitch _codexLocalUsage;
     private readonly ToggleSwitch _sub2ApiPool;
     private readonly ToggleSwitch _openAtLogin;
@@ -88,7 +89,8 @@ internal sealed class SettingsForm : Form
         int targetDpi,
         bool renderOnly = false,
         Rectangle? renderWorkingArea = null,
-        IReadOnlyList<PluginStatus>? plugins = null)
+        IReadOnlyList<PluginStatus>? plugins = null,
+        IReadOnlyList<DockVisibilityEntry>? dockItems = null)
     {
         if (!renderOnly && renderWorkingArea is not null)
         {
@@ -196,9 +198,10 @@ internal sealed class SettingsForm : Form
                 UsageProviderHint(definition.DisplayName),
                 settings.IsPluginEnabled(definition.Id, true)));
         }
-        if (settings.HiddenDockItems.Length > 0)
+        foreach (var entry in dockItems ?? [])
         {
-            _restoreHiddenDockItems = CreateToggle(HiddenDockItemsTitle(settings.HiddenDockItems.Length), HiddenDockItemsHint, true);
+            var title = entry.Detail is { Length: > 0 } detail ? $"{entry.Title} · {detail}" : entry.Title;
+            _dockItemToggles.Add((entry, CreateToggle(title, DockItemHint, !settings.HiddenDockItems.Contains(entry.Id, StringComparer.Ordinal))));
         }
         _codexLocalUsage = CreateToggle(
             _text.CodexLocalUsageModule,
@@ -329,7 +332,7 @@ internal sealed class SettingsForm : Form
         _grok.CheckedChanged += (_, _) => RefreshDirtyState();
         _antigravity.CheckedChanged += (_, _) => RefreshDirtyState();
         foreach (var toggle in _usageProviderToggles.Values) toggle.CheckedChanged += (_, _) => RefreshDirtyState();
-        if (_restoreHiddenDockItems is not null) _restoreHiddenDockItems.CheckedChanged += (_, _) => RefreshDirtyState();
+        foreach (var (_, toggle) in _dockItemToggles) toggle.CheckedChanged += (_, _) => RefreshDirtyState();
         _codexLocalUsage.CheckedChanged += (_, _) =>
         {
             if (!_updatingCodexDependency && _codex.Checked)
@@ -505,10 +508,16 @@ internal sealed class SettingsForm : Form
             var name = UsageProviderRegistry.Find(id)?.Definition.DisplayName ?? id;
             providers.Add(new ToggleSettingRow(toggle, name, UsageProviderHint(name), _theme, _scale));
         }
-        if (_restoreHiddenDockItems is not null)
+        if (_dockItemToggles.Count > 0)
         {
-            providers.Add(new ToggleSettingRow(_restoreHiddenDockItems, HiddenDockItemsTitle(_original.HiddenDockItems.Length),
-                HiddenDockItemsHint, _theme, _scale));
+            providers.Add(new SectionNote(_text.IsChinese
+                ? "Bar 显示项目：逐个开关某个服务或账号是否显示在 Bar 上（只影响显示，不停止读取）。"
+                : "Bar items: choose which services or accounts appear on the Bar (display only; reading continues).", _theme, _scale));
+            foreach (var (entry, toggle) in _dockItemToggles)
+            {
+                var title = entry.Detail is { Length: > 0 } detail ? $"{entry.Title} · {detail}" : entry.Title;
+                providers.Add(new ToggleSettingRow(toggle, title, DockItemHint, _theme, _scale));
+            }
         }
         providers.Add(new ToggleSettingRow(
             _codexLocalUsage,
@@ -758,11 +767,15 @@ internal sealed class SettingsForm : Form
         ? $"读取本机 {name} 登录或密钥的额度；关闭后不再读取，也不显示在 Bar 上"
         : $"Reads the local {name} sign-in or key; off stops reading it and hides it from the Bar";
 
-    private string HiddenDockItemsTitle(int count) => _text.IsChinese ? $"保持隐藏 {count} 个 Bar 项目" : $"Keep {count} Bar item(s) hidden";
+    private string DockItemHint => _text.IsChinese ? "在 Bar 上显示" : "Show on the Bar";
 
-    private string HiddenDockItemsHint => _text.IsChinese
-        ? "单个账号可在 Bar 的 +N 展开后点眼睛图标开关；关闭此项可一次恢复全部"
-        : "Toggle single accounts from the eye chip after expanding +N on the Bar; turn this off to show them all again";
+    /// <summary>Hidden ids: items switched off here, plus hidden ids not listed (e.g. a disabled provider).</summary>
+    private string[] BuildHiddenDockItems()
+    {
+        var listed = _dockItemToggles.Select(item => item.Entry.Id).ToHashSet(StringComparer.Ordinal);
+        return AppSettings.CopyHiddenDockItems(_original.HiddenDockItems.Where(id => !listed.Contains(id))
+            .Concat(_dockItemToggles.Where(item => !item.Toggle.Checked).Select(item => item.Entry.Id)));
+    }
 
     private ToggleSwitch CreateToggle(string name, string description, bool value) => new(_theme, _scale)
     {
@@ -962,7 +975,8 @@ internal sealed class SettingsForm : Form
             EnableSub2ApiPool = _codex.Checked && _sub2ApiPool.Checked,
             MiniAreaLayouts = AppSettings.CopyMiniAreaLayouts(_original.MiniAreaLayouts),
             MiniAreaOrder = AppSettings.CopyMiniAreaOrder(_original.MiniAreaOrder),
-            HiddenDockItems = _restoreHiddenDockItems is { Checked: false } ? [] : AppSettings.CopyHiddenDockItems(_original.HiddenDockItems),
+            HiddenDockItems = BuildHiddenDockItems(),
+            GlassDockExpanded = _original.GlassDockExpanded,
             RadarModelGroups = AppSettings.CopyRadarModelGroups(_original.RadarModelGroups),
             CodexMiniDisplayMode = (_codexDisplayMode.SelectedItem as CodexMiniDisplayModeChoice)?.Mode
                 ?? _original.CodexMiniDisplayMode,
@@ -1056,6 +1070,7 @@ internal sealed class SettingsForm : Form
             MiniAreaLayouts = AppSettings.CopyMiniAreaLayouts(settings.MiniAreaLayouts),
             MiniAreaOrder = AppSettings.CopyMiniAreaOrder(settings.MiniAreaOrder),
             HiddenDockItems = AppSettings.CopyHiddenDockItems(settings.HiddenDockItems),
+            GlassDockExpanded = settings.GlassDockExpanded,
             RadarModelGroups = AppSettings.CopyRadarModelGroups(settings.RadarModelGroups),
             CodexMiniDisplayMode = CodexMiniDisplayModes.Normalize(settings.CodexMiniDisplayMode),
             BackgroundPalette = AppSettings.NormalizeBackgroundPalette(settings.BackgroundPalette),
