@@ -71,6 +71,16 @@ internal sealed partial class BarForm
 
     private bool _embedWatchdogWired;
 
+    /// <summary>
+    /// Re-parenting and the style swap can drop a layered window's last frame; forget the
+    /// unchanged-frame shortcut so the next render hands the pixels to the window again.
+    /// </summary>
+    private void RepushLayeredFrame()
+    {
+        _glassFrameSize = Size.Empty;
+        if (GlassLayered) QueueGlassRender();
+    }
+
     /// <summary>Called from the docked placement path right before the bar is positioned.</summary>
     private void EnsureTaskbarEmbedding(string? resolvedMonitor)
     {
@@ -116,6 +126,7 @@ internal sealed partial class BarForm
         _embedHungTicks = 0;
         TaskbarEmbedStatus = "embedded";
         TaskbarPlacement.InvalidateCache();
+        RepushLayeredFrame();
         // Popovers already shown with the bar as owner keep that owner; drop them so the next
         // hover recreates them owner-less.
         HidePopovers();
@@ -129,6 +140,7 @@ internal sealed partial class BarForm
         _embedOriginalStyle = null;
         TaskbarEmbedStatus = _embedRequested ? "fallback:" + reason : "off";
         TaskbarPlacement.InvalidateCache();
+        RepushLayeredFrame();
         if (IsHandleCreated && Visible && _taskbarDocked && !_taskbarDragging) SyncTaskbarPlacement();
     }
 
