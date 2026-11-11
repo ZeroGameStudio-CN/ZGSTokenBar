@@ -420,6 +420,7 @@ internal sealed partial class BarForm
         if (_hintPopover?.Visible == true || _hoverHintTarget != HoverTarget.None) HideHintPopover();
         if (_systemUsagePopover?.Visible == true || _hoverSystemUsage) HideSystemUsagePopover();
         if (_radarPopover?.Visible == true || _hoverRadarTarget is not null) HideRadarPopover();
+        using var trace = PerfTrace.Measure("quota-popover.open");
         _quotaPopover ??= new QuotaPopoverForm();
         _quotaPopover.ApplyTheme(_backgroundTheme);
         var anchor = QuotaTargetScreenBounds(target.Bounds);

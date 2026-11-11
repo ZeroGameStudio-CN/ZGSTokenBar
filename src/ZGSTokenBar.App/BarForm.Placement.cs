@@ -25,6 +25,7 @@ internal sealed partial class BarForm
             }
             return;
         }
+        using var probe = PerfTrace.Measure("placement.probe");
         if (TaskbarPlacement.ShouldHideForFullscreen())
         {
             _taskbarPlacementMisses = 0;
@@ -71,9 +72,10 @@ internal sealed partial class BarForm
             _resolvedTaskbarMonitor = resolvedMonitor;
             if (WindowState != FormWindowState.Normal) WindowState = FormWindowState.Normal;
             if (!Visible) Show();
-            EnsureTaskbarEmbedding(resolvedMonitor);
-            if (!TaskbarPlacement.ShowAt(Handle, location, placementSize) && !EmbeddedInTaskbar) Location = location;
-            RepositionPopovers();
+            using (PerfTrace.Measure("placement.embed")) EnsureTaskbarEmbedding(resolvedMonitor);
+            using (PerfTrace.Measure("placement.show-at"))
+                if (!TaskbarPlacement.ShowAt(Handle, location, placementSize) && !EmbeddedInTaskbar) Location = location;
+            using (PerfTrace.Measure("placement.reposition-popovers")) RepositionPopovers();
             return;
         }
 

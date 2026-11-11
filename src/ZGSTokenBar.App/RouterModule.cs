@@ -36,11 +36,13 @@ internal sealed class RouterModule : IDisposable
         if (request.PluginId != RouterPlugin.Id || !_enabled()) return;
         if (_window is null || _window.IsDisposed)
         {
+            using var create = PerfTrace.Measure("router.panel.create");
             _window = new RouterMonitorForm();
             _window.PinChanged += (_, pinned) => _bar.PinPluginPopover(pinned);
             _window.CloseRequested += (_, _) => _bar.HidePluginPopover();
         }
-        _window.ShowFor(_bar, request.Anchor, request.Pinned, request.Scale, request.Theme);
+        using (PerfTrace.Measure("router.panel.show"))
+            _window.ShowFor(_bar, request.Anchor, request.Pinned, request.Scale, request.Theme);
         request.Popup = _window;
     }
     public void SetVisible(bool visible)

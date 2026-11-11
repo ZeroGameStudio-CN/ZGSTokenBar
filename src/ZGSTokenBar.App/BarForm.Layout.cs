@@ -234,10 +234,11 @@ internal sealed partial class BarForm
                 _visibleTaskbarAreas.Select(TaskbarAreaWidth)
                     .ToArray(),
                 _hiddenCardCount > 0);
-        ClientSize = new Size(Scale(miniLogicalWidth), Scale(TaskbarMiniLayoutMath.Height));
-        UpdateWindowRegion();
+        using (PerfTrace.Measure("layout.client-size")) ClientSize = new Size(Scale(miniLogicalWidth), Scale(TaskbarMiniLayoutMath.Height));
+        using (PerfTrace.Measure("layout.region")) UpdateWindowRegion();
         if (!_renderOnly && updatePlacement)
         {
+            using var placement = PerfTrace.Measure("layout.placement");
             if (_taskbarDocked)
             {
                 if (_resizingMiniAreaId is null) SyncTaskbarPlacement();

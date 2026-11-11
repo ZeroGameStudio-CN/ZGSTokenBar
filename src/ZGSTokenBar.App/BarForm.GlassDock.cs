@@ -285,9 +285,11 @@ internal sealed partial class BarForm
             _glassCollapseTimer.Start();
         }
         else _glassCollapseTimer.Stop();
-        HidePopovers();
-        ApplySnapshotLayout();
+        using var total = PerfTrace.Measure(expanded ? "glass.expand" : "glass.collapse");
+        using (PerfTrace.Measure("glass.expand.hide-popovers")) HidePopovers();
+        using (PerfTrace.Measure("glass.expand.layout")) ApplySnapshotLayout();
         Invalidate();
+        if (PerfTrace.Enabled) BeginInvoke(() => PerfTrace.Note("glass.expand.first-frame-posted"));
     }
 
     private void HandleGlassChipHoverTick()
@@ -334,6 +336,7 @@ internal sealed partial class BarForm
     {
         _glassRenderQueued = false;
         if (!IsHandleCreated || IsDisposed || ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
+        using var trace = PerfTrace.Measure("glass.render");
         using var bitmap = new Bitmap(ClientSize.Width, ClientSize.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
         using (var graphics = Graphics.FromImage(bitmap))
         {
@@ -353,8 +356,14 @@ internal sealed partial class BarForm
         // Most ticks repaint identical pixels; skipping the HBITMAP/UpdateLayeredWindow round trip
         // for unchanged frames removes the bulk of the bar's idle kernel time.
         if (!CaptureGlassFrame(bitmap)) return;
-        if (!LayeredWindow.Update(Handle, bitmap)) _glassFrameSize = Size.Empty;
+        using (PerfTrace.Measure("glass.render.update-layered"))
+            if (!LayeredWindow.Update(Handle, bitmap)) _glassFrameSize = Size.Empty;
+        if (PerfTrace.Enabled)
+            PerfTrace.Note($"glass.bounds chip={Rectangle.Round(ScaleRect(_glassChipBounds))} router={Rectangle.Round(ScaleRect(GlassDockLayout.RouterBoundsFor(CurrentGlassPlan().Width)))} client={ClientSize}");
     }
+
+    private RectangleF ScaleRect(RectangleF logical) =>
+        new(logical.X * _scale, logical.Y * _scale, logical.Width * _scale, logical.Height * _scale);
 
     /// <summary>Returns true when the rendered frame differs from the last one handed to the window.</summary>
     private bool CaptureGlassFrame(Bitmap bitmap)
