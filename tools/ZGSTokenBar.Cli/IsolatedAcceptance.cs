@@ -668,7 +668,6 @@ internal static class IsolatedAcceptance
                         "accent.fixture",
                         [new("fixture.value", new("integer", Integer: 42))]),
                 ],
-                [],
                 []));
         }
     }

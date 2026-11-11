@@ -4,4 +4,4 @@ Enabled ZGSTokenBar Providers read local Claude, Codex, and DeepSeek Harness cre
 
 Include the affected version, reproduction steps, relevant files or requests, and redacted logs. Never attach tokens, complete credential files, conversation contents, or personal paths.
 
-The supported security posture is: no telemetry, no cloud sync, no separate credential backup, atomic credential refresh, credential-bound balance caches, disabled-provider network isolation, and an opt-in credential-free Radar feed.
+The supported security posture is: no telemetry, no cloud sync, no separate credential backup, atomic credential refresh, credential-bound balance caches, and disabled-provider network isolation.
