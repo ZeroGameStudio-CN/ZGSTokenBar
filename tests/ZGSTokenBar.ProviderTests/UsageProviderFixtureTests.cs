@@ -154,6 +154,19 @@ public static class UsageProviderFixtureTests
         Check(copilotPeriod is { Kind: "quota-reset", Source: "quota_reset_date" }, "copilot quota reset date");
         var gemini = UsageParsers.ParseAntigravity("""{"buckets":[{"model":"Gemini Models","remainingFraction":0.25,"resetTime":"2026-11-14T17:41:52Z"}]}""");
         Check(gemini?.Windows[0].UsedPercent == 75, "antigravity json fraction");
+        var envelope = UsageParsers.ParseAntigravity("""
+            {"status":"SUCCESS","response":"Gemini Models\tWeekly Limit Remaining\t100%\t2026-11-16T15:46:23Z\n","command":{"name":"usage","data":{"groups":[
+             {"name":"Gemini Models","buckets":[{"name":"Weekly Limit Remaining","window":"weekly","remaining_fraction":1,"reset_time":"2026-11-16T15:46:23Z"},
+               {"name":"Five Hour Limit Remaining","window":"5h","remaining_fraction":1,"reset_time":"2026-11-11T18:25:53Z"}]},
+             {"name":"Claude and GPT models","buckets":[{"name":"Weekly Limit Remaining","window":"weekly","remaining_fraction":0.036091599613428116,"reset_time":"2026-11-16T15:42:01Z"},
+               {"name":"Five Hour Limit Remaining","window":"5h","remaining_fraction":1,"reset_time":"2026-11-11T18:25:53Z"}]},
+             {"name":"Gemini 4 Argon","buckets":[{"name":"Gemini 4 Argon Weekly Limit","window":"weekly","remaining_fraction":1,"reset_time":"2026-11-16T15:41:46Z"}]}]}}}
+            """);
+        var claudeWeekly = envelope?.Windows.FirstOrDefault(window => window.Id == "Claude and GPT models · 7d" && window.Label == "Claude/GPT · 7d");
+        Check(envelope?.Windows.Count == 5 && claudeWeekly is { UsedPercent: > 96.3 and < 96.5 }
+            && claudeWeekly.ResetsAt == DateTimeOffset.Parse("2026-11-16T15:42:01Z"), "agy JSON envelope keeps exact fractions and resets per window");
+        Check(UsageParsers.ParseAntigravity("""{"response":"Gemini Models\tWeekly Limit Remaining\t40%\t2026-11-16T15:46:23Z\n"}""")?.Windows[0].UsedPercent == 60,
+            "agy JSON envelope falls back to its text table");
     }
 
     private static void VerifyLedger()

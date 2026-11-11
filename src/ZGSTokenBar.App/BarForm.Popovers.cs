@@ -1,4 +1,5 @@
 using System.Drawing.Drawing2D;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using ZGSTokenBar.Core;
 using ZGSTokenBar.PluginSdk;
@@ -457,16 +458,31 @@ internal sealed partial class BarForm
         Directory.CreateDirectory(directory);
         var now = DateTimeOffset.UtcNow;
         var written = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var values = new System.Text.StringBuilder();
+        static string Time(DateTimeOffset? value) => value?.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture) ?? "-";
         foreach (var item in items)
         {
             var name = item.Card!.Provider == ProviderKind.Codex ? "codex" : item.Ring.ProviderId.Split('.', ':').Last();
-            if (!written.Add(name)) continue;
             var hint = item.Card.AccountHint;
             var card = hint?.Contains('@') == true ? item.Card with { AccountHint = CodexAccountFormatting.MaskEmail(hint) } : item.Card;
             var target = new MiniQuotaTarget(RectangleF.Empty, card, item.Window!, null, item.Logo);
+            var content = QuotaPopoverContentFor(target, pinned: false, now);
+            // Values the ring and hover show, for checking against the provider's own numbers. No
+            // account identifiers or secrets: the account is its ordinal only.
+            var pace = _text.QuotaPace(content.Pace?.ForDisplay(now), now, content.Window.ResetsAt);
+            values.Append(CultureInfo.InvariantCulture, $"[{name}#{item.Ring.AccountNumber}] ring={item.Ring.RemainingPercent?.ToString("0.##", CultureInfo.InvariantCulture) ?? "-"}% ringReset={Time(item.Ring.ResetsAt)} plan={content.Card.Badge ?? "-"} captured={Time(content.CapturedAt)}\n");
+            values.Append(CultureInfo.InvariantCulture, $"  headline={content.Window.Label} used={content.Window.UsedPercent?.ToString("0.##", CultureInfo.InvariantCulture) ?? "-"} reset={Time(content.Window.ResetsAt)}\n");
+            foreach (var window in content.Card.Windows)
+            {
+                values.Append(CultureInfo.InvariantCulture, $"  window {window.Label} used={window.UsedPercent?.ToString("0.##", CultureInfo.InvariantCulture) ?? "-"} reset={Time(window.ResetsAt)} duration={window.Duration}\n");
+            }
+            values.Append(CultureInfo.InvariantCulture, $"  credits={(content.Card.Credits is { } credits ? $"has={credits.HasCredits} unlimited={credits.Unlimited} balance={credits.Balance?.ToString(CultureInfo.InvariantCulture) ?? "-"}" : "-")}\n");
+            values.Append(CultureInfo.InvariantCulture, $"  subscription={(content.Card.Subscription is { } period ? $"start={Time(period.Start)} end={Time(period.End)} kind={period.Kind} source={period.Source}" : "-")}\n");
+            values.Append(CultureInfo.InvariantCulture, $"  pace={content.Pace?.Status.ToString() ?? "-"} \"{pace.Left}\" \"{pace.Right}\"\n");
+            if (!written.Add(name)) continue;
             using var popover = new QuotaPopoverForm();
             using var bitmap = popover.RenderForTest(
-                QuotaPopoverContentFor(target, pinned: false, now) with { Card = card },
+                content,
                 _text,
                 item.Logo ?? ProviderLogo(card.Provider),
                 _resetClockIcon,
@@ -474,6 +490,7 @@ internal sealed partial class BarForm
                 now);
             bitmap.Save(Path.Combine(directory, $"hover-{name}.png"), System.Drawing.Imaging.ImageFormat.Png);
         }
+        File.WriteAllText(Path.Combine(directory, "hover-values.txt"), values.ToString());
         File.WriteAllText(Path.Combine(directory, "hover-done.txt"), string.Join(",", written));
     }
 

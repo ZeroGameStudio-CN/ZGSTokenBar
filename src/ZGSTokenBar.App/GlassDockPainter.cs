@@ -102,7 +102,11 @@ internal static class GlassDockPainter
         if (scene.RouterHovered) DrawHover(graphics, RectangleF.Inflate(routerBounds, 3, 3), scene.Light);
         if (scene.Router is { } router)
         {
-            RouterCardRenderer.Draw(graphics, routerBounds, router, badgeFont, collapsed: true);
+            // The queue count is the same chip as the ring %: same size, and in the corner layout the
+            // same baseline as the ring chips, on the Router icon's lower-left.
+            var corner = scene.RingStyle == GlassRingStyle.IconPercentBelow && scene.PercentPosition == GlassPercentPosition.BottomLeft;
+            var chip = new RouterQueueChip(scene.LabelSize, corner ? (GlassDockLayout.Height + scene.IconRingSize) / 2f + 2.5f : null, scene.Light);
+            RouterCardRenderer.Draw(graphics, routerBounds, router, badgeFont, collapsed: true, queueChip: chip);
         }
 
         var barsBounds = GlassDockLayout.BarsBoundsFor(scene.Width);
@@ -243,19 +247,26 @@ internal static class GlassDockPainter
 
         if (ring.AccountNumber > 0)
         {
-            var corner = below && !stacked;
-            var badgeSide = corner ? 10.5f : below ? 11f : 12f;
-            var badge = corner
-                ? new RectangleF(Math.Max(ringBounds.Right - badgeSide + 2f, float.IsNaN(chipRight) ? 0f : chipRight - 1.5f), ringBounds.Bottom - badgeSide + 2.5f, badgeSide, badgeSide)
-                : new RectangleF(ringBounds.Right - badgeSide + .5f, ringBounds.Bottom - badgeSide + 1.5f, badgeSide, badgeSide);
-            using var badgeFill = new SolidBrush(light ? UiPalette.Slate800 : UiPalette.Slate100);
-            using var badgeEdge = new Pen(Separator(light), 1.4f);
-            graphics.FillEllipse(badgeFill, badge);
-            graphics.DrawEllipse(badgeEdge, badge);
-            using var badgeFont = new Font("Segoe UI", below ? 7.5f : 8f, FontStyle.Bold, GraphicsUnit.Pixel);
-            using var badgeText = new SolidBrush(light ? Color.White : UiPalette.Slate900);
-            DrawCentered(graphics, ring.AccountNumber.ToString(CultureInfo.InvariantCulture), badgeFont, badgeText, RectangleF.Inflate(badge, 1, 0));
+            // The account index is the same chip as the % (font size, translucent fill, outline,
+            // baseline); it sits on the ring's lower-right and slides right to clear the % chip.
+            var index = ring.AccountNumber.ToString(CultureInfo.InvariantCulture);
+            var width = ChipWidth(graphics, index, labelSize);
+            var left = Math.Max(ringBounds.Right - width + 2f, float.IsNaN(chipRight) ? 0f : chipRight - 1.5f);
+            DrawChip(graphics, left, ringBounds.Bottom + 2.5f, index, labelSize, critical: false, light);
         }
+    }
+
+    /// <summary>Width of a corner chip holding <paramref name="text"/> at <paramref name="labelSize"/>.</summary>
+    internal static float ChipWidth(Graphics graphics, string text, float labelSize)
+    {
+        var number = text.EndsWith('%') ? text[..^1] : text;
+        var hasSign = text.EndsWith('%') && number.Length > 0;
+        using var format = new StringFormat(StringFormat.GenericTypographic) { FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces };
+        using var numberFont = new Font("Segoe UI", labelSize, FontStyle.Bold, GraphicsUnit.Pixel);
+        using var signFont = new Font("Segoe UI", Math.Max(6.5f, labelSize * .66f), FontStyle.Bold, GraphicsUnit.Pixel);
+        var numberWidth = graphics.MeasureString(number, numberFont, PointF.Empty, format).Width;
+        var signWidth = hasSign ? graphics.MeasureString("%", signFont, PointF.Empty, format).Width + .2f : 0f;
+        return numberWidth + signWidth + 4.5f;
     }
 
     /// <summary>Look of the corner % chip; <see cref="ChipStyle"/> holds the shipped one.</summary>
@@ -285,8 +296,18 @@ internal static class GlassDockPainter
     private static void DrawCornerPercent(Graphics graphics, Rectangle slot, RectangleF ringBounds, string text,
         float labelSize, bool hasBadge, bool critical, bool light, out float chipRight)
     {
+        chipRight = DrawChip(graphics, Math.Max(8f, slot.X - 1.5f), ringBounds.Bottom + 2.5f, text, labelSize, critical, light).Right;
+    }
+
+    /// <summary>
+    /// The one small-number chip of the dock: ring %, account index and Router queue count all use
+    /// it, so they share font size, translucent fill, outline and text shadow. <paramref name="bottom"/>
+    /// is the chip's lower edge; the chip grows with its text from <paramref name="left"/>.
+    /// </summary>
+    internal static RectangleF DrawChip(Graphics graphics, float left, float bottom, string text,
+        float labelSize, bool critical, bool light)
+    {
         var style = ChipStyle;
-        var left = Math.Max(8f, slot.X - 1.5f);
         var number = text.EndsWith('%') ? text[..^1] : text;
         var hasSign = text.EndsWith('%') && number.Length > 0;
         using var format = new StringFormat(StringFormat.GenericTypographic) { FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces };
@@ -296,8 +317,7 @@ internal static class GlassDockPainter
         var signWidth = hasSign ? graphics.MeasureString("%", signFont, PointF.Empty, format).Width + .2f : 0f;
         var height = Math.Max(11.5f, labelSize + 1.5f);
         var width = numberWidth + signWidth + 4.5f;
-        var pill = new RectangleF(left, ringBounds.Bottom - height + 2.5f, width, height);
-        chipRight = pill.Right;
+        var pill = new RectangleF(left, bottom - height, width, height);
         using (var path = Rounded(pill, height / 2f))
         {
             var fill = critical && style.CriticalFill is { } criticalFill
@@ -336,6 +356,7 @@ internal static class GlassDockPainter
         using var inkBrush = new SolidBrush(ink);
         graphics.DrawString(number, numberFont, inkBrush, x, numberTop, format);
         if (hasSign) graphics.DrawString("%", signFont, inkBrush, x + numberWidth + .2f, signTop, format);
+        return pill;
     }
 
     /// <summary>Bold number with a smaller % sign, centred as one unit inside the ring.</summary>

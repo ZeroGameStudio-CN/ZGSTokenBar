@@ -426,6 +426,7 @@ public static class UsageParsers
         using (document)
         {
             var root = document.RootElement;
+            if (root.ValueKind == JsonValueKind.Object && AntigravityEnvelope(root) is { } envelope) return envelope;
             var array = root.ValueKind == JsonValueKind.Array
                 ? root
                 : root.ArrayProperty("buckets")
@@ -463,6 +464,52 @@ public static class UsageParsers
 
             return windows.Count == 0 ? null : new UsageParseResult(OrderAntigravity(windows).ToArray(), null, [], null, null);
         }
+    }
+
+    /// <summary>
+    /// agy's JSON output (<c>agy -p /usage --output-format json</c>) wraps the same table: exact
+    /// <c>remaining_fraction</c> buckets under <c>command.data.groups</c> plus the rounded text in
+    /// <c>response</c>. The buckets win (agy rounds 3.6% to "4%"); the text is the fallback.
+    /// </summary>
+    private static UsageParseResult? AntigravityEnvelope(JsonElement root)
+    {
+        var groups = root.ObjectProperty("command") is { } command && command.ObjectProperty("data") is { } data
+            ? data.ArrayProperty("groups")
+            : root.ArrayProperty("groups");
+        if (groups is { } list)
+        {
+            var windows = new List<UsageWindow>();
+            foreach (var group in list.EnumerateArray())
+            {
+                if (group.ValueKind != JsonValueKind.Object || group.StringProperty("name") is not { Length: > 0 } name) continue;
+                if (group.ArrayProperty("buckets") is not { } buckets) continue;
+                foreach (var bucket in buckets.EnumerateArray())
+                {
+                    if (bucket.ValueKind != JsonValueKind.Object) continue;
+                    var kind = bucket.StringProperty("window") switch
+                    {
+                        "weekly" => (" · 7d", TimeSpan.FromDays(7)),
+                        "5h" => (" · 5h", TimeSpan.FromHours(5)),
+                        _ => AntigravityWindow(bucket.StringProperty("name") ?? string.Empty),
+                    };
+                    if (kind is not var (suffix, duration)) continue;
+                    if (Number(bucket, "remaining_fraction", "remainingFraction") is not { } fraction || !double.IsFinite(fraction)) continue;
+                    var remaining = fraction <= 1 ? fraction * 100 : fraction;
+                    windows.Add(new UsageWindow(
+                        name + suffix,
+                        AntigravityGroup(name) + suffix,
+                        JsonSupport.ClampPercent(100 - remaining),
+                        Time(bucket, "reset_time", "resetTime"),
+                        duration));
+                }
+            }
+
+            if (windows.Count > 0) return new UsageParseResult(OrderAntigravity(windows).Take(8).ToArray(), null, [], null, null);
+        }
+
+        return root.StringProperty("response") is { Length: > 0 } text && !text.TrimStart().StartsWith('{')
+            ? ParseAntigravity(text)
+            : null;
     }
 
     private static bool TryLegacyRemaining(JsonElement payload, out UsageParseResult? result)

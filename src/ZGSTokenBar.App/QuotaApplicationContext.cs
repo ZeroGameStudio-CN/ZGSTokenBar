@@ -111,6 +111,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
             _snapshot,
             codexAccounts: _codexAccounts,
             activeProviders: _activeProviders);
+        _bar.UsageBoardChanged += (_, board) => ObserveUsagePace(board);
         _otherToolsModule = new OtherToolsModule(_bar, ApplyGenericPluginCards);
         _bar.SetQuotaPaceEstimates(QuotaPaceEstimates(_snapshot, now));
         _bar.SetCodexQuotaTokenSummaries(CodexQuotaTokenSummaries(now));

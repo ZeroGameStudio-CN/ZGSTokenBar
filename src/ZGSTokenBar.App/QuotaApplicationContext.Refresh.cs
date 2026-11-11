@@ -304,7 +304,7 @@ internal sealed partial class QuotaApplicationContext
         DateTimeOffset now)
     {
         var estimates = new Dictionary<string, QuotaPaceEstimate>(StringComparer.Ordinal);
-        foreach (var card in snapshot.Cards)
+        foreach (var card in snapshot.Cards.Concat(_usagePaceCards))
         {
             foreach (var window in card.Windows)
             {
@@ -313,6 +313,44 @@ internal sealed partial class QuotaApplicationContext
             }
         }
         return estimates;
+    }
+
+    private IReadOnlyList<QuotaCard> _usagePaceCards = [];
+
+    /// <summary>
+    /// Samples every usage-board window (Grok, Antigravity, Cursor, …) into the same persisted pace
+    /// tracker Codex and Claude use, so their shared hover shows the same "at reset" / "runs out"
+    /// projection rows. Claude and Codex are skipped: their native snapshot already feeds the tracker.
+    /// </summary>
+    private void ObserveUsagePace(UsageBoard board)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var cards = new List<QuotaCard>();
+        foreach (var provider in board.Providers)
+        {
+            if (provider.ProviderId is UsageProviderIds.Claude or UsageProviderIds.Codex) continue;
+            foreach (var account in provider.Accounts)
+            {
+                if (BarForm.UsageQuotaCard(provider, account, provider.ProviderId) is { } projected) cards.Add(projected.Card);
+            }
+        }
+
+        _usagePaceCards = cards;
+        if (cards.Count == 0) return;
+        var observed = new QuotaSnapshot(cards, [new ProviderHealth(ProviderKind.Claude, true, "usage board", ProviderHealthCode.Current)], now);
+        if (_quotaPaceTracker.Observe(observed, now))
+        {
+            try
+            {
+                _store.SaveQuotaRateHistory(_quotaPaceTracker.Export(now));
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // Pace history is best-effort and never blocks live quota.
+            }
+        }
+
+        _bar.SetQuotaPaceEstimates(QuotaPaceEstimates(_snapshot, now));
     }
 
     private void ApplyClockInterval()

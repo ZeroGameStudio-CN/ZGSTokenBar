@@ -7,7 +7,7 @@ internal static class RouterCardRenderer
 {
     internal const int Width = 132;
     internal static void Draw(Graphics graphics, RectangleF bounds, MiniCardContribution card, Font badgeFont,
-        bool collapsed = true, Font? titleFont = null, Font? detailFont = null)
+        bool collapsed = true, Font? titleFont = null, Font? detailFont = null, RouterQueueChip? queueChip = null)
     {
         var state = card.Summary.FirstOrDefault(item => item.LabelKey == "router.state")?.Status ?? "unknown";
         var queued = card.Summary.FirstOrDefault(item => item.LabelKey == "router.queued")?.Value.Integer ?? 0;
@@ -24,18 +24,17 @@ internal static class RouterCardRenderer
         if (queued > 0)
         {
             var text = queued > 99 ? "99+" : queued.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            RectangleF badge;
             if (collapsed)
             {
-                // Fixed-size pill on the icon's lower-right corner, sized for "99+".
-                var fixedWidth = Math.Max(13, graphics.MeasureString("99+", badgeFont).Width + 2);
-                badge = new RectangleF(icon.Right - fixedWidth / 2 - 2, icon.Bottom - 7, fixedWidth, 12);
+                // Collapsed (taskbar dock): the shared ring chip (GlassDockPainter.DrawChip) on the
+                // icon's lower-left, the same corner and look as the ring % chips.
+                var chip = queueChip ?? new RouterQueueChip(GlassDockPainter.DefaultLabelSize, null, false);
+                GlassDockPainter.DrawChip(graphics, icon.X - 3f, chip.Bottom ?? icon.Bottom + 4f, text, chip.LabelSize, critical: false, chip.Light);
+                graphics.Restore(saved);
+                return;
             }
-            else
-            {
-                var badgeWidth = Math.Max(13, graphics.MeasureString(text, badgeFont).Width + 4);
-                badge = new RectangleF(iconArea.Right - badgeWidth - 1, bounds.Top + 3, badgeWidth, 12);
-            }
+            var badgeWidth = Math.Max(13, graphics.MeasureString(text, badgeFont).Width + 4);
+            var badge = new RectangleF(iconArea.Right - badgeWidth - 1, bounds.Top + 3, badgeWidth, 12);
             // Neutral UiKit pill (no outline, so it never bleeds into the icon's half): the count reads at every DPI without competing with the state dot.
             using var background = new SolidBrush(UiPalette.Slate700);
             using (var path = UiPaint.RoundedPath(badge, badge.Height / 2)) graphics.FillPath(background, path);
@@ -139,3 +138,6 @@ internal static class RouterCardRenderer
         graphics.FillPath(brush, path);
     }
 }
+
+/// <summary>Size, baseline and theme of the collapsed Router queue chip (see GlassDockPainter.DrawChip).</summary>
+internal sealed record RouterQueueChip(float LabelSize, float? Bottom, bool Light);

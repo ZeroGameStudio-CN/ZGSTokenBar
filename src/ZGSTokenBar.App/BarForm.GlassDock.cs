@@ -26,9 +26,13 @@ internal sealed partial class BarForm
     private readonly Dictionary<string, Image?> _glassIcons = new(StringComparer.Ordinal);
     private bool GlassLayered => _glassDock && !_renderOnly;
 
+    /// <summary>Raised after every usage-board update so the pace tracker can sample its windows.</summary>
+    internal event EventHandler<UsageBoard>? UsageBoardChanged;
+
     internal void SetUsageBoard(UsageBoard board)
     {
         _usageBoard = board ?? UsageBoard.Empty;
+        UsageBoardChanged?.Invoke(this, _usageBoard);
         Invalidate();
     }
 
@@ -126,6 +130,19 @@ internal sealed partial class BarForm
         if (provider is null) return null;
         foreach (var account in provider.Accounts)
         {
+            if (UsageQuotaCard(provider, account, view.Title) is { } projected) return projected;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// One usage-board account as a quota card. Its key is stable per provider/account, so the pace
+    /// tracker (QuotaApplicationContext.ObserveUsagePace) samples the same series the hover reads.
+    /// </summary>
+    internal static (QuotaCard Card, QuotaWindow Window)? UsageQuotaCard(UsageProviderSnapshot provider, UsageAccountSnapshot account, string title)
+    {
+        {
             // The headline is the provider's primary window, the same one the ring's % comes from
             // (UsageProjection.MiniCard), so ring and hover always agree; every window is listed below it.
             var window = UsageFormatting.Primary(account) is { UsedPercent: not null, Unlimited: false } primary
@@ -133,7 +150,7 @@ internal sealed partial class BarForm
                 : account.Windows.Where(item => item.UsedPercent is not null && !item.Unlimited)
                     .OrderByDescending(item => item.UsedPercent)
                     .FirstOrDefault();
-            if (window is null) continue;
+            if (window is null) return null;
             static QuotaWindow Project(UsageWindow item) => new(item.Label, item.UsedPercent, item.ResetsAt, item.Duration ?? TimeSpan.Zero);
             var quotaWindow = Project(window);
             var windows = new List<QuotaWindow> { quotaWindow };
@@ -141,7 +158,7 @@ internal sealed partial class BarForm
             var card = new QuotaCard(
                 "usage:" + provider.ProviderId + ":" + account.AccountId,
                 ProviderKind.Claude,
-                view.Title,
+                title,
                 account.Plan,
                 string.IsNullOrWhiteSpace(provider.Accent) ? "#8b5cf6" : provider.Accent,
                 true,
@@ -150,14 +167,12 @@ internal sealed partial class BarForm
                 CapturedAt = account.SampledAt,
                 Subscription = account.Period,
                 // Same masked "a***b@domain" form the Codex rings show.
-                AccountHint = string.Equals(account.Label, view.Title, StringComparison.OrdinalIgnoreCase)
+                AccountHint = string.Equals(account.Label, title, StringComparison.OrdinalIgnoreCase)
                     ? null
                     : account.Label?.Contains('@') == true ? CodexAccountFormatting.MaskEmail(account.Label) : account.Label,
             };
             return (card, quotaWindow);
         }
-
-        return null;
     }
 
     private static string GlassAccountName(QuotaCard card, int ordinal)

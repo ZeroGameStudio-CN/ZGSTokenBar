@@ -13,7 +13,8 @@ public sealed class AntigravityUsageProvider : UsageProvider
     public override UsageCliSource Cli { get; } = new(
         "agy-cli",
         context => UsageProbes.AntigravityExecutable(context.Paths),
-        [["-p", "/usage", "--print-timeout", "20s"], ["-p", "/quota", "--output-format", "json"]],
+        // JSON first: it carries the exact remaining fractions; the text table is rounded.
+        [["-p", "/usage", "--output-format", "json", "--print-timeout", "20s"], ["-p", "/usage", "--print-timeout", "20s"]],
         UsageParsers.ParseAntigravity,
         TimeSpan.FromMinutes(10));
 

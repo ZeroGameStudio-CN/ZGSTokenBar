@@ -202,6 +202,17 @@ if (args.Length > 0 && args[0] == "--settings-layout-regressions")
     return 0;
 }
 
+var settingsDockCaptureIndex = Array.FindIndex(
+    args,
+    value => string.Equals(value, "--settings-dock-capture", StringComparison.OrdinalIgnoreCase));
+if (settingsDockCaptureIndex >= 0)
+{
+    RenderSettingsDockCapture(settingsDockCaptureIndex + 1 < args.Length
+        ? args[settingsDockCaptureIndex + 1]
+        : Path.Combine("artifacts", "native-settings-panel"));
+    return 0;
+}
+
 var settingsCaptureIndex = Array.FindIndex(
     args,
     value => string.Equals(value, "--settings-captures", StringComparison.OrdinalIgnoreCase));
@@ -9282,6 +9293,44 @@ static void RenderSettingsCaptures(string outputDirectory)
     }
 }
 
+// The "providers" page with the Bar display toggles (synthetic dock items, one hidden), scrolled
+// so the "Bar 显示项目" section is at the top; zh-CN and en at 144 DPI.
+static void RenderSettingsDockCapture(string outputDirectory)
+{
+    Directory.CreateDirectory(outputDirectory);
+    DockVisibilityEntry[] items =
+    [
+        new("card:codex-1", "Codex", "1 · a***e@example.com", null, true),
+        new("card:codex-2", "Codex", "2 · d***r@example.com", null, false),
+        new("card:claude", "Claude", null, null, true),
+        new("zgstokenbar.usage.grok", "Grok", null, null, true),
+        new("zgstokenbar.usage.antigravity", "Antigravity", null, null, true),
+        new("router", "Router", null, null, true),
+    ];
+    foreach (var locale in new[] { "zh-CN", "en" })
+    {
+        var settings = new AppSettings { Locale = locale, BackgroundPalette = "midnight", HiddenDockItems = ["card:codex-2"] };
+        using var form = new SettingsForm(settings, 144, renderOnly: true, dockItems: items);
+        form.Show();
+        System.Windows.Forms.Application.DoEvents();
+        LayoutControlTree(form);
+        form.SelectPageForRendering("providers");
+        form.ScrollViewport.AutoScrollPosition = Point.Empty;
+        System.Windows.Forms.Application.DoEvents();
+        var note = DescendantControls(form).OfType<System.Windows.Forms.Label>()
+            .First(label => label.Text.StartsWith("Bar 显示项目", StringComparison.Ordinal) || label.Text.StartsWith("Bar items", StringComparison.Ordinal));
+        var viewport = form.ScrollViewport;
+        var top = viewport.PointToClient(note.Parent!.PointToScreen(note.Parent.ClientRectangle.Location)).Y - viewport.AutoScrollPosition.Y;
+        viewport.AutoScrollPosition = new Point(0, Math.Max(0, top - 12));
+        System.Windows.Forms.Application.DoEvents();
+        using var bitmap = CaptureSettingsForm(form);
+        form.Hide();
+        var path = Path.GetFullPath(Path.Combine(outputDirectory, $"settings-dock-items-{locale}-144dpi.png"));
+        bitmap.Save(path, ImageFormat.Png);
+        Console.WriteLine($"{path} {bitmap.Width}x{bitmap.Height}");
+    }
+}
+
 static Bitmap CaptureSettingsForm(SettingsForm form)
 {
     var bitmap = new Bitmap(form.Width, form.Height, PixelFormat.Format32bppPArgb);
@@ -13484,8 +13533,9 @@ static void TestGlassDockStableSlots()
         var width = graphics.MeasureString(GlassDockPainter.FixedRateText(value), font, PointF.Empty, StringFormat.GenericTypographic).Width;
         Check(width <= box.Width + .5f, $"rate {value} fits the fixed number box");
     }
-    // Router icon must not move with the queue count: compare the icon's left half across counts.
-    byte[] Router(long queued, string state)
+    // Router icon must not move with the queue count: the count is the ring-style chip on the
+    // icon's lower-left, so compare the icon's upper part (above the chip) across counts.
+    byte[] Router(long queued, string state, bool chipArea = false)
     {
         using var image = new Bitmap(52, 52);
         using var g = Graphics.FromImage(image);
@@ -13493,7 +13543,7 @@ static void TestGlassDockStableSlots()
         g.ScaleTransform(2, 2);
         using var badge = new Font("Segoe UI", 8f, FontStyle.Bold, GraphicsUnit.Pixel);
         RouterCardRenderer.Draw(g, new RectangleF(0, 0, 26, 26), RouterModuleTests.Card(state, queued), badge, collapsed: true);
-        using var left = image.Clone(new Rectangle(0, 0, 18, 52), image.PixelFormat);
+        using var left = image.Clone(chipArea ? new Rectangle(0, 30, 52, 22) : new Rectangle(0, 0, 52, 22), image.PixelFormat);
         using var stream = new MemoryStream();
         left.Save(stream, ImageFormat.Png);
         return stream.ToArray();
@@ -13502,6 +13552,8 @@ static void TestGlassDockStableSlots()
     {
         Check(Router(0, state).SequenceEqual(Router(3, state)) && Router(3, state).SequenceEqual(Router(42, state)),
             $"router {state} icon stays put whether or not tasks are queued");
+        Check(!Router(0, state, chipArea: true).SequenceEqual(Router(3, state, chipArea: true)),
+            $"router {state} queue count shows as the lower-left chip");
     }
 }
 
