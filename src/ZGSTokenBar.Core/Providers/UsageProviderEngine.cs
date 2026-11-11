@@ -6,18 +6,20 @@ namespace ZGSTokenBar.Core;
 
 public sealed class UsageHttpRequest
 {
-    public UsageHttpRequest(string method, Uri url, IReadOnlyDictionary<string, string> headers, string? body = null)
+    public UsageHttpRequest(string method, Uri url, IReadOnlyDictionary<string, string> headers, string? body = null, string? contentType = null)
     {
         Method = method;
         Url = url;
         Headers = headers;
         Body = body;
+        ContentType = contentType;
     }
 
     public string Method { get; }
     public Uri Url { get; }
     public IReadOnlyDictionary<string, string> Headers { get; }
     public string? Body { get; }
+    public string? ContentType { get; }
 
     public override string ToString() => Method + " " + Url.GetLeftPart(UriPartial.Path);
 }
@@ -58,6 +60,12 @@ public static class UsageEndpoints
             return false;
         }
 
+        // The Grok CLI's OIDC refresh grant (see GrokTokenRefresher).
+        if (string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase) && Host(host, "auth.x.ai"))
+        {
+            return path == "/oauth2/token";
+        }
+
         return string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase)
             && (Host(host, "cloudcode-pa.googleapis.com") || Host(host, "daily-cloudcode-pa.googleapis.com"))
             && path == "/v1internal:retrieveUserQuotaSummary";
@@ -82,7 +90,7 @@ public sealed class HttpUsageTransport(HttpClient httpClient) : IUsageTransport
 
         if (request.Body is not null)
         {
-            message.Content = new StringContent(request.Body, Encoding.UTF8, "application/json");
+            message.Content = new StringContent(request.Body, Encoding.UTF8, request.ContentType ?? "application/json");
         }
 
         try
@@ -203,6 +211,21 @@ public static class UsageProviderEngine
         UsageLoadRequest request,
         CancellationToken cancellationToken)
     {
+        // An expired Grok CLI access token is renewed with the CLI's own refresh token (and written
+        // back for the CLI), so a signed-in CLI never shows "sign-in expired" just for being idle.
+        if (credential.Secret is null
+            && definition.FetcherKey == "grok"
+            && credential.Fields.TryGetValue(GrokTokenRefresher.PathField, out var authPath)
+            && credential.Fields.TryGetValue(GrokTokenRefresher.EntryField, out var authEntry)
+            && await GrokTokenRefresher.RefreshAsync(authPath, authEntry, request.Transport, request.Now, cancellationToken)
+                .ConfigureAwait(false) is { } renewed)
+        {
+            var fields = credential.Fields
+                .Where(field => field.Key is not GrokTokenRefresher.PathField and not GrokTokenRefresher.EntryField)
+                .ToDictionary(field => field.Key, field => field.Value, StringComparer.Ordinal);
+            credential = new UsageCredential(credential.AccountId, credential.Label, credential.SourceKind, renewed, fields);
+        }
+
         if (credential.Secret is null)
         {
             return Account(credential, null, UsageFreshness.MissingCredentials, request.Now, credential.UnavailableReason ?? "missing_credentials");

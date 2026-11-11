@@ -170,7 +170,7 @@ public static class UsageAccountDirectory
             if (node.ValueKind != JsonValueKind.Object) return [];
             if (StringOf(node, "key", "access_token") is { } single)
             {
-                return [GrokAccount("grok", node, single)];
+                return [GrokAccount("grok", node, single, path, "")];
             }
 
             var accounts = new List<UsageCredential>();
@@ -179,26 +179,33 @@ public static class UsageAccountDirectory
                 if (property.Value.ValueKind != JsonValueKind.Object) continue;
                 var secret = StringOf(property.Value, "key", "access_token");
                 if (secret is null) continue;
-                accounts.Add(GrokAccount(property.Name, property.Value, secret));
+                accounts.Add(GrokAccount(property.Name, property.Value, secret, path, property.Name));
             }
 
             return accounts;
         }
     }
 
-    private static UsageCredential GrokAccount(string name, JsonElement node, string secret)
+    private static UsageCredential GrokAccount(string name, JsonElement node, string secret, string path, string entry)
     {
         var email = StringOf(node, "email");
         var expired = IsExpired(node);
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["auth_mode"] = StringOf(node, "auth_mode") ?? "",
+        };
+        // Only the file location travels with the credential; the refresh token stays in the file.
+        if (expired && GrokTokenRefresher.IsRefreshable(node))
+        {
+            fields[GrokTokenRefresher.PathField] = path;
+            fields[GrokTokenRefresher.EntryField] = entry;
+        }
         return new UsageCredential(
             email ?? name,
             email ?? "Grok",
             "grok-auth",
             expired ? null : secret,
-            new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["auth_mode"] = StringOf(node, "auth_mode") ?? "",
-            },
+            fields,
             expired ? "credential_expired" : null);
     }
 

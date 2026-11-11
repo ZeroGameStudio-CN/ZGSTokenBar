@@ -558,7 +558,8 @@ var tests = new (string Name, Action Run)[]
     ("Taskbar Mini popover placement", TestTaskbarMiniPopoverPlacement),
     ("Taskbar embed attach, detach and parent loss", TestTaskbarEmbeddingWithFakeTaskbar),
     ("Glass dock rate and router slots are layout-stable", TestGlassDockStableSlots),
-        ("Grok plan comes from the settings cache, never the sign-in type", TestGrokPlanFromSettingsCache),
+    ("Grok plan comes from the settings cache, never the sign-in type", TestGrokPlanFromSettingsCache),
+    ("Expired Grok CLI session is renewed with its refresh token", TestGrokExpiredSessionIsRenewed),
     ("Quota remaining color gradient", TestQuotaRemainingColorGradient),
     ("Native background palette contract", TestNativeBackgroundPaletteContract),
     ("Native settings panel contract", TestNativeSettingsPanelContract),
@@ -16467,6 +16468,74 @@ static void TestGrokPlanFromSettingsCache()
         Directory.Delete(root, true);
     }
 }
+
+static void TestGrokExpiredSessionIsRenewed()
+{
+    var root = Path.Combine(Path.GetTempPath(), "zgs-grok-refresh-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(root);
+    try
+    {
+        var auth = Path.Combine(root, "auth.json");
+        File.WriteAllText(auth, """
+            {"https://auth.x.ai::client-1":{"key":"old-access","auth_mode":"oidc","email":"a@example.com",
+             "team_id":"team-9","refresh_token":"old-refresh","expires_at":"2020-01-01T00:00:00.0000000Z",
+             "oidc_issuer":"https://auth.x.ai","oidc_client_id":"client-1"}}
+            """);
+        var accounts = UsageAccountDirectory.ReadGrokAuth(auth);
+        Check(accounts.Count == 1 && accounts[0].Secret is null && accounts[0].UnavailableReason == "credential_expired",
+            "an expired access token is not used as-is");
+        Check(accounts[0].Fields.TryGetValue("auth_path", out var path) && path == auth
+            && accounts[0].Fields.TryGetValue("auth_entry", out var entryValue) && entryValue == "https://auth.x.ai::client-1",
+            "an expired OIDC sign-in with a refresh token is marked renewable");
+        Check(!accounts[0].Fields.Values.Any(value => value.Contains("refresh", StringComparison.Ordinal) && value != auth),
+            "the refresh token never leaves the file");
+
+        var entry = accounts[0].Fields.GetValueOrDefault("auth_entry") ?? "";
+        var transport = new GrokRefreshTransport("""{"access_token":"new-access","refresh_token":"new-refresh","expires_in":21600,"token_type":"Bearer"}""");
+        var now = DateTimeOffset.Parse("2026-11-11T10:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        var renewed = GrokTokenRefresher.RefreshAsync(auth, entry, transport, now, CancellationToken.None).GetAwaiter().GetResult();
+        Check(renewed == "new-access", "the refresh grant returns the new access token");
+        Check(transport.Requests.Count == 1
+            && transport.Requests[0].Method == "POST"
+            && transport.Requests[0].Url == GrokTokenRefresher.TokenEndpoint
+            && transport.Requests[0].ContentType == "application/x-www-form-urlencoded"
+            && transport.Requests[0].Body == "grant_type=refresh_token&refresh_token=old-refresh&client_id=client-1",
+            "the CLI's own OIDC refresh grant is sent to the recorded issuer");
+        Check(UsageEndpoints.IsAllowed("POST", GrokTokenRefresher.TokenEndpoint)
+            && !UsageEndpoints.IsAllowed("GET", GrokTokenRefresher.TokenEndpoint)
+            && !UsageEndpoints.IsAllowed("POST", new Uri("https://auth.x.ai/other")),
+            "only the token endpoint is allowed");
+
+        using (var written = System.Text.Json.JsonDocument.Parse(File.ReadAllText(auth)))
+        {
+            var node = written.RootElement.GetProperty("https://auth.x.ai::client-1");
+            Check(node.GetProperty("key").GetString() == "new-access"
+                && node.GetProperty("refresh_token").GetString() == "new-refresh"
+                && node.GetProperty("expires_at").GetString() == "2026-11-11T16:00:00.0000000Z"
+                && node.GetProperty("team_id").GetString() == "team-9"
+                && node.GetProperty("email").GetString() == "a@example.com",
+                "the renewed session is written back for the CLI with every other field kept");
+        }
+
+        var second = GrokTokenRefresher.RefreshAsync(auth, entry, transport, now, CancellationToken.None).GetAwaiter().GetResult();
+        Check(second == "new-access" && transport.Requests.Count == 1, "a still-valid session is reused without another grant");
+
+        var rejected = new GrokRefreshTransport(null, 400);
+        File.WriteAllText(auth, """{"x":{"key":"a","refresh_token":"r","expires_at":"2020-01-01T00:00:00Z","oidc_issuer":"https://auth.x.ai","oidc_client_id":"c"}}""");
+        var before = File.ReadAllText(auth);
+        Check(GrokTokenRefresher.RefreshAsync(auth, "x", rejected, now, CancellationToken.None).GetAwaiter().GetResult() is null
+            && File.ReadAllText(auth) == before, "a rejected refresh leaves the CLI file untouched");
+        Check(GrokTokenRefresher.RefreshAsync(auth, "x", rejected, now, CancellationToken.None).GetAwaiter().GetResult() is null
+            && rejected.Requests.Count == 1, "a rejected refresh token is not retried until the CLI rewrites its file");
+        File.WriteAllText(auth, """{"x":{"key":"a","refresh_token":"r","expires_at":"2020-01-01T00:00:00Z","oidc_issuer":"https://evil.example","oidc_client_id":"c"}}""");
+        Check(!UsageAccountDirectory.ReadGrokAuth(auth)[0].Fields.ContainsKey("auth_path"), "a foreign issuer is never refreshed");
+    }
+    finally
+    {
+        Directory.Delete(root, true);
+    }
+}
+
 
 static void TestGlassDockStableSlots()
 {
