@@ -10,7 +10,7 @@ internal sealed class RouterModule : IDisposable
     private readonly Func<bool> _enabled;
     private readonly CancellationToken _shutdown;
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 2000 };
-    private readonly System.Windows.Forms.Timer _warmup = new() { Interval = 12_000 };
+    private readonly System.Windows.Forms.Timer _warmup = new() { Interval = 4_000 };
     private RouterMonitorForm? _window;
     private RouterHoverCardForm? _hover;
     private bool _refreshing;
@@ -36,7 +36,7 @@ internal sealed class RouterModule : IDisposable
         _warmup.Tick += (_, _) =>
         {
             _warmup.Stop();
-            if (!_shutdown.IsCancellationRequested && _enabled()) EnsureWindow();
+            if (!_shutdown.IsCancellationRequested && _enabled()) EnsureWindow().Prewarm(_bar.UiScale, _bar.UiTheme);
         };
         _warmup.Start();
     }
@@ -53,8 +53,10 @@ internal sealed class RouterModule : IDisposable
             request.Popup = _hover;
             return;
         }
+        var clicked = System.Diagnostics.Stopwatch.GetTimestamp();
         if (_hover is { Visible: true }) _hover.Hide();
         EnsureWindow();
+        if (!_window!.Visible) _window.MarkOpenRequested(clicked);
         using (PerfTrace.Measure("router.panel.show"))
             _window.ShowFor(_bar, request.Anchor, request.Pinned, request.Scale, request.Theme);
         request.Popup = _window;

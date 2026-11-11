@@ -47,6 +47,15 @@ internal sealed partial class QuotaApplicationContext
         }
     }
 
+    /// <summary>Perf/stability probe: open the real dialog and press Save without edits.</summary>
+    private void ProbeSettingsSave()
+    {
+        OpenSettings();
+        if (_settingsDialog is not { IsDisposed: false } dialog) return;
+        PerfTrace.Note($"probe.settings-open location={dialog.Location} size={dialog.Size} loaded={dialog.LoadedBoundsForProbe}");
+        dialog.SaveForProbe();
+    }
+
     private void SettingsDialogClosed(object? sender, FormClosedEventArgs eventArgs)
     {
         if (sender is not SettingsForm dialog) return;

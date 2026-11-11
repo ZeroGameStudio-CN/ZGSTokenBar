@@ -138,6 +138,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
             : null);
         _bar.RefreshRequested += (_, _) => _ = RefreshAsync(userInitiated: true);
         _bar.SettingsRequested += (_, _) => OpenSettings();
+        _bar.ProbeSettingsSaveRequested += (_, _) => ProbeSettingsSave();
         _bar.OverviewRequested += (_, _) => _otherToolsModule.ShowOverview();
         _bar.PlacementCommitted += (_, commit) => SavePlacement(commit);
         _bar.RadarPreviewRequested += (_, request) =>

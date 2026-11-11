@@ -183,7 +183,13 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _timer.Tick += async (_, _) => { if (Visible) await RefreshViewAsync(); };
         _notice.TextChanged += (_, _) => _tips.SetToolTip(_notice, _notice.Text);
         _history.CellPainting += PaintHistoryStatus;
-        if (observe) VisibleChanged += async (_, _) => { if (Visible) { _timer.Start(); await RefreshViewAsync(); } else _timer.Stop(); };
+        // Show the (cached) shell first; the data refresh starts after the window has painted.
+        if (observe) VisibleChanged += (_, _) =>
+        {
+            if (!Visible) { _timer.Stop(); return; }
+            _timer.Start();
+            BeginInvoke(new Action(async () => { if (Visible && !IsDisposed) await RefreshViewAsync(); }));
+        };
         UpdateControls();
         ApplyPalette(QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
         ResumeLayout(true);
@@ -202,10 +208,53 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _tips.SetToolTip(_pin, pinned ? "取消固定" : "固定后可操作队列与历史");
         if (string.IsNullOrEmpty(_notice.Text) || _notice.Text is "悬停预览 · 点击模块固定后可操作" or "已固定 · Esc 或点击外部收起")
             _notice.Text = pinned ? "已固定 · Esc 或点击外部收起" : "悬停预览 · 点击模块固定后可操作";
-        if (changed && IsHandleCreated) RecreateHandle();
+        // Toggle WS_EX_NOACTIVATE in place: recreating the handle rebuilt every child control.
+        if (changed && IsHandleCreated)
+        {
+            var style = GetWindowLongPtr(Handle, GwlExStyle).ToInt64();
+            style = pinned ? style & ~NoActivateExStyle : style | NoActivateExStyle;
+            SetWindowLongPtr(Handle, GwlExStyle, new IntPtr(style));
+        }
         UpdateControls();
         if (pinned && Visible) Activate();
     }
+    private const int GwlExStyle = -20;
+    private const long NoActivateExStyle = 0x08000000;
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    private static extern IntPtr GetWindowLongPtr(IntPtr window, int index);
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    private static extern IntPtr SetWindowLongPtr(IntPtr window, int index, IntPtr value);
+
+    /// <summary>Click time of the pending open, for the click-to-paint / click-to-data trace.</summary>
+    private long _openStamp;
+    private bool _openDataPending;
+
+    private long _openDataStamp;
+    internal void MarkOpenRequested(long stamp) { _openStamp = stamp; _openDataStamp = stamp; _openDataPending = true; }
+
+    /// <summary>
+    /// Idle-time warm-up: scale, fonts, palette, every native child handle and one layout pass,
+    /// so a click only positions and shows the already-built window.
+    /// </summary>
+    internal void Prewarm(float scale, QuotaBackgroundTheme theme)
+    {
+        if (IsDisposed || Visible) return;
+        using var trace = PerfTrace.Measure("router.panel.prewarm");
+        SetPinned(true);
+        var nextScale = Math.Max(1, scale);
+        SuspendLayout();
+        if (Math.Abs(nextScale - _popoverScale) > .001) Scale(new SizeF(nextScale / _popoverScale, nextScale / _popoverScale));
+        _popoverScale = nextScale;
+        ClientSize = new Size((int)(PreferredBodySize.Width * nextScale), (int)(PreferredBodySize.Height * nextScale));
+        ResumeLayout(false);
+        _ = Handle;
+        foreach (var control in Children(this)) _ = control.Handle;
+        ApplyLogicalFonts();
+        ApplyPalette(theme);
+        _appliedScale = _popoverScale; _appliedTheme = theme;
+        PerformLayout();
+    }
+
     internal void ShowFor(BarForm owner, Rectangle anchor, bool pinned, float scale, QuotaBackgroundTheme theme)
     {
         ConfigureFor(anchor, pinned, scale, theme, Screen.FromRectangle(anchor).WorkingArea);
@@ -285,6 +334,18 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         base.OnPaint(e); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         using var path = SurfacePath(); using var border = new Pen(UiTokens.Hairline);
         e.Graphics.DrawPath(border, path);
+        if (_openStamp != 0)
+        {
+            var stamp = _openStamp; _openStamp = 0;
+            PerfTrace.Note($"router.panel.click-to-paint {System.Diagnostics.Stopwatch.GetElapsedTime(stamp).TotalMilliseconds:0.00}ms");
+            // Children paint after the frame; the first idle after that is "fully drawn".
+            void Idle(object? s, EventArgs a)
+            {
+                Application.Idle -= Idle;
+                PerfTrace.Note($"router.panel.click-to-idle {System.Diagnostics.Stopwatch.GetElapsedTime(stamp).TotalMilliseconds:0.00}ms");
+            }
+            if (PerfTrace.Enabled) Application.Idle += Idle;
+        }
     }
     protected override void OnMouseWheel(MouseEventArgs e)
     {
@@ -506,6 +567,11 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
             if (generation != _generation || IsDisposed) return;
             ApplySnapshot(snapshot);
             await RefreshQueueAsync();
+            if (_openDataPending)
+            {
+                _openDataPending = false;
+                PerfTrace.Note($"router.panel.open-to-data {System.Diagnostics.Stopwatch.GetElapsedTime(_openDataStamp).TotalMilliseconds:0.00}ms");
+            }
             if (!InteractionOpen && _historyOffset == 0 && (DateTimeOffset.UtcNow - _historyReadAt).TotalSeconds >= 10)
                 await HistoryAsync(forceRefresh: true);
         }

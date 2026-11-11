@@ -23,6 +23,7 @@ internal sealed partial class BarForm
             var round = step / 6;
             if (round >= 5)
             {
+                if (RunProbeStabilityStep(step - 30)) { step++; return; }
                 _perfProbeTimer.Stop();
                 PerfTrace.Note("probe.done");
                 return;
@@ -71,6 +72,59 @@ internal sealed partial class BarForm
         };
         _perfProbeTimer.Start();
     }
+
+    /// <summary>Raised by the probe to run the real Settings dialog save path (open, Save, close).</summary>
+    internal event EventHandler? ProbeSettingsSaveRequested;
+
+    /// <summary>
+    /// Stability phase of the probe: a synthetic left click (down/up at one point, as the mouse
+    /// handlers receive it; the real cursor never moves) and a real Settings save, each followed
+    /// by embed/visibility samples so "the bar vanished" shows up in the trace.
+    /// </summary>
+    private bool RunProbeStabilityStep(int index)
+    {
+        switch (index)
+        {
+            case 0: NoteProbeState("before-click"); return true;
+            case 1:
+            {
+                var point = ProbeClickPoint();
+                using (PerfTrace.Measure("probe.click"))
+                {
+                    OnMouseDown(new MouseEventArgs(MouseButtons.Left, 1, point.X, point.Y, 0));
+                    OnMouseUp(new MouseEventArgs(MouseButtons.Left, 1, point.X, point.Y, 0));
+                }
+                NoteProbeState("click+0");
+                return true;
+            }
+            case 2: NoteProbeState("click+0.7s"); HidePopovers(); return true;
+            case 3: NoteProbeState("click+1.4s"); return true;
+            case 4:
+                using (PerfTrace.Measure("probe.settings-save")) ProbeSettingsSaveRequested?.Invoke(this, EventArgs.Empty);
+                NoteProbeState("save+0");
+                return true;
+            case 5: NoteProbeState("save+0.7s"); return true;
+            case 6: NoteProbeState("save+1.4s"); return true;
+            case 7: NoteProbeState("save+2.1s"); return true;
+            case 8: NoteProbeState("save+2.8s"); return true;
+            default: return false;
+        }
+    }
+
+    private Point ProbeClickPoint()
+    {
+        // Centre of the first ring: a plain click on a quota item (not a chip, not Router).
+        if (_cardBounds.Count > 0)
+        {
+            var b = _cardBounds[0].Bounds;
+            return new Point((int)((b.X + b.Width / 2) * _scale), (int)((b.Y + b.Height / 2) * _scale));
+        }
+        return new Point(Scale(30), ClientSize.Height / 2);
+    }
+
+    private void NoteProbeState(string tag) => PerfTrace.Note(
+        $"probe.state {tag} visible={Visible} embedded={EmbeddedInTaskbar} status={TaskbarEmbedStatus} docked={_taskbarDocked} "
+        + $"handle={(IsHandleCreated ? Handle.ToString() : "none")} bounds={Bounds} screen={ScreenLocation}");
 
     /// <summary>The bar frame exactly as the layered window gets it (offscreen; no screen capture).</summary>
     private Bitmap RenderGlassBitmap()

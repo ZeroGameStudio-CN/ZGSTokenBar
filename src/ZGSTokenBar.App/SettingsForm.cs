@@ -380,7 +380,8 @@ internal sealed class SettingsForm : Form
         ApplyResponsiveLayout();
 
         Resize += (_, _) => ApplyResponsiveLayout();
-        Shown += (_, _) => ApplyProductionWorkingArea();
+        // Size and centre the window before it is first shown, so it opens at its final position.
+        Load += (_, _) => { ApplyProductionWorkingArea(); LoadedBoundsForProbe = Bounds; };
         FormClosing += OnFormClosing;
         CaptureDesignFonts(this);
     }
@@ -887,6 +888,10 @@ internal sealed class SettingsForm : Form
     }
 
     private bool IsDirty => !EditableEquals(_original, BuildSettings());
+
+    internal Rectangle LoadedBoundsForProbe { get; private set; }
+
+    internal void SaveForProbe() => Save();
 
     private void Save()
     {
