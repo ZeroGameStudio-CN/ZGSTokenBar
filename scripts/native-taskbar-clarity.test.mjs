@@ -10,10 +10,6 @@ const popoverForm = fs.readFileSync('src/ZGSTokenBar.App/QuotaPopoverForm.cs', '
 const codexAccountsPopoverForm = fs.readFileSync('src/ZGSTokenBar.App/CodexAccountsPopoverForm.cs', 'utf8');
 const planBadgePresentation = fs.readFileSync('src/ZGSTokenBar.App/PlanBadgePresentation.cs', 'utf8');
 const hintPopoverForm = fs.readFileSync('src/ZGSTokenBar.App/TaskbarHintPopoverForm.cs', 'utf8');
-const radarPopoverForm = fs.readFileSync('src/ZGSTokenBar.App/ProviderRadarPopoverForm.cs', 'utf8');
-const radarRenderer = fs.readFileSync('src/ZGSTokenBar.App/RadarPopoverRenderer.cs', 'utf8');
-const spendHistoryLayout = fs.readFileSync('src/ZGSTokenBar.Core/CodexSpendHistoryLayout.cs', 'utf8');
-const radarResetTiming = fs.readFileSync('src/ZGSTokenBar.App/RadarResetTiming.cs', 'utf8');
 const nativeProject = fs.readFileSync('src/ZGSTokenBar.App/ZGSTokenBar.App.csproj', 'utf8');
 const uiKit = fs.readFileSync('src/ZGSTokenBar.App/UiKit.cs', 'utf8');
 const settingsForm = fs.readFileSync('src/ZGSTokenBar.App/SettingsForm.cs', 'utf8');
@@ -30,7 +26,6 @@ const taskbarGrouping = fs.readFileSync('src/ZGSTokenBar.App/TaskbarMiniGrouping
 const codexPoolProjection = fs.readFileSync('src/ZGSTokenBar.App/CodexPoolCardProjection.cs', 'utf8');
 const codexPoolPresentation = fs.readFileSync('src/ZGSTokenBar.App/CodexPoolPresentation.cs', 'utf8');
 const modelsSource = fs.readFileSync('src/ZGSTokenBar.Core/Models.cs', 'utf8');
-const radarAlertTracker = fs.readFileSync('src/ZGSTokenBar.Core/RadarAlertTracker.cs', 'utf8');
 const aiGatewayBalance = fs.readFileSync('src/ZGSTokenBar.Core/AiGatewayBalanceService.cs', 'utf8');
 const sub2ApiPool = fs.readFileSync('src/ZGSTokenBar.Core/Sub2ApiPoolService.cs', 'utf8');
 const sub2ApiUsage = fs.readFileSync('src/ZGSTokenBar.Core/Sub2ApiUsageService.cs', 'utf8');
@@ -74,70 +69,6 @@ test('available quota details stay bright while blocked and missing states are m
   assert.match(fullBody, /blockedByWeekly[\s\S]*?DrawTaskbarLockIcon/);
   assert.match(fullBody, /remainingColor = blockedByWeekly[\s\S]*?UiPalette\.Slate500[\s\S]*?QuotaColorScale\.ForRemaining/);
   assert.match(fullBody, /FormatCompactReset\(resetAt, now\)/);
-});
-
-test('Radar row emphasis follows distinctions instead of source position', () => {
-  const start = radarRenderer.indexOf('    private static void DrawRows(');
-  const end = radarRenderer.indexOf('    private static void DrawDistinctionIcons(', start);
-  const body = radarRenderer.slice(start, end);
-  assert.match(body, /distinctionCount = \(strongest \? 1 : 0\)[\s\S]*?row\.RecommendationGroupIndexes\.Count/);
-  assert.match(body, /multipleDistinctions = distinctionCount > 1/);
-  assert.match(body, /distinguished = distinctionCount > 0/);
-  assert.match(body, /labelColor = UiPalette\.Slate200/);
-  assert.match(body, /modelFont = distinguished \? fonts\.EmphasizedModel : fonts\.Model/);
-  assert.match(body, /recommendationColor = row\.RecommendationGroupIndexes\.Count[\s\S]*?RecommendationColor/);
-  assert.match(body, /modelColor = strongest[\s\S]*?\? StrongestColor[\s\S]*?: recommendationColor/);
-  assert.match(body, /if \(multipleDistinctions\)[\s\S]*?DrawRainbowText\([\s\S]*?modelLabel/);
-  assert.doesNotMatch(body, /SourceIndex == 0/);
-});
-
-test('Codex spend history reserves a compact 30-day chart and three-model composition', () => {
-  assert.match(spendHistoryLayout, /LogicalNarrowWidth = 360/);
-  assert.match(spendHistoryLayout, /LogicalWideWidth = RadarPopoverLayout\.LogicalWidth/);
-  assert.match(spendHistoryLayout, /LogicalHeight = 270/);
-  assert.match(spendHistoryLayout, /new List<Rectangle>\(4\)/);
-  assert.match(spendHistoryLayout, /CreateBarBounds\(chartBounds, dayCount/);
-  assert.match(spendHistoryLayout, /Rect\(12, 201, innerWidth, 18\)[\s\S]*?Rect\(12, 222, innerWidth, 18\)[\s\S]*?Rect\(12, 243, innerWidth, 18\)/);
-  assert.match(radarRenderer, /var firstRecentIndex = Math\.Max\(0, count - 7\)/);
-  assert.match(radarRenderer, /isRecent[\s\S]*?UiPalette\.Indigo400\.WithAlpha\(190\)/);
-  assert.match(radarRenderer, /HasUnpricedUsage[\s\S]*?UiPalette\.Amber400/);
-  assert.match(radarRenderer, /\.Take\(layout\.ModelRowBounds\.Count\)/);
-});
-
-test('developer captures keep separate narrow and wide bilingual spend-history references', () => {
-  assert.match(testProgram, /static CodexTokenUsageSummary SpendHistoryCaptureUsage\(/);
-  assert.match(testProgram, /new CodexSpendHistory\(days, models, last7Days\)/);
-  assert.match(testProgram, /new CodexSpendModel\("gpt-5\.6-sol"/);
-  assert.match(testProgram, /new CodexSpendModel\("gpt-5\.6-terra"/);
-  assert.match(testProgram, /new CodexSpendModel\("gpt-5\.6-luna"/);
-  assert.match(testProgram, /renderer\.DrawSpendHistory\(/);
-  assert.match(testProgram, /taskbar-mini-codex-spend-history-\{locale\}-\{dpi\}dpi\.png/);
-  assert.match(testProgram, /native-localization-spend-history-\{locale\}-\{dpi\}dpi\.png/);
-});
-
-test('Radar uses distinct local scenario markers in the compact footer', () => {
-  const rowsStart = radarRenderer.indexOf('    private static void DrawRows(');
-  const rowsEnd = radarRenderer.indexOf('    private static void DrawDistinctionIcons(', rowsStart);
-  const rowsBody = radarRenderer.slice(rowsStart, rowsEnd);
-  const footerStart = radarRenderer.indexOf('    private static void DrawFooter(');
-  const footerEnd = radarRenderer.indexOf('    private static void DrawColumnText(', footerStart);
-  const footerBody = radarRenderer.slice(footerStart, footerEnd);
-  assert.match(radarRenderer, /RecommendationColors =[\s\S]*?UiPalette\.Emerald400[\s\S]*?34, 211, 238[\s\S]*?244, 114, 182/);
-  assert.match(radarRenderer, /MultiDistinctionColors =[\s\S]*?StrongestColor[\s\S]*?RecommendationColors/);
-  assert.match(footerBody, /RadarStrongestTitle[\s\S]*?RadarDailyScenarioTitle[\s\S]*?RadarPlanningScenarioTitle[\s\S]*?RadarBackgroundScenarioTitle/);
-  assert.match(footerBody, /DrawStar[\s\S]*?DrawRecommendationMarker/);
-  assert.match(radarRenderer, /case 1:[\s\S]*?FillPolygon/);
-  assert.match(radarRenderer, /case 2:[\s\S]*?FillRectangle/);
-  assert.match(radarRenderer, /default:[\s\S]*?FillEllipse/);
-  assert.match(rowsBody, /multipleDistinctions = distinctionCount > 1/);
-  assert.match(rowsBody, /else if \(distinguished\)[\s\S]*?highlightColor = strongest[\s\S]*?recommendationColor/);
-  assert.match(rowsBody, /DrawRainbowSurface\([\s\S]*?highlightBounds[\s\S]*?168/);
-  assert.match(rowsBody, /DrawRainbowText\([\s\S]*?modelLabel/);
-  assert.match(radarRenderer, /new LinearGradientBrush\([\s\S]*?LinearGradientMode\.Horizontal/);
-  assert.match(radarRenderer, /InterpolationColors = new ColorBlend/);
-  assert.match(radarRenderer, /DrawRainbowText\([\s\S]*?MeasureString\([\s\S]*?RainbowBrush\(spectrumBounds, 255\)[\s\S]*?graphics\.DrawString/);
-  assert.match(radarRenderer, /DrawDistinctionIcons\([\s\S]*?strongest,[\s\S]*?row\.RecommendationGroupIndexes/);
-  assert.doesNotMatch(radarRenderer, /DrawRecommendations/);
 });
 
 test('taskbar Mini prefers real quota windows and keeps labels for a fully unavailable provider', () => {
@@ -428,22 +359,6 @@ test('taskbar Mini reset affordance comes from the Fluent icon asset', () => {
   assert.match(barForm, /DrawResetClockIcon/);
 });
 
-test('taskbar Mini optically balances reset icons and marks unread Radar data', () => {
-  assert.match(barForm, /MiniResetGlyphSize = 9f/);
-  assert.match(barForm, /MiniResetClockSize = 11f/);
-  assert.match(barForm, /CenteredSquare\(bounds, MiniResetClockSize\)/);
-  assert.match(barForm, /_radarState\.HasUnreadFor\(RadarSurfaceIds\.Codex\)/);
-  assert.match(barForm, /_radarState\.HasUnreadFor\(RadarSurfaceIds\.DeepSeek\)/);
-  assert.match(barForm, /DrawRadarUnreadDot\(graphics, logoBounds\)/);
-  assert.match(barForm, /public string\? VisibleRadarSurfaceId/);
-  assert.match(applicationContext, /RequestRadarPreview\(request\.Provider, request\.SurfaceId\)/);
-  assert.match(applicationContext, /RadarAlertTracker\.RecordViewed\(_radarState, _radarViewState\.Snapshot, surfaceId\)/);
-  assert.match(applicationContext, /_bar\.VisibleRadarSurfaceId is \{ \} visibleSurfaceId/);
-  assert.match(radarAlertTracker, /ViewedEventIdsBySurface/);
-  assert.match(radarAlertTracker, /public const string Codex = "zgstokenbar\.radar\.codex"/);
-  assert.match(radarAlertTracker, /public const string DeepSeek = "zgstokenbar\.radar\.deepseek"/);
-});
-
 test('collapsed quota and balance providers share a compact semantic summary without another fetch path', () => {
   assert.match(barForm, /var primaryCard = PrimaryTaskbarCard\(group\)/);
   assert.match(barForm, /DrawCollapsedAiGatewayCard\(graphics, bounds, primaryCard\)/);
@@ -647,36 +562,6 @@ test('taskbar Mini balances narrow cards with readable vertical controls', () =>
   assert.match(barForm, /StringAlignment\.Center/);
 });
 
-test('open Radar reset windows keep a persistent honest Mini countdown', () => {
-  assert.match(models, /public const string RadarReset = "zgstokenbar\.radar\.reset";/);
-  assert.ok(
-    radarResetTiming.indexOf('window.TargetAt is { } exactTarget')
-      < radarResetTiming.indexOf('window.OpenedAt is not { } openedAt'),
-    'an exact upstream target must win before any date inference',
-  );
-  assert.match(radarResetTiming, /BeijingDate\(openedAt\)/);
-  assert.match(radarResetTiming, /AddDays\(openedDate, 1\)/);
-  assert.match(radarResetTiming, /catch \(ArgumentOutOfRangeException\)/);
-  assert.match(radarResetTiming, /TargetWeekday\(window\.Scope\)/);
-  assert.doesNotMatch(radarResetTiming, /DateTimeOffset\.UtcNow|DateTime\.Now/);
-  assert.match(nativeText, /RadarResetMiniTitle/);
-  assert.match(nativeText, /RadarResetMiniValue/);
-  assert.match(nativeText, /\$"~\{days\}d"/);
-  assert.match(nativeText, /推测重置/);
-  assert.match(nativeText, /时间未定/);
-  assert.match(barForm, /ShouldShowRadarResetArea\(\)/);
-  assert.match(barForm, /TaskbarMiniAreaContent\.ForRadarReset\(_text\.RadarResetMiniAreaTitle\)/);
-  assert.match(barForm, /DrawRadarResetCard\(graphics, bounds, layout\.Collapsed\)/);
-  assert.match(models, /public const int RadarResetContentWidth = 92;/);
-  assert.match(barForm, /graphics\.DrawImage\(ProviderLogo\(ProviderKind\.Codex\), iconBounds\)/);
-  assert.match(barForm, /_taskbarRadarBounds\.Add\(new MiniRadarTarget\(\s*bounds,\s*MiniAreaIds\.RadarReset,[\s\S]*?RadarSurfaceIds\.Codex\)\)/);
-  assert.match(barForm, /visibleIds\.Add\(MiniAreaIds\.RadarReset\)/);
-  assert.match(barForm, /RadarResetTiming\.RefreshIntervalMilliseconds\(CurrentRadarResetWindow\(\), _utcNow\(\)\)/);
-  assert.match(barForm, /_radarResetTimer\.Dispose\(\)/);
-  assert.match(radarPopoverForm, /RadarResetTiming\.RefreshIntervalMilliseconds\(window, now\)/);
-  assert.doesNotMatch(barForm, /data-window-closes-at|opened_at|scheduled_at/);
-});
-
 test('explicit refresh can recover an expired Claude OAuth token', () => {
   assert.match(applicationContext, /RefreshRequested \+= \(_, _\) => _ = RefreshAsync\(userInitiated: true\)/);
   assert.match(applicationContext, /allowClaudeOAuthRefresh: userInitiated/);
@@ -692,16 +577,6 @@ test('native bar micro-motion stays subtle and follows the animation preference'
   assert.match(popoverForm, /animateEntrance/);
   assert.match(popoverForm, /TotalMilliseconds \/ 130/);
   assert.match(popoverForm, /ExitDurationMs = 90/);
-  assert.match(radarPopoverForm, /EntranceDurationMs = 130/);
-  assert.match(radarPopoverForm, /ExitDurationMs = 90/);
-  assert.match(radarPopoverForm, /RadarPopoverRenderer\.CreateWindowRegion/);
-  assert.match(radarRenderer, /internal static Region CreateWindowRegion/);
-  assert.match(radarRenderer, /Scale\(layout\.Dpi, 10\)/);
-  assert.match(radarRenderer, /StrongestColor = Color\.FromArgb\(246, 196, 83\)/);
-  assert.match(radarRenderer, /RecommendationColors/);
-  assert.match(radarRenderer, /var modelColor = strongest[\s\S]*?\? StrongestColor[\s\S]*?: recommendationColor/);
-  assert.match(radarRenderer, /modelLabel, modelFont, modelColor/);
-  assert.match(radarRenderer, /layout\.GroupHeaders\.Count > 0[\s\S]*?FormatEffort\(row\.Model\.ReasoningEffort\) \?\? row\.ModelText/);
   assert.match(settingsForm, /_text\.Animations/);
   assert.match(nativeText, /Enable subtle transitions and refresh animation/);
 });
@@ -757,15 +632,12 @@ test('settings use a compact navigation shell with explicit draft semantics', ()
   assert.match(settingsForm, /AddNavigation\("providers"/);
   assert.match(settingsForm, /AddNavigation\("notifications"/);
   assert.match(settingsForm, /AddNavigation\("display"/);
-  assert.match(settingsForm, /AddNavigation\("radar"/);
   assert.match(settingsForm, /AddNavigation\("advanced"/);
   assert.match(settingsForm, /AddNavigation\("about"/);
   assert.doesNotMatch(settingsForm, /SettingsCard|BadgeLabel|NATIVE BAR/);
   assert.match(settingsForm, /ConstrainOuterSize\(Size desiredOuterSize, Rectangle workingArea, int safeMarginPixels\)/);
   assert.doesNotMatch(settingsForm, /MinimumSize\s*=/);
   assert.match(settingsForm, /_save\.Enabled = dirty/);
-  assert.match(settingsForm, /_radarAlertsBeforeDisable/);
-  assert.match(settingsForm, /_radar\.Checked && _radarAlerts\.Checked/);
   assert.match(settingsForm, /_pageHost\.SuspendLayout\(\)[\s\S]*?_pageHost\.ResumeLayout\(true\)[\s\S]*?_pageHost\.Invalidate\(true\)/);
   assert.match(settingsForm, /WmSetRedraw = 0x000B/);
   assert.match(settingsForm, /SendMessage\(_pageHost\.Handle, WmSetRedraw/);

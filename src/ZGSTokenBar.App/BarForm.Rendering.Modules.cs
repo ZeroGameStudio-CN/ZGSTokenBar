@@ -5,84 +5,9 @@ using ZGSTokenBar.PluginSdk;
 
 namespace ZGSTokenBar.App;
 
-/// <summary>Rendering of the radar-reset, plugin, live-metrics and system-usage modules.</summary>
+/// <summary>Rendering of the plugin, live-metrics and system-usage modules.</summary>
 internal sealed partial class BarForm
 {
-    private void DrawRadarResetCard(Graphics graphics, RectangleF bounds, bool collapsed)
-    {
-        var now = _utcNow();
-        var window = CurrentRadarResetWindow();
-        var timing = RadarResetTiming.Resolve(window);
-        var stale = _radarState.Error is not null || _radarState.IsStale(now);
-        var statusColor = stale
-            ? UiPalette.Slate400
-            : timing.Kind switch
-            {
-                RadarResetTimingKind.Exact when timing.ExactTargetAt <= now => UiPalette.Amber400,
-                RadarResetTimingKind.Exact => UiPalette.Emerald400,
-                RadarResetTimingKind.EstimatedDate => UiPalette.Amber400,
-                _ => UiPalette.Slate400,
-            };
-
-        using var path = RoundedRectangle(bounds, 6);
-        using var fill = new SolidBrush(MixColor(
-            _backgroundTheme.ProviderGroup,
-            statusColor,
-            stale ? .04f : .08f));
-        using var border = new Pen(Color.FromArgb(stale ? 62 : 104, statusColor), 1);
-        graphics.FillPath(fill, path);
-        graphics.DrawPath(border, path);
-
-        var iconBounds = collapsed
-            ? new RectangleF(bounds.X + (bounds.Width - 16) / 2, bounds.Y + 3, 16, 16)
-            : new RectangleF(bounds.X + 5, bounds.Y + 8, 20, 20);
-        graphics.DrawImage(ProviderLogo(ProviderKind.Codex), iconBounds);
-        if (_radarState.HasUnreadFor(RadarSurfaceIds.Codex))
-        {
-            DrawRadarUnreadDot(graphics, iconBounds);
-        }
-
-        if (collapsed)
-        {
-            using var compactBrush = new SolidBrush(statusColor);
-            DrawString(
-                graphics,
-                _text.RadarResetMiniCompact(window, now),
-                _badgeFont,
-                compactBrush,
-                new RectangleF(bounds.X + 2, bounds.Bottom - 13, bounds.Width - 4, 10),
-                StringAlignment.Center);
-        }
-        else
-        {
-            using var titleBrush = new SolidBrush(stale
-                ? UiPalette.Slate400
-                : UiPalette.Slate300);
-            using var valueBrush = new SolidBrush(statusColor);
-            DrawString(
-                graphics,
-                _text.RadarResetMiniTitle(window, now),
-                _subtitleFont,
-                titleBrush,
-                new RectangleF(bounds.X + 29, bounds.Y + 5, bounds.Width - 34, 12),
-                StringAlignment.Near);
-            DrawString(
-                graphics,
-                _text.RadarResetMiniValue(window, now),
-                _badgeFont,
-                valueBrush,
-                new RectangleF(bounds.X + 29, bounds.Y + 18, bounds.Width - 34, 11),
-                StringAlignment.Near);
-        }
-
-        _taskbarRadarBounds.Add(new MiniRadarTarget(
-            bounds,
-            MiniAreaIds.RadarReset,
-            ProviderKind.Codex,
-            ProviderKind.Codex,
-            false,
-            RadarSurfaceIds.Codex));
-    }
 
     private void DrawPluginMiniCard(
         Graphics graphics,

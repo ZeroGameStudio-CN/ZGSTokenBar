@@ -5,7 +5,7 @@ using ZGSTokenBar.PluginSdk;
 
 namespace ZGSTokenBar.App;
 
-/// <summary>Animations: snapshot value tweening, pulse, hover progress and the radar reset clock.</summary>
+/// <summary>Animations: snapshot value tweening, pulse, hover progress.</summary>
 internal sealed partial class BarForm
 {
     private void StartSnapshotAnimation(QuotaSnapshot previous, QuotaSnapshot next)
@@ -79,45 +79,6 @@ internal sealed partial class BarForm
     private void EnsureAnimationTimer()
     {
         if (_animationsEnabled && !_animationTimer.Enabled) _animationTimer.Start();
-    }
-
-    private RadarResetWindow? CurrentRadarResetWindow() =>
-        _radarState.Snapshot is { Provider: ProviderKind.Codex } snapshot
-            ? snapshot.ResetWindow
-            : null;
-
-    private bool ShouldShowRadarResetArea() =>
-        _radarProviders.Contains(ProviderKind.Codex)
-        && CurrentRadarResetWindow()?.Open == true;
-
-    private void RefreshRadarResetClock()
-    {
-        if (_radarPopover?.Visible == true
-            && _hoverRadarTarget is { SourceProvider: ProviderKind.Codex } target
-            && RadarResetTiming.Resolve(CurrentRadarResetWindow()).Kind == RadarResetTimingKind.EstimatedDate)
-        {
-            ShowRadarPopover(target, _popoverPinned, requestRefresh: false);
-        }
-        UpdateRadarResetTimer();
-        Invalidate();
-    }
-
-    private void UpdateRadarResetTimer()
-    {
-        var interval = ShouldShowRadarResetArea()
-            ? RadarResetTiming.RefreshIntervalMilliseconds(CurrentRadarResetWindow(), _utcNow())
-            : null;
-        if (interval is null)
-        {
-            _radarResetTimer.Stop();
-            return;
-        }
-        if (_radarResetTimer.Interval != interval.Value)
-        {
-            _radarResetTimer.Stop();
-            _radarResetTimer.Interval = interval.Value;
-        }
-        if (!_radarResetTimer.Enabled) _radarResetTimer.Start();
     }
 
     private bool AdvanceHoverAnimation()

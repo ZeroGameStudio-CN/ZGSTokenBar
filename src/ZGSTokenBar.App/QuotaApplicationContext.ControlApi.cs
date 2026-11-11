@@ -279,13 +279,6 @@ internal sealed partial class QuotaApplicationContext
                 ConversationLiveRateTotal = _bar.LiveMetrics.CurrentOutputRate is null ? null
                     : CodexConversationDisplay.Select(_cachedCodexTokenUsage).Sum(turn => turn.LiveRate?.Total ?? 0),
                 ConversationLiveRateCount = CodexConversationDisplay.Select(_cachedCodexTokenUsage).Count(turn => turn.LiveRate is not null),
-                RadarTrialObservedAt = _radarViewState.Snapshot?.TrialFeed?.ObservedAt,
-                RadarVisible = _bar.RadarVisible,
-                RadarModelGroups = _bar.DisplayedRadarModelGroups,
-                CachedRadarModelGroups = _radarViewState.Snapshot is { } radarSnapshot
-                    ? RadarPresentation.BuildCodex(radarSnapshot).Rows
-                        .Select(row => row.Model.Model).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
-                    : null,
             },
             cancellationToken));
 

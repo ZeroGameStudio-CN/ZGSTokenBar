@@ -17,7 +17,7 @@ A Provider that can reuse credentials from its own fixed local store may declare
 
 On a fresh settings root, successful local probes seed Provider enablement. Missing credentials are checked again on later starts, while a user's explicit on/off choice always takes precedence. Opening and saving Settings without changing a switch does not convert an automatic state into an explicit choice. This mechanism is discovery, not a second credential store; Provider-specific keys do not belong in ZGSTokenBar Settings.
 
-Provider output uses `MiniCardContribution`, `DetailContribution`, and optional radar-style contributions from `ZGSTokenBar.PluginSdk`. Use stable ids and localization keys; do not hard-code host layout, access application settings directly, or write outside the plugin data root.
+Provider output uses `MiniCardContribution` and `DetailContribution` from `ZGSTokenBar.PluginSdk`. Use stable ids and localization keys; do not hard-code host layout, access application settings directly, or write outside the plugin data root.
 
 See `schemas/plugin-manifest.v1.json` for the package contract and the existing built-ins for minimal examples.
 

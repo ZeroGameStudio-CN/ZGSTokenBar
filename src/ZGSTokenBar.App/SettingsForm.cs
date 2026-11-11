@@ -15,7 +15,6 @@ internal sealed class SettingsForm : Form
         "zgstokenbar.provider.claude",
         "zgstokenbar.provider.codex",
         "zgstokenbar.usage.codex-local",
-        "zgstokenbar.intelligence.radar",
     ];
     private const int LogicalClientWidth = 720;
     private const int LogicalClientHeight = 540;
@@ -55,8 +54,6 @@ internal sealed class SettingsForm : Form
     private readonly ToggleSwitch _usageAlerts;
     private readonly ToggleSwitch _animations;
     private readonly ToggleSwitch _embedTaskbar;
-    private readonly ToggleSwitch _radar;
-    private readonly ToggleSwitch _radarAlerts;
     private readonly ToggleSwitch _refreshClaudeOAuth;
     private readonly SettingsComboBox _refreshMinutes;
     private readonly SettingsComboBox _locale;
@@ -65,15 +62,11 @@ internal sealed class SettingsForm : Form
     private readonly Dictionary<string, PaletteChoiceButton> _backgroundPaletteButtons = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ToggleSwitch> _externalPluginToggles = new(StringComparer.Ordinal);
     private readonly IReadOnlyList<PluginStatus> _plugins;
-    private readonly RoundedButton _testRadar;
     private readonly RoundedButton _save;
     private readonly Label _dirtyLabel;
     private SettingsPage _activePage = null!;
     private Icon? _windowIcon;
     private string _backgroundPalette;
-    private bool _radarAlertsBeforeDisable;
-    private bool _lastRadarEnabled;
-    private bool _updatingRadarDependency;
     private bool _codexLocalUsageBeforeDisable;
     private bool _sub2ApiPoolBeforeDisable;
     private bool _lastCodexEnabled;
@@ -82,7 +75,6 @@ internal sealed class SettingsForm : Form
     private bool _applyingLayout;
 
     public AppSettings? ResultSettings { get; private set; }
-    public event EventHandler? RadarTestNotificationRequested;
 
     public SettingsForm(
         AppSettings settings,
@@ -109,8 +101,6 @@ internal sealed class SettingsForm : Form
         _renderOnly = renderOnly;
         _desiredClientSize = new Size(Scale(LogicalClientWidth), Scale(LogicalClientHeight));
         _backgroundPalette = AppSettings.NormalizeBackgroundPalette(settings.BackgroundPalette);
-        _radarAlertsBeforeDisable = settings.EnableRadarAlerts;
-        _lastRadarEnabled = settings.EnableRadar;
         _baseTitle = _text.SettingsTitle;
 
         AutoScaleMode = AutoScaleMode.None;
@@ -218,8 +208,6 @@ internal sealed class SettingsForm : Form
         _usageAlerts = CreateToggle(_text.UsageAlertsTitle, _text.UsageAlerts, settings.EnableAlerts);
         _animations = CreateToggle(_text.AnimationsTitle, _text.Animations, settings.EnableAnimations);
         _embedTaskbar = CreateToggle(_text.EmbedTaskbarTitle, _text.EmbedTaskbarHint, settings.EmbedInTaskbar);
-        _radar = CreateToggle(_text.ShowRadarTitle, _text.ShowRadar, settings.EnableRadar);
-        _radarAlerts = CreateToggle(_text.RadarAlertsTitle, _text.RadarAlerts, settings.EnableRadarAlerts);
         _refreshClaudeOAuth = CreateToggle(_text.AllowClaudeRefresh, _text.ClaudeRefreshHint, settings.AutoRefreshClaudeOAuth);
         foreach (var plugin in _plugins
                      .Where(plugin => !BuiltinPluginIds.Contains(plugin.Manifest.Id))
@@ -257,17 +245,6 @@ internal sealed class SettingsForm : Form
             _paletteGrid.Controls.Add(choice);
         }
         UpdateBackgroundPaletteSelection();
-
-        _testRadar = new RoundedButton(_theme, _scale, primary: false)
-        {
-            Text = _text.TestRadarNotification,
-            Width = Scale(164),
-            Height = Scale(32),
-            Tag = "settings.radar.test",
-            AccessibleName = _text.TestRadarNotification,
-            AccessibleDescription = _text.RadarTestNotificationHint,
-        };
-        _testRadar.Click += (_, _) => RadarTestNotificationRequested?.Invoke(this, EventArgs.Empty);
 
         var root = new TableLayoutPanel
         {
@@ -353,16 +330,7 @@ internal sealed class SettingsForm : Form
         {
             toggle.CheckedChanged += (_, _) => RefreshDirtyState();
         }
-        _radar.CheckedChanged += (_, _) => UpdateRadarDependency();
         _openAtLogin.CheckedChanged += (_, _) => RefreshDirtyState();
-        _radarAlerts.CheckedChanged += (_, _) =>
-        {
-            if (!_updatingRadarDependency && _radar.Checked)
-            {
-                _radarAlertsBeforeDisable = _radarAlerts.Checked;
-            }
-            RefreshDirtyState();
-        };
         foreach (var toggle in new[]
                  {
                      _usageAlerts,
@@ -378,7 +346,6 @@ internal sealed class SettingsForm : Form
         _codexDisplayMode.SelectedIndexChanged += (_, _) => RefreshDirtyState();
 
         UpdateCodexDependencies(initializing: true);
-        UpdateRadarDependency(initializing: true);
         RefreshDirtyState();
         ApplyResponsiveLayout();
 
@@ -531,7 +498,6 @@ internal sealed class SettingsForm : Form
             _text.Sub2ApiModuleHint,
             _theme,
             _scale));
-        providers.Add(new ToggleSettingRow(_radar, _text.ShowRadarTitle, _text.ShowRadar, _theme, _scale));
         foreach (var plugin in _plugins
                      .Where(plugin => _externalPluginToggles.ContainsKey(plugin.Manifest.Id))
                      .OrderBy(plugin => plugin.Manifest.Order)
@@ -559,17 +525,6 @@ internal sealed class SettingsForm : Form
             _text.BackgroundPalette,
             _text.BackgroundPaletteHint,
             _paletteGrid,
-            _theme,
-            _scale));
-
-        var radar = AddPage("radar", _text.RadarSectionTitle);
-        radar.Add(new SectionNote(_text.RadarNetworkHint, _theme, _scale));
-        radar.Add(new ToggleSettingRow(_radarAlerts, _text.RadarAlertsTitle, _text.RadarAlerts, _theme, _scale));
-        radar.Add(new ActionSettingRow(
-            _text.TestRadarNotification,
-            _text.RadarTestNotificationHint,
-            _text.RadarRunsWhileOpen,
-            _testRadar,
             _theme,
             _scale));
 
@@ -610,7 +565,6 @@ internal sealed class SettingsForm : Form
         AddNavigation("providers", "\uE77B", _text.Modules);
         AddNavigation("notifications", "\uEA8F", _text.Notifications);
         AddNavigation("display", "\uE790", _text.Display);
-        AddNavigation("radar", "\uF272", _text.RadarNavigation);
         AddNavigation("advanced", "\uE9F9", _text.Advanced);
         AddNavigation("about", "\uE946", _text.About);
     }
@@ -853,35 +807,6 @@ internal sealed class SettingsForm : Form
         RefreshDirtyState();
     }
 
-    private void UpdateRadarDependency(bool initializing = false)
-    {
-        if (_updatingRadarDependency) return;
-        _updatingRadarDependency = true;
-        try
-        {
-            if (_radar.Checked != _lastRadarEnabled || initializing)
-            {
-                if (_radar.Checked)
-                {
-                    if (!initializing) _radarAlerts.Checked = _radarAlertsBeforeDisable;
-                }
-                else
-                {
-                    if (!initializing) _radarAlertsBeforeDisable = _radarAlerts.Checked;
-                    _radarAlerts.Checked = false;
-                }
-                _lastRadarEnabled = _radar.Checked;
-            }
-            _radarAlerts.Enabled = _radar.Checked;
-            _testRadar.Enabled = _radar.Checked;
-        }
-        finally
-        {
-            _updatingRadarDependency = false;
-        }
-        RefreshDirtyState();
-    }
-
     private void UpdateBackgroundPaletteSelection()
     {
         foreach (var (id, button) in _backgroundPaletteButtons)
@@ -965,8 +890,6 @@ internal sealed class SettingsForm : Form
             EnableAnimations = _animations.Checked,
             EmbedInTaskbar = _embedTaskbar.Checked,
             GlassDockMaxRings = _original.GlassDockMaxRings,
-            EnableRadar = _radar.Checked,
-            EnableRadarAlerts = _radar.Checked && _radarAlerts.Checked,
             EnableAiGatewayBalance = _externalPluginToggles.TryGetValue(
                 MiniAreaIds.AiGateway,
                 out var aiGatewayToggle)
@@ -977,7 +900,6 @@ internal sealed class SettingsForm : Form
             MiniAreaOrder = AppSettings.CopyMiniAreaOrder(_original.MiniAreaOrder),
             HiddenDockItems = BuildHiddenDockItems(),
             GlassDockExpanded = _original.GlassDockExpanded,
-            RadarModelGroups = AppSettings.CopyRadarModelGroups(_original.RadarModelGroups),
             CodexMiniDisplayMode = (_codexDisplayMode.SelectedItem as CodexMiniDisplayModeChoice)?.Mode
                 ?? _original.CodexMiniDisplayMode,
             BackgroundPalette = _backgroundPalette,
@@ -1002,7 +924,6 @@ internal sealed class SettingsForm : Form
             "zgstokenbar.usage.codex-local",
             _codex.Checked && _codexLocalUsage.Checked,
             _original.IsEnabled(ProviderKind.Codex));
-        ApplyPluginToggle(settings, "zgstokenbar.intelligence.radar", _radar.Checked, false);
         foreach (var pair in _externalPluginToggles)
         {
             ApplyPluginToggle(
@@ -1034,8 +955,6 @@ internal sealed class SettingsForm : Form
         && left.EnableAlerts == right.EnableAlerts
         && left.EnableAnimations == right.EnableAnimations
         && left.EmbedInTaskbar == right.EmbedInTaskbar
-        && left.EnableRadar == right.EnableRadar
-        && left.EnableRadarAlerts == right.EnableRadarAlerts
         && left.EnableAiGatewayBalance == right.EnableAiGatewayBalance
         && left.EnableSub2ApiPool == right.EnableSub2ApiPool
         && left.IsPluginEnabled("zgstokenbar.metrics.system", true)
@@ -1063,15 +982,12 @@ internal sealed class SettingsForm : Form
             EnableAnimations = settings.EnableAnimations,
             EmbedInTaskbar = settings.EmbedInTaskbar,
             GlassDockMaxRings = settings.GlassDockMaxRings,
-            EnableRadar = settings.EnableRadar,
-            EnableRadarAlerts = settings.EnableRadarAlerts,
             EnableAiGatewayBalance = settings.EnableAiGatewayBalance,
             EnableSub2ApiPool = settings.EnableSub2ApiPool,
             MiniAreaLayouts = AppSettings.CopyMiniAreaLayouts(settings.MiniAreaLayouts),
             MiniAreaOrder = AppSettings.CopyMiniAreaOrder(settings.MiniAreaOrder),
             HiddenDockItems = AppSettings.CopyHiddenDockItems(settings.HiddenDockItems),
             GlassDockExpanded = settings.GlassDockExpanded,
-            RadarModelGroups = AppSettings.CopyRadarModelGroups(settings.RadarModelGroups),
             CodexMiniDisplayMode = CodexMiniDisplayModes.Normalize(settings.CodexMiniDisplayMode),
             BackgroundPalette = AppSettings.NormalizeBackgroundPalette(settings.BackgroundPalette),
             Locale = settings.Locale,

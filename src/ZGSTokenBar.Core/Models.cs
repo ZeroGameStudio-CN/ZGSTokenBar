@@ -367,7 +367,6 @@ public static class TaskbarMiniLayoutMath
     public const int CardWidth = 144;
     public const int CodexPoolCardWidth = 184;
     public const int ServiceCardWidth = 104;
-    public const int RadarResetContentWidth = 92;
     public const int CollapsedCardWidth = 34;
     public const int ProviderCollapseHandleWidth = 9;
     public const int MinimumAreaContentWidth = 88;
@@ -662,7 +661,6 @@ public static class MiniAreaIds
     public const string Claude = "zgstokenbar.provider.claude";
     public const string Codex = "zgstokenbar.provider.codex";
     public const string AiGateway = "zgstokenbar.provider.ai-gateway";
-    public const string RadarReset = "zgstokenbar.radar.reset";
     public const string SystemMetrics = "zgstokenbar.metrics.system";
     public const string LiveMetrics = "zgstokenbar.metrics.live";
 }

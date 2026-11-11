@@ -26,9 +26,6 @@ internal static class SettingsChangeDetector
             && previous.TaskbarDocked == next.TaskbarDocked
             && previous.EnableAnimations == next.EnableAnimations
             && previous.EmbedInTaskbar == next.EmbedInTaskbar
-            && previous.EnableRadar == next.EnableRadar
-            && previous.EnableRadarAlerts == next.EnableRadarAlerts
-            && PluginEnabledEqual(previous.RadarModelGroups, next.RadarModelGroups)
             && previous.EnableAiGatewayBalance == next.EnableAiGatewayBalance
             && previous.EnableSub2ApiPool == next.EnableSub2ApiPool
             && PluginEnabledEqual(previous.PluginEnabled, next.PluginEnabled)

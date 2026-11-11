@@ -27,7 +27,6 @@ internal sealed partial class QuotaApplicationContext
             _updateMenuItem.Visible = true;
             if (_notifiedUpdateVersion == update.Version || _quitting) return;
             _notifiedUpdateVersion = update.Version;
-            _radarBalloonActive = false;
             _updateBalloonActive = true;
             _tray.ShowBalloonTip(
                 8_000,
@@ -61,7 +60,6 @@ internal sealed partial class QuotaApplicationContext
     private void ShowMilestoneAlerts(IReadOnlyList<QuotaMilestoneAlert> alerts)
     {
         if (alerts.Count == 0 || _quitting) return;
-        _radarBalloonActive = false;
         _updateBalloonActive = false;
         var now = DateTimeOffset.UtcNow;
         var warning = alerts.Any(alert => alert.Threshold >= 90);

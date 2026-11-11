@@ -167,8 +167,6 @@ internal static class PluginAutoDiscovery
         string[] PluginEnablementDecisions,
         string[] AutoEnabledPlugins,
         string[] EnabledProviders,
-        bool EnableRadar,
-        bool EnableRadarAlerts,
         bool EnableAiGatewayBalance)
     {
         public static EnablementState Capture(AppSettings settings) => new(
@@ -178,8 +176,6 @@ internal static class PluginAutoDiscovery
             [.. settings.PluginEnablementDecisions ?? []],
             [.. settings.AutoEnabledPlugins ?? []],
             [.. settings.EnabledProviders ?? []],
-            settings.EnableRadar,
-            settings.EnableRadarAlerts,
             settings.EnableAiGatewayBalance);
 
         public void Restore(AppSettings settings)
@@ -188,8 +184,6 @@ internal static class PluginAutoDiscovery
             settings.PluginEnablementDecisions = [.. PluginEnablementDecisions];
             settings.AutoEnabledPlugins = [.. AutoEnabledPlugins];
             settings.EnabledProviders = [.. EnabledProviders];
-            settings.EnableRadar = EnableRadar;
-            settings.EnableRadarAlerts = EnableRadarAlerts;
             settings.EnableAiGatewayBalance = EnableAiGatewayBalance;
         }
     }

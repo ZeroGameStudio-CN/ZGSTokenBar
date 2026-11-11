@@ -12,7 +12,7 @@ Default agent closeout and standing local-update authorization are defined in [A
 ## Layout
 
 ```text
-src/ZGSTokenBar.Core/          provider, settings, cache, pace, Radar
+src/ZGSTokenBar.Core/          provider, settings, cache, pace
 src/ZGSTokenBar.App/           WinForms bar, popovers, tray, settings
 src/ZGSTokenBar.PluginSdk/     stable plugin and local API contracts
 src/ZGSTokenBar.Host/          plugin lifecycle and typed dispatcher
@@ -205,15 +205,12 @@ For local replacement builds, publish with a fresh temporary `--artifacts-path`
 and output directory. Verify live behavior after restarting the installed file;
 its on-disk hash alone does not prove the running behavior matches the source.
 `window inspect` reports the loaded App/Core module IDs, the actual UI Token
-total, and actual/open versus cached Radar model groups. Compare module IDs
+total. Compare module IDs
 with the built DLLs instead of relying on a hash computed from a path after launch.
-It also reports `radarTrialObservedAt`, `recentConversationCount` and
+It also reports `recentConversationCount` and
 `latestTurnOutputTokensPerSecond`. The latter is output tokens divided by the
 entire turn's wall time, including tools and waiting, not server decode throughput.
 
-Run the synthetic Radar/current-pricing/conversation cases and render their
-production UI with `dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj
--c Release -- --radar-usage-update <temporary-capture-directory>`.
 Conversation measurement incrementally scans all discovered sessions,
 with an 8 MiB per-file budget per refresh. A complete turn in the last 2 MiB
 bootstraps immediately; longer turns catch up across refreshes. Only complete
@@ -232,68 +229,10 @@ retries and due retention still merge with the latest durable index under its
 existing cross-process lock. The opt-in `--history-refresh-memory-probe
 <temporary-index-copy> <report>` test command compares this refresh path using
 an isolated session and ledger, with unchanged on-disk bytes checked.
-The popover starts at the newest summaries and pages through the retained records,
-while unfinished turns remain
-in the live window. Plugin snapshot details continue to expose the bounded recent
-view. The Codex surface opens the conversation list as its primary view, with
-spend, Token and overall cache summaries beneath it. Its optional Radar opens as
-an owned window to the right, retaining its own model folding, scrolling and
-benchmark selection. Opening the conversation view does not request a Radar fetch;
-expanding Radar requests one without resetting conversation paging. Closing the
-primary view closes its extension, and pointer containment includes both windows.
-The compact two-line table caps the title column at approximately 200 logical
-units and ellipsizes longer names, preserving their full hover text. It groups
-the chat name above known model/effort/tier metadata;
-state has a dedicated centered column. Each turn retains its full local start
-date/time and adds cached input divided by total input as its cache hit percentage.
-Missing/zero input remains unavailable. Long names use ellipsis and row hover
-shows the full name and cache percentage. Names are read
-from a bounded, change-cached 2 MiB tail of each registered home's session index
-and are never persisted to the token ledger. A missing title displays the project
-and short session ID rather than an indistinguishable unnamed label. The main
-view uses larger title/body/number fonts and 44-unit two-line rows; the Radar
-extension keeps its separate sizing and has its own collapse control.
-Missing metric cells are blank; columns with no measured values anywhere in the
-retained display list are removed, reducing the whole popup width. Rows without
-any measured usage/timing are omitted. Display paging and hover use the same
-filtered list, leaving the ledger and exported measurements unchanged. The
-primary hover lists only recorded fields, including response/routing evidence
-when present, without repeated unknown or unavailable messages.
-The primary model label is the session setting. Timestamped `response.completed`
-records are accepted as response evidence only with an explicit matching turn,
-matching thread when present, a completed response envelope and a response ID.
-Explicit `model_rerouted` / `model/rerouted` records remain a separate routing
-notice, preserving from/to/reason. Settings, catalog headers and sub-agent
-activity are never promoted into response evidence. Hover and CLI report the
-recorded evidence or explicit unavailability. The sampled local sources did
-not retain actual response-model or routing records; this reader does not change
-client logging/proxies or recover missing past responses. Explicit context or
-`thread_settings_applied` events identify Fast/Standard; missing records remain
-unknown and turns with multiple observed tiers show mixed.
-Alternating row shading and aligned numeric columns
-show new input (input minus cache hits), output, cached input, API-equivalent
-cost, turn-average output rate and first-token latency. Cost is summed per proven
-request/model/tier; unknown coverage is unavailable or marked with a plus.
-The state column distinguishes running, ended,
-interrupted or unknown after two minutes without usage updates or on a log read failure. Unknown does not
-assert that a turn has stopped. First-token headings and values are centered.
-Project, identity and metric definitions live in hover details.
-
-The primary view includes local-start-date presets (observed history, today, seven
-or thirty local calendar days), exact recorded project-name and configured-model
-filters, metadata search and sortable column headings. Filters are in-memory;
-background refresh preserves the selection and typing. Changing a filter resets
-paging. The four summary cards describe matching observed turns, recorded output,
-API-equivalent cost (including partial coverage) and whole-turn average speed.
-They are not all-request totals; the current live window and retained terminal
-history remain bounded. Empty matches never fall back to unfiltered records.
-The same popup keeps whole-row paging, the separate Radar extension and the
-existing global token/cache/fee summaries under an explicit global-scope label.
-The header counts and upper summaries follow the current filters; the global
-footer does not. Retention limits remain in the history hover. On short screens
-the per-model cards
-may be omitted to retain a usable table without adding scrollbars; full filtered
-model summaries remain in the speed tooltip.
+The tok/s hover lists the most recent sessions (Token in→out, average speed,
+first-token latency and cache hit rate) above today's Token total, the 24-hour
+curve and cache read/write statistics. Plugin snapshot details continue to
+expose the bounded recent view.
 
 Live-only refreshes reuse filtered ordering, summaries, model groups and unchanged
 window geometry. Recorded changes, filter changes, local midnight, sample
@@ -373,11 +312,6 @@ Already-rendered forecasts expire at their window reset or maximum data age;
 known exhausted/weekly-blocked quota can remain blocked until its known reset
 while refresh is deferred. This prevents stale "until reset" claims after reset.
 
-The Radar subtitle switches between the Codex trial (/100) and historical (/150)
-views. API contributions keep those datasets separate and include sample counts.
-Trial unread state uses the trial timestamp. The routing export retains its
-existing historical ranking policy and identifies its benchmark, original source
-timestamp and historical status explicitly; five-question trials do not drive it.
 
 The model price table includes exact GPT-6 Astra/Sol/Luna and GPT-6.1 Sol prices
 from the official model pages checked on 2026-10-23. Known 6-series Fast/Flex/Batch
@@ -409,8 +343,7 @@ The built-in adapters receive the explicit host data root through `PluginStartCo
 process Providers still receive only their own plugin data directory.
 Transient startup read failures defer local recomputation until the ledger can
 be loaded; they must not turn a protected on-disk baseline into a lower in-memory
-total. Radar likewise retries restoring its cached supplemental models before
-refreshing after a transient cache-read failure.
+total.
 
 Transient settings read failures also defer auto-discovery, startup registration
 and settings saves until the original file can be restored. Plugin stop/start and

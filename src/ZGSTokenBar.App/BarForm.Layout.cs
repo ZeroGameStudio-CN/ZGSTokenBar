@@ -210,16 +210,7 @@ internal sealed partial class BarForm
             if (_systemUsage.OutputRateCapturedAt is not null)
                 defaultAreas.Add(TaskbarMiniAreaContent.ForLiveMetrics(_text.IsChinese ? "实时速率" : "Live rates"));
         }
-        if (ShouldShowRadarResetArea())
-        {
-            var codexIndex = defaultAreas.FindLastIndex(area =>
-                area.Group?.Cards.Any(card => card.Provider == ProviderKind.Codex) == true);
-            defaultAreas.Insert(
-                codexIndex >= 0 ? codexIndex + 1 : Math.Max(0, defaultAreas.Count - 1),
-                TaskbarMiniAreaContent.ForRadarReset(_text.RadarResetMiniAreaTitle));
-        }
-        var effectiveOrder = MiniAreaOrderWithRadarDefault(_miniAreaOrder);
-        _taskbarContentAreas = OrderTaskbarContentAreas(defaultAreas, effectiveOrder)
+        _taskbarContentAreas = OrderTaskbarContentAreas(defaultAreas, _miniAreaOrder)
             .ToArray();
         _visibleTaskbarAreas = SelectVisibleTaskbarAreas(_taskbarContentAreas);
         _visibleCards = _visibleTaskbarAreas
@@ -335,28 +326,14 @@ internal sealed partial class BarForm
         return ordered;
     }
 
-    private static IReadOnlyList<string> MiniAreaOrderWithRadarDefault(
-        IReadOnlyList<string> order)
-    {
-        if (order.Contains(MiniAreaIds.RadarReset, StringComparer.Ordinal)) return order;
-        var effectiveOrder = order.ToList();
-        var codexIndex = effectiveOrder.FindLastIndex(areaId =>
-            string.Equals(areaId, MiniAreaIds.Codex, StringComparison.Ordinal)
-            || areaId.StartsWith($"{MiniAreaIds.Codex}.", StringComparison.Ordinal));
-        if (codexIndex >= 0) effectiveOrder.Insert(codexIndex + 1, MiniAreaIds.RadarReset);
-        return effectiveOrder;
-    }
-
     private static TaskbarMiniAreaContent[] SelectVisibleTaskbarAreas(
         IReadOnlyList<TaskbarMiniAreaContent> areas)
     {
         var visibleIds = areas
-            .Where(area => !string.Equals(area.AreaId, MiniAreaIds.SystemMetrics, StringComparison.Ordinal)
-                && !string.Equals(area.AreaId, MiniAreaIds.RadarReset, StringComparison.Ordinal))
+            .Where(area => !string.Equals(area.AreaId, MiniAreaIds.SystemMetrics, StringComparison.Ordinal))
             .Take(TaskbarMiniLayoutMath.MaximumCards)
             .Select(area => area.AreaId)
             .ToHashSet(StringComparer.Ordinal);
-        visibleIds.Add(MiniAreaIds.RadarReset);
         visibleIds.Add(MiniAreaIds.SystemMetrics);
         foreach (var providerId in ProviderCatalog.PersistentMiniIds) visibleIds.Add(providerId);
         // The dock window no longer sizes itself from this set. GlassDockLayout.Width

@@ -183,6 +183,4 @@ test('legacy optional providers are ignored when their built-ins are not install
   assert.doesNotMatch(
     application.match(/LegacyRenderedPluginIds =[\s\S]*?\];/)?.[0] ?? '',
     /zgstokenbar\.provider\.ai-gateway/);
-  assert.match(application, /if \(HasPlugin\("zgstokenbar\.intelligence\.radar"\) && _radarViewState\.Snapshot/);
-  assert.match(application, /if \(HasPlugin\("zgstokenbar\.intelligence\.radar"\)\)[\s\S]*?CorePluginProjection\.Radar/);
 });

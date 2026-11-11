@@ -39,7 +39,6 @@ internal sealed partial class BarForm
             if (onChip)
             {
                 UpdateSystemUsageHover(false);
-                UpdateRadarHover(null);
                 UpdateCodexAccountsHover(null);
                 UpdateQuotaHover(null);
                 _hoverPluginTarget = null;
@@ -58,7 +57,6 @@ internal sealed partial class BarForm
             _hoverResizeAreaId = resizeTarget.AreaId;
             _hoverPluginTarget = null;
             UpdateSystemUsageHover(false);
-            UpdateRadarHover(null);
             UpdateCodexAccountsHover(null);
             UpdateQuotaHover(null);
             UpdateHintHover(HoverTarget.None);
@@ -76,7 +74,6 @@ internal sealed partial class BarForm
             _hoverReorderAreaId = reorderTarget.AreaId;
             _hoverPluginTarget = null;
             UpdateSystemUsageHover(false);
-            UpdateRadarHover(null);
             UpdateCodexAccountsHover(null);
             UpdateQuotaHover(null);
             _hoverTarget = HoverTarget.MiniReorder;
@@ -92,13 +89,10 @@ internal sealed partial class BarForm
         var miniAreaTarget = TaskbarCollapseTargetAt(logical);
         var miniCollapseTarget = miniAreaTarget is not null;
         _hoverMiniAreaId = miniAreaTarget?.AreaId;
-        var radarTarget = !systemUsageTarget && !miniCollapseTarget
-            ? TaskbarRadarTargetAt(logical)
-            : null;
-        var codexAccountTarget = radarTarget is null && !systemUsageTarget && !miniCollapseTarget
+        var codexAccountTarget = !systemUsageTarget && !miniCollapseTarget
             ? TaskbarCodexAccountTargetAt(logical)
             : null;
-        var pluginTarget = radarTarget is null && codexAccountTarget is null
+        var pluginTarget = codexAccountTarget is null
             && !systemUsageTarget && !miniCollapseTarget
             ? TaskbarPluginTargetAt(logical)
             : null;
@@ -108,13 +102,12 @@ internal sealed partial class BarForm
             StringComparison.Ordinal);
         _hoverPluginTarget = pluginTarget;
         if (pluginChanged && _hintPopover?.Visible == true) HideHintPopover();
-        var quotaTarget = radarTarget is null && codexAccountTarget is null
+        var quotaTarget = codexAccountTarget is null
             && pluginTarget is null && !miniCollapseTarget
             ? TaskbarQuotaTargetAt(logical)
             : null;
         if (systemUsageTarget || miniCollapseTarget) quotaTarget = null;
         UpdateSystemUsageHover(systemUsageTarget);
-        UpdateRadarHover(radarTarget);
         UpdateCodexAccountsHover(codexAccountTarget);
         UpdateQuotaHover(quotaTarget);
         var next = _codexStrategyBounds.Contains(logical)
@@ -131,8 +124,6 @@ internal sealed partial class BarForm
                         ? HoverTarget.QuotaWindow
                         : pluginTarget is not null
                             ? HoverTarget.Plugin
-                        : radarTarget is not null
-                            ? HoverTarget.Radar
                             : systemUsageTarget
                                 ? HoverTarget.SystemUsage
                                 : HoverTarget.None;
@@ -153,7 +144,6 @@ internal sealed partial class BarForm
         base.OnMouseLeave(e);
         if (_taskbarDragging || _reorderingMiniAreaId is not null || _resizingMiniAreaId is not null) return;
         UpdateSystemUsageHover(false);
-        UpdateRadarHover(null);
         UpdateCodexAccountsHover(null);
         UpdateQuotaHover(null);
         _hoverPluginTarget = null;
@@ -327,12 +317,6 @@ internal sealed partial class BarForm
             PluginActivated?.Invoke(this, pluginTarget.Card.PluginId);
             return;
         }
-        var radarTarget = TaskbarRadarTargetAt(logical);
-        if (radarTarget is not null)
-        {
-            TogglePinnedRadarPopover(radarTarget);
-            return;
-        }
         var quotaTarget = TaskbarQuotaTargetAt(logical);
         if (quotaTarget is not null)
         {
@@ -490,9 +474,6 @@ internal sealed partial class BarForm
 
     private MiniQuotaTarget? TaskbarQuotaTargetAt(PointF point) =>
         _taskbarWindowBounds.FirstOrDefault(target => target.Bounds.Contains(point));
-
-    private MiniRadarTarget? TaskbarRadarTargetAt(PointF point) =>
-        _taskbarRadarBounds.FirstOrDefault(target => target.Bounds.Contains(point));
 
     private (RectangleF Bounds, PluginMiniCardView Card)? TaskbarPluginTargetAt(PointF point)
     {

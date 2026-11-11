@@ -170,25 +170,6 @@ public sealed record DetailContribution(
     string PluginId,
     IReadOnlyList<DetailSectionContribution> Sections);
 
-public sealed record RadarModelRow(
-    string Model,
-    double? Score,
-    double? Average24Hours,
-    int? AverageMinutes,
-    decimal? EstimatedTaskCost,
-    IReadOnlyList<string> ScenarioMarkers)
-{
-    public long? SampleCount { get; init; }
-    public double? AverageSeconds { get; init; }
-}
-
-public sealed record RadarContribution(
-    string Id,
-    string PluginId,
-    DateTimeOffset SourceAt,
-    IReadOnlyList<RadarModelRow> Rows,
-    IReadOnlyList<ContributionSummaryItem> Footer);
-
 public sealed record SettingsFieldContribution(
     string Id,
     string LabelKey,
@@ -210,7 +191,6 @@ public sealed record PluginDataSnapshot(
     PluginHealth Health,
     IReadOnlyList<MiniCardContribution> MiniCards,
     IReadOnlyList<DetailContribution> Details,
-    IReadOnlyList<RadarContribution> Radar,
     IReadOnlyDictionary<string, JsonElement>? SafeMetadata = null);
 
 public sealed record CommandDescriptor(
@@ -336,6 +316,5 @@ public abstract class BuiltinPluginBase : IZgsPlugin
 [JsonSerializable(typeof(PluginError))]
 [JsonSerializable(typeof(MiniCardContribution))]
 [JsonSerializable(typeof(DetailContribution))]
-[JsonSerializable(typeof(RadarContribution))]
 [JsonSerializable(typeof(JsonElement))]
 public partial class PluginSdkJsonContext : JsonSerializerContext;

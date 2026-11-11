@@ -219,7 +219,6 @@ internal sealed partial class BarForm
         var (plan, items) = CurrentGlassLayout();
         _cardBounds.Clear();
         _taskbarWindowBounds.Clear();
-        _taskbarRadarBounds.Clear();
         _taskbarPluginBounds.Clear();
         _taskbarCodexAccountBounds.Clear();
         _taskbarAreaBounds.Clear();

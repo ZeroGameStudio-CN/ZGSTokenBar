@@ -467,48 +467,8 @@ internal sealed partial class BarForm
     {
         if (showOrdinal) DrawProviderLogo(graphics, logoBounds, card);
         else DrawProviderLogo(graphics, logoBounds, card, false);
-        var radarEnabled = _radarProviders.Contains(card.Provider);
-        var deepSeekRadarEnabled = card.Provider == ProviderKind.AiGateway
-            && _radarProviders.Contains(ProviderKind.Codex);
-        if (deepSeekRadarEnabled)
-        {
-            _taskbarRadarBounds.Add(new MiniRadarTarget(
-                logoBounds,
-                WindowKey(card.Key, "__deepseek-radar"),
-                ProviderKind.AiGateway,
-                ProviderKind.Codex,
-                true,
-                RadarSurfaceIds.DeepSeek));
-            if (_radarState.HasUnreadFor(RadarSurfaceIds.DeepSeek)
-                && _radarState.Snapshot?.Provider == ProviderKind.Codex)
-            {
-                DrawRadarUnreadDot(graphics, logoBounds);
-            }
-        }
-        else if (HasProviderOverview(card.Provider, radarEnabled, _codexTokenUsage))
-        {
-            _taskbarRadarBounds.Add(new MiniRadarTarget(
-                logoBounds,
-                card.Key,
-                card.Provider,
-                card.Provider,
-                false,
-                RadarSurfaceIds.Codex));
-            if (radarEnabled
-                && _radarState.HasUnreadFor(RadarSurfaceIds.Codex)
-                && _radarState.Snapshot?.Provider == card.Provider)
-            {
-                DrawRadarUnreadDot(graphics, logoBounds);
-            }
-        }
         return logoBounds;
     }
-
-    internal static bool HasProviderOverview(
-        ProviderKind provider,
-        bool radarEnabled,
-        CodexTokenUsageSummary? codexTokenUsage) =>
-        radarEnabled || provider == ProviderKind.Codex && codexTokenUsage is not null;
 
     private static RectangleF TaskbarCapsuleBounds(RectangleF cardBounds, int windowCount, int index)
     {

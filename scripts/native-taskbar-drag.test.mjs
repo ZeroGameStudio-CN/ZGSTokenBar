@@ -134,10 +134,3 @@ test('taskbar drag enumerates secondary taskbars and selects a persisted monitor
   assert.match(barForm, /generation != _topologyCaptureGeneration/);
   assert.doesNotMatch(barForm, /var captured = DisplayTopology\.Capture\(\)/);
 });
-
-test('product help documents Mini dragging and the Radar entry point', () => {
-  assert.match(productReadme, /Drag the Mini's card area/);
-  assert.match(productReadme, /hover a Codex logo in Mini/);
-  assert.match(appContext, /_text\.OpenRadarWebsite/);
-  assert.match(nativeText, /Open Codex Radar website/);
-});

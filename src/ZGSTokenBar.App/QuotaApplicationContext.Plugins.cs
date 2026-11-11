@@ -197,9 +197,6 @@ internal sealed partial class QuotaApplicationContext
                 _activeProviders = ActiveProviders(_settings);
                 _bar.ApplySettings(_settings);
                 _bar.SetActiveProviders(_activeProviders);
-                _bar.SetRadarProviders(_settings.EnableRadar ? [_radarService.Provider] : []);
-                _radarMenuItem.Visible = _settings.EnableRadar;
-                ApplyRadarInterval();
                 _ = RefreshAsync(userInitiated: true);
                 return true;
             },

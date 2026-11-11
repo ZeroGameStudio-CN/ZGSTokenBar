@@ -30,7 +30,6 @@ internal sealed partial class QuotaApplicationContext
             plugins: pluginStatuses,
             dockItems: _bar.DockVisibilityEntries());
         _settingsDialog = dialog;
-        dialog.RadarTestNotificationRequested += (_, _) => ShowRadarTestNotification();
         dialog.FormClosed += SettingsDialogClosed;
         var area = Screen.FromControl(_bar).WorkingArea;
         dialog.Location = new Point(
@@ -61,7 +60,6 @@ internal sealed partial class QuotaApplicationContext
         if (!localeOnlyChange)
         {
             _ = RefreshAsync();
-            if (_settings.EnableRadarAlerts) _ = RefreshRadarAsync();
         }
     }
 
@@ -203,11 +201,8 @@ internal sealed partial class QuotaApplicationContext
         _bar.ApplySettings(_settings);
         _ = UpdateProviderActivityAsync(requestRefresh: false);
         _bar.SetQuotaPaceEstimates(QuotaPaceEstimates(_snapshot, DateTimeOffset.UtcNow));
-        _bar.SetRadarProviders(_settings.EnableRadar ? [_radarService.Provider] : []);
-        ApplyRadarInterval();
         ApplyClockInterval();
         ApplyText();
-        _radarMenuItem.Visible = _settings.EnableRadar;
         ApplyGenericPluginCards();
     }
 
@@ -275,7 +270,6 @@ internal sealed partial class QuotaApplicationContext
     private void ApplyText()
     {
         _refreshMenuItem.Text = _text.RefreshNow;
-        _radarMenuItem.Text = _text.OpenRadarWebsite;
         if (_availableUpdate is { } update) _updateMenuItem.Text = _text.UpdateTo(update.Version);
         _settingsMenuItem.Text = _text.Settings;
         _quitMenuItem.Text = _text.Quit;

@@ -532,17 +532,6 @@ internal sealed partial class BarForm
     private void DrawResetClockIcon(Graphics graphics, RectangleF bounds) =>
         graphics.DrawImage(_resetClockIcon, CenteredSquare(bounds, MiniResetClockSize));
 
-    private void DrawRadarUnreadDot(Graphics graphics, RectangleF logoBounds)
-    {
-        var dotBounds = new RectangleF(logoBounds.Right - 5, logoBounds.Top - 1, 7, 7);
-        using var border = new SolidBrush(_backgroundTheme.Outer);
-        using var fill = new SolidBrush(Color.FromArgb(248, 74, 88));
-        graphics.FillEllipse(border, dotBounds);
-        graphics.FillEllipse(
-            fill,
-            new RectangleF(dotBounds.X + 1, dotBounds.Y + 1, 5, 5));
-    }
-
     private void DrawProviderLogo(Graphics graphics, RectangleF logoBounds, QuotaCard card) =>
         DrawProviderLogo(graphics, logoBounds, card, true);
 

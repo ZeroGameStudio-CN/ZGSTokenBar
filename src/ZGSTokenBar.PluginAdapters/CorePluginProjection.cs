@@ -68,8 +68,7 @@ public static class CorePluginProjection
                 ?? DateTimeOffset.UtcNow,
             Health(result.Health),
             cards,
-            details,
-            []);
+            details);
     }
 
     public static PluginDataSnapshot CodexUsage(
@@ -91,7 +90,7 @@ public static class CorePluginProjection
                 false,
                 summary.CapturedAt,
                 cached ? "codex.usage.cached" : "codex.usage.current");
-        if (summary is null) return new(pluginId, now, health, [], [], []);
+        if (summary is null) return new(pluginId, now, health, [], []);
 
         var rows = new[]
         {
@@ -136,8 +135,7 @@ public static class CorePluginProjection
                                 summary.CapturedAt)).ToArray()),
                     ]),
                 .. summary.RecentTurns.Take(12).Select((turn, index) => ConversationDetail(pluginId, turn, index)),
-            ],
-            []);
+            ]);
     }
 
     private static DetailContribution ConversationDetail(string pluginId, CodexConversationTurn turn, int index) =>
@@ -187,51 +185,6 @@ public static class CorePluginProjection
                 Text: "USD",
                 Decimal: period?.ApiEquivalentUsd),
             status);
-    }
-
-    public static PluginDataSnapshot Radar(
-        string pluginId,
-        ProviderRadarSnapshot snapshot)
-    {
-        var legacy = new[] { snapshot.Primary }
-            .Concat(snapshot.Comparisons)
-            .Take(256).ToArray();
-        var trial = snapshot.TrialFeed is { Models.Count: > 0 } feed ? feed : null;
-        var sourceAt = trial?.ObservedAt ?? snapshot.SourceUpdatedAt;
-        var historical = sourceAt is null || snapshot.CapturedAt - sourceAt > TimeSpan.FromHours(24);
-        RadarModelRow Row(RadarModel model) => new(
-                model.Label,
-                model.Score,
-                model.IqHistory.Count == 0 ? null : model.IqHistory.Average(sample => sample.Score),
-                model.AverageTaskSeconds is null ? null : (int?)Math.Round(model.AverageTaskSeconds.Value / 60d),
-                model.CostUsd is null ? null : (decimal?)model.CostUsd.Value,
-                model.Status is null ? [] : [model.Status])
-        {
-            SampleCount = model.ValidTasks,
-            AverageSeconds = model.AverageTaskSeconds,
-        };
-        var contributions = new List<RadarContribution>
-        {
-            new("radar.models", pluginId, sourceAt ?? snapshot.CapturedAt,
-                (trial?.Models ?? legacy).Select(Row).ToArray(),
-                [new("radar.score.maximum", new("integer", Integer: trial is null ? 150 : 100)),
-                 new("radar.benchmark", new("text", Text: trial is null ? "legacy" : "codex-trial"))]),
-        };
-        if (trial is not null)
-            contributions.Add(new("radar.legacy", pluginId, snapshot.SourceUpdatedAt ?? snapshot.CapturedAt,
-                legacy.Select(Row).ToArray(), [new("radar.score.maximum", new("integer", Integer: 150))]));
-        return new(
-            pluginId,
-            snapshot.CapturedAt,
-            new(
-                historical ? PluginHealthCode.Cached : PluginHealthCode.Current,
-                true,
-                false,
-                snapshot.CapturedAt,
-                historical ? "radar.historical" : trial is null ? "radar.current" : "radar.trial"),
-            [],
-            [],
-            contributions);
     }
 
     public static PluginHealth Health(ProviderHealth health) =>

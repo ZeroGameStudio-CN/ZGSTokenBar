@@ -66,7 +66,6 @@ if (args.Length > 0 && args[0] == "--usage-clarity-review")
     TestQuotaPacePopoverPresentation();
     if (args.Length == 2)
     {
-        ConversationQueryTests.Capture(args[1]);
         RenderTaskbarMiniCaptures(args[1]);
         ConversationPresentationCacheTests.Benchmark(Path.Combine(args[1], "conversation-cache-benchmark.json"));
     }
@@ -85,8 +84,7 @@ if (args.Length > 0 && args[0] == "--live-metrics")
 if (args.Length > 0 && args[0] == "--conversation-history-panel")
 {
     ConversationQueryTests.Run();
-    if (args.Length == 2) ConversationQueryTests.Capture(args[1]);
-    Console.WriteLine("PASS retained history filters, summaries, sorting, CSV and native presentation");
+    Console.WriteLine("PASS retained history filters, summaries, sorting and CSV");
     return 0;
 }
 
@@ -146,14 +144,6 @@ if (args.Length > 0 && args[0] == "--system-usage-regressions")
     TestSystemUsagePopoverPresentation();
     if (args.Length == 2) RenderSystemUsagePolishCaptures(args[1]);
     Console.WriteLine("PASS system usage sampling and presentation");
-    return 0;
-}
-
-if (args.Length > 0 && args[0] == "--radar-usage-update")
-{
-    RadarAndUsageUpdateTests.Run();
-    if (args.Length == 2) RadarAndUsageUpdateTests.Capture(args[1]);
-    Console.WriteLine("PASS current Radar and local conversation usage");
     return 0;
 }
 
@@ -385,18 +375,6 @@ if (args.Length == 1 && args[0] == "--token-usage-recount")
     return 0;
 }
 
-if (args.Length == 2 && args[0] == "--radar-group-captures")
-{
-    TestRadarModelGroups(args[1]);
-    return 0;
-}
-
-var radarCli = await RadarDeveloperCli.TryRunAsync(args, Console.Out, Console.Error);
-if (radarCli.Handled)
-{
-    return radarCli.ExitCode;
-}
-
 var taskbarMiniCaptureIndex = Array.FindIndex(
     args,
     value => string.Equals(value, "--taskbar-mini-captures", StringComparison.OrdinalIgnoreCase));
@@ -441,7 +419,7 @@ if (args.Contains("--live", StringComparer.OrdinalIgnoreCase))
 
 if (args.Length > 0)
 {
-    Console.Error.WriteLine("radar-evaluate: invalid_arguments; use --help");
+    Console.Error.WriteLine("invalid_arguments; use --help");
     return 1;
 }
 
@@ -489,34 +467,17 @@ var tests = new (string Name, Action Run)[]
     ("Codex rollout bounded scanner", TestCodexRolloutBoundedScanner),
     ("Codex quota token tracker", TestCodexQuotaTokenTracker),
     ("Codex local token aggregation", TestCodexTokenUsageAggregation),
-    ("Current Radar and conversation usage", RadarAndUsageUpdateTests.Run),
     ("Codex multi-instance token aggregation", TestCodexMultiInstanceTokenUsage),
     ("Codex API-equivalent pricing", TestCodexApiEquivalentPricing),
     ("Codex spend history projection", TestCodexSpendHistoryProjection),
     ("Codex startup cache activation", TestCodexStartupCacheActivation),
     ("Codex rollout fixture CLI", TestCodexRolloutFixtureCli),
-    ("Codex Radar parser", TestRadarParser),
-    ("Codex Radar reset countdown supplement", TestRadarResetCountdownSupplement),
-    ("Codex Radar recommendation parser", TestRadarRecommendationParser),
-    ("Codex Radar measurement parser", TestRadarMeasurementParser),
-    ("Codex Radar request privacy", TestRadarRequestPrivacy),
-    ("Codex Radar recommendation continuity", TestRadarRecommendationContinuity),
-    ("Codex Radar local scenario evaluator", TestRadarScenarioEvaluator),
-    ("Codex Radar presentation", TestRadarPresentation),
-    ("Codex Radar developer CLI", TestRadarDeveloperCli),
     ("Native localization catalog", TestNativeLocalization),
-    ("Radar persistent reset Mini", TestRadarPersistentResetMini),
     ("Quota pace popover presentation", TestQuotaPacePopoverPresentation),
     ("Codex account popover presentation", TestCodexAccountPopoverPresentation),
     ("Codex account usage strategy", () => CodexUsageStrategyTests.Run()),
     ("Taskbar hint popover presentation", TestTaskbarHintPopoverPresentation),
     ("Taskbar popover motion geometry", TestTaskbarPopoverMotionGeometry),
-    ("Codex Radar stable ranking", TestRadarStableRanking),
-    ("Codex Radar pixel layout", TestRadarPopoverLayout),
-    ("Radar dynamic model groups", () => TestRadarModelGroups()),
-    ("Codex spend history pixel layout", TestCodexSpendHistoryLayout),
-    ("Codex Radar alert contract", TestRadarAlertContract),
-    ("Codex Radar state persistence", TestRadarStatePersistence),
     ("Settings normalization", TestSettingsNormalization),
     ("Settings data directory override", TestSettingsDataDirectoryOverride),
     ("Windows startup registration policy", TestWindowsStartupRegistrationPolicy),
@@ -1722,7 +1683,7 @@ static void TestSub2ApiPool()
         "temporary observer failure keeps only stale account availability");
 
     using (var mini = new BarForm(
-        new AppSettings { Locale = "zh-CN", EnableAnimations = false, EnableRadar = false },
+        new AppSettings { Locale = "zh-CN", EnableAnimations = false },
         attachedAccountAvailability,
         renderOnly: true,
         renderDpi: 96,
@@ -1752,7 +1713,7 @@ static void TestSub2ApiPool()
     Equal("codex.api-service", stackedGroup.Cards[1].Key, "Sub2API occupies the second Codex Mini row");
 
     using (var stackedMini = new BarForm(
-        new AppSettings { Locale = "zh-CN", EnableAnimations = false, EnableRadar = false },
+        new AppSettings { Locale = "zh-CN", EnableAnimations = false },
         stackedSnapshot,
         renderOnly: true,
         renderDpi: 96,
@@ -3399,7 +3360,6 @@ static void TestCockpitApiServiceCard()
             {
                 Locale = "zh-CN",
                 EnableAnimations = false,
-                EnableRadar = false,
             },
             new QuotaSnapshot([card], [result.Health], DateTimeOffset.UtcNow),
             renderOnly: true,
@@ -4646,12 +4606,10 @@ static void TestPersistentHistoryIoProtection()
         };
         var tokenIndex = new CodexTokenUsageIndex();
         var quotaTokens = new CodexQuotaTokenHistory();
-        var radar = new RadarAlertState { LastSuccessfulFetchAt = now };
 
         store.SaveQuotaRateHistory(pace);
         store.SaveCodexTokenUsageIndex(tokenIndex);
         store.SaveCodexQuotaTokenHistory(quotaTokens);
-        store.SaveRadarState(radar);
 
         VerifyHistoryIoProtection(
             store.QuotaRateHistoryPath,
@@ -4668,11 +4626,6 @@ static void TestPersistentHistoryIoProtection()
             () => store.LoadCodexQuotaTokenHistory(),
             () => store.SaveCodexQuotaTokenHistory(quotaTokens),
             "Codex quota token history");
-        VerifyHistoryIoProtection(
-            store.RadarStatePath,
-            () => store.LoadRadarState(),
-            () => store.SaveRadarState(radar),
-            "Radar state");
 
         var seededIndex = new CodexTokenUsageIndex().WithHistoricalBaseline(10_000, now);
         store.SaveCodexTokenUsageIndex(seededIndex);
@@ -4686,16 +4639,6 @@ static void TestPersistentHistoryIoProtection()
         Equal(10_000L, new CodexTokenUsageReader(restoredIndex).Snapshot(now)?.LocalTokens, "recovery restores the fixed baseline, not the local-only total");
         bootStore.SaveCodexTokenUsageIndex(restoredIndex);
         Equal(10_000L, new AppSettingsStore(directory).LoadCodexTokenUsageIndex().HistoricalBaselineTokens, "recovered baseline survives the next save and restart");
-
-        radar.LastSnapshot = new ProviderRadarSnapshot(ProviderKind.Codex, "io-recovery", now, now,
-            ScenarioRadarModel("gpt-5.6-sol", "max", 90, 1, 2),
-            [ScenarioRadarModel("gpt-6-astra", "max", 100, 1, 2)]);
-        store.SaveRadarState(radar);
-        using (new FileStream(store.RadarStatePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
-            Equal(false, bootStore.TryLoadRadarState(out _), "locked radar cache remains pending instead of losing supplemental models");
-        Equal(true, bootStore.TryLoadRadarState(out var restoredRadar), "radar cache recovers without an app restart");
-        Equal("gpt-6-astra", RadarPresentation.CodexOnly(RadarPresentation.Build(restoredRadar.LastSnapshot!)).Rows[0].Model.Model,
-            "restored cache retains Astra in the first group");
 
         var firstBackup = Encoding.UTF8.GetBytes("first recovery copy");
         File.WriteAllBytes(store.QuotaRateHistoryPath + ".corrupt.bak", firstBackup);
@@ -7385,1383 +7328,6 @@ static object? RolloutWindowPayload(CodexRolloutRateLimitWindow? window) => wind
         resets_at = window.ResetsAt?.ToUnixTimeSeconds(),
     };
 
-static void TestRadarParser()
-{
-    const string summary = """
-        {
-          "monitored_at": "2026-07-19T12:00:00+08:00",
-          "window": {
-            "open": false,
-            "closed_at": "2026-08-01T11:32:37+08:00",
-            "target_at": "2026-08-03T09:00:00+08:00",
-            "scope": "周一表演式重置预告",
-            "source_url": "https://x.com/example/status/123"
-          },
-          "model_iq": {
-            "updated_at": "2026-07-19T11:30:00+08:00",
-            "latest": {
-              "date": "2026-07-19",
-              "model": "gpt-5.6-sol",
-              "reasoning_effort": "max",
-              "score": 106.3,
-              "status": "green",
-              "passed": 79,
-              "valid_tasks": 112,
-              "average_cost_usd": 10.2,
-              "average_task_seconds": 2340,
-              "average_task_time_human": "39m"
-            },
-            "recent_days": [
-              { "date": "2026-07-19T08:00:00+08:00", "score": 100 },
-              { "date": "2026-07-19T10:00:00+08:00", "score": 104 },
-              { "date": "invalid", "score": 999 }
-            ],
-            "comparisons": {
-              "terra": {
-                "label": "GPT-5.6 Terra high",
-                "latest": { "date": "2026-07-19", "model": "gpt-5.6-terra", "reasoning_effort": "high", "score": 69.1 },
-                "recent_days": [
-                  { "date": "2026-07-19T08:00:00+08:00", "score": 68 },
-                  { "date": "2026-07-19T10:00:00+08:00", "score": 70 }
-                ]
-              },
-              "totals": {
-                "latest": {
-                  "date": "2026-07-19",
-                  "model": "totals-only",
-                  "score": 60,
-                  "cost_usd": 99,
-                  "wall_time_human": "3h"
-                }
-              },
-              "stale": {
-                "latest": { "date": "2026-07-18", "model": "old-model", "score": 55 }
-              }
-            }
-          }
-        }
-        """;
-    var snapshot = RadarParser.Parse(summary, DateTimeOffset.Parse("2026-07-19T04:00:00Z"));
-    Equal(ProviderKind.Codex, snapshot.Provider, "Radar provider");
-    Equal("model_iq:2026-07-19", snapshot.EventId, "Radar event id");
-    Equal("gpt-5.6-sol", snapshot.Primary.Model, "primary model");
-    Equal("max", snapshot.Primary.ReasoningEffort, "primary effort");
-    Equal("green", snapshot.Primary.Status, "primary status");
-    Equal(2340d, snapshot.Primary.AverageTaskSeconds, "primary average task seconds");
-    Equal(2, snapshot.Primary.IqHistory.Count, "primary recent IQ history");
-    Equal(104d, snapshot.Primary.IqHistory[1].Score, "primary history preserves score order");
-    Equal(false, snapshot.ResetWindow?.Open, "closed global reset window");
-    Equal(
-        DateTimeOffset.Parse("2026-08-01T11:32:37+08:00"),
-        snapshot.ResetWindow?.ClosedAt,
-        "global reset close time");
-    Equal(
-        "https://x.com/example/status/123",
-        snapshot.ResetWindow?.SourceUrl,
-        "global reset source");
-    Equal(
-        DateTimeOffset.Parse("2026-08-03T09:00:00+08:00"),
-        snapshot.ResetWindow?.TargetAt,
-        "global reset target time");
-    Equal("周一表演式重置预告", snapshot.ResetWindow?.Scope, "global reset target scope");
-    Equal(2, snapshot.Comparisons.Count, "only same-date comparison rows");
-    Equal("GPT-5.6 Terra high", snapshot.Comparisons[0].Label, "comparison label");
-    Equal(2, snapshot.Comparisons[0].IqHistory.Count, "comparison recent IQ history");
-    var totalsOnly = snapshot.Comparisons.Single(model => model.Model == "totals-only");
-    Equal<double?>(null, totalsOnly.CostUsd, "total cost is not displayed as per-task cost");
-    Equal<string?>(null, totalsOnly.WallTime, "total wall time is not displayed as per-task average");
-
-    var pageTarget = DateTimeOffset.Parse("2030-04-05T06:07:08+08:00");
-    Equal(
-        pageTarget,
-        RadarHomePageParser.ParseResetTarget("""
-            <div data-window-closes-at="2099-01-01T00:00:00Z"></div>
-            <div data-window-closes-at='2030-04-05T06:07:08&#43;08:00' data-window-clock></div>
-            """),
-        "Radar homepage parser reads only the marked reset clock target");
-    Equal<DateTimeOffset?>(
-        null,
-        RadarHomePageParser.ParseResetTarget("<div data-window-closes-at='2030-04-05T06:07:08+08:00'></div>"),
-        "unmarked homepage dates cannot become a reset target");
-    Equal<DateTimeOffset?>(
-        null,
-        RadarHomePageParser.ParseResetTarget("<div data-window-clock data-window-closes-at='not-a-date'></div>"),
-        "malformed homepage clock target is ignored");
-
-    var extreme = RadarParser.Parse("""
-        {
-          "model_iq": {
-            "latest": {
-              "date": "2026-07-19",
-              "model": "extreme",
-              "score": 1e999,
-              "passed": 1e999,
-              "valid_tasks": 9223372036854775808,
-              "average_cost_usd": -1,
-              "average_task_seconds": 1e999
-            }
-          }
-        }
-        """, DateTimeOffset.Parse("2026-07-19T04:00:00Z"));
-    Equal<double?>(null, extreme.Primary.Score, "non-finite Radar score is ignored");
-    Equal<long?>(null, extreme.Primary.Passed, "non-finite Radar count is ignored");
-    Equal<long?>(null, extreme.Primary.ValidTasks, "out-of-range Radar count is ignored");
-    Equal<double?>(null, extreme.Primary.CostUsd, "negative Radar cost is ignored");
-    Equal<double?>(null, extreme.Primary.AverageTaskSeconds, "non-finite Radar duration is ignored");
-
-    var comparisonRows = string.Join(
-        ",",
-        Enumerable.Range(0, 15).Select(index => $$"""
-            "row_{{index}}": {
-              "label": "row {{index}}",
-              "latest": {
-                "date": "2026-07-30",
-                "model": "{{(index == 13 ? "gpt-5.6-sol" : $"test-model-{index}")}}",
-                "reasoning_effort": "{{(index == 13 ? "ultra" : $"level-{index}")}}",
-                "score": {{100 - index}}
-              }
-            }
-            """));
-    var expandedSummary = $$"""
-        {
-          "model_iq": {
-            "latest": {
-              "date": "2026-07-30",
-              "model": "gpt-5.6-sol",
-              "reasoning_effort": "max",
-              "score": 100
-            },
-            "comparisons": {
-              {{comparisonRows}}
-            }
-          }
-        }
-        """;
-    var expanded = RadarParser.Parse(expandedSummary, DateTimeOffset.Parse("2026-07-30T12:00:00Z"));
-    Equal<RadarResetWindow?>(null, expanded.ResetWindow, "missing reset window remains absent");
-    Equal(15, expanded.Comparisons.Count, "parser preserves the complete dynamic comparison set");
-    Equal(true, expanded.Comparisons.Any(model => model.ReasoningEffort == "ultra"), "trailing Ultra comparison is preserved");
-    Equal(true, expanded.Comparisons.Any(model => model.Model == "test-model-14"), "future comparison is not dropped by source order");
-
-    var oversizedComparisonRows = string.Join(
-        ",",
-        Enumerable.Range(0, 200).Select(index => $$"""
-            "row_{{index}}": {
-              "latest": {
-                "date": "2026-07-30",
-                "model": "oversized-model-{{index}}",
-                "reasoning_effort": "level-{{index}}",
-                "score": {{100 - index / 10d}}
-              }
-            }
-            """));
-    var oversized = RadarParser.Parse($$"""
-        {
-          "model_iq": {
-            "latest": {
-              "date": "2026-07-30",
-              "model": "gpt-5.6-sol",
-              "reasoning_effort": "max",
-              "score": 100
-            },
-            "comparisons": { {{oversizedComparisonRows}} }
-          }
-        }
-        """, DateTimeOffset.Parse("2026-07-30T12:00:00Z"));
-    Equal(
-        RadarSnapshotLimits.MaxComparisonModels,
-        oversized.Comparisons.Count,
-        "dynamic comparison parsing has a generous persistence safety bound");
-}
-
-static void TestRadarResetCountdownSupplement()
-{
-    var now = DateTimeOffset.Parse("2030-04-04T20:00:00Z");
-    var firstTarget = DateTimeOffset.Parse("2030-04-05T06:00:00+08:00");
-    using var handler = new RadarResetCountdownRequestHandler
-    {
-        HomeTarget = firstTarget,
-        OpenedAt = DateTimeOffset.Parse("2030-04-04T14:00:00+08:00"),
-    };
-    using var service = new RadarService(handler, () => now);
-
-    var first = service.FetchAsync().GetAwaiter().GetResult();
-    Equal<DateTimeOffset?>(firstTarget, first.ResetWindow?.TargetAt, "homepage clock enriches an open reset window without a JSON target");
-    Equal(1, handler.PageCalls, "open reset window fetches the homepage clock once");
-    Equal(true, handler.PageAcceptsHtml, "homepage clock requests HTML explicitly");
-    Equal(true, handler.PageSawNoCache, "homepage clock revalidates the public page");
-    Equal(true, handler.PageHasProductUserAgent, "homepage clock identifies the product");
-    Equal(false, handler.HasAuthorization, "homepage clock sends no authorization");
-    Equal(false, handler.HasCookie, "homepage clock sends no cookie");
-
-    service.FetchAsync().GetAwaiter().GetResult();
-    Equal(1, handler.PageCalls, "homepage clock target uses the existing ten-minute supplemental cache");
-
-    var secondTarget = firstTarget.AddHours(3);
-    handler.OpenedAt = handler.OpenedAt!.Value.AddMinutes(1);
-    handler.HomeTarget = secondTarget;
-    now = now.AddMinutes(1);
-    var changedWindow = service.FetchAsync().GetAwaiter().GetResult();
-    Equal<DateTimeOffset?>(secondTarget, changedWindow.ResetWindow?.TargetAt, "new reset-window identity cannot reuse the previous target");
-    Equal(2, handler.PageCalls, "new reset-window identity refreshes the homepage clock immediately");
-
-    var jsonTarget = firstTarget.AddHours(6);
-    using var jsonHandler = new RadarResetCountdownRequestHandler
-    {
-        HomeTarget = firstTarget,
-        JsonTarget = jsonTarget,
-    };
-    using var jsonService = new RadarService(jsonHandler, () => now);
-    var fromJson = jsonService.FetchAsync().GetAwaiter().GetResult();
-    Equal<DateTimeOffset?>(jsonTarget, fromJson.ResetWindow?.TargetAt, "current.json reset target has priority over homepage metadata");
-    Equal(1, jsonHandler.PageCalls, "current.json target shares the single trial homepage request");
-
-    using var incompleteHandler = new RadarResetCountdownRequestHandler
-    {
-        HomeTarget = firstTarget,
-        OpenedAt = null,
-    };
-    using var incompleteService = new RadarService(incompleteHandler, () => now);
-    var incompleteFirst = incompleteService.FetchAsync().GetAwaiter().GetResult();
-    Equal<DateTimeOffset?>(firstTarget, incompleteFirst.ResetWindow?.TargetAt, "an incomplete window identity still uses the current homepage target");
-    incompleteHandler.HomeTarget = secondTarget;
-    now = now.AddMinutes(1);
-    var incompleteSecond = incompleteService.FetchAsync().GetAwaiter().GetResult();
-    Equal<DateTimeOffset?>(secondTarget, incompleteSecond.ResetWindow?.TargetAt, "an incomplete window identity cannot reuse a previous target");
-    Equal(2, incompleteHandler.PageCalls, "an incomplete window identity disables cross-refresh target caching");
-
-    using var failingHandler = new RadarResetCountdownRequestHandler { FailPage = true };
-    using var failingService = new RadarService(failingHandler, () => now);
-    var withoutClock = failingService.FetchAsync().GetAwaiter().GetResult();
-    Equal(true, withoutClock.ResetWindow?.Open, "homepage failure preserves the primary open-window snapshot");
-    Equal<DateTimeOffset?>(null, withoutClock.ResetWindow?.TargetAt, "homepage failure does not invent a countdown target");
-    now = now.AddMinutes(1);
-    failingService.FetchAsync().GetAwaiter().GetResult();
-    Equal(1, failingHandler.PageCalls, "homepage failure uses the supplemental retry interval");
-    now = now.AddMinutes(9);
-    failingService.FetchAsync().GetAwaiter().GetResult();
-    Equal(2, failingHandler.PageCalls, "homepage failure retries when the supplemental interval expires");
-}
-
-static void TestRadarRecommendationParser()
-{
-    const string insights = """
-        {
-          "schema": 1,
-          "mode": "latest_valid_per_task",
-          "generated_at": "2026-08-01T13:39:13+08:00",
-          "source_updated_at": "2026-08-01T13:39:08+08:00",
-          "recommendations": [
-            {
-              "key": "daily_development",
-              "title": "日常开发",
-              "rule": "上游分组规则",
-              "items": [
-                {
-                  "model": "gpt-5.5",
-                  "effort": "xhigh",
-                  "iq": 91.07,
-                  "passed": 68,
-                  "samples": 112,
-                  "average_cost_usd": 5.870495,
-                  "cost_samples": 111,
-                  "average_duration_minutes": 23.41,
-                  "duration_samples": 112,
-                  "combined_cost_index": 7877.209,
-                  "trend_48h": [
-                    { "timestamp": "2026-07-31T12:00:00+08:00", "iq": 90 },
-                    { "timestamp": "2026-08-01T12:00:00+08:00", "iq": 92 }
-                  ],
-                  "rule": "上游速度位规则",
-                  "slot": "speed"
-                },
-                {
-                  "model": "gpt-5.6-sol",
-                  "effort": "xhigh",
-                  "iq": 96.43,
-                  "samples": 112,
-                  "average_cost_usd": 6.635433,
-                  "average_duration_minutes": 25.2,
-                  "slot": "smart"
-                }
-              ]
-            },
-            {
-              "key": "future_category",
-              "title": "未来类别",
-              "rule": "未来规则",
-              "items": [
-                {
-                  "model": "future-model",
-                  "effort": "adaptive",
-                  "iq": 88,
-                  "samples": 10
-                }
-              ]
-            },
-            {
-              "key": "invalid",
-              "title": "无有效条目",
-              "items": [
-                { "model": "", "effort": "max", "iq": 100 }
-              ]
-            }
-          ]
-        }
-        """;
-
-    var feed = RadarRecommendationsParser.Parse(insights);
-    Equal<int?>(1, feed.Schema, "upstream recommendation schema");
-    Equal("latest_valid_per_task", feed.Mode, "upstream recommendation mode");
-    Equal(DateTimeOffset.Parse("2026-08-01T13:39:13+08:00"), feed.GeneratedAt, "upstream generated time");
-    Equal(DateTimeOffset.Parse("2026-08-01T13:39:08+08:00"), feed.SourceUpdatedAt, "upstream source time");
-    Equal(2, feed.Groups.Count, "invalid empty groups are rejected");
-    Equal("daily_development", feed.Groups[0].Key, "group key order is preserved");
-    Equal("日常开发", feed.Groups[0].Title, "group title is preserved");
-    Equal("上游分组规则", feed.Groups[0].Rule, "group rule is preserved");
-    Equal("gpt-5.5", feed.Groups[0].Items[0].Model.Model, "item order is preserved");
-    Equal("speed", feed.Groups[0].Items[0].Slot, "item slot is preserved");
-    Equal("上游速度位规则", feed.Groups[0].Items[0].Rule, "item rule is preserved");
-    Equal<long?>(111, feed.Groups[0].Items[0].CostSamples, "cost sample count is preserved");
-    Equal<long?>(112, feed.Groups[0].Items[0].DurationSamples, "duration sample count is preserved");
-    Equal(7877.209, feed.Groups[0].Items[0].CombinedCostIndex, "combined cost index is preserved");
-    Equal(1404.6, feed.Groups[0].Items[0].Model.AverageTaskSeconds, "duration is mapped to seconds");
-    Equal(2, feed.Groups[0].Items[0].Model.IqHistory.Count, "48-hour IQ trend is preserved");
-    Equal("future_category", feed.Groups[1].Key, "unknown group keys remain data-driven");
-    Equal("adaptive", feed.Groups[1].Items[0].Model.ReasoningEffort, "unknown efforts remain data-driven");
-
-    var expandedInsights = JsonSerializer.Serialize(new
-    {
-        recommendations = Enumerable.Range(0, 10).Select(groupIndex => new
-        {
-            key = $"group_{groupIndex}",
-            title = $"Group {groupIndex}",
-            items = Enumerable.Range(0, 5).Select(itemIndex => new
-            {
-                model = $"model-{groupIndex}-{itemIndex}",
-                effort = $"effort-{itemIndex}",
-            }),
-        }),
-    });
-    var expandedFeed = RadarRecommendationsParser.Parse(expandedInsights);
-    Equal(10, expandedFeed.Groups.Count, "recommendation group count follows the upstream feed");
-    Equal(5, expandedFeed.Groups[9].Items.Count, "recommendation item count follows the upstream feed");
-
-    var oversizedInsights = JsonSerializer.Serialize(new
-    {
-        recommendations = Enumerable.Range(0, 40).Select(groupIndex => new
-        {
-            key = $"oversized_group_{groupIndex}",
-            title = $"Oversized Group {groupIndex}",
-            items = Enumerable.Range(0, 5).Select(itemIndex => new
-            {
-                model = $"oversized-model-{groupIndex}-{itemIndex}",
-                effort = $"effort-{itemIndex}",
-            }),
-        }),
-    });
-    var boundedFeed = RadarRecommendationsParser.Parse(oversizedInsights);
-    Equal(
-        RadarSnapshotLimits.MaxRecommendationItems,
-        boundedFeed.Groups.Sum(group => group.Items.Count),
-        "recommendation feed has a total item safety bound");
-    Equal(
-        true,
-        boundedFeed.Groups.Count <= RadarSnapshotLimits.MaxRecommendationGroups,
-        "recommendation feed has a group safety bound");
-}
-
-static void TestRadarMeasurementParser()
-{
-    const string measurements = """
-        {
-          "schema": 2,
-          "source_updated_at": "2026-08-02T12:31:38+08:00",
-          "points": [
-            {
-              "model": "gpt-5.6-sol",
-              "effort": "max",
-              "iq": 100.45,
-              "passed": 75,
-              "valid_tasks": 112,
-              "average_price_usd": 9.57,
-              "incomplete_cost_samples": 39,
-              "average_minutes": 34.4
-            },
-            {
-              "model": "deepseek-v4-flash",
-              "effort": "max",
-              "iq": 79.02,
-              "passed": 59,
-              "valid_tasks": 112,
-              "average_price_usd": 0.10,
-              "average_minutes": 22.29
-            },
-            {
-              "model": "deepseek-v4-flash",
-              "effort": "high",
-              "iq": 50.89,
-              "passed": 38,
-              "valid_tasks": 112,
-              "average_price_usd": 0.098,
-              "average_minutes": 24.18
-            }
-          ],
-          "history": [
-            {
-              "at": "2026-08-01T12:00:00+08:00",
-              "points": [
-                { "model": "deepseek-v4-flash", "effort": "max", "iq": 80 },
-                { "model": "deepseek-v4-flash", "effort": "high", "iq": 48 }
-              ]
-            },
-            {
-              "at": "2026-08-02T12:00:00+08:00",
-              "points": [
-                { "model": "deepseek-v4-flash", "effort": "max", "iq": 78 },
-                { "model": "deepseek-v4-flash", "effort": "high", "iq": 52 }
-              ]
-            }
-          ]
-        }
-        """;
-
-    var feed = RadarMeasurementsParser.Parse(measurements);
-    Equal(DateTimeOffset.Parse("2026-08-02T12:31:38+08:00"), feed.SourceUpdatedAt, "measurement source time");
-    Equal(3, feed.Models.Count, "every measured configuration is parsed");
-    var deepSeekMax = feed.Models.Single(model =>
-        model.Model == "deepseek-v4-flash" && model.ReasoningEffort == "max");
-    Equal(79.02, deepSeekMax.Score, "DeepSeek Max IQ");
-    Equal(2, deepSeekMax.IqHistory.Count, "DeepSeek Max history");
-    Equal(1337.4, Math.Round(deepSeekMax.AverageTaskSeconds!.Value, 1), "measurement duration is mapped to seconds");
-    Equal<long?>(39, feed.Models[0].IncompleteCostSamples, "incomplete cost samples are preserved");
-
-    var baseline = RadarSnapshot("2026-08-02", "gpt-5.6-sol", "max", 99, "green");
-    var merged = RadarMeasurementsParser.Merge(baseline, feed);
-    Equal(100.45, merged.Primary.Score, "full measurement overlays the primary IQ");
-    Equal("green", merged.Primary.Status, "summary status survives measurement overlay");
-    Equal(2, merged.Comparisons.Count(model => model.Model == "deepseek-v4-flash"), "both DeepSeek efforts are added");
-
-    var oversizedMeasurements = JsonSerializer.Serialize(new
-    {
-        points = Enumerable.Range(0, 200).Select(index => new
-        {
-            model = $"measurement-model-{index}",
-            effort = $"effort-{index}",
-            iq = 100 - index / 10d,
-        }),
-    });
-    var boundedMeasurements = RadarMeasurementsParser.Parse(oversizedMeasurements);
-    Equal(
-        RadarSnapshotLimits.MaxTrackedModels,
-        boundedMeasurements.Models.Count,
-        "measurement parsing has a tracked-model safety bound");
-    Equal(
-        RadarSnapshotLimits.MaxComparisonModels,
-        RadarMeasurementsParser.Merge(baseline, boundedMeasurements).Comparisons.Count,
-        "measurement merge reserves one tracked-model slot for the primary");
-
-    var crowdedModels = RadarScenarioFixtureModels()
-        .Concat(
-        [
-            ScenarioRadarModel("deepseek-v4-flash", "max", 79.02, 0.10, 22.29),
-            ScenarioRadarModel("deepseek-v4-flash", "high", 50.89, 0.098, 24.18),
-            ScenarioRadarModel("gpt-5.6-sol", "low", 72.3, 2.14, 11.3),
-            ScenarioRadarModel("gpt-5.6-terra", "low", 37.5, 0.49, 8.6),
-            ScenarioRadarModel("gpt-5.6-luna", "medium", 33.5, 0.08, 8.7),
-            ScenarioRadarModel("gpt-5.6-luna", "low", 5.4, 0.03, 5.2),
-        ])
-        .ToArray();
-    var crowdedSnapshot = baseline with
-    {
-        Primary = crowdedModels[0],
-        Comparisons = crowdedModels[1..],
-    };
-    var visible = RadarPresentation.Build(crowdedSnapshot).Rows;
-    Equal(crowdedModels.Length, visible.Count, "Radar keeps the complete dynamic model set");
-    Equal(2, visible.Count(row => row.Model.Model == "deepseek-v4-flash"), "compact Radar keeps both members of a two-effort family");
-    var expectedModelGroups = new (string Model, string?[] Efforts)[]
-    {
-        ("gpt-5.6-sol", ["ultra", "max", "xhigh", "high", "medium", "low", "low"]),
-        ("gpt-5.6-terra", ["max", "xhigh", "high", "medium", "low"]),
-        ("gpt-5.6-luna", ["max", "high", "medium", "low"]),
-        ("gpt-5.5", ["xhigh", "high"]),
-        ("deepseek-v4-flash", ["max", "high"]),
-    };
-    var actualModelGroups = visible
-        .GroupBy(row => row.Model.Model, StringComparer.OrdinalIgnoreCase)
-        .Select(group => (Model: group.Key, Efforts: group.Select(row => row.Model.ReasoningEffort).ToArray()))
-        .ToArray();
-    Equal(expectedModelGroups.Length, actualModelGroups.Length, "Radar keeps distinct model groups");
-    for (var groupIndex = 0; groupIndex < expectedModelGroups.Length; groupIndex++)
-    {
-        Equal(expectedModelGroups[groupIndex].Model, actualModelGroups[groupIndex].Model, "Radar model group order");
-        Equal(
-            true,
-            actualModelGroups[groupIndex].Efforts.SequenceEqual(expectedModelGroups[groupIndex].Efforts),
-            $"Radar {expectedModelGroups[groupIndex].Model} effort order");
-    }
-}
-
-static ProviderRadarSnapshot RadarSnapshot(
-    string date,
-    string model,
-    string effort,
-    double? score,
-    string status)
-{
-    var capturedAt = DateTimeOffset.Parse($"{date}T12:00:00Z");
-    return new ProviderRadarSnapshot(
-        ProviderKind.Codex,
-        $"model_iq:{date}",
-        capturedAt,
-        capturedAt,
-        new RadarModel(model, model, effort, score, status, 80, 100, 1.5, 1800, "30m"),
-        []);
-}
-
-static void TestRadarRequestPrivacy()
-{
-    using var handler = new RadarRequestHandler { RequireConcurrentSupplementalRequests = true };
-    using var service = new RadarService(handler);
-    var snapshot = service.FetchAsync().GetAwaiter().GetResult();
-    Equal("model_iq:2026-07-19", snapshot.EventId, "Radar request response parsed");
-    Equal(4, handler.Calls, "Radar requests primary, full measurement, recommendation and trial feeds");
-    Equal(true, handler.RequestUris.Contains(RadarService.SummaryUri), "Radar uses current.json");
-    Equal(true, handler.RequestUris.Contains(RadarService.MeasurementsUri), "Radar uses full intelligence measurements");
-    Equal(true, handler.RequestUris.Contains(RadarService.RecommendationsUri), "Radar uses public recommendations");
-    Equal(true, handler.AcceptsJson, "Radar requests JSON");
-    Equal(true, handler.SawNoCache, "Radar revalidates requested snapshots");
-    Equal(true, handler.HasProductUserAgent, "Radar identifies the product");
-    Equal(false, handler.HasAuthorization, "Radar sends no authorization");
-    Equal(false, handler.HasCookie, "Radar sends no cookie");
-    Equal(true, handler.ConcurrentSupplementalRequestsObserved, "Radar fetches supplemental feeds concurrently");
-
-    var feed = snapshot.RecommendationFeed!;
-    Equal(4, feed.Groups.Count, "every upstream recommendation group is mapped");
-    Equal("daily_development", feed.Groups[0].Key, "upstream group order is preserved");
-    Equal("future_category", feed.Groups[3].Key, "unknown upstream groups are preserved");
-    Equal("gpt-5.6-luna", feed.Groups[2].Items[0].Model.Model, "upstream item order is preserved");
-    Equal("max", feed.Groups[2].Items[0].Model.ReasoningEffort, "Luna recommendation effort");
-    Equal(0.457463, feed.Groups[2].Items[0].Model.CostUsd, "Luna recommendation cost");
-    Equal(1783.8, feed.Groups[2].Items[0].Model.AverageTaskSeconds, "Luna recommendation duration");
-    Equal<long?>(112, feed.Groups[2].Items[0].CostSamples, "upstream cost samples");
-    Equal(1274.144, feed.Groups[2].Items[0].CombinedCostIndex, "upstream combined cost index");
-
-    Equal(103.12, snapshot.Primary.Score, "recommended primary metrics overlay current.json");
-    Equal("green", snapshot.Primary.Status, "primary status remains sourced from current.json");
-    Equal(8, snapshot.Comparisons.Count, "full measurements and missing recommended configurations are added");
-    Equal(2, snapshot.Comparisons.Count(model => model.Model == "deepseek-v4-flash"), "both DeepSeek configurations survive assembly");
-    var solUltra = snapshot.Comparisons.Single(model =>
-        model.Model == "gpt-5.6-sol" && model.ReasoningEffort == "ultra");
-    Equal(109.82, solUltra.Score, "Sol Ultra recommendation IQ");
-    Equal<long?>(82, solUltra.Passed, "Sol Ultra passed tasks");
-    Equal<long?>(112, solUltra.ValidTasks, "Sol Ultra samples");
-    Equal(18.804978, solUltra.CostUsd, "Sol Ultra measured cost");
-    Equal(3127.2, solUltra.AverageTaskSeconds, "Sol Ultra measured duration");
-    Equal(true, snapshot.Comparisons.Any(model =>
-        model.Model == "gpt-5.6-terra" && model.ReasoningEffort == "medium"), "unknown-category item is added");
-    Equal(DateTimeOffset.Parse("2026-08-01T13:39:08+08:00"), snapshot.SourceUpdatedAt, "newer recommendation source time is preserved");
-
-    service.FetchAsync().GetAwaiter().GetResult();
-    Equal(5, handler.Calls, "supplemental feeds and trial page are cached for ten minutes");
-
-    using var largeHandler = new RadarRequestHandler
-    {
-        MeasurementPayload = JsonSerializer.Serialize(new
-        {
-            points = new[] { "low", "medium", "high", "xhigh", "max", "ultra" }
-                .Select(effort => new { model = "gpt-6-astra", effort, iq = 100, valid_tasks = 100 }),
-            padding = new string(' ', 5 * 1024 * 1024),
-        }),
-    };
-    var clock = DateTimeOffset.UtcNow;
-    using var largeService = new RadarService(largeHandler, () => clock);
-    var largeSnapshot = largeService.FetchAsync().GetAwaiter().GetResult();
-    Equal(6, largeSnapshot.Comparisons.Count(model => model.Model == "gpt-6-astra"),
-        "HTTP responses beyond the old 4 MiB limit retain all Astra efforts");
-    largeHandler.MeasurementPayload = new string(' ', 17 * 1024 * 1024);
-    clock = clock.AddMinutes(11);
-    var oversizedSnapshot = largeService.FetchAsync().GetAwaiter().GetResult();
-    Equal(6, oversizedSnapshot.Comparisons.Count(model => model.Model == "gpt-6-astra"),
-        "responses beyond the bounded limit preserve the last usable measurements");
-}
-static void TestRadarRecommendationContinuity()
-{
-    var now = DateTimeOffset.Parse("2026-08-01T06:00:00Z");
-    using var handler = new RadarRequestHandler { ReturnEmptyRecommendationsAfterFirst = true };
-    using var service = new RadarService(handler, () => now);
-
-    var initial = service.FetchAsync().GetAwaiter().GetResult();
-    Equal(4, initial.RecommendationFeed?.Groups.Count, "initial upstream groups are present");
-    Equal(8, initial.Comparisons.Count, "initial full measurement rows are present");
-
-    now = now.AddMinutes(11);
-    var afterEmptyRefresh = service.FetchAsync().GetAwaiter().GetResult();
-    Equal(4, afterEmptyRefresh.RecommendationFeed?.Groups.Count, "empty refresh retains last upstream groups");
-    Equal(8, afterEmptyRefresh.Comparisons.Count, "empty refresh retains full measurement rows");
-
-    now = now.AddMinutes(1);
-    service.FetchAsync().GetAwaiter().GetResult();
-    Equal(10, handler.Calls, "empty recommendation refresh is not cached and is retried");
-
-    using var restartedHandler = new RadarRequestHandler { ReturnEmptyRecommendations = true };
-    using var restartedService = new RadarService(restartedHandler, () => now);
-    restartedService.RestoreRecommendationCache(afterEmptyRefresh);
-    var afterRestart = restartedService.FetchAsync().GetAwaiter().GetResult();
-    Equal(4, afterRestart.RecommendationFeed?.Groups.Count, "restart retains persisted upstream groups");
-    Equal(8, afterRestart.Comparisons.Count, "restart retains persisted full measurement rows");
-    Equal(4, restartedHandler.Calls, "restart probes all supplemental sources immediately");
-}
-static void TestRadarScenarioEvaluator()
-{
-    var models = RadarScenarioFixtureModels();
-    var evaluation = RadarScenarioEvaluator.Evaluate(models);
-
-    Equal(RadarScenarioEvaluator.PolicyVersion, evaluation.PolicyVersion, "local scenario policy version");
-    Equal("gpt-5.6-sol", evaluation.DailyDevelopment?.Model, "daily development model");
-    Equal("xhigh", evaluation.DailyDevelopment?.ReasoningEffort, "daily development balances IQ, time, and cost");
-    Equal("gpt-5.6-sol", evaluation.HardProblems?.Model, "hard-problem planning model");
-    Equal("ultra", evaluation.HardProblems?.ReasoningEffort, "planning follows the highest guarded IQ");
-    Equal("gpt-5.6-sol", evaluation.TaskExecution?.Model, "task execution model");
-    Equal("xhigh", evaluation.TaskExecution?.ReasoningEffort, "task execution balances IQ and cost");
-    Equal("gpt-5.6-luna", evaluation.BackgroundAutomation?.Model, "background automation model");
-    Equal("max", evaluation.BackgroundAutomation?.ReasoningEffort, "lower background IQ admits Luna Max value");
-    var rankings = RadarScenarioEvaluator.Rank(models);
-    Equal(evaluation.HardProblems, rankings.HardProblems[0], "ranked planning leader matches the existing pick");
-    Equal(evaluation.TaskExecution, rankings.TaskExecution[0], "ranked execution leader matches the existing pick");
-    var lunaRankings = RadarScenarioEvaluator.Rank(
-        models.Where(RadarScenarioEvaluator.IsLunaModel).ToArray());
-    Equal("gpt-5.6-luna", lunaRankings.HardProblems[0].Model, "Luna-only planning stays inside the exact Luna family");
-    Equal("max", lunaRankings.HardProblems[0].ReasoningEffort, "Luna-only planning is recalculated on the filtered set");
-
-    var routing = RadarRoutingSnapshotBuilder.Build(new ProviderRadarSnapshot(
-        ProviderKind.Codex,
-        "routing-fixture",
-        DateTimeOffset.Parse("2026-08-04T12:00:00Z"),
-        DateTimeOffset.Parse("2026-08-04T12:00:00Z"),
-        models[0],
-        models[1..]));
-    Equal(3, routing.Scenarios.Count, "routing snapshot contains the three automatic scenarios");
-    Equal("ultra", routing.Scenarios[RadarScenarioEvaluator.HardProblemsKey].Overall[0].Effort, "routing snapshot preserves the measured planning leader");
-    Equal("max", routing.Scenarios[RadarScenarioEvaluator.HardProblemsKey].LunaOnly[0].Effort, "routing snapshot exposes the recalculated Luna leader");
-
-    var withoutUltra = RadarScenarioEvaluator.Evaluate(models
-        .Where(model => !string.Equals(model.ReasoningEffort, "ultra", StringComparison.OrdinalIgnoreCase))
-        .ToArray());
-    Equal("max", withoutUltra.HardProblems?.ReasoningEffort, "planning follows the measured leader instead of a fixed top effort");
-
-    var repriced = RadarScenarioEvaluator.Evaluate(models
-        .Select(model => string.Equals(model.Model, "gpt-5.6-luna", StringComparison.OrdinalIgnoreCase)
-            && string.Equals(model.ReasoningEffort, "max", StringComparison.OrdinalIgnoreCase)
-                ? model with { CostUsd = 2.50 }
-                : model)
-        .ToArray());
-    Equal("gpt-5.6-terra", repriced.BackgroundAutomation?.Model, "background reacts to Luna price changes");
-    Equal("high", repriced.BackgroundAutomation?.ReasoningEffort, "repriced background winner");
-
-    var planningQualityPriority = RadarScenarioEvaluator.Evaluate(
-    [
-        ScenarioRadarModel("leader", "high", 100, 100, 10),
-        ScenarioRadarModel("eligible", "high", 90, 2, 10),
-        ScenarioRadarModel("below-threshold", "high", 89.9, 0.01, 1),
-    ]);
-    Equal("leader", planningQualityPriority.HardProblems?.Model, "planning never trades guarded IQ for lower cost");
-
-    var planningTie = RadarScenarioEvaluator.Evaluate(
-    [
-        ScenarioRadarModel("expensive-leader", "high", 100, 100, 10),
-        ScenarioRadarModel("efficient-leader", "high", 100, 2, 10),
-        ScenarioRadarModel("cheaper-lower-iq", "high", 99, 0.01, 1),
-    ]);
-    Equal("efficient-leader", planningTie.HardProblems?.Model, "planning uses efficiency only to break an IQ tie");
-
-    var executionCostPriority = RadarScenarioEvaluator.Evaluate(
-    [
-        ScenarioRadarModel("leader", "high", 100, 100, 10),
-        ScenarioRadarModel("surplus-iq", "high", 99, 1.05, 10),
-        ScenarioRadarModel("threshold-iq", "high", 70, 1, 10),
-    ]);
-    Equal("surplus-iq", executionCostPriority.BackgroundAutomation?.Model, "background preserves continuous IQ value above the quality floor");
-
-    var deepSeekCostOutlier = RadarScenarioEvaluator.Evaluate(
-    [
-        ScenarioRadarModel("gpt-5.6-sol", "ultra", 107.14, 18.926747, 53.04),
-        ScenarioRadarModel("gpt-5.6-sol", "max", 99.11, 9.712145, 34.35),
-        ScenarioRadarModel("gpt-5.6-sol", "xhigh", 97.77, 6.624371, 25.18),
-        ScenarioRadarModel("gpt-5.6-sol", "high", 88.8, 5.44678, 22.05),
-        ScenarioRadarModel("gpt-5.6-sol", "medium", 88.39, 3.96539, 18.01),
-        ScenarioRadarModel("gpt-5.5", "xhigh", 92.41, 5.853857, 23.51),
-        ScenarioRadarModel("deepseek-v4-flash", "max", 84, 0.097974, 23.85),
-        ScenarioRadarModel("gpt-5.6-terra", "medium", 57.59, 0.637281, 9.04),
-    ]);
-    Equal("gpt-5.6-sol", deepSeekCostOutlier.DailyDevelopment?.Model, "daily quality floor rejects an extreme low-cost IQ outlier");
-    Equal("xhigh", deepSeekCostOutlier.DailyDevelopment?.ReasoningEffort, "daily keeps the balanced xhigh configuration");
-    Equal("ultra", deepSeekCostOutlier.HardProblems?.ReasoningEffort, "planning keeps the highest guarded-IQ configuration");
-    Equal("deepseek-v4-flash", deepSeekCostOutlier.BackgroundAutomation?.Model, "background automation can still choose the extreme low-cost candidate");
-
-    var reference = RadarScenarioEvaluator.Evaluate(RadarScenarioReferenceModels());
-    Equal("gpt-5.6-sol", reference.DailyDevelopment?.Model, "reference daily model");
-    Equal("xhigh", reference.DailyDevelopment?.ReasoningEffort, "reference daily effort");
-    Equal("gpt-5.6-sol", reference.HardProblems?.Model, "reference planning model");
-    Equal("max", reference.HardProblems?.ReasoningEffort, "reference planning effort");
-    Equal("gpt-5.6-luna", reference.TaskExecution?.Model, "reference task-execution model");
-    Equal("max", reference.TaskExecution?.ReasoningEffort, "reference task-execution effort");
-    Equal("deepseek-v4-flash", reference.BackgroundAutomation?.Model, "reference background model");
-    Equal("max", reference.BackgroundAutomation?.ReasoningEffort, "reference background effort");
-
-    var confidenceGuard = RadarScenarioEvaluator.Evaluate(
-    [
-        ScenarioRadarModel("trusted", "high", 100.45, 2, 10) with { Passed = 75, ValidTasks = 112 },
-        ScenarioRadarModel("sparse-outlier", "high", 150, 0.01, 1) with { Passed = 1, ValidTasks = 1 },
-    ]);
-    Equal("trusted", confidenceGuard.BackgroundAutomation?.Model, "confidence guard rejects a one-sample IQ outlier");
-
-    var sampleQualification = RadarScenarioEvaluator.Evaluate(
-    [
-        ScenarioRadarModel("trusted-boundary", "high", 100, 2, 10) with
-        {
-            Status = "red",
-            Passed = 34,
-            ValidTasks = RadarScenarioEvaluator.MinimumValidTasks,
-        },
-        ScenarioRadarModel("k3-sparse-outlier", "max", 150, 0.01, 1) with
-        {
-            Status = "green",
-            Passed = 23,
-            ValidTasks = 23,
-        },
-        ScenarioRadarModel("missing-samples", "max", 160, 0.01, 1) with
-        {
-            Status = "green",
-            ValidTasks = null,
-        },
-    ]);
-    Equal("trusted-boundary", sampleQualification.DailyDevelopment?.Model, "sample gate includes the exact 50-task boundary");
-    Equal("trusted-boundary", sampleQualification.HardProblems?.Model, "planning excludes sparse and missing-sample outliers");
-    Equal("trusted-boundary", sampleQualification.TaskExecution?.Model, "task execution excludes sparse and missing-sample outliers");
-    Equal("trusted-boundary", sampleQualification.BackgroundAutomation?.Model, "background excludes sparse and missing-sample outliers");
-    Equal(
-        false,
-        RadarScenarioEvaluator.HasSufficientSamples(ScenarioRadarModel("sparse", "high", 100, 1, 10) with { ValidTasks = 49 }),
-        "49 valid tasks are insufficient");
-    Equal(
-        true,
-        RadarScenarioEvaluator.HasSufficientSamples(ScenarioRadarModel("boundary", "high", 100, 1, 10) with { ValidTasks = 50 }),
-        "50 valid tasks are sufficient");
-
-    var observedAt = DateTimeOffset.Parse("2026-08-02T12:00:00+08:00");
-    var volatilityGuard = RadarScenarioEvaluator.Evaluate(
-    [
-        ScenarioRadarModel("stable", "high", 100.45, 2, 10) with
-        {
-            Passed = 75,
-            ValidTasks = 112,
-            IqHistory =
-            [
-                new RadarIqSample(observedAt.AddHours(-24), 100),
-                new RadarIqSample(observedAt, 100),
-            ],
-        },
-        ScenarioRadarModel("volatile", "high", 99.11, 0.01, 1) with
-        {
-            Passed = 74,
-            ValidTasks = 112,
-            IqHistory =
-            [
-                new RadarIqSample(observedAt.AddHours(-24), 20),
-                new RadarIqSample(observedAt, 120),
-            ],
-        },
-    ]);
-    Equal("stable", volatilityGuard.BackgroundAutomation?.Model, "24-hour downside guard rejects an unstable cheap outlier");
-
-    var mixedHistoryCoverage = RadarScenarioEvaluator.Evaluate(
-    [
-        ScenarioRadarModel("dense-history", "high", 100.45, 1, 10) with
-        {
-            Passed = 75,
-            ValidTasks = 112,
-            IqHistory =
-            [
-                new RadarIqSample(observedAt.AddHours(-24), 20),
-                new RadarIqSample(observedAt, 120),
-            ],
-        },
-        ScenarioRadarModel("sparse-history", "high", 100.45, 2, 10) with
-        {
-            Passed = 75,
-            ValidTasks = 112,
-            IqHistory = [new RadarIqSample(observedAt, 100.45)],
-        },
-    ]);
-    Equal(
-        "dense-history",
-        mixedHistoryCoverage.BackgroundAutomation?.Model,
-        "mixed history coverage never penalizes only the densely measured candidate");
-
-    var invalid = RadarScenarioEvaluator.Evaluate(
-    [
-        ScenarioRadarModel("invalid", "high", 100, 0, 10),
-    ]);
-    Equal<RadarModel?>(null, invalid.DailyDevelopment, "invalid costs produce no daily pick");
-    Equal<RadarModel?>(null, invalid.HardProblems, "invalid costs produce no planning pick");
-    Equal<RadarModel?>(null, invalid.TaskExecution, "invalid costs produce no task-execution pick");
-    Equal<RadarModel?>(null, invalid.BackgroundAutomation, "invalid costs produce no background pick");
-}
-
-static RadarModel[] RadarScenarioReferenceModels() =>
-[
-    ScenarioRadarModel("gpt-5.6-sol", "ultra", 107.14, 21.85, 53.14) with { Passed = 80 },
-    ScenarioRadarModel("gpt-5.6-sol", "max", 107.14, 9.49, 35.22) with { Passed = 80 },
-    ScenarioRadarModel("gpt-5.6-sol", "xhigh", 104.46, 6.29, 25.52) with { Passed = 78 },
-    ScenarioRadarModel("gpt-5.5", "xhigh", 100.45, 5.76, 24.00) with { Passed = 75 },
-    ScenarioRadarModel("gpt-5.6-terra", "ultra", 97.77, 9.90, 43.00) with { Passed = 73 },
-    ScenarioRadarModel("gpt-5.6-terra", "max", 95.09, 4.02, 31.00) with { Passed = 71 },
-    ScenarioRadarModel("gpt-5.6-luna", "max", 97.77, 0.46, 32.00) with { Passed = 73 },
-    ScenarioRadarModel("deepseek-v4-flash", "max", 89.73, 0.10, 27.00) with { Passed = 67 },
-];
-
-static RadarModel[] RadarScenarioFixtureModels() =>
-[
-    ScenarioRadarModel("gpt-5.6-sol", "max", 101.79, 9.50, 33.63),
-    ScenarioRadarModel("gpt-5.6-sol", "xhigh", 97.77, 6.65, 25.26),
-    ScenarioRadarModel("gpt-5.6-sol", "high", 90.10, 5.45, 21.89),
-    ScenarioRadarModel("gpt-5.6-sol", "medium", 87.05, 3.88, 17.51),
-    ScenarioRadarModel("gpt-5.6-sol", "low", 74.00, 2.24, 11.76),
-    ScenarioRadarModel("gpt-5.6-terra", "max", 87.05, 4.11, 30.67),
-    ScenarioRadarModel("gpt-5.6-terra", "xhigh", 74.00, 2.44, 18.41),
-    ScenarioRadarModel("gpt-5.6-terra", "high", 78.00, 1.37, 13.76),
-    ScenarioRadarModel("gpt-5.6-luna", "max", 79.40, 1.24, 29.86),
-    ScenarioRadarModel("gpt-5.6-luna", "high", 66.96, 0.21, 17.45),
-    ScenarioRadarModel("gpt-5.5", "xhigh", 91.07, 5.87, 23.41),
-    ScenarioRadarModel("gpt-5.5", "high", 79.40, 3.70, 17.42),
-    ScenarioRadarModel("gpt-5.6-sol", "ultra", 109.82, 18.79, 52.14),
-    ScenarioRadarModel("gpt-5.6-terra", "medium", 57.59, 0.64, 9.06),
-];
-
-static RadarModel ScenarioRadarModel(
-    string model,
-    string effort,
-    double iq,
-    double cost,
-    double minutes) =>
-    new(model, $"{model} {effort}", effort, iq, "unknown", null, 112, cost, minutes * 60, $"{minutes:0.##}m");
-
-static void TestRadarPresentation()
-{
-    var inspection = new WindowInspection(true, 1, null, true, new UiBounds(0, 0, 100, 100), true, 96)
-    {
-        AppModuleId = "app-module", CoreModuleId = "core-module", DisplayedTokenTotal = 123,
-        RadarVisible = true, RadarModelGroups = ["gpt-6-astra"], CachedRadarModelGroups = ["gpt-6-astra", "gpt-5.6-sol"],
-    };
-    using (var diagnostics = JsonDocument.Parse(JsonSerializer.Serialize(inspection, ApiJsonContext.Default.WindowInspection)))
-    {
-        Equal("app-module", diagnostics.RootElement.GetProperty("appModuleId").GetString(), "window inspection returns loaded app identity");
-        Equal(123L, diagnostics.RootElement.GetProperty("displayedTokenTotal").GetInt64(), "window inspection returns UI token state");
-        Equal("gpt-6-astra", diagnostics.RootElement.GetProperty("radarModelGroups")[0].GetString(), "window inspection preserves actual group order");
-    }
-    var capturedAt = DateTimeOffset.Parse("2026-07-28T13:09:56+08:00");
-    var primary = new RadarModel(
-        "gpt-5.6-sol",
-        "gpt-5.6-sol max",
-        "max",
-        103.6,
-        "green",
-        77,
-        112,
-        9.064097,
-        1939.321,
-        "32分钟");
-    var faster = new RadarModel(
-        "gpt-5.6-sol",
-        "GPT-5.6 Sol high",
-        "high",
-        91.5,
-        "yellow",
-        68,
-        112,
-        6,
-        1000,
-        "17分钟");
-    var cheapest = new RadarModel(
-        "gpt-5.6-luna",
-        "GPT-5.6 Luna high",
-        "high",
-        74,
-        "red",
-        55,
-        112,
-        0.004,
-        2100,
-        "35分钟");
-    var unselected = cheapest with
-    {
-        Model = "gpt-5.6-terra",
-        Label = "GPT-5.6 Terra medium",
-        ReasoningEffort = "medium",
-        Score = 80,
-    };
-    var snapshot = new ProviderRadarSnapshot(
-        ProviderKind.Codex,
-        "model_iq:2026-07-28",
-        capturedAt,
-        capturedAt,
-        primary,
-        [faster, cheapest, unselected])
-    {
-        RecommendationFeed = new RadarRecommendationFeed(
-            1,
-            "latest_valid_per_task",
-            capturedAt,
-            capturedAt,
-            [
-                new RadarRecommendationGroup(
-                    "daily_development",
-                    "日常开发",
-                    "上游日常规则",
-                    [
-                        RecommendationItem(faster, "speed", "速度位"),
-                        RecommendationItem(primary, "smart", "聪明位"),
-                    ]),
-                new RadarRecommendationGroup(
-                    "hard_problems",
-                    "难题攻坚",
-                    "上游攻坚规则",
-                    [RecommendationItem(primary)]),
-                new RadarRecommendationGroup(
-                    "background_automation",
-                    "后台自动化",
-                    "上游后台规则",
-                    [RecommendationItem(cheapest)]),
-                new RadarRecommendationGroup(
-                    "lobster_tasks",
-                    "跑龙虾类任务",
-                    "不在产品中展示",
-                    [RecommendationItem(cheapest)]),
-            ]),
-    };
-    var presentation = RadarPresentation.Build(snapshot);
-    var local = RadarScenarioEvaluator.Evaluate([primary, faster, cheapest, unselected]);
-
-    Equal(4, presentation.Rows.Count, "presentation preserves the complete comparison table");
-    Equal(true, presentation.Rows.Any(row =>
-        string.Equals(row.Model.Model, unselected.Model, StringComparison.OrdinalIgnoreCase)
-        && string.Equals(row.Model.ReasoningEffort, unselected.ReasoningEffort, StringComparison.OrdinalIgnoreCase)), "unrecommended rows stay visible");
-    Equal(primary.Label, presentation.Rows[0].Model.Label, "full table keeps model order");
-    Equal(1, presentation.Rows[0].Rank, "full-table IQ leader rank");
-    Equal<int?>(null, presentation.Rows[1].Rank, "second visible row is not ranked");
-    Equal<int?>(null, presentation.Rows[2].Rank, "third IQ rank is not displayed");
-    Equal<int?>(null, presentation.Rows[3].Rank, "fourth visible row is not ranked");
-    Equal(primary.Label, presentation.IqLeader?.Label, "full-table IQ leader summary");
-    Equal(4, presentation.Recommendations.Count, "four local scenario groups are exposed");
-    Equal(true, presentation.Recommendations.All(group => group.Items.Count == 1), "each scenario exposes one local pick");
-    Equal(local.DailyDevelopment?.Model, presentation.Recommendations[0].Items[0].Model.Model, "daily local selection is mapped");
-    Equal(local.HardProblems?.Model, presentation.Recommendations[1].Items[0].Model.Model, "planning local selection is mapped");
-    Equal(local.TaskExecution?.Model, presentation.Recommendations[2].Items[0].Model.Model, "task-execution local selection is mapped");
-    Equal(local.BackgroundAutomation?.Model, presentation.Recommendations[3].Items[0].Model.Model, "background local selection is mapped");
-    Equal<string?>(null, presentation.Recommendations[0].Items[0].Slot, "local picks do not impersonate upstream slots");
-    Equal<long?>(null, presentation.Recommendations[0].Items[0].CostSamples, "local picks do not impersonate upstream cost sample counts");
-    Equal<long?>(null, presentation.Recommendations[0].Items[0].DurationSamples, "local picks do not impersonate upstream duration sample counts");
-    Equal(RadarScenarioEvaluator.RuleFor("daily_development"), presentation.Recommendations[0].Rule, "local rule replaces upstream rule");
-    Equal(2, snapshot.RecommendationFeed!.Groups[0].Items.Count, "the raw upstream feed stays complete");
-    Equal("daily_development", presentation.Recommendations[0].Key, "local scenario order starts with daily development");
-    Equal("task_execution", presentation.Recommendations[2].Key, "task-execution group is exposed");
-    Equal("background_automation", presentation.Recommendations[3].Key, "background group is exposed");
-    Equal(false, presentation.Recommendations.Any(group => group.Key == "lobster_tasks"), "lobster task group is hidden");
-    Equal(true, presentation.Rows[0].RecommendationGroupIndexes.SequenceEqual([0, 1]), "one model can serve daily and planning scenarios");
-    Equal(true, presentation.Rows[1].RecommendationGroupIndexes.SequenceEqual([2, 3]), "confidence-qualified task and background picks are marked");
-    Equal(true, presentation.Rows[2].RecommendationGroupIndexes.Count == 0, "unselected comparison stays unmarked");
-    Equal(true, presentation.Rows[3].RecommendationGroupIndexes.Count == 0, "below-confidence comparison stays unmarked");
-    var withoutFeed = RadarPresentation.Build(snapshot with { RecommendationFeed = null });
-    Equal(4, withoutFeed.Rows.Count, "missing upstream recommendations keep every source row");
-    Equal(4, withoutFeed.Recommendations.Count, "local scenario picks do not depend on upstream groups");
-    var trustedBoundary = ScenarioRadarModel("trusted-boundary", "high", 100, 2, 10) with
-    {
-        Status = "red",
-        Passed = 34,
-        ValidTasks = RadarScenarioEvaluator.MinimumValidTasks,
-    };
-    var sparseK3 = ScenarioRadarModel("k3", "max", 150, 0.01, 1) with
-    {
-        Status = "green",
-        Passed = 23,
-        ValidTasks = 23,
-    };
-    var sparsePresentation = RadarPresentation.Build(new ProviderRadarSnapshot(
-        ProviderKind.Codex,
-        "sample-qualification",
-        capturedAt,
-        capturedAt,
-        trustedBoundary,
-        [sparseK3]));
-    Equal(2, sparsePresentation.Rows.Count, "sparse rows remain visible");
-    Equal(trustedBoundary.Label, sparsePresentation.IqLeader?.Label, "strongest ignores a higher-IQ sparse K3 row");
-    Equal(1, sparsePresentation.Rows.Single(row => row.Model.Model == trustedBoundary.Model).Rank, "sample-qualified row receives strongest rank");
-    Equal<int?>(null, sparsePresentation.Rows.Single(row => row.Model.Model == sparseK3.Model).Rank, "sparse K3 row has no strongest rank");
-    Equal(4, sparsePresentation.Rows.Single(row => row.Model.Model == trustedBoundary.Model).RecommendationGroupIndexes.Count, "sample-qualified row can receive all scenario markers");
-    Equal(0, sparsePresentation.Rows.Single(row => row.Model.Model == sparseK3.Model).RecommendationGroupIndexes.Count, "sparse K3 row receives no scenario marker");
-    var deepSeek = new RadarModel(
-        "deepseek-v4-flash",
-        "deepseek-v4-flash max",
-        "max",
-        79,
-        "green",
-        42,
-        50,
-        0.10,
-        1800,
-        "30分钟");
-    var dshDeepSeek = deepSeek with
-    {
-        Model = "dsh-deepseek-v4-pro",
-        Label = "dsh-deepseek-v4-pro max",
-        Score = 112,
-    };
-    var deepSeekPresentation = RadarPresentation.DeepSeekOnly(
-        RadarPresentation.Build(snapshot with
-        {
-            Comparisons = [.. snapshot.Comparisons, deepSeek, dshDeepSeek],
-        }));
-    Equal(2, deepSeekPresentation.Rows.Count, "DeepSeek Radar keeps only DeepSeek model rows");
-    Equal(true, deepSeekPresentation.Rows.All(row => RadarPresentation.IsDeepSeekModel(row.Model)), "DeepSeek filter excludes non-DeepSeek rows");
-    Equal(dshDeepSeek.Label, deepSeekPresentation.IqLeader?.Label, "filtered view preserves a DeepSeek leader");
-    Equal("dsh-deepseek-v4-pro", deepSeekPresentation.Rows[0].Model.Model, "DeepSeek Radar puts Pro before Flash");
-    Equal(true, RadarPresentation.IsDeepSeekModel(dshDeepSeek), "dsh-prefixed DeepSeek model is included");
-    RadarModel DeepSeekVariant(string model, string effort, double score) => deepSeek with
-    {
-        Model = model,
-        Label = $"{model} {effort}",
-        ReasoningEffort = effort,
-        Score = score,
-    };
-    var deepSeekOrderingRows = new[]
-    {
-        DeepSeekVariant("deepseek-v4-pro", "max", 90),
-        DeepSeekVariant("deepseek-v4-pro", "high", 89),
-        DeepSeekVariant("deepseek-v4-pro", "off", 88),
-        DeepSeekVariant("dsh-deepseek-v4-pro", "max", 100),
-        DeepSeekVariant("dsh-deepseek-v4-pro", "high", 99),
-        DeepSeekVariant("dsh-deepseek-v4-pro", "off", 98),
-        DeepSeekVariant("deepseek-v4-flash", "max", 80),
-        DeepSeekVariant("deepseek-v4-flash", "high", 79),
-        DeepSeekVariant("deepseek-v4-flash", "off", 78),
-        DeepSeekVariant("dsh-deepseek-v4-flash", "max", 87),
-        DeepSeekVariant("dsh-deepseek-v4-flash", "high", 86),
-        DeepSeekVariant("dsh-deepseek-v4-flash", "off", 85),
-    };
-    var deepSeekOrderingPresentation = RadarPresentation.DeepSeekOnly(
-        RadarPresentation.Build(new ProviderRadarSnapshot(
-            ProviderKind.Codex,
-            "deepseek-ordering",
-            capturedAt,
-            capturedAt,
-            deepSeekOrderingRows[0],
-            deepSeekOrderingRows.Skip(1).ToArray())));
-    var deepSeekOrdering = deepSeekOrderingPresentation.Rows
-        .Select(row => $"{row.Model.Model}:{row.Model.ReasoningEffort}")
-        .ToArray();
-    Equal(
-        true,
-        deepSeekOrdering.SequenceEqual(
-            [
-                "deepseek-v4-pro:max",
-                "deepseek-v4-pro:high",
-                "deepseek-v4-pro:off",
-                "dsh-deepseek-v4-pro:max",
-                "dsh-deepseek-v4-pro:high",
-                "dsh-deepseek-v4-pro:off",
-                "deepseek-v4-flash:max",
-                "deepseek-v4-flash:high",
-                "deepseek-v4-flash:off",
-                "dsh-deepseek-v4-flash:max",
-                "dsh-deepseek-v4-flash:high",
-                "dsh-deepseek-v4-flash:off",
-            ],
-            StringComparer.Ordinal),
-        "DeepSeek Radar groups base and DSH lanes within each model family");
-    var codexPresentation = RadarPresentation.CodexOnly(
-        RadarPresentation.Build(snapshot with
-        {
-            Comparisons = [.. snapshot.Comparisons, deepSeek, dshDeepSeek],
-        }));
-    Equal(4, codexPresentation.Rows.Count, "Codex Radar keeps only non-DeepSeek model rows");
-    Equal(true, codexPresentation.Rows.All(row => !RadarPresentation.IsDeepSeekModel(row.Model)), "Codex filter excludes all DeepSeek rows");
-
-    var futureOrdering = RadarPresentation.CodexOnly(RadarPresentation.Build(new ProviderRadarSnapshot(
-        ProviderKind.Codex,
-        "future-ordering",
-        capturedAt,
-        capturedAt,
-        ScenarioRadarModel("gpt-5.6-luna", "max", 80, 1, 2),
-        [
-            ScenarioRadarModel("gpt-6-luna", "max", 80, 1, 2),
-            ScenarioRadarModel("gpt-6-sol", "max", 80, 1, 2),
-            ScenarioRadarModel("gpt-6-astra", "max", 80, 1, 2),
-            ScenarioRadarModel("gpt-5.6-sol", "max", 80, 1, 2),
-            ScenarioRadarModel("gpt-5.6-terra", "max", 80, 1, 2),
-        ]))).Rows
-        .GroupBy(row => row.Model.Model, StringComparer.OrdinalIgnoreCase)
-        .Select(group => group.Key)
-        .ToArray();
-    Equal(true, futureOrdering.SequenceEqual([
-        "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
-        "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
-    ], StringComparer.OrdinalIgnoreCase), "Codex Radar orders model generations and families dynamically");
-
-    var astraFeed = RadarMeasurementsParser.Parse(JsonSerializer.Serialize(new
-    {
-        points = new[] { "low", "medium", "high", "xhigh", "max", "ultra" }
-            .Select(effort => new
-            {
-                model = "gpt-6-astra",
-                effort,
-                iq = 100,
-                valid_tasks = 120,
-            }),
-    }));
-    var refreshedSnapshot = RadarMeasurementsParser.Merge(snapshot with
-    {
-        Primary = cheapest with { Model = "GPT-5.6-LUNA", Score = 200 },
-        Comparisons = [primary, faster, unselected with { Model = "GPT-5.6-TERRA", Score = 190 }],
-    }, astraFeed);
-    var refreshedPresentation = RadarPresentation.CodexOnly(RadarPresentation.Build(refreshedSnapshot));
-    Equal(10, refreshedPresentation.Rows.Count, "refreshed Radar retains every model and upstream Astra effort");
-    Equal(6, refreshedPresentation.Rows.Count(row => row.Model.Model == "gpt-6-astra"), "Astra measurements reach the displayed rows");
-    Equal(true, refreshedPresentation.Rows.Take(6).All(row => row.Model.Model == "gpt-6-astra"), "all Astra efforts precede older model groups");
-    Equal(true, refreshedPresentation.Rows
-        .GroupBy(row => row.Model.Model, StringComparer.OrdinalIgnoreCase)
-        .Select(group => group.Key)
-        .SequenceEqual(["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"], StringComparer.OrdinalIgnoreCase),
-        "Codex Radar keeps model generations and families in semantic order");
-    Equal("GPT-6 Astra Ultra", refreshedPresentation.Rows.First(row => row.Model.Model == "gpt-6-astra").ModelText, "Astra label and effort order");
-    Equal(refreshedSnapshot.Primary, refreshedPresentation.IqLeader, "folding does not change model ranking");
-    Equal(9, refreshedSnapshot.Comparisons.Count, "display filtering leaves source measurements intact");
-    Equal("DSH deepseek-v4-pro max", RadarPresentation.FormatModelLabel(dshDeepSeek), "DSH lane is labeled instead of looking like a duplicate");
-    Equal("77/112 (69%)", RadarPresentation.FormatPass(primary), "pass/valid percentage");
-    Equal("$9.06", RadarPresentation.FormatAverageCost(primary), "average cost");
-    Equal("<$0.01", RadarPresentation.FormatAverageCost(cheapest), "small average cost");
-    Equal(RadarStatusIndicator.Stable, RadarStatus.Indicator(primary.Status), "green shape");
-    Equal(RadarStatusIndicator.Watch, RadarStatus.Indicator(faster.Status), "yellow shape");
-    Equal(RadarStatusIndicator.Degraded, RadarStatus.Indicator(cheapest.Status), "red shape");
-    Equal(RadarStatusIndicator.Unknown, RadarStatus.Indicator("future"), "unknown shape");
-    Equal("GPT-5.6 Sol Max", presentation.Rows[0].ModelText, "row model display");
-    Equal("GPT-5.6 Sol XHigh", RadarPresentation.FormatModelLabel(faster with
-    {
-        ReasoningEffort = "xhigh",
-    }), "reasoning effort display casing");
-    Equal("103.6", presentation.Rows[0].ScoreText, "row score display");
-    Equal("112", presentation.Rows[0].SampleCountText, "row valid sample count display");
-    Equal<RadarIqComparison?>(null, presentation.Rows[0].IqComparison, "row omits unavailable recent average");
-    Equal<RadarIqComparison?>(
-        null,
-        RadarPresentation.FormatIqComparison(primary with
-        {
-            IqHistory = [new RadarIqSample(capturedAt, primary.Score!.Value)],
-        }),
-        "one history point does not manufacture a flat current-versus-average arrow");
-    var withIqHistory = primary with
-    {
-        IqHistory =
-        [
-            new RadarIqSample(DateTimeOffset.Parse("2026-07-20T12:00:00+08:00"), 1000),
-            new RadarIqSample(DateTimeOffset.Parse("2026-07-31T12:00:00+08:00"), 98),
-            new RadarIqSample(DateTimeOffset.Parse("2026-08-01T12:00:00+08:00"), 102),
-        ],
-    };
-    Equal<RadarIqComparison?>(
-        new RadarIqComparison("↑", "100.0"),
-        RadarPresentation.FormatIqComparison(withIqHistory),
-        "row places an upward arrow after current IQ when above the recent average");
-    Equal<RadarIqComparison?>(
-        new RadarIqComparison("↓", "100.0"),
-        RadarPresentation.FormatIqComparison(withIqHistory with { Score = 97.4 }),
-        "row places a downward arrow after current IQ when below the recent average");
-    Equal<RadarIqComparison?>(
-        new RadarIqComparison("→", "100.0"),
-        RadarPresentation.FormatIqComparison(withIqHistory with { Score = 100.0 }),
-        "row places a flat arrow after current IQ when matching the recent average");
-    Equal(
-        "≈$9.06",
-        RadarPresentation.FormatAverageCost(primary with { IncompleteCostSamples = 1 }),
-        "partial cost coverage is marked as approximate");
-    Equal("77/112 (69%)", presentation.Rows[0].PassText, "row pass display");
-
-    var missing = primary with
-    {
-        Passed = null,
-        ValidTasks = 0,
-        CostUsd = null,
-        AverageTaskSeconds = null,
-        WallTime = null,
-    };
-    Equal("—", RadarPresentation.FormatPass(missing), "invalid pass denominator");
-    Equal("—", RadarPresentation.FormatSampleCount(missing), "missing sample count");
-    Equal("—", RadarPresentation.FormatAverageCost(missing), "missing average cost");
-}
-
-static void TestRadarDeveloperCli()
-{
-    var directory = Path.Combine(Path.GetTempPath(), $"wmt-radar-cli-{Guid.NewGuid():N}");
-    Directory.CreateDirectory(directory);
-    try
-    {
-        var validPath = Path.Combine(directory, "current.json");
-        File.WriteAllText(validPath, RadarCliFixtureJson());
-        var first = RunRadarCli(["--radar-evaluate", validPath]);
-        var second = RunRadarCli(["--RADAR-EVALUATE", validPath]);
-        Equal(0, first.ExitCode, "offline CLI succeeds");
-        Equal(string.Empty, first.Error, "offline CLI keeps stderr empty");
-        Equal(first.Output, second.Output, "offline CLI output is deterministic");
-        using (var document = JsonDocument.Parse(first.Output))
-        {
-            var root = document.RootElement;
-            Equal(6, root.GetProperty("schemaVersion").GetInt32(), "CLI schema version");
-            Equal(JsonValueKind.Null, root.GetProperty("recommendationFeed").ValueKind, "current.json does not synthesize recommendations");
-            Equal(2, root.GetProperty("rows").GetArrayLength(), "CLI emits every row");
-            Equal(0L, root.GetProperty("rows")[0].GetProperty("sourceIndex").GetInt64(), "CLI preserves source order");
-            Equal("gpt-5.6-sol", root.GetProperty("rows")[0].GetProperty("model").GetString(), "CLI exposes raw model data");
-            var localRecommendations = root.GetProperty("localRecommendations");
-            Equal(RadarScenarioEvaluator.PolicyVersion, localRecommendations.GetProperty("policyVersion").GetString(), "CLI exposes local policy");
-            Equal("max", localRecommendations.GetProperty("dailyDevelopment").GetProperty("effort").GetString(), "CLI daily selection");
-            Equal("max", localRecommendations.GetProperty("hardProblems").GetProperty("effort").GetString(), "CLI planning selection");
-            Equal("medium", localRecommendations.GetProperty("taskExecution").GetProperty("effort").GetString(), "CLI task-execution selection");
-            Equal("medium", localRecommendations.GetProperty("backgroundAutomation").GetProperty("effort").GetString(), "CLI background selection");
-        }
-
-        var liveCalls = 0;
-        var live = RunRadarCli(
-            ["--radar-live"],
-            _ =>
-            {
-                liveCalls++;
-                var snapshot = RadarParser.Parse(RadarCliFixtureJson(), DateTimeOffset.UnixEpoch);
-                return Task.FromResult(snapshot with
-                {
-                    RecommendationFeed = new RadarRecommendationFeed(
-                        1,
-                        "latest_valid_per_task",
-                        DateTimeOffset.Parse("2026-08-01T13:39:13+08:00"),
-                        DateTimeOffset.Parse("2026-08-01T13:39:08+08:00"),
-                        [
-                            new RadarRecommendationGroup(
-                                "background_automation",
-                                "后台自动化",
-                                "上游规则",
-                                [RecommendationItem(snapshot.Comparisons[0], rule: "上游条目规则")]),
-                        ]),
-                });
-            });
-        Equal(0, live.ExitCode, "live CLI succeeds");
-        Equal(1, liveCalls, "live CLI fetches exactly once");
-        using (var liveDocument = JsonDocument.Parse(live.Output))
-        {
-            var root = liveDocument.RootElement;
-            Equal(6, root.GetProperty("schemaVersion").GetInt32(), "live CLI shares schema");
-            var feed = root.GetProperty("recommendationFeed");
-            Equal("latest_valid_per_task", feed.GetProperty("mode").GetString(), "CLI exposes upstream mode");
-            var group = feed.GetProperty("recommendations")[0];
-            Equal("background_automation", group.GetProperty("key").GetString(), "CLI exposes upstream group key");
-            Equal("后台自动化", group.GetProperty("title").GetString(), "CLI exposes upstream title");
-            Equal("上游规则", group.GetProperty("rule").GetString(), "CLI exposes upstream rule");
-            Equal("上游条目规则", group.GetProperty("items")[0].GetProperty("rule").GetString(), "CLI exposes upstream item rule");
-            Equal(RadarScenarioEvaluator.PolicyVersion, root.GetProperty("localRecommendations").GetProperty("policyVersion").GetString(), "live CLI exposes local policy");
-        }
-
-        var noRecommendationPath = Path.Combine(directory, "none.json");
-        File.WriteAllText(noRecommendationPath, RadarCliFixtureJson("\"score\": null", "\"score\": null"));
-        var none = RunRadarCli(["--radar-evaluate", noRecommendationPath]);
-        using (var noneDocument = JsonDocument.Parse(none.Output))
-        {
-            Equal(JsonValueKind.Null, noneDocument.RootElement.GetProperty("recommendationFeed").ValueKind, "offline input remains recommendation-free");
-            Equal(JsonValueKind.Null, noneDocument.RootElement.GetProperty("rows")[0].GetProperty("iq").ValueKind, "invalid IQ remains null");
-            Equal(JsonValueKind.Null, noneDocument.RootElement.GetProperty("localRecommendations").GetProperty("dailyDevelopment").ValueKind, "invalid IQ has no local selection");
-        }
-
-        var invalidPath = Path.Combine(directory, "invalid.json");
-        File.WriteAllText(invalidPath, "{}");
-        var oversizedPath = Path.Combine(directory, "oversized.json");
-        File.WriteAllBytes(oversizedPath, new byte[1024 * 1024 + 1]);
-        AssertRadarCliError(["--radar-evaluate"], "invalid_arguments");
-        AssertRadarCliError(["--radar-evaluate", Path.Combine(directory, "missing.json")], "input_not_found");
-        AssertRadarCliError(["--radar-evaluate", directory], "input_not_file");
-        AssertRadarCliError(["--radar-evaluate", oversizedPath], "input_too_large");
-        AssertRadarCliError(["--radar-evaluate", invalidPath], "invalid_payload");
-        AssertRadarCliError(["--unknown"], "invalid_arguments");
-        AssertRadarCliError(["--help", "extra"], "invalid_arguments");
-
-        var help = RunRadarCli(["--help"]);
-        Equal(0, help.ExitCode, "help succeeds");
-        Equal(true, help.Output.Contains("--radar-evaluate", StringComparison.Ordinal), "help documents offline evaluation");
-        Equal(
-            true,
-            help.Output.Contains("--taskbar-mini-captures", StringComparison.Ordinal),
-            "help documents headless Mini captures");
-    }
-    finally
-    {
-        Directory.Delete(directory, true);
-    }
-}
-
-static (int ExitCode, string Output, string Error) RunRadarCli(
-    string[] arguments,
-    Func<CancellationToken, Task<ProviderRadarSnapshot>>? fetchLive = null)
-{
-    using var output = new StringWriter();
-    using var error = new StringWriter();
-    var result = RadarDeveloperCli.TryRunAsync(arguments, output, error, fetchLive).GetAwaiter().GetResult();
-    Equal(true, result.Handled, "Radar CLI handles command");
-    return (result.ExitCode, output.ToString(), error.ToString());
-}
-
-static void AssertRadarCliError(string[] arguments, string category)
-{
-    var result = RunRadarCli(arguments);
-    Equal(1, result.ExitCode, $"CLI {category} exits one");
-    Equal(string.Empty, result.Output, $"CLI {category} keeps stdout clean");
-    Equal(true, result.Error.Contains(category, StringComparison.Ordinal), $"CLI {category} is stable");
-    Equal(false, result.Error.Contains(" at ", StringComparison.Ordinal), $"CLI {category} has no stack trace");
-}
-
-static string RadarCliFixtureJson(
-    string primaryScore = "\"score\": 104.9",
-    string comparisonScore = "\"score\": 92.8") =>
-    $$"""
-      {
-        "model_iq": {
-          "updated_at": "2026-07-28T17:33:00+08:00",
-          "latest": {
-            "date": "2026-07-28",
-            "model": "gpt-5.6-sol",
-            "reasoning_effort": "max",
-            {{primaryScore}},
-            "status": "green",
-            "passed": 78,
-            "valid_tasks": 112,
-            "average_cost_usd": 9.06,
-            "average_task_seconds": 1920
-          },
-          "comparisons": {
-            "medium": {
-              "label": "GPT-5.6 Sol medium",
-              "latest": {
-                "date": "2026-07-28",
-                "model": "gpt-5.6-sol",
-                "reasoning_effort": "medium",
-                {{comparisonScore}},
-                "status": "yellow",
-                "passed": 69,
-                "valid_tasks": 112,
-                "average_cost_usd": 3.56,
-                "average_task_seconds": 1020
-              }
-            }
-          }
-        }
-      }
-      """;
-
 static void RenderQuotaTokenEstimateCaptures(string outputDirectory)
 {
     Directory.CreateDirectory(outputDirectory);
@@ -8846,7 +7412,7 @@ static void RenderGrokHoverCapture(string outputDirectory)
             null, null, [], UsageFreshness.Current, now, null),
     ]);
     using var form = new BarForm(
-        new AppSettings { Locale = "zh-CN", UseTaskbarRings = true, EnableAnimations = false, EnableRadar = false },
+        new AppSettings { Locale = "zh-CN", UseTaskbarRings = true, EnableAnimations = false },
         TaskbarMiniCaptureSnapshot(true, 1),
         renderOnly: true,
         renderDpi: 192);
@@ -9261,7 +7827,7 @@ static void RenderGlassOverflowCaptures(string outputDirectory)
         .ToArray();
     var overflowSnapshot = TaskbarMiniCaptureSnapshot(true, 4);
     using var overflowForm = new BarForm(
-        new AppSettings { Locale = "zh-CN", UseTaskbarRings = true, EnableAnimations = false, EnableRadar = false, GlassDockMaxRings = 3 },
+        new AppSettings { Locale = "zh-CN", UseTaskbarRings = true, EnableAnimations = false, GlassDockMaxRings = 3 },
         overflowSnapshot,
         renderOnly: true,
         renderDpi: 192,
@@ -9348,7 +7914,6 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
                         Locale = locale,
                         UseTaskbarRings = true,
                         EnableAnimations = false,
-                        EnableRadar = false,
                         BackgroundPalette = paletteId,
                     };
                     using var form = new BarForm(
@@ -9460,7 +8025,6 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
                     Locale = "zh-CN",
                     UseTaskbarRings = true,
                     EnableAnimations = false,
-                    EnableRadar = false,
                     CodexMiniDisplayMode = CodexMiniDisplayModes.Pool,
                 },
                 scenario.Snapshot,
@@ -9494,7 +8058,6 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
                 Locale = "zh-CN",
                 UseTaskbarRings = true,
                 EnableAnimations = false,
-                EnableRadar = false,
                 MiniAreaOrder = [
                     MiniAreaIds.SystemMetrics,
                     MiniAreaIds.Codex,
@@ -9556,7 +8119,6 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
                     Locale = locale,
                     UseTaskbarRings = true,
                     EnableAnimations = false,
-                    EnableRadar = false,
                     MiniAreaLayouts = collapsed
                         ? new(StringComparer.Ordinal) { [MiniAreaIds.AiGateway] = new(true) }
                         : new(StringComparer.Ordinal),
@@ -9737,7 +8299,6 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
                         {
                             Locale = locale,
                             EnableAnimations = false,
-                            EnableRadar = false,
                         },
                         new QuotaSnapshot(
                             [scenario.Card],
@@ -9771,7 +8332,6 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
                 {
                     Locale = locale,
                     EnableAnimations = false,
-                    EnableRadar = false,
                 },
                 new QuotaSnapshot(
                     [sub2ApiCard],
@@ -9817,7 +8377,6 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
                 {
                     Locale = locale,
                     EnableAnimations = false,
-                    EnableRadar = false,
                 },
                 stackedSub2ApiSnapshot,
                 renderOnly: true,
@@ -9879,112 +8438,6 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
         }
     }
 
-    var radarSurfaceSnapshot = LocalizationRadarSnapshot();
-    var radarSurfaceCards = TaskbarMiniCaptureSnapshot(includeClaude: false).Cards
-        .Append(aiGatewayCard)
-        .ToArray();
-    foreach (var dpi in new[] { 96, 192 })
-    {
-        using var form = new BarForm(
-            new AppSettings
-            {
-                Locale = "zh-CN",
-                EnableRadar = true,
-                EnableAnimations = false,
-            },
-            new QuotaSnapshot(
-                radarSurfaceCards,
-                [new ProviderHealth(ProviderKind.Codex, true, "current", ProviderHealthCode.Current)],
-                aiGatewayNow),
-            radarProviders: [ProviderKind.Codex],
-            renderOnly: true,
-            renderDpi: dpi,
-            codexAccounts: codexAccounts,
-            activeProviders: new HashSet<ProviderKind> { ProviderKind.Codex, ProviderKind.AiGateway },
-            utcNow: () => aiGatewayNow);
-        form.SetRadarState(new RadarViewState(
-            radarSurfaceSnapshot,
-            radarSurfaceSnapshot.CapturedAt,
-            false,
-            null,
-            true,
-            new HashSet<string>(StringComparer.Ordinal) { RadarSurfaceIds.DeepSeek }));
-        form.CreateControl();
-        using var bitmap = new Bitmap(
-            form.ClientSize.Width,
-            form.ClientSize.Height,
-            PixelFormat.Format32bppPArgb);
-        form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
-        var path = Path.GetFullPath(Path.Combine(
-            outputDirectory,
-            $"taskbar-mini-radar-surface-unread-zh-CN-{dpi}dpi.png"));
-        bitmap.Save(path, ImageFormat.Png);
-        Console.WriteLine($"{path} {bitmap.Width}x{bitmap.Height} codex=read deepseek=unread");
-    }
-
-    var resetCaptureNow = DateTimeOffset.Parse("2026-08-23T16:00:00+08:00");
-    var resetCaptureQuota = TaskbarMiniCaptureSnapshot(includeClaude: false);
-    var resetCaptureScenarios = new[]
-    {
-        (
-            Name: "exact",
-            Window: new RadarResetWindow(
-                true,
-                resetCaptureNow.AddHours(-2),
-                null,
-                "https://x.com/example/status/123")
-            {
-                TargetAt = resetCaptureNow.AddHours(15).AddMinutes(42).AddSeconds(17),
-            }),
-        (
-            Name: "estimated",
-            Window: new RadarResetWindow(
-                true,
-                resetCaptureNow.AddHours(-2),
-                null,
-                "https://x.com/example/status/123")),
-    };
-    foreach (var locale in new[] { "en", "zh-CN" })
-    {
-        foreach (var dpi in new[] { 96, 192 })
-        {
-            foreach (var scenario in resetCaptureScenarios)
-            {
-                using var form = new BarForm(
-                    new AppSettings
-                    {
-                        Locale = locale,
-                        EnableRadar = true,
-                        EnableAnimations = false,
-                    },
-                    resetCaptureQuota,
-                    radarProviders: [ProviderKind.Codex],
-                    renderOnly: true,
-                    renderDpi: dpi,
-                    codexAccounts: codexAccounts,
-                    activeProviders: new HashSet<ProviderKind> { ProviderKind.Codex },
-                    utcNow: () => resetCaptureNow);
-                var snapshot = radarSurfaceSnapshot with { ResetWindow = scenario.Window };
-                form.SetRadarState(new RadarViewState(
-                    snapshot,
-                    resetCaptureNow,
-                    false,
-                    null));
-                form.CreateControl();
-                using var bitmap = new Bitmap(
-                    form.ClientSize.Width,
-                    form.ClientSize.Height,
-                    PixelFormat.Format32bppPArgb);
-                form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
-                var path = Path.GetFullPath(Path.Combine(
-                    outputDirectory,
-                    $"taskbar-mini-radar-reset-{scenario.Name}-{locale}-{dpi}dpi.png"));
-                bitmap.Save(path, ImageFormat.Png);
-                Console.WriteLine($"{path} {bitmap.Width}x{bitmap.Height} reset={scenario.Name}");
-            }
-        }
-    }
-
     var collapsedProvidersSnapshot = TaskbarMiniCaptureSnapshot(includeClaude: true);
     var allCollapsedProvidersSnapshot = new QuotaSnapshot(
         collapsedProvidersSnapshot.Cards.Append(aiGatewayCard).ToArray(),
@@ -10001,7 +8454,6 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
             Locale = "zh-CN",
             UseTaskbarRings = true,
             EnableAnimations = false,
-            EnableRadar = false,
             MiniAreaLayouts = new(StringComparer.Ordinal)
             {
                 [MiniAreaIds.Claude] = new(true),
@@ -10043,7 +8495,6 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
             Locale = "zh-CN",
             UseTaskbarRings = true,
             EnableAnimations = false,
-            EnableRadar = false,
             MiniAreaLayouts = new(StringComparer.Ordinal)
             {
                 [MiniAreaIds.Claude] = new(true),
@@ -10464,87 +8915,6 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
                     172_500_000_000,
                     100_000_000,
                     152.73m));
-            var tokenLayout = RadarPopoverLayout.CreateTokenUsage(dpi);
-            using var tokenBitmap = new Bitmap(
-                tokenLayout.BodySize.Width,
-                tokenLayout.BodySize.Height + tokenLayout.TailSize,
-                PixelFormat.Format32bppPArgb);
-            using (var tokenGraphics = Graphics.FromImage(tokenBitmap))
-            using (var renderer = new RadarPopoverRenderer())
-            {
-                tokenGraphics.Clear(Color.FromArgb(7, 7, 7));
-                renderer.Draw(
-                    tokenGraphics,
-                    tokenLayout,
-                    PopoverTailSide.Bottom,
-                    tokenLayout.BodySize.Width / 2,
-                    new RadarViewState(null, null, false, null),
-                    null,
-                    providerLogo,
-                    NativeText.For(locale),
-                    tokenUsage);
-            }
-            var tokenPath = Path.GetFullPath(Path.Combine(
-                outputDirectory,
-                $"taskbar-mini-codex-token-popover-{locale}-{dpi}dpi.png"));
-            tokenBitmap.Save(tokenPath, ImageFormat.Png);
-            Console.WriteLine($"{tokenPath} {tokenBitmap.Width}x{tokenBitmap.Height}");
-
-            var spendHistoryUsage = SpendHistoryCaptureUsage(now);
-            using var historyActionBitmap = new Bitmap(
-                tokenLayout.BodySize.Width,
-                tokenLayout.BodySize.Height + tokenLayout.TailSize,
-                PixelFormat.Format32bppPArgb);
-            using (var historyActionGraphics = Graphics.FromImage(historyActionBitmap))
-            using (var renderer = new RadarPopoverRenderer())
-            {
-                historyActionGraphics.Clear(Color.FromArgb(7, 7, 7));
-                renderer.Draw(
-                    historyActionGraphics,
-                    tokenLayout,
-                    PopoverTailSide.Bottom,
-                    tokenLayout.BodySize.Width / 2,
-                    new RadarViewState(null, null, false, null),
-                    null,
-                    providerLogo,
-                    NativeText.For(locale),
-                    spendHistoryUsage);
-            }
-            var historyActionPath = Path.GetFullPath(Path.Combine(
-                outputDirectory,
-                $"taskbar-mini-codex-token-popover-history-action-{locale}-{dpi}dpi.png"));
-            historyActionBitmap.Save(historyActionPath, ImageFormat.Png);
-            Console.WriteLine($"{historyActionPath} {historyActionBitmap.Width}x{historyActionBitmap.Height}");
-
-            var spendHistoryLayout = CodexSpendHistoryLayout.Create(
-                dpi,
-                wide: false,
-                spendHistoryUsage.SpendHistory!.Days.Count);
-            using var spendHistoryBitmap = new Bitmap(
-                spendHistoryLayout.BodySize.Width,
-                spendHistoryLayout.BodySize.Height + spendHistoryLayout.TailSize,
-                PixelFormat.Format32bppPArgb);
-            using (var spendHistoryGraphics = Graphics.FromImage(spendHistoryBitmap))
-            using (var renderer = new RadarPopoverRenderer())
-            {
-                spendHistoryGraphics.Clear(Color.FromArgb(7, 7, 7));
-                renderer.DrawSpendHistory(
-                    spendHistoryGraphics,
-                    spendHistoryLayout,
-                    PopoverTailSide.Bottom,
-                    spendHistoryLayout.BodySize.Width / 2,
-                    spendHistoryUsage,
-                    providerLogo,
-                    NativeText.For(locale),
-                    spendHistoryUsage.SpendHistory.Days.Count - 1,
-                    pinned: true);
-            }
-            var spendHistoryPath = Path.GetFullPath(Path.Combine(
-                outputDirectory,
-                $"taskbar-mini-codex-spend-history-{locale}-{dpi}dpi.png"));
-            spendHistoryBitmap.Save(spendHistoryPath, ImageFormat.Png);
-            Console.WriteLine($"{spendHistoryPath} {spendHistoryBitmap.Width}x{spendHistoryBitmap.Height}");
-
             using var systemPopover = new SystemUsagePopoverForm();
             using var systemBitmap = systemPopover.RenderForTest(
                 new SystemUsagePopoverContent(systemUsage, false),
@@ -10830,224 +9200,20 @@ static CodexTokenUsageSummary SpendHistoryCaptureUsage(DateTimeOffset capturedAt
 static void RenderLocalizationCaptures(string outputDirectory)
 {
     Directory.CreateDirectory(outputDirectory);
-    var snapshot = LocalizationRadarSnapshot();
-    var state = new RadarViewState(snapshot, snapshot.CapturedAt, false, null);
-    var fullPresentation = RadarPresentation.Build(snapshot);
-    var presentation = RadarPresentation.CodexOnly(fullPresentation);
-    var deepSeekPresentation = RadarPresentation.DeepSeekOnly(fullPresentation);
-    using var providerLogo = LoadNativeAsset("ZGSTokenBar.App.Assets.openai-official-ios-icon.png");
-    using var deepSeekLogo = LoadNativeAsset("ZGSTokenBar.App.Assets.deepseek-whale-icon.png");
-
     foreach (var locale in new[] { "zh-CN", "en" })
     {
         foreach (var dpi in new[] { 96, 144, 192 })
         {
-            Bitmap? settingsBitmap = null;
-            if (dpi == 96)
-            {
-                var settings = new AppSettings
-                {
-                    Locale = locale,
-                    EnableRadar = true,
-                    EnableRadarAlerts = true,
-                };
-                using var settingsForm = new SettingsForm(settings, dpi);
-                settingsForm.Location = new Point(-20_000, -20_000);
-                settingsForm.Show();
-                System.Windows.Forms.Application.DoEvents();
-                settingsBitmap = new Bitmap(
-                    settingsForm.Width,
-                    settingsForm.Height,
-                    PixelFormat.Format32bppPArgb);
-                settingsForm.DrawToBitmap(
-                    settingsBitmap,
-                    new Rectangle(Point.Empty, settingsBitmap.Size));
-                settingsForm.Hide();
-            }
-
-            var layout = RadarPopoverLayout.Create(
-                dpi,
-                presentation.Rows.Select(row => row.Model.Model).ToArray(),
-                false,
-                snapshot.ResetWindow?.Open == true,
-                hasSpendSummary: true);
-            var radarSize = new Size(
-                layout.BodySize.Width,
-                layout.BodySize.Height + layout.TailSize);
-            foreach (var pinned in new[] { false, true })
-            {
-                using var radarBitmap = new Bitmap(
-                    radarSize.Width,
-                    radarSize.Height,
-                    PixelFormat.Format32bppPArgb);
-                using (var radarGraphics = Graphics.FromImage(radarBitmap))
-                using (var renderer = new RadarPopoverRenderer())
-                {
-                    radarGraphics.Clear(Color.FromArgb(7, 7, 7));
-                    renderer.Draw(
-                        radarGraphics,
-                        layout,
-                        PopoverTailSide.Bottom,
-                        layout.BodySize.Width / 2,
-                        state,
-                        presentation,
-                        null,
-                        NativeText.For(locale),
-                        new CodexTokenUsageSummary(
-                            12_345_678,
-                            172_600_000_000,
-                            2_179,
-                            snapshot.CapturedAt,
-                            337_671_064,
-                            332_691_712,
-                            12_000_000,
-                            11_400_000,
-                            TodaySpend: new CodexSpendPeriod(
-                                12_000_000,
-                                11_400_000,
-                                345_678,
-                                0,
-                                0,
-                                12_345_678,
-                                1,
-                                1_024.7992890m),
-                            Last30DaysSpend: new CodexSpendPeriod(
-                                168_000_000_000,
-                                164_000_000_000,
-                                4_600_000_000,
-                                0,
-                                0,
-                                172_500_000_000,
-                                100_000_000,
-                                33_149.57033992m)),
-                        null,
-                        pinned);
-                }
-
-                var gap = settingsBitmap is null ? 0 : Math.Max(16, dpi / 6);
-                var settingsWidth = settingsBitmap?.Width ?? 0;
-                var settingsHeight = settingsBitmap?.Height ?? 0;
-                using var composite = new Bitmap(
-                    settingsWidth + gap + radarBitmap.Width,
-                    Math.Max(settingsHeight, radarBitmap.Height),
-                    PixelFormat.Format32bppPArgb);
-                using (var graphics = Graphics.FromImage(composite))
-                {
-                    graphics.Clear(Color.FromArgb(7, 7, 7));
-                    if (settingsBitmap is not null)
-                    {
-                        graphics.DrawImageUnscaled(settingsBitmap, 0, 0);
-                    }
-                    graphics.DrawImageUnscaled(radarBitmap, settingsWidth + gap, 0);
-                }
-
-                var suffix = pinned ? "-pinned" : string.Empty;
-                var path = Path.Combine(
-                    outputDirectory,
-                    $"native-localization-{locale}-{dpi}dpi{suffix}.png");
-                composite.Save(path, ImageFormat.Png);
-                Console.WriteLine(path);
-
-                if (!pinned)
-                {
-                    using var historyActionBitmap = new Bitmap(
-                        radarSize.Width,
-                        radarSize.Height,
-                        PixelFormat.Format32bppPArgb);
-                    using (var historyActionGraphics = Graphics.FromImage(historyActionBitmap))
-                    using (var historyActionRenderer = new RadarPopoverRenderer())
-                    {
-                        historyActionGraphics.Clear(Color.FromArgb(7, 7, 7));
-                        historyActionRenderer.Draw(
-                            historyActionGraphics,
-                            layout,
-                            PopoverTailSide.Bottom,
-                            layout.BodySize.Width / 2,
-                            state,
-                            presentation,
-                            null,
-                            NativeText.For(locale),
-                            SpendHistoryCaptureUsage(snapshot.CapturedAt));
-                    }
-                    var historyActionPath = Path.Combine(
-                        outputDirectory,
-                        $"native-localization-history-action-{locale}-{dpi}dpi.png");
-                    historyActionBitmap.Save(historyActionPath, ImageFormat.Png);
-                    Console.WriteLine(historyActionPath);
-                }
-
-                var deepSeekLayout = RadarPopoverLayout.Create(
-                    dpi,
-                    deepSeekPresentation.Rows.Select(row => row.Model.Model).ToArray(),
-                    false,
-                    snapshot.ResetWindow?.Open == true);
-                var deepSeekSize = new Size(
-                    deepSeekLayout.BodySize.Width,
-                    deepSeekLayout.BodySize.Height + deepSeekLayout.TailSize);
-                using var deepSeekBitmap = new Bitmap(
-                    deepSeekSize.Width,
-                    deepSeekSize.Height,
-                    PixelFormat.Format32bppPArgb);
-                using (var deepSeekGraphics = Graphics.FromImage(deepSeekBitmap))
-                using (var renderer = new RadarPopoverRenderer())
-                {
-                    deepSeekGraphics.Clear(Color.FromArgb(7, 7, 7));
-                    renderer.Draw(
-                        deepSeekGraphics,
-                        deepSeekLayout,
-                        PopoverTailSide.Bottom,
-                        deepSeekLayout.BodySize.Width / 2,
-                        state,
-                        deepSeekPresentation,
-                        deepSeekLogo,
-                        NativeText.For(locale),
-                        null,
-                        new AiGatewayUsageSummary(
-                            "CNY",
-                            AiGatewayBalanceStatus.Available,
-                            new AiGatewayUsagePeriod(8, 7_000, 1_500, 8_500, 5_600, 1_400, 0, 80m, 0.0043m),
-                            new AiGatewayUsagePeriod(91, 120_000, 24_000, 144_000, 98_000, 20_000, 2_000, 83.05m, 0.0723m),
-                            snapshot.CapturedAt),
-                        pinned,
-                        NativeText.For(locale).DeepSeekRadarTitle);
-                }
-                var deepSeekPath = Path.Combine(
-                    outputDirectory,
-                    $"native-localization-deepseek-{locale}-{dpi}dpi{suffix}.png");
-                deepSeekBitmap.Save(deepSeekPath, ImageFormat.Png);
-                Console.WriteLine(deepSeekPath);
-            }
-
-            var spendHistoryUsage = SpendHistoryCaptureUsage(snapshot.CapturedAt);
-            var spendHistoryLayout = CodexSpendHistoryLayout.Create(
-                dpi,
-                wide: true,
-                spendHistoryUsage.SpendHistory!.Days.Count);
-            using var spendHistoryBitmap = new Bitmap(
-                spendHistoryLayout.BodySize.Width,
-                spendHistoryLayout.BodySize.Height + spendHistoryLayout.TailSize,
-                PixelFormat.Format32bppPArgb);
-            using (var spendHistoryGraphics = Graphics.FromImage(spendHistoryBitmap))
-            using (var renderer = new RadarPopoverRenderer())
-            {
-                spendHistoryGraphics.Clear(Color.FromArgb(7, 7, 7));
-                renderer.DrawSpendHistory(
-                    spendHistoryGraphics,
-                    spendHistoryLayout,
-                    PopoverTailSide.Bottom,
-                    spendHistoryLayout.BodySize.Width / 2,
-                    spendHistoryUsage,
-                    providerLogo,
-                    NativeText.For(locale),
-                    spendHistoryUsage.SpendHistory.Days.Count - 1,
-                    pinned: true);
-            }
-            var spendHistoryPath = Path.Combine(
-                outputDirectory,
-                $"native-localization-spend-history-{locale}-{dpi}dpi.png");
-            spendHistoryBitmap.Save(spendHistoryPath, ImageFormat.Png);
-            Console.WriteLine(spendHistoryPath);
-            settingsBitmap?.Dispose();
+            using var settingsForm = new SettingsForm(new AppSettings { Locale = locale }, dpi);
+            settingsForm.Location = new Point(-20_000, -20_000);
+            settingsForm.Show();
+            System.Windows.Forms.Application.DoEvents();
+            using var settingsBitmap = new Bitmap(settingsForm.Width, settingsForm.Height, PixelFormat.Format32bppPArgb);
+            settingsForm.DrawToBitmap(settingsBitmap, new Rectangle(Point.Empty, settingsBitmap.Size));
+            settingsForm.Hide();
+            var path = Path.Combine(outputDirectory, $"native-localization-{locale}-{dpi}dpi.png");
+            settingsBitmap.Save(path, ImageFormat.Png);
+            Console.WriteLine(path);
         }
     }
 }
@@ -11065,8 +9231,6 @@ static void RenderSettingsCaptures(string outputDirectory)
                 var settings = new AppSettings
                 {
                     Locale = locale,
-                    EnableRadar = true,
-                    EnableRadarAlerts = true,
                     OpenAtLogin = true,
                     EnableAnimations = true,
                     BackgroundPalette = "midnight",
@@ -11125,139 +9289,10 @@ static Bitmap CaptureSettingsForm(SettingsForm form)
     return bitmap;
 }
 
-static ProviderRadarSnapshot LocalizationRadarSnapshot()
-{
-    var capturedAt = DateTimeOffset.Parse("2026-07-28T16:40:00+08:00");
-    var rows = new[]
-    {
-        new RadarModel("gpt-5.6-sol", "gpt-5.6-sol max", "max", 103.6, "green", 77, 112, 9.06, 1920, "32分钟"),
-        new RadarModel("gpt-5.6-sol", "GPT-5.6 Sol ultra", "ultra", 101.79, "green", 76, 112, 23.46, 2975.4, "50分钟"),
-        new RadarModel("gpt-5.6-sol", "GPT-5.6 Sol xhigh", "xhigh", 90.1, "yellow", 67, 112, 7.34, 1620, "27分钟"),
-        new RadarModel("gpt-5.6-sol", "GPT-5.6 Sol high", "high", 91.5, "yellow", 68, 112, 5.14, 1320, "22分钟"),
-        new RadarModel("gpt-5.6-sol", "GPT-5.6 Sol medium", "medium", 94.2, "yellow", 70, 112, 3.66, 1020, "17分钟"),
-        new RadarModel("gpt-5.6-sol", "GPT-5.6 Sol low", "low", 72.6, "red", 54, 112, 1.98, 600, "10分钟"),
-        new RadarModel("gpt-5.6-terra", "GPT-5.6 Terra ultra", "ultra", 100.45, "green", 75, 112, 13.47, 2559, "43分钟"),
-        new RadarModel("gpt-5.6-terra", "GPT-5.6 Terra max", "max", 90.1, "yellow", 67, 112, 4.76, 1800, "30分钟"),
-        new RadarModel("gpt-5.6-terra", "GPT-5.6 Terra xhigh", "xhigh", 80.7, "yellow", 60, 112, 2.60, 1140, "19分钟"),
-        new RadarModel("gpt-5.6-terra", "GPT-5.6 Terra high", "high", 65.9, "red", 49, 112, 1.34, 720, "12分钟"),
-        new RadarModel("gpt-5.6-terra", "GPT-5.6 Terra medium", "medium", 57.6, null, 43, 112, 0.64, 544, "9分钟"),
-        new RadarModel("gpt-5.6-luna", "GPT-5.6 Luna max", "max", 92.8, "yellow", 69, 112, 2.47, 1920, "32分钟"),
-        new RadarModel("gpt-5.6-luna", "GPT-5.6 Luna high", "high", 74.0, "red", 55, 112, 1.06, 1020, "17分钟"),
-        new RadarModel("gpt-5.5", "GPT-5.5 xhigh", "xhigh", 87.4, "yellow", 65, 112, 5.90, 1380, "23分钟"),
-        new RadarModel("gpt-5.5", "GPT-5.5 high", "high", 79.4, "yellow", 59, 112, 3.73, 1038, "17分钟"),
-        new RadarModel("deepseek-v4-flash", "DeepSeek V4 Flash max", "max", 79.0, null, 59, 112, 0.10, 1337, "22分钟"),
-        new RadarModel("deepseek-v4-flash", "DeepSeek V4 Flash high", "high", 50.9, null, 38, 112, 0.098, 1451, "24分钟"),
-        new RadarModel("dsh-deepseek-v4-flash", "dsh-deepseek-v4-flash max", "max", 150.0, null, 2, 2, null, 1199, null),
-        new RadarModel("dsh-deepseek-v4-pro", "dsh-deepseek-v4-pro max", "max", 112.5, null, 3, 4, null, 2315, null),
-        new RadarModel("gpt-5.6-luna", "GPT-5.6 Luna xhigh", "xhigh", 79.0, "yellow", 59, 112, 0.31, 1437, "24分钟"),
-        new RadarModel("gpt-5.6-luna", "GPT-5.6 Luna medium", "medium", 33.5, "red", 25, 112, 0.08, 524, "9分钟"),
-        new RadarModel("gpt-5.6-luna", "GPT-5.6 Luna low", "low", 5.4, "red", 4, 112, 0.03, 312, "5分钟"),
-        new RadarModel("gpt-5.6-terra", "GPT-5.6 Terra low", "low", 37.5, "red", 28, 112, 0.49, 517, "9分钟"),
-    };
-    rows = rows
-        .Select((model, index) => model with
-        {
-            IncompleteCostSamples = string.Equals(
-                model.ReasoningEffort,
-                "ultra",
-                StringComparison.OrdinalIgnoreCase)
-                ? 1
-                : 0,
-            IqHistory = model.Score is { } score
-                ? (index % 3) switch
-                {
-                    0 =>
-                    new[]
-                    {
-                        new RadarIqSample(capturedAt.AddHours(-4), score - 2.0),
-                        new RadarIqSample(capturedAt.AddHours(-2), score - 1.0),
-                        new RadarIqSample(capturedAt, score),
-                    },
-                    1 =>
-                    new[]
-                    {
-                        new RadarIqSample(capturedAt.AddHours(-4), score + 2.0),
-                        new RadarIqSample(capturedAt.AddHours(-2), score + 1.0),
-                        new RadarIqSample(capturedAt, score),
-                    },
-                    _ =>
-                    new[]
-                    {
-                        new RadarIqSample(capturedAt.AddHours(-4), score - 1.0),
-                        new RadarIqSample(capturedAt.AddHours(-2), score),
-                        new RadarIqSample(capturedAt, score + 1.0),
-                    },
-                }
-                : [],
-        })
-        .ToArray();
-    return new ProviderRadarSnapshot(
-        ProviderKind.Codex,
-        "model_iq:2026-07-28",
-        capturedAt.AddHours(-3),
-        capturedAt,
-        rows[0],
-        rows[1..])
-    {
-        ResetWindow = new RadarResetWindow(
-            true,
-            DateTimeOffset.Parse("2026-08-01T09:15:00+08:00"),
-            null,
-            "https://x.com/example/status/123")
-        {
-            Scope = "周一表演式重置预告",
-        },
-        RecommendationFeed = new RadarRecommendationFeed(
-            1,
-            "latest_valid_per_task",
-            capturedAt,
-            capturedAt,
-            [
-                new RadarRecommendationGroup(
-                    "daily_development",
-                    "日常开发",
-                    "速度位与聪明位均直接来自 Codex Radar。",
-                    [RecommendationItem(rows[13], "speed"), RecommendationItem(rows[2], "smart")]),
-                new RadarRecommendationGroup(
-                    "hard_problems",
-                    "难题攻坚",
-                    "按上游 IQ 排名直接展示。",
-                    [RecommendationItem(rows[1]), RecommendationItem(rows[0])]),
-                new RadarRecommendationGroup(
-                    "background_automation",
-                    "后台自动化",
-                    "成本优先的上游推荐。",
-                    [RecommendationItem(rows[11]), RecommendationItem(rows[4])]),
-                new RadarRecommendationGroup(
-                    "lobster_tasks",
-                    "跑龙虾类任务",
-                    "费用与耗时综合成本最低的上游推荐。",
-                    [RecommendationItem(rows[10]), RecommendationItem(rows[12])]),
-            ]),
-    };
-}
-
-static RadarRecommendationItem RecommendationItem(
-    RadarModel model,
-    string? slot = null,
-    string? rule = null) =>
-    new(model, slot, rule, model.ValidTasks, model.ValidTasks, null);
-
 static void TestNativeLocalization()
 {
     var zh = NativeText.For("zh-CN");
     var en = NativeText.For("en");
-    var model = new RadarModel(
-        "gpt-5.6-sol",
-        "GPT-5.6 Sol max",
-        "max",
-        103.6,
-        "green",
-        77,
-        112,
-        9.06,
-        1920,
-        "32分钟");
     var health = new ProviderHealth(
         ProviderKind.Codex,
         false,
@@ -11269,315 +9304,19 @@ static void TestNativeLocalization()
     Equal("en", en.Locale, "English locale");
     Equal("设置", zh.Settings, "Chinese settings");
     Equal("Settings", en.Settings, "English settings");
-    Equal("最强", zh.RadarStrongestTitle, "Chinese strongest title");
-    Equal("STRONGEST", en.RadarStrongestTitle, "English strongest title");
-    Equal("IQ", zh.RadarIqHeader, "Chinese current IQ header");
-    Equal("IQ", en.RadarIqHeader, "English current IQ header");
-    Equal("24H均", zh.RadarIqAverageHeader, "Chinese IQ average header");
-    Equal("24H AVG", en.RadarIqAverageHeader, "English IQ average header");
-    Equal("样本", zh.RadarSampleHeader, "Chinese sample-count header");
-    Equal("N", en.RadarSampleHeader, "English sample-count header");
-    Equal("状态未知", zh.RadarUnknownStatusLegend, "Chinese unknown-status legend");
-    Equal("status unknown", en.RadarUnknownStatusLegend, "English unknown-status legend");
-    Equal("N≥50 · 95%下界评分", zh.RadarConfidenceNote, "Chinese confidence note");
-    Equal("N≥50 · 95% lower-bound picks", en.RadarConfidenceNote, "English confidence note");
-    Equal("日常", zh.RadarDailyScenarioTitle, "Chinese daily scenario label");
-    Equal("DAILY", en.RadarDailyScenarioTitle, "English daily scenario label");
-    Equal("规划", zh.RadarPlanningScenarioTitle, "Chinese planning scenario label");
-    Equal("PLAN", en.RadarPlanningScenarioTitle, "English planning scenario label");
-    Equal("执行", zh.RadarExecutionScenarioTitle, "Chinese execution scenario label");
-    Equal("EXEC", en.RadarExecutionScenarioTitle, "English execution scenario label");
-    Equal("后台", zh.RadarBackgroundScenarioTitle, "Chinese background scenario label");
-    Equal("BG", en.RadarBackgroundScenarioTitle, "English background scenario label");
-    Equal("非官方 · 点击固定", zh.RadarPopoverSubtitle(false), "Chinese Radar preview subtitle");
-    Equal("PINNED · ESC / CLICK OUTSIDE", en.RadarPopoverSubtitle(true), "English Radar pinned subtitle");
     Equal("点击固定", zh.CodexTokenPopoverSubtitle(false), "Chinese token preview subtitle");
     Equal("PINNED", en.CodexTokenPopoverSubtitle(true), "English token pinned subtitle");
     Equal("受周额度限制", zh.WeeklyQuotaBlocked, "Chinese weekly quota block");
     Equal("blocked by weekly limit", en.WeeklyQuotaBlocked, "English weekly quota block");
-    Equal(
-        now.ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture),
-        en.RadarChecked(now, now),
-        "compact checked time");
-    var closedReset = new RadarResetWindow(
-        false,
-        null,
-        DateTimeOffset.Parse("2026-08-01T11:32:37+08:00"),
-        null);
-    var localReset = closedReset.ClosedAt!.Value.ToLocalTime();
-    Equal($"硬重置 · {localReset:M/d HH:mm}", zh.RadarResetWindow(closedReset, now), "Chinese reset time");
-    Equal($"RESET · {localReset:MM-dd HH:mm}", en.RadarResetWindow(closedReset, now), "English reset time");
-    var openedReset = closedReset with
-    {
-        Open = true,
-        OpenedAt = DateTimeOffset.Parse("2026-08-01T09:15:00+08:00"),
-    };
-    var resetNow = DateTimeOffset.Parse("2026-08-01T12:00:00+08:00");
-    Equal(
-        "重置窗口已开启 · 推测重置 8/2 · 约1天",
-        zh.RadarResetWindow(openedReset, resetNow),
-        "Chinese open reset window fallback date");
-    Equal(
-        "RESET WINDOW OPEN · ESTIMATED RESET 08-02 · ~1d",
-        en.RadarResetWindow(openedReset, resetNow),
-        "English open reset window fallback date");
-    Equal(
-        "重置窗口已开启 · 时间未定",
-        zh.RadarResetWindow(openedReset with { OpenedAt = null }, resetNow),
-        "Chinese open reset window without time");
-    var scopedReset = openedReset with { Scope = "周一表演式重置预告" };
-    Equal(
-        "重置窗口已开启 · 推测重置 8/3 · 约2天",
-        zh.RadarResetWindow(scopedReset, resetNow),
-        "Chinese scoped reset target");
-    Equal(
-        "RESET WINDOW OPEN · ESTIMATED RESET 08-03 · ~2d",
-        en.RadarResetWindow(scopedReset, resetNow),
-        "English scoped reset target");
-    var exactTarget = DateTimeOffset.Parse("2026-08-03T09:00:00+08:00");
-    var countdownNow = exactTarget.AddHours(-26).AddMinutes(-3).AddSeconds(-4);
-    var targetedReset = scopedReset with { TargetAt = exactTarget };
-    Equal(
-        "重置窗口已开启 · 距离预计重置 26:03:04",
-        zh.RadarResetWindow(targetedReset, countdownNow),
-        "exact reset target becomes a cumulative-hour Chinese countdown");
-    Equal(
-        "RESET WINDOW OPEN · EXPECTED RESET IN 26:03:04",
-        en.RadarResetWindow(targetedReset, countdownNow),
-        "exact reset target becomes a cumulative-hour English countdown");
-    var justBeforeTarget = exactTarget.AddMilliseconds(-500);
-    Equal(
-        "重置窗口已开启 · 距离预计重置 00:00:00",
-        zh.RadarResetWindow(targetedReset, justBeforeTarget),
-        "a positive subsecond remainder does not expire the countdown early");
-    Equal(true, ProviderRadarPopoverForm.HasActiveResetCountdown(targetedReset, justBeforeTarget), "a positive subsecond remainder keeps the countdown timer active");
-    Equal(
-        "重置窗口已开启 · 等待官方确认重置完成",
-        zh.RadarResetWindow(targetedReset, exactTarget),
-        "countdown expiry waits for official reset confirmation");
-    Equal(
-        "RESET WINDOW OPEN · AWAITING OFFICIAL RESET CONFIRMATION",
-        en.RadarResetWindow(targetedReset, exactTarget.AddSeconds(1)),
-        "expired English countdown does not claim reset completion");
-    Equal(true, ProviderRadarPopoverForm.HasActiveResetCountdown(targetedReset, countdownNow), "future reset target runs the countdown timer");
-    Equal(false, ProviderRadarPopoverForm.HasActiveResetCountdown(targetedReset, exactTarget), "expired reset target stops the countdown timer");
-    Equal(false, ProviderRadarPopoverForm.HasActiveResetCountdown(targetedReset with { Open = false }, countdownNow), "closed reset window has no active countdown");
-    Equal("重置窗口已开启", zh.RadarResetWindowTitle(scopedReset), "Chinese reset banner title");
-    Equal("RESET WINDOW OPEN", en.RadarResetWindowTitle(scopedReset), "English reset banner title");
-    Equal("推测重置 8/3 · 约2天", zh.RadarResetWindowDetail(scopedReset, resetNow), "Chinese reset banner detail");
-    Equal("ESTIMATED RESET 08-03 · ~2d", en.RadarResetWindowDetail(scopedReset, resetNow), "English reset banner detail");
-    Equal("32分", zh.RadarAverageTime(model), "Chinese average time");
-    Equal("32m", en.RadarAverageTime(model), "English average time");
     Equal("未找到 Codex OAuth 凭据。", zh.Health(health, now), "semantic Chinese health");
     Equal("Codex OAuth credentials were not found.", en.Health(health, now), "semantic English health");
-    Equal("模型 5.6 Sol → 5.7 Sol", zh.RadarChange(
-        new RadarAlertChange(RadarAlertChangeKind.Model, "5.6 Sol", "5.7 Sol")), "Chinese alert change");
-    Equal("model 5.6 Sol → 5.7 Sol", en.RadarChange(
-        new RadarAlertChange(RadarAlertChangeKind.Model, "5.6 Sol", "5.7 Sol")), "English alert change");
     Equal("😀…", NativeText.TruncateTextElements("😀中文", 3), "surrogate-safe truncation");
 
-    var previous = new AppSettings { Locale = "zh-CN", EnableRadar = true };
-    var localeOnly = new AppSettings { Locale = "en", EnableRadar = true };
-    var localeAndRefresh = new AppSettings { Locale = "en", EnableRadar = true, RefreshMinutes = 10 };
+    var previous = new AppSettings { Locale = "zh-CN" };
+    var localeOnly = new AppSettings { Locale = "en" };
+    var localeAndRefresh = new AppSettings { Locale = "en", RefreshMinutes = 10 };
     Equal(true, QuotaApplicationContext.IsLocaleOnlyChange(previous, localeOnly), "locale-only save avoids refresh");
     Equal(false, QuotaApplicationContext.IsLocaleOnlyChange(previous, localeAndRefresh), "other settings still refresh");
-}
-
-static void TestRadarPersistentResetMini()
-{
-    var now = DateTimeOffset.Parse("2026-08-23T16:00:00+08:00");
-    var openedAt = DateTimeOffset.Parse("2026-08-23T14:11:36+08:00");
-    var estimatedWindow = new RadarResetWindow(
-        true,
-        openedAt,
-        null,
-        "https://x.com/example/status/123");
-    var estimated = RadarResetTiming.Resolve(estimatedWindow);
-    Equal(RadarResetTimingKind.EstimatedDate, estimated.Kind, "missing exact reset time uses a date estimate");
-    Equal(new DateOnly(2026, 8, 24), estimated.EstimatedDate, "date-only fallback is anchored to the Beijing opening date");
-    Equal(false, estimated.EstimatedFromWeekday, "next-day fallback is distinguished from a scoped weekday");
-
-    var mondayWindow = estimatedWindow with { Scope = "All plans expected Monday" };
-    var monday = RadarResetTiming.Resolve(mondayWindow);
-    Equal(new DateOnly(2026, 8, 24), monday.EstimatedDate, "English weekday scope maps to the first matching date");
-    Equal(true, monday.EstimatedFromWeekday, "weekday-derived estimate is explicit");
-    var tuesday = RadarResetTiming.Resolve(estimatedWindow with { Scope = "预计星期二重置" });
-    Equal(new DateOnly(2026, 8, 25), tuesday.EstimatedDate, "Chinese weekday scope maps from the stable opening date");
-    var sameDay = RadarResetTiming.Resolve(estimatedWindow with { Scope = "周日重置" });
-    Equal(new DateOnly(2026, 8, 23), sameDay.EstimatedDate, "opening-day weekday does not roll to the following week");
-    Equal(-1, sameDay.CalendarDaysUntil(now.AddDays(1)), "an overdue inferred date stays overdue instead of rolling forward");
-
-    var exactTarget = now.AddHours(12).AddMinutes(34).AddSeconds(56);
-    var exactWindow = mondayWindow with { TargetAt = exactTarget };
-    var exact = RadarResetTiming.Resolve(exactWindow);
-    Equal(RadarResetTimingKind.Exact, exact.Kind, "exact target has priority over inferred scope");
-    Equal(exactTarget, exact.ExactTargetAt, "exact target is preserved without offset conversion");
-    Equal(
-        RadarResetTiming.ExactRefreshIntervalMilliseconds,
-        RadarResetTiming.RefreshIntervalMilliseconds(exactWindow, now),
-        "future exact target refreshes every second");
-    Equal(
-        RadarResetTiming.EstimatedDateRefreshIntervalMilliseconds,
-        RadarResetTiming.RefreshIntervalMilliseconds(estimatedWindow, now),
-        "date estimate refreshes at low frequency");
-    Equal<int?>(null, RadarResetTiming.RefreshIntervalMilliseconds(exactWindow, exactTarget), "expired exact target stops ticking");
-    Equal<int?>(null, RadarResetTiming.RefreshIntervalMilliseconds(estimatedWindow, now.AddDays(2)), "overdue date estimate stops ticking");
-    Equal(RadarResetTimingKind.Unknown, RadarResetTiming.Resolve(estimatedWindow with { OpenedAt = null }).Kind, "missing opening anchor stays unknown");
-    Equal(RadarResetTimingKind.Unknown, RadarResetTiming.Resolve(estimatedWindow with { Open = false }).Kind, "closed window has no active timing");
-    Equal(
-        RadarResetTimingKind.Unknown,
-        RadarResetTiming.Resolve(estimatedWindow with { OpenedAt = DateTimeOffset.MaxValue }).Kind,
-        "an opening instant outside the Beijing DateTime range degrades safely");
-    Equal(
-        RadarResetTimingKind.Unknown,
-        RadarResetTiming.Resolve(estimatedWindow with
-        {
-            OpenedAt = DateTimeOffset.Parse("9999-12-31T00:00:00+08:00"),
-        }).Kind,
-        "a fallback date past DateOnly max degrades safely");
-
-    var zh = NativeText.For("zh-CN");
-    var en = NativeText.For("en");
-    Equal("重置", zh.RadarResetMiniTitle(exactWindow, now), "exact Chinese Mini title");
-    Equal("12:34:56", zh.RadarResetMiniValue(exactWindow, now), "exact Mini keeps cumulative-hour precision");
-    Equal("推测 8/24", zh.RadarResetMiniTitle(estimatedWindow, now), "estimated Chinese Mini title includes the date");
-    Equal("约1天", zh.RadarResetMiniValue(estimatedWindow, now), "estimated Chinese Mini uses calendar-day precision");
-    Equal("EST 08-24", en.RadarResetMiniTitle(estimatedWindow, now), "estimated English Mini title includes the date");
-    Equal("~1d", en.RadarResetMiniValue(estimatedWindow, now), "estimated English Mini uses calendar-day precision");
-    Equal("今天", zh.RadarResetMiniValue(estimatedWindow with { Scope = "周日重置" }, now), "estimated date shows today without fake time precision");
-    Equal("待确认", zh.RadarResetMiniValue(estimatedWindow, now.AddDays(2)), "overdue estimated date waits for confirmation");
-    Equal("时间未定", zh.RadarResetMiniValue(estimatedWindow with { OpenedAt = null }, now), "missing date anchor is explicit");
-    Equal("~1d", zh.RadarResetMiniCompact(estimatedWindow, now), "collapsed estimated Mini keeps an explicit approximation marker");
-    Equal("~0d", zh.RadarResetMiniCompact(estimatedWindow with { Scope = "周日重置" }, now), "collapsed same-day Chinese estimate stays explicit and compact");
-    Equal("~0d", en.RadarResetMiniCompact(estimatedWindow with { Scope = "Sunday" }, now), "collapsed same-day English estimate stays explicit and compact");
-
-    var quotaSnapshot = TaskbarMiniCaptureSnapshot(includeClaude: true);
-    RadarViewState StateFor(RadarResetWindow window)
-    {
-        var snapshot = RadarSnapshot("2026-08-23", "gpt-5.6-sol", "max", 100, "green") with
-        {
-            ResetWindow = window,
-        };
-        return new RadarViewState(snapshot, now, false, null);
-    }
-
-    using var form = new BarForm(
-        new AppSettings
-        {
-            Locale = "zh-CN",
-            EnableRadar = true,
-            EnableAnimations = false,
-        },
-        quotaSnapshot,
-        radarProviders: [ProviderKind.Codex],
-        renderOnly: true,
-        renderDpi: 96,
-        utcNow: () => now);
-    form.SetRadarState(StateFor(exactWindow));
-    var areas = form.GetMiniAreaStates();
-    var codexIndex = areas.ToList().FindIndex(area => area.AreaId == MiniAreaIds.Codex);
-    Equal(MiniAreaIds.RadarReset, areas[codexIndex + 1].AreaId, "new reset area defaults immediately after Codex");
-    Equal(TaskbarMiniLayoutMath.RadarResetContentWidth, areas.Single(area => area.AreaId == MiniAreaIds.RadarReset).Width, "reset area uses its tighter Codex status width");
-    Equal(true, form.IsRadarResetTimerEnabled, "future exact Mini starts its timer");
-    Equal(RadarResetTiming.ExactRefreshIntervalMilliseconds, form.RadarResetTimerInterval, "exact Mini timer uses one-second cadence");
-    Equal(true, form.SetMiniAreaFromCommand(MiniAreaIds.RadarReset, true, null), "reset area supports the shared collapse command");
-    Equal(true, form.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.RadarReset).Collapsed, "reset area collapse state is reported");
-
-    var pluginCards = Enumerable.Range(0, 5)
-        .Select(index => new PluginMiniCardView(
-            $"test.reset-plugin.{index}",
-            $"Plugin {index}",
-            new MiniCardContribution(
-                $"card.test.reset-plugin.{index}",
-                $"test.reset-plugin.{index}",
-                "test",
-                ContributionKind.Metric,
-                index,
-                "test.title",
-                "test.icon",
-                "test.accent",
-                []),
-            new Dictionary<string, string>(StringComparer.Ordinal)))
-        .ToArray();
-    form.SetPluginMiniCards(pluginCards);
-    Equal(true, form.GetMiniAreaStates().Any(area => area.AreaId == MiniAreaIds.RadarReset), "reset area survives the ordinary Mini card limit");
-    Equal(
-        TaskbarMiniLayoutMath.MaximumCards,
-        form.GetMiniAreaStates().Count(area =>
-            !string.Equals(area.AreaId, MiniAreaIds.RadarReset, StringComparison.Ordinal)
-            && !string.Equals(area.AreaId, MiniAreaIds.SystemMetrics, StringComparison.Ordinal)),
-        "persistent reset area does not consume an ordinary card slot");
-
-    var quotaCards = new[] { OtherToolsModule.GrokId, OtherToolsModule.AntigravityId }
-        .Select((id, index) => new PluginMiniCardView(id, id,
-            new MiniCardContribution($"card.{id}", id, id, ContributionKind.Quota,
-                900 + index, id, $"{id}.icon", $"accent.{id}", []),
-            new Dictionary<string, string>(StringComparer.Ordinal)))
-        .ToArray();
-    Equal("Gemini · 7d 100%", OtherToolsModule.ParseAntigravity(
-        "Gemini Models\tWeekly Limit Remaining\t100%\t2026-11-14T17:41:52Z\n" +
-        "Claude and GPT models\tWeekly Limit Remaining\t0%\t2026-11-08T03:50:06Z\n")[0],
-        "Antigravity retains the remaining quota scale");
-    Equal(0, OtherToolsModule.ParseAntigravity("invalid").Length,
-        "malformed Antigravity output cannot become a quota");
-    Equal(null, OtherToolsModule.ParseGrok("{\"message\":\"unavailable\"}"),
-        "Grok errors cannot become a quota");
-    form.SetPluginMiniCards([.. pluginCards, .. quotaCards]);
-    foreach (var id in quotaCards.Select(card => card.PluginId))
-    {
-        var area = form.GetMiniAreaStates().Single(value => value.AreaId == id);
-        Equal(true, area.Collapsed, "each local quota provider defaults to a compact icon");
-        Equal(TaskbarMiniLayoutMath.CollapsedCardWidth + TaskbarMiniLayoutMath.ProviderCollapseHandleWidth,
-            TaskbarMiniLayoutMath.AreaWidth(area.Width, area.Collapsed, id),
-            "each local quota provider adds only one collapsed icon width");
-    }
-
-    form.SetRadarState(StateFor(estimatedWindow));
-    Equal(true, form.IsRadarResetTimerEnabled, "estimated date Mini keeps a low-frequency timer");
-    Equal(RadarResetTiming.EstimatedDateRefreshIntervalMilliseconds, form.RadarResetTimerInterval, "estimated Mini timer uses minute cadence");
-    form.SetRadarState(StateFor(estimatedWindow with { OpenedAt = null }));
-    Equal(true, form.GetMiniAreaStates().Any(area => area.AreaId == MiniAreaIds.RadarReset), "unknown open window keeps a persistent status area");
-    Equal(false, form.IsRadarResetTimerEnabled, "unknown date does not waste timer ticks");
-    now = exactTarget;
-    form.SetRadarState(StateFor(exactWindow));
-    Equal(true, form.GetMiniAreaStates().Any(area => area.AreaId == MiniAreaIds.RadarReset), "expired exact target waits visibly for confirmation");
-    Equal(false, form.IsRadarResetTimerEnabled, "expired exact target stops the Mini timer");
-    form.SetRadarState(StateFor(exactWindow with { Open = false }));
-    Equal(false, form.GetMiniAreaStates().Any(area => area.AreaId == MiniAreaIds.RadarReset), "closed reset window removes the persistent area");
-    Equal(false, form.IsRadarResetTimerEnabled, "closed reset window stops the Mini timer");
-
-    now = DateTimeOffset.Parse("2026-08-23T16:00:00+08:00");
-    using var explicitlyOrdered = new BarForm(
-        new AppSettings
-        {
-            EnableRadar = true,
-            EnableAnimations = false,
-            MiniAreaOrder =
-            [
-                MiniAreaIds.SystemMetrics,
-                MiniAreaIds.RadarReset,
-                MiniAreaIds.Codex,
-                MiniAreaIds.Claude,
-            ],
-        },
-        quotaSnapshot,
-        radarProviders: [ProviderKind.Codex],
-        renderOnly: true,
-        renderDpi: 96,
-        utcNow: () => now);
-    explicitlyOrdered.SetRadarState(StateFor(exactWindow));
-    Equal(MiniAreaIds.RadarReset, explicitlyOrdered.GetMiniAreaStates()[1].AreaId, "explicit reset-area order overrides the default Codex adjacency");
-
-    using var radarDisabled = new BarForm(
-        new AppSettings { EnableRadar = false, EnableAnimations = false },
-        quotaSnapshot,
-        radarProviders: [ProviderKind.Codex],
-        renderOnly: true,
-        renderDpi: 96,
-        utcNow: () => now);
-    radarDisabled.SetRadarState(StateFor(exactWindow));
-    Equal(false, radarDisabled.GetMiniAreaStates().Any(area => area.AreaId == MiniAreaIds.RadarReset), "disabled Radar never creates the reset area");
-    Equal(false, radarDisabled.IsRadarResetTimerEnabled, "disabled Radar never starts the reset timer");
 }
 
 static void TestQuotaPacePopoverPresentation()
@@ -11997,693 +9736,6 @@ static void TestTaskbarHintPopoverPresentation()
         "hint popover produces visible pixels");
 }
 
-static void TestRadarStableRanking()
-{
-    var capturedAt = DateTimeOffset.Parse("2026-07-28T13:09:56+08:00");
-    var sourceFirst = new RadarModel("a", "Source first", "max", 100, "green", 80, 100, 10, 30, "30s");
-    var lowerCost = new RadarModel("b", "Lower cost", "max", 100, "green", 80, 100, 9, 35, "35s");
-    var fasterTie = new RadarModel("c", "Faster tie", "max", 100, "green", 80, 100, 9, 25, "25s");
-    var missingTieBreakers = new RadarModel("d", "Missing", "max", 100, "green", null, 100, null, null, null);
-    var snapshot = new ProviderRadarSnapshot(
-        ProviderKind.Codex,
-        "model_iq:tie",
-        capturedAt,
-        capturedAt,
-        sourceFirst,
-        [lowerCost, fasterTie, missingTieBreakers]);
-    var presentation = RadarPresentation.Build(snapshot);
-
-    Equal("Source first", presentation.Rows[0].Model.Label, "ranking does not reorder rows");
-    Equal<int?>(null, presentation.Rows[0].Rank, "non-leader has no visible rank");
-    Equal<int?>(null, presentation.Rows[1].Rank, "runner-up has no visible rank");
-    Equal(1, presentation.Rows[2].Rank, "faster exact tie ranks first");
-    Equal<int?>(null, presentation.Rows[3].Rank, "missing tie breakers rank after awarded rows");
-}
-
-static void TestRadarModelGroups(string? captureDirectory = null)
-{
-    var now = DateTimeOffset.Parse("2026-09-06T12:00:00+08:00");
-    var models = new[] { "gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "future-model" }
-        .SelectMany((model, index) => new[] { "max", "high", "low" }.Select(effort =>
-            new RadarModel(model, model, effort, 100 - index, "green", 80, 100, 1, 120, null)))
-        .ToArray();
-    var snapshot = new ProviderRadarSnapshot(ProviderKind.Codex, "groups", now, now, models[0], models[1..]);
-    var presentation = RadarPresentation.CodexOnly(RadarPresentation.Build(snapshot));
-    var keys = presentation.Rows.Select(row => row.Model.Model).ToArray();
-    var groups = new RadarModelGroupState();
-    var original = RadarPopoverLayout.CreateGrouped(96, keys, groups.CollapsedModels, false);
-    Equal(5, original.GroupHeaders.Count, "every upstream model gets a group, including unknown families");
-    Equal(true, original.GroupHeaders.Single(group => group.ModelKey == "gpt-5.6-terra").Collapsed, "Terra defaults collapsed");
-    Equal(true, original.GroupHeaders.Single(group => group.ModelKey == "gpt-5.6-luna").Collapsed, "Luna defaults collapsed");
-    Equal(false, original.GroupHeaders.Single(group => group.ModelKey == "gpt-6-astra").Collapsed, "Astra defaults expanded");
-    Equal(false, original.GroupHeaders.Single(group => group.ModelKey == "future-model").Collapsed, "unknown future models default expanded");
-    Equal(9, original.RowBounds.Count(bounds => !bounds.IsEmpty), "collapsed groups remove only their effort rows");
-    groups.Toggle("GPT-5.6-TERRA");
-    groups.Toggle("gpt-6-astra");
-    var settingsDirectory = Path.Combine(Path.GetTempPath(), $"radar-group-settings-{Guid.NewGuid():N}");
-    try
-    {
-        var settingsStore = new AppSettingsStore(settingsDirectory);
-        var saved = new AppSettings { RadarModelGroups = AppSettings.CopyRadarModelGroups(groups.Overrides) };
-        settingsStore.Save(saved);
-        var loaded = new AppSettingsStore(settingsDirectory).Load();
-        var restarted = new RadarModelGroupState();
-        restarted.Restore(loaded.RadarModelGroups);
-        Equal(false, restarted.CollapsedModels.Contains("gpt-5.6-terra"), "explicit Terra expansion survives restart");
-        Equal(true, restarted.CollapsedModels.Contains("GPT-6-ASTRA"), "explicit Astra collapse survives restart ignoring case");
-        Equal(true, restarted.CollapsedModels.Contains("gpt-5.6-luna"), "untouched Luna retains default");
-        Equal(false, restarted.CollapsedModels.Contains("brand-new-model"), "new models remain expanded after restart");
-        var fromDialog = new AppSettings();
-        fromDialog.CopyMiniAreaLayoutsFrom(loaded);
-        Equal(true, fromDialog.RadarModelGroups["gpt-6-astra"], "settings dialog merge preserves folding choices");
-        fromDialog.RadarModelGroups["gpt-6-astra"] = false;
-        Equal(true, loaded.RadarModelGroups["gpt-6-astra"], "settings copies do not share folding dictionaries");
-        restarted.Restore(null);
-        Equal(true, restarted.CollapsedModels.Contains("gpt-5.6-terra"), "legacy settings without saved state retain defaults");
-    }
-    finally
-    {
-        if (Directory.Exists(settingsDirectory)) Directory.Delete(settingsDirectory, true);
-    }
-    var refreshed = RadarPopoverLayout.CreateGrouped(96, [.. keys.Select(key => key.ToUpperInvariant()), "new-provider-model"], groups.CollapsedModels, false);
-    Equal(false, refreshed.GroupHeaders.Single(group => group.ModelKey == "GPT-5.6-TERRA").Collapsed, "manual expansion survives refresh and casing changes");
-    Equal(true, refreshed.GroupHeaders.Single(group => group.ModelKey == "GPT-6-ASTRA").Collapsed, "manual folding survives refresh");
-    Equal(false, refreshed.GroupHeaders.Last().Collapsed, "new model is automatically added expanded during refresh");
-    Equal(true, groups.CollapsedModels.Contains("gpt-6-astra"), "missing models do not clear stored folding choices");
-    Equal(models.Length, presentation.Rows.Count, "grouping never removes underlying measurements");
-    Equal("gpt-6-astra", presentation.IqLeader?.Model, "folding leaves IQ leader unchanged");
-    var allCollapsed = keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
-    var closed = RadarPopoverLayout.CreateGrouped(96, keys, allCollapsed, false);
-    Equal(5, closed.GroupHeaders.Count, "all folded retains every group header");
-    Equal(true, closed.RowBounds.All(bounds => bounds.IsEmpty), "all folded hides all effort rows");
-    Equal(true, closed.BodySize.Height < original.BodySize.Height, "folding shrinks the popover");
-    var empty = RadarPopoverLayout.CreateGrouped(96, [], groups.CollapsedModels, false);
-    Equal(0, empty.GroupHeaders.Count, "empty feed has no manufactured models");
-
-    var futureFeed = RadarMeasurementsParser.Parse(JsonSerializer.Serialize(new
-    {
-        points = new[] { new { model = "unknown-new-model", effort = "high", iq = 90, valid_tasks = 100 } },
-    }));
-    var updated = RadarPresentation.CodexOnly(RadarPresentation.Build(RadarMeasurementsParser.Merge(snapshot, futureFeed)));
-    Equal(true, RadarPopoverLayout.CreateGrouped(96, updated.Rows.Select(row => row.Model.Model).ToArray(), groups.CollapsedModels, false)
-        .GroupHeaders.Any(group => group.ModelKey == "unknown-new-model" && !group.Collapsed), "future model flows from parsed upstream measurements into the layout");
-
-    if (captureDirectory is not null) Directory.CreateDirectory(captureDirectory);
-    using var renderer = new RadarPopoverRenderer();
-    using var logo = LoadNativeAsset("ZGSTokenBar.App.Assets.openai-official-ios-icon.png");
-    foreach (var dpi in new[] { 96, 144, 192 })
-    {
-        var cap = 360 * dpi / 96;
-        var expanded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var top = RadarPopoverLayout.CreateGrouped(dpi, keys, expanded, true, true, true, cap);
-        var bottom = RadarPopoverLayout.CreateGrouped(dpi, keys, expanded, true, true, true, cap, int.MaxValue);
-        Equal(true, top.BodySize.Height <= cap, "group viewport respects the DPI-scaled height cap");
-        Equal(true, top.MaximumScrollOffset > 0, "overflow enables scrolling");
-        Equal(top.MaximumScrollOffset, bottom.ScrollOffset, "oversized scroll offset is clamped to the end");
-        Equal(top.MaximumScrollOffset, top.ScrollOffsetForThumbTop(top.ScrollTrackBounds.Bottom), "thumb dragging maps to the last row");
-        Equal(0, top.ScrollOffsetForThumbTop(-100), "thumb dragging above track clamps to start");
-        Equal(true, bottom.RowBounds.Last().Bottom <= bottom.TableViewport.Bottom, "last effort row is reachable at scroll end");
-        Equal(true, top.TableViewport.Top > top.SeparatorY, "scrolling does not overwrite column headers");
-        Equal(true, top.TableViewport.Bottom <= top.ErrorBounds.Top && top.ErrorBounds.Bottom <= top.FooterSpendBounds.Top,
-            "table and error do not overlap spend footer");
-        Equal(true, top.FooterSpendBounds.Bottom <= top.FooterLegendBounds.Top, "spend and legend do not overlap");
-        var first = top.GroupHeaders[0];
-        Equal(first.ModelKey, top.ModelGroupAt(new Point(first.Bounds.Left + 2, first.Bounds.Top + 2)), "header hit testing matches rendered bounds");
-        Equal<string?>(null, bottom.ModelGroupAt(new Point(first.Bounds.Left, top.TableViewport.Top - 1)), "clipped headers cannot intercept fixed chrome");
-        var folded = RadarPopoverLayout.CreateGrouped(dpi, keys, allCollapsed, false, maximumBodyHeight: cap, scrollOffset: int.MaxValue);
-        Equal(0, folded.ScrollOffset, "folding clamps obsolete scrolling to zero");
-        Equal(true, folded.ScrollTrackBounds.IsEmpty, "short folded list has no scrollbar");
-        var crowdedKeys = Enumerable.Range(0, 64).SelectMany(index => new[] { $"future-{index}", $"future-{index}" }).ToArray();
-        var crowded = RadarPopoverLayout.CreateGrouped(dpi, crowdedKeys, expanded, false, maximumBodyHeight: cap, scrollOffset: int.MaxValue);
-        Equal(64, crowded.GroupHeaders.Count, "many new model families are not dropped by the layout");
-        Equal(true, crowded.RowBounds.Last().Bottom <= crowded.TableViewport.Bottom, "large feeds retain access to the last row");
-        foreach (var locale in new[] { "zh-CN", "en" })
-        {
-            foreach (var (name, layout) in new[]
-            {
-                ("defaults", RadarPopoverLayout.CreateGrouped(dpi, keys, new RadarModelGroupState().CollapsedModels, false)),
-                ("expanded", RadarPopoverLayout.CreateGrouped(dpi, keys, expanded, false, maximumBodyHeight: cap)),
-                ("scrolled", RadarPopoverLayout.CreateGrouped(dpi, keys, expanded, false, maximumBodyHeight: cap, scrollOffset: int.MaxValue)),
-                ("collapsed", folded),
-            })
-            {
-                using var bitmap = new Bitmap(layout.BodySize.Width, layout.BodySize.Height + layout.TailSize);
-                using (var graphics = Graphics.FromImage(bitmap))
-                {
-                    renderer.Draw(graphics, layout, PopoverTailSide.Bottom, layout.BodySize.Width / 2,
-                        new RadarViewState(snapshot, now, false, null), presentation, logo, NativeText.For(locale));
-                }
-                var header = layout.GroupHeaders.First(group => layout.TableViewport.Contains(group.Bounds));
-                var colors = new HashSet<int>();
-                for (var y = header.Bounds.Top; y < header.Bounds.Bottom; y++)
-                    for (var x = header.Bounds.Left; x < header.Bounds.Right; x++) colors.Add(bitmap.GetPixel(x, y).ToArgb());
-                Equal(true, colors.Count > 4, "group header renders text and disclosure icon pixels");
-                if (captureDirectory is not null)
-                {
-                    var path = Path.GetFullPath(Path.Combine(captureDirectory, $"radar-groups-{locale}-{dpi}dpi-{name}.png"));
-                    bitmap.Save(path, ImageFormat.Png);
-                    Console.WriteLine(path);
-                }
-            }
-        }
-    }
-}
-
-static void TestRadarPopoverLayout()
-{
-    var zh = NativeText.For("zh-CN");
-    var en = NativeText.For("en");
-    var renderNow = DateTimeOffset.Parse("2026-08-01T08:00:00+08:00");
-    var resetLabel = NativeText.For("en").RadarResetWindow(new RadarResetWindow(
-        false,
-        null,
-        DateTimeOffset.Parse("2026-08-01T11:32:37+08:00"),
-        null), renderNow);
-    var openResetWindow = new RadarResetWindow(
-        true,
-        DateTimeOffset.Parse("2026-08-01T09:15:00+08:00"),
-        null,
-        null)
-    {
-        Scope = "周一表演式重置预告",
-    };
-    foreach (var dpi in new[] { 96, 144, 192 })
-    {
-        var scale = dpi / 96d;
-        var layout = RadarPopoverLayout.Create(dpi, 11, false);
-        Equal(false, layout.TokenOnly, $"{dpi} DPI Radar layout is not token-only");
-        Equal((int)Math.Round(476 * scale, MidpointRounding.AwayFromZero), layout.BodySize.Width, $"{dpi} DPI body width");
-        Equal((int)Math.Round(329 * scale, MidpointRounding.AwayFromZero), layout.BodySize.Height, $"{dpi} DPI 11-row height");
-        Equal(11, layout.RowBounds.Count, $"{dpi} DPI row count");
-        Equal(true, layout.FooterSpendBounds.IsEmpty, $"{dpi} DPI default Radar omits spend row");
-        var spendLayout = RadarPopoverLayout.Create(dpi, 11, false, hasSpendSummary: true);
-        Equal(
-            (int)Math.Round((329 + RadarPopoverLayout.LogicalSpendSummaryHeight) * scale, MidpointRounding.AwayFromZero),
-            spendLayout.BodySize.Height,
-            $"{dpi} DPI spend row extends Radar height");
-        Equal(
-            (int)Math.Round(RadarPopoverLayout.LogicalSpendCardHeight * scale, MidpointRounding.AwayFromZero),
-            spendLayout.FooterSpendBounds.Height,
-            $"{dpi} DPI spend card has its compact two-line height");
-        Equal(
-            (int)Math.Round(6 * scale, MidpointRounding.AwayFromZero),
-            spendLayout.FooterLegendBounds.Top - spendLayout.FooterSpendBounds.Bottom,
-            $"{dpi} DPI spend card clears the legend by a visible gap");
-        Equal(false, spendLayout.FooterSpendBounds.IntersectsWith(spendLayout.FooterLegendBounds), $"{dpi} DPI spend row clears legend");
-        Equal(false, spendLayout.FooterSpendBounds.IntersectsWith(spendLayout.FooterSourceBounds), $"{dpi} DPI spend row clears metric cards");
-        Equal(false, spendLayout.RowBounds[^1].IntersectsWith(spendLayout.FooterSpendBounds), $"{dpi} DPI rows clear spend row");
-        Equal(false, layout.SubtitleBounds.IntersectsWith(layout.ResetBounds), $"{dpi} DPI reset status clears subtitle");
-        Equal(false, layout.ResetBounds.IntersectsWith(layout.TableHeaderBounds), $"{dpi} DPI reset status clears table header");
-        Equal(false, layout.SubtitleBounds.IntersectsWith(layout.TableHeaderBounds), $"{dpi} DPI table header clears product header");
-        using var badgeFont = new Font(
-            "Segoe UI",
-            Math.Max(1, (float)Math.Round(7 * scale, MidpointRounding.AwayFromZero)),
-            FontStyle.Bold,
-            GraphicsUnit.Pixel);
-        using var metaFont = new Font(
-            "Segoe UI",
-            Math.Max(1, (float)Math.Round(8 * scale, MidpointRounding.AwayFromZero)),
-            FontStyle.Regular,
-            GraphicsUnit.Pixel);
-        using var emphasizedModelFont = new Font(
-            "Segoe UI",
-            Math.Max(1, (float)Math.Round(8.5 * scale, MidpointRounding.AwayFromZero)),
-            FontStyle.Bold,
-            GraphicsUnit.Pixel);
-        using var numberFont = new Font(
-            "Cascadia Mono",
-            Math.Max(1, (float)Math.Round(8.5 * scale, MidpointRounding.AwayFromZero)),
-            FontStyle.Bold,
-            GraphicsUnit.Pixel);
-        using var spendNumberFont = new Font(
-            "Cascadia Mono",
-            Math.Max(1, (float)Math.Round(10.5 * scale, MidpointRounding.AwayFromZero)),
-            FontStyle.Bold,
-            GraphicsUnit.Pixel);
-        var resetTextWidth = System.Windows.Forms.TextRenderer.MeasureText(
-            resetLabel,
-            badgeFont,
-            Size.Empty,
-            System.Windows.Forms.TextFormatFlags.NoPadding
-            | System.Windows.Forms.TextFormatFlags.NoPrefix
-            | System.Windows.Forms.TextFormatFlags.SingleLine).Width;
-        Equal(true, resetTextWidth <= layout.ResetBounds.Width, $"{dpi} DPI reset label fits its header cell");
-        var openLayout = RadarPopoverLayout.Create(dpi, 11, false, true);
-        Equal(true, openLayout.HasOpenResetWindow, $"{dpi} DPI open reset layout flag");
-        Equal(
-            (int)Math.Round(365 * scale, MidpointRounding.AwayFromZero),
-            openLayout.BodySize.Height,
-            $"{dpi} DPI open reset banner height");
-        Equal(false, openLayout.SubtitleBounds.IntersectsWith(openLayout.ResetBounds), $"{dpi} DPI reset banner clears subtitle");
-        Equal(false, openLayout.ResetBounds.IntersectsWith(openLayout.TableHeaderBounds), $"{dpi} DPI reset banner clears table header");
-        Equal(
-            (int)Math.Round(36 * scale, MidpointRounding.AwayFromZero),
-            openLayout.RowBounds[0].Top - layout.RowBounds[0].Top,
-            $"{dpi} DPI reset banner shifts table rows");
-        using var titleFont = new Font(
-            "Segoe UI",
-            Math.Max(1, (float)Math.Round(11 * scale, MidpointRounding.AwayFromZero)),
-            FontStyle.Bold,
-            GraphicsUnit.Pixel);
-        var resetBannerLabelWidth = System.Windows.Forms.TextRenderer.MeasureText(
-            en.RadarResetWindow(openResetWindow, renderNow),
-            titleFont,
-            Size.Empty,
-            System.Windows.Forms.TextFormatFlags.NoPadding
-            | System.Windows.Forms.TextFormatFlags.NoPrefix
-            | System.Windows.Forms.TextFormatFlags.SingleLine).Width;
-        Equal(
-            true,
-            resetBannerLabelWidth
-                + (int)Math.Round((12 * 2 + 7 + 7) * scale, MidpointRounding.AwayFromZero)
-                <= openLayout.ResetBounds.Width,
-            $"{dpi} DPI centered open reset title and target fit");
-        foreach (var text in new[] { zh, en })
-        {
-            foreach (var pinned in new[] { false, true })
-            {
-                var subtitleWidth = System.Windows.Forms.TextRenderer.MeasureText(
-                    text.RadarPopoverSubtitle(pinned),
-                    badgeFont,
-                    Size.Empty,
-                    System.Windows.Forms.TextFormatFlags.NoPadding
-                    | System.Windows.Forms.TextFormatFlags.NoPrefix
-                    | System.Windows.Forms.TextFormatFlags.SingleLine).Width;
-                Equal(true, subtitleWidth <= layout.SubtitleBounds.Width, $"{dpi} DPI {text.Locale} Radar pin subtitle fits");
-            }
-        }
-        var markerWidth = Math.Max(1, (int)Math.Round(8 * scale, MidpointRounding.AwayFromZero));
-        var markerGap = Math.Max(1, (int)Math.Round(3 * scale, MidpointRounding.AwayFromZero));
-        var itemGap = Math.Max(1, (int)Math.Round(4 * scale, MidpointRounding.AwayFromZero));
-        foreach (var text in new[] { zh, en })
-        {
-            var groupGap = Math.Max(1, (int)Math.Round(16 * scale, MidpointRounding.AwayFromZero));
-            var groupWidth = (layout.FooterSourceBounds.Width - groupGap) / 2;
-            var cardPadding = Math.Max(1, (int)Math.Round(8 * scale, MidpointRounding.AwayFromZero));
-            var metricWidth = Math.Max(1, (int)Math.Round(36 * scale, MidpointRounding.AwayFromZero));
-            var fieldGap = Math.Max(1, (int)Math.Round(6 * scale, MidpointRounding.AwayFromZero));
-            var interFieldGap = Math.Max(1, (int)Math.Round(14 * scale, MidpointRounding.AwayFromZero));
-            var fieldWidth = (groupWidth - cardPadding * 2 - metricWidth - fieldGap - interFieldGap) / 2;
-            foreach (var metric in new[] { text.CodexTokenRadarMetricTitle, text.CodexCacheRadarMetricTitle })
-            {
-                Equal(true, MeasureSingleLine(metric, emphasizedModelFont) <= metricWidth, $"{dpi} DPI {text.Locale} Radar metric label fits");
-            }
-            var valueGap = Math.Max(1, (int)Math.Round(3 * scale, MidpointRounding.AwayFromZero));
-            foreach (var value in new[] { "12.3M", "95.0%" })
-            {
-                Equal(
-                    true,
-                    MeasureSingleLine(text.CodexTodayMetricLabel, metaFont)
-                        + valueGap
-                        + MeasureSingleLine(value, numberFont)
-                        <= fieldWidth,
-                    $"{dpi} DPI {text.Locale} Radar today field fits");
-            }
-            foreach (var value in new[] { "173B", "98.5%" })
-            {
-                Equal(
-                    true,
-                    MeasureSingleLine(text.CodexTotalMetricLabel, metaFont)
-                        + valueGap
-                        + MeasureSingleLine(value, numberFont)
-                        <= fieldWidth,
-                    $"{dpi} DPI {text.Locale} Radar total field fits");
-            }
-            Equal(
-                (int)Math.Round(24 * scale, MidpointRounding.AwayFromZero),
-                layout.FooterSourceBounds.Height,
-                $"{dpi} DPI token footer has one-line height");
-            Equal(
-                (int)Math.Round(14 * scale, MidpointRounding.AwayFromZero),
-                layout.FooterLegendBounds.Height,
-                $"{dpi} DPI Radar legend has one-line height");
-            var labels = new[]
-            {
-                text.RadarUnknownStatusLegend,
-                text.RadarStrongestTitle,
-                text.RadarDailyScenarioTitle,
-                text.RadarPlanningScenarioTitle,
-                text.RadarExecutionScenarioTitle,
-                text.RadarBackgroundScenarioTitle,
-            };
-            var legendWidth = labels.Sum(label => markerWidth
-                + markerGap
-                + System.Windows.Forms.TextRenderer.MeasureText(
-                    label,
-                    metaFont,
-                    Size.Empty,
-                    System.Windows.Forms.TextFormatFlags.NoPadding
-                    | System.Windows.Forms.TextFormatFlags.NoPrefix
-                    | System.Windows.Forms.TextFormatFlags.SingleLine).Width)
-                + itemGap * (labels.Length - 1);
-            var confidenceNoteWidth = System.Windows.Forms.TextRenderer.MeasureText(
-                text.RadarConfidenceNote,
-                metaFont,
-                Size.Empty,
-                System.Windows.Forms.TextFormatFlags.NoPadding
-                | System.Windows.Forms.TextFormatFlags.NoPrefix
-                | System.Windows.Forms.TextFormatFlags.SingleLine).Width;
-            var noteGap = Math.Max(1, (int)Math.Round(8 * scale, MidpointRounding.AwayFromZero));
-            Equal(
-                true,
-                confidenceNoteWidth + noteGap + legendWidth <= layout.FooterLegendBounds.Width,
-                $"{dpi} DPI {text.Locale} confidence note and six-item legend fit");
-        }
-        Equal(false, layout.TableHeaderBounds.IntersectsWith(layout.RowBounds[0]), $"{dpi} DPI table header clears first row");
-        Equal(false, layout.FooterSourceBounds.IntersectsWith(layout.FooterLegendBounds), $"{dpi} DPI footer zones");
-        Equal(
-            (int)Math.Round(4 * scale, MidpointRounding.AwayFromZero),
-            layout.FooterSourceBounds.Top - layout.FooterLegendBounds.Bottom,
-            $"{dpi} DPI legend clears metric cards");
-        Equal(false, layout.RowBounds[^1].IntersectsWith(layout.FooterLegendBounds), $"{dpi} DPI rows clear footer legend");
-        Equal(false, layout.RowBounds[^1].IntersectsWith(layout.FooterSourceBounds), $"{dpi} DPI rows clear footer");
-
-        var row = layout.RowBounds[0];
-        Equal(
-            true,
-            MeasureSingleLine("99999", numberFont) <= layout.Columns.Samples.Width,
-            $"{dpi} DPI five-digit sample count fits");
-        foreach (var text in new[] { zh, en })
-        {
-            Equal(
-                true,
-                MeasureSingleLine(text.RadarSampleHeader, badgeFont) <= layout.Columns.Samples.Width,
-                $"{dpi} DPI {text.Locale} sample header fits");
-        }
-        var columns = new[]
-        {
-            layout.Columns.Marker,
-            layout.Columns.Model,
-            layout.Columns.Status,
-            layout.Columns.IqCurrent,
-            layout.Columns.IqAverage,
-            layout.Columns.Samples,
-            layout.Columns.AverageTime,
-            layout.Columns.Cost,
-        };
-        for (var index = 0; index < columns.Length; index++)
-        {
-            Equal(true, columns[index].Width > 0, $"{dpi} DPI column {index} has width");
-            var cell = columns[index].InRow(row);
-            Equal(row.Top, cell.Top, $"{dpi} DPI column {index} row alignment");
-            if (index > 0)
-            {
-                Equal(true, columns[index - 1].Right <= columns[index].Left, $"{dpi} DPI columns {index - 1}/{index} do not overlap");
-            }
-        }
-        var withError = RadarPopoverLayout.Create(dpi, 11, true);
-        Equal((int)Math.Round(343 * scale, MidpointRounding.AwayFromZero), withError.BodySize.Height, $"{dpi} DPI error height");
-        Equal(false, withError.ErrorBounds.IntersectsWith(withError.FooterSourceBounds), $"{dpi} DPI error clears footer");
-
-        var grouped = RadarPopoverLayout.Create(
-            dpi,
-            ["gpt-5.6-sol", "gpt-5.6-sol", "gpt-5.6-terra"],
-            false);
-        Equal(
-            (int)Math.Round((120 + 3 * 19 + RadarPopoverLayout.LogicalModelGroupGap) * scale, MidpointRounding.AwayFromZero),
-            grouped.BodySize.Height,
-            $"{dpi} DPI model group gap adds to body height");
-        Equal(
-            (int)Math.Round(RadarPopoverLayout.LogicalModelGroupGap * scale, MidpointRounding.AwayFromZero),
-            grouped.RowBounds[2].Top - grouped.RowBounds[1].Bottom,
-            $"{dpi} DPI model groups have a visual gap");
-
-        var tokenLayout = RadarPopoverLayout.CreateTokenUsage(dpi);
-        Equal(true, tokenLayout.TokenOnly, $"{dpi} DPI token-only layout");
-        Equal(
-            (int)Math.Round(240 * scale, MidpointRounding.AwayFromZero),
-            tokenLayout.BodySize.Width,
-            $"{dpi} DPI token body width");
-        Equal(
-            (int)Math.Round(RadarPopoverLayout.LogicalTokenHeight * scale, MidpointRounding.AwayFromZero),
-            tokenLayout.BodySize.Height,
-            $"{dpi} DPI token body height");
-        Equal(
-            (int)Math.Round(RadarPopoverLayout.LogicalSpendCardHeight * scale, MidpointRounding.AwayFromZero),
-            tokenLayout.FooterSpendBounds.Height,
-            $"{dpi} DPI token overview reuses the spend card");
-        foreach (var text in new[] { zh, en })
-        {
-            foreach (var pinned in new[] { false, true })
-            {
-                var subtitleWidth = System.Windows.Forms.TextRenderer.MeasureText(
-                    text.CodexTokenPopoverSubtitle(pinned),
-                    badgeFont,
-                    Size.Empty,
-                    System.Windows.Forms.TextFormatFlags.NoPadding
-                    | System.Windows.Forms.TextFormatFlags.NoPrefix
-                    | System.Windows.Forms.TextFormatFlags.SingleLine).Width;
-                Equal(true, subtitleWidth <= tokenLayout.SubtitleBounds.Width, $"{dpi} DPI {text.Locale} token pin subtitle fits");
-            }
-
-            var spendInnerWidth = tokenLayout.FooterSpendBounds.Width
-                - 2 * Math.Max(1, (int)Math.Round(8 * scale, MidpointRounding.AwayFromZero));
-            var spendTitleWidth = spendInnerWidth * 3 / 5;
-            Equal(
-                true,
-                MeasureSingleLine(text.CodexSpendMetricTitle, badgeFont) <= spendTitleWidth,
-                $"{dpi} DPI {text.Locale} spend-card title fits");
-            Equal(
-                true,
-                MeasureSingleLine(text.CodexSessionCount(2_179), metaFont) <= spendInnerWidth - spendTitleWidth,
-                $"{dpi} DPI {text.Locale} spend-card session count fits");
-            var spendFieldGap = Math.Max(1, (int)Math.Round(10 * scale, MidpointRounding.AwayFromZero));
-            var spendFieldWidth = (spendInnerWidth - spendFieldGap) / 2;
-            var spendValueGap = Math.Max(1, (int)Math.Round(4 * scale, MidpointRounding.AwayFromZero));
-            Equal(
-                true,
-                MeasureSingleLine(text.CodexTodayMetricLabel, metaFont)
-                    + spendValueGap
-                    + MeasureSingleLine("≈$33,149.6+", spendNumberFont)
-                    <= spendFieldWidth,
-                $"{dpi} DPI {text.Locale} primary spend field fits");
-            Equal(
-                true,
-                MeasureSingleLine(text.CodexLast30DaysMetricLabel, metaFont)
-                    + spendValueGap
-                    + MeasureSingleLine("≈$33,149.6+", numberFont)
-                    <= spendFieldWidth,
-                $"{dpi} DPI {text.Locale} secondary spend field fits");
-            foreach (var fallbackValue in new[]
-                     {
-                         text.CodexApiEquivalent(null),
-                         text.CodexApiEquivalent(new CodexSpendPeriod(0, 0, 0, 0, 50, 0, 50, 0m)),
-                     })
-            {
-                Equal(
-                    true,
-                    MeasureSingleLine(text.CodexLast30DaysMetricLabel, metaFont)
-                        + spendValueGap
-                        + MeasureSingleLine(fallbackValue, numberFont)
-                        <= spendFieldWidth,
-                    $"{dpi} DPI {text.Locale} spend fallback '{fallbackValue}' fits");
-            }
-        }
-    }
-
-    Equal(180, RadarPopoverLayout.Create(96, 0, false).BodySize.Height, "empty layout minimum height");
-    var tokenUsage = new CodexTokenUsageSummary(
-        12_345_678,
-        1_234_567_890,
-        42,
-        DateTimeOffset.Parse("2026-08-03T12:00:00+08:00"),
-        800,
-        610,
-        200,
-        180,
-        TodaySpend: new CodexSpendPeriod(100, 0, 0, 0, 0, 100, 0, 1.234m),
-        YesterdaySpend: new CodexSpendPeriod(0, 0, 0, 0, 50, 0, 50, 0m),
-        Last30DaysSpend: new CodexSpendPeriod(1_000, 100, 200, 0, 50, 1_200, 50, 12.34m));
-    Equal(("今日 Token", "12.3M"), zh.CodexTodayTokens(tokenUsage.TodayTokens), "Chinese daily token summary");
-    Equal(("Local total", "1.23B"), en.CodexLocalTokens(tokenUsage.LocalTokens), "English local token summary");
-    Equal(("今日命中率", "90.0%"), zh.CodexTodayCacheHitRate(tokenUsage.TodayCacheHitPercent), "Chinese today cache hit rate");
-    Equal(("Total cache hit", "76.3%"), en.CodexTotalCacheHitRate(tokenUsage.TotalCacheHitPercent), "English total cache hit rate");
-    Equal(("Today cache hit", "—"), en.CodexTodayCacheHitRate(null), "missing today cache hit rate is explicit");
-    Equal("Token 用量", zh.CodexTokenMetricTitle, "Chinese token metric group title");
-    Equal("Cache hit", en.CodexCacheMetricTitle, "English cache metric group title");
-    Equal("今日", zh.CodexTodayMetricLabel, "Chinese metric scope label");
-    Equal("Total", en.CodexTotalMetricLabel, "English metric scope label");
-    Equal("30 日", zh.CodexLast30DaysMetricLabel, "Chinese spend period label");
-    Equal("API equivalent estimate", en.CodexSpendMetricTitle, "English spend card names the estimate");
-    Equal("42 sessions", en.CodexSessionCount(42), "spend card keeps session scope secondary");
-    Equal("Token", zh.CodexTokenRadarMetricTitle, "Chinese Radar token metric title");
-    Equal("Cache", en.CodexCacheRadarMetricTitle, "English Radar cache metric title");
-    Equal("42 sessions · not split by account", en.CodexTokenScope(42), "token scope names local account limitation");
-    Equal("≈$1.23", zh.CodexApiEquivalent(tokenUsage.TodaySpend), "known API equivalent is labeled approximate");
-    Equal("—", en.CodexApiEquivalent(null), "missing spend remains explicit in the spend card");
-    Equal("unpriced", en.CodexApiEquivalent(tokenUsage.YesterdaySpend), "all-unknown usage is never displayed as zero dollars");
-    Equal("≈$12.34+", en.CodexApiEquivalent(tokenUsage.Last30DaysSpend), "partly priced usage is displayed as a lower bound");
-    Equal(
-        "≈$33,149.6+",
-        en.CodexApiEquivalent(new CodexSpendPeriod(1, 0, 0, 0, 0, 1, 1, 33_149.57033992m)),
-        "large API-equivalent values use grouping separators");
-    Equal(
-        "42 sessions · API eq. Today ≈$1.23 · 30d ≈$12.34+",
-        en.CodexTokenScope(42, tokenUsage.TodaySpend, tokenUsage.Last30DaysSpend),
-        "token popover labels the estimate as API-equivalent");
-    var projectedUsage = ZGSTokenBar.PluginAdapters.CorePluginProjection.CodexUsage(
-        "zgstokenbar.usage.codex-local",
-        tokenUsage,
-        tokenUsage.CapturedAt);
-    var projectedRows = projectedUsage.MiniCards.Single().Summary;
-    Equal(8, projectedRows.Count, "Codex local usage contribution exposes cost periods and conversation catch-up state");
-    Equal<long?>(0, projectedRows.Single(row => row.LabelKey == "usage.conversations.pending").Value.Integer,
-        "idle conversation indexing is explicit");
-    Equal(1.234m, projectedRows.Single(row => row.LabelKey == "usage.cost.today").Value.Decimal, "plugin snapshot exposes today's API equivalent");
-    Equal("partial", projectedRows.Single(row => row.LabelKey == "usage.cost.30d").Status, "plugin snapshot preserves partial price coverage");
-    var cockpitAccounts = new[]
-    {
-        new CodexAccountInfo("current", "current@example.test", "pro", true),
-        new CodexAccountInfo("second", "second@example.test", "plus", false),
-    };
-    Equal("Codex accounts", en.CodexAccountsHeading, "account popover heading is formal");
-    Equal("c***t@example.test", CodexAccountFormatting.MaskEmail(cockpitAccounts[0].Email), "account popover masks email");
-    Equal("999", NativeText.FormatTokenCount(999), "small token count stays exact");
-    Equal(true, BarForm.HasProviderOverview(ProviderKind.Codex, false, tokenUsage), "Codex tokens enable logo hover");
-    Equal(false, BarForm.HasProviderOverview(ProviderKind.Codex, false, null), "empty Codex overview stays inert");
-    Equal(false, BarForm.HasProviderOverview(ProviderKind.Claude, false, tokenUsage), "Codex tokens do not enable Claude hover");
-    Equal(true, BarForm.HasProviderOverview(ProviderKind.Claude, true, null), "Radar enables provider logo hover");
-}
-
-static void TestCodexSpendHistoryLayout()
-{
-    var zh = NativeText.For("zh-CN");
-    var en = NativeText.For("en");
-    Equal("消费历史", zh.CodexSpendHistoryTitle, "Chinese spend-history title");
-    Equal("Spend history", en.CodexSpendHistoryTitle, "English spend-history title");
-    Equal("历史 ›", zh.CodexSpendHistoryAction, "Chinese spend-history CTA");
-    Equal("History ›", en.CodexSpendHistoryAction, "English spend-history CTA");
-    Equal("‹ 返回", zh.CodexSpendHistoryBack, "Chinese spend-history back action");
-    Equal("‹ Back", en.CodexSpendHistoryBack, "English spend-history back action");
-    Equal("昨日", zh.CodexYesterdayMetricLabel, "Chinese yesterday metric label");
-    Equal("7d", en.CodexLast7DaysMetricLabel, "English 7d metric label");
-    Equal("30 日趋势", zh.CodexSpendTrendTitle, "Chinese spend trend title");
-    Equal("Models · 30d", en.CodexSpendModelsTitle, "English model-composition title");
-    Equal("8月3日", zh.CodexSpendDate("2026-08-03"), "Chinese selected spend date");
-    Equal("Aug 3", en.CodexSpendDate("2026-08-03"), "English selected spend date");
-    Equal("not-a-date", en.CodexSpendDate("not-a-date"), "invalid spend dates remain lossless");
-    Equal(
-        "42 会话 · 本机日志 · API 等值估算",
-        zh.CodexSpendHistorySubtitle(42),
-        "Chinese spend-history subtitle names local API-equivalent scope");
-    Equal(
-        "42 sessions · local logs · API equivalent",
-        en.CodexSpendHistorySubtitle(42),
-        "English spend-history subtitle names local API-equivalent scope");
-
-    foreach (var dpi in new[] { 96, 144, 192 })
-    {
-        var scale = dpi / 96d;
-        foreach (var wide in new[] { false, true })
-        {
-            var layout = CodexSpendHistoryLayout.Create(dpi, wide, 30);
-            var mode = wide ? "wide" : "narrow";
-            var expectedLogicalWidth = wide
-                ? CodexSpendHistoryLayout.LogicalWideWidth
-                : CodexSpendHistoryLayout.LogicalNarrowWidth;
-            Equal(
-                (int)Math.Round(expectedLogicalWidth * scale, MidpointRounding.AwayFromZero),
-                layout.BodySize.Width,
-                $"{dpi} DPI {mode} spend-history width");
-            Equal(
-                (int)Math.Round(CodexSpendHistoryLayout.LogicalHeight * scale, MidpointRounding.AwayFromZero),
-                layout.BodySize.Height,
-                $"{dpi} DPI {mode} spend-history height");
-            Equal(wide, layout.Wide, $"{dpi} DPI {mode} layout keeps its width mode");
-            Equal(4, layout.SummaryCardBounds.Count, $"{dpi} DPI {mode} layout has four period summaries");
-            Equal(30, layout.BarBounds.Count, $"{dpi} DPI {mode} layout has one bar hit area per day");
-            Equal(3, layout.ModelRowBounds.Count, $"{dpi} DPI {mode} layout reserves three model rows");
-
-            var body = new Rectangle(Point.Empty, layout.BodySize);
-            void AssertInside(Rectangle bounds, string region)
-            {
-                Equal(true, bounds.Width > 0 && bounds.Height > 0, $"{dpi} DPI {mode} {region} has area");
-                Equal(true, body.Contains(bounds), $"{dpi} DPI {mode} {region} remains inside the body");
-            }
-
-            AssertInside(layout.LogoBounds, "logo");
-            AssertInside(layout.TitleBounds, "title");
-            AssertInside(layout.SubtitleBounds, "subtitle");
-            AssertInside(layout.BackBounds, "back action");
-            AssertInside(layout.TrendTitleBounds, "trend title");
-            AssertInside(layout.SelectedDayBounds, "selected day");
-            AssertInside(layout.TrendChartBounds, "trend chart");
-            AssertInside(layout.ModelsTitleBounds, "models title");
-            foreach (var (bounds, index) in layout.SummaryCardBounds.Select((bounds, index) => (bounds, index)))
-            {
-                AssertInside(bounds, $"summary card {index}");
-            }
-            foreach (var (bounds, index) in layout.ModelRowBounds.Select((bounds, index) => (bounds, index)))
-            {
-                AssertInside(bounds, $"model row {index}");
-            }
-            foreach (var (bar, index) in layout.BarBounds.Select((bounds, index) => (bounds, index)))
-            {
-                Equal(true, bar.Width > 0 && bar.Height > 0, $"{dpi} DPI {mode} bar {index} has a hit area");
-                Equal(true, layout.TrendChartBounds.Contains(bar), $"{dpi} DPI {mode} bar {index} stays inside the chart");
-                if (index > 0)
-                {
-                    Equal(
-                        true,
-                        layout.BarBounds[index - 1].Right <= bar.Left,
-                        $"{dpi} DPI {mode} bars {index - 1}/{index} do not overlap");
-                }
-            }
-
-            Equal(false, layout.LogoBounds.IntersectsWith(layout.TitleBounds), $"{dpi} DPI {mode} logo clears title");
-            Equal(false, layout.BackBounds.IntersectsWith(layout.TitleBounds), $"{dpi} DPI {mode} back action clears title");
-            Equal(false, layout.BackBounds.IntersectsWith(layout.SubtitleBounds), $"{dpi} DPI {mode} back action clears subtitle");
-            for (var index = 1; index < layout.SummaryCardBounds.Count; index++)
-            {
-                Equal(
-                    true,
-                    layout.SummaryCardBounds[index - 1].Right <= layout.SummaryCardBounds[index].Left,
-                    $"{dpi} DPI {mode} summary cards {index - 1}/{index} do not overlap");
-            }
-            Equal(false, layout.SummaryCardBounds[^1].IntersectsWith(layout.TrendTitleBounds), $"{dpi} DPI {mode} summaries clear trend heading");
-            Equal(false, layout.TrendTitleBounds.IntersectsWith(layout.SelectedDayBounds), $"{dpi} DPI {mode} trend heading clears selected day");
-            Equal(false, layout.TrendTitleBounds.IntersectsWith(layout.TrendChartBounds), $"{dpi} DPI {mode} trend heading clears chart");
-            Equal(false, layout.SelectedDayBounds.IntersectsWith(layout.TrendChartBounds), $"{dpi} DPI {mode} selected day clears chart");
-            Equal(false, layout.TrendChartBounds.IntersectsWith(layout.ModelsTitleBounds), $"{dpi} DPI {mode} chart clears model heading");
-            Equal(false, layout.ModelsTitleBounds.IntersectsWith(layout.ModelRowBounds[0]), $"{dpi} DPI {mode} model heading clears rows");
-            for (var index = 1; index < layout.ModelRowBounds.Count; index++)
-            {
-                Equal(
-                    true,
-                    layout.ModelRowBounds[index - 1].Bottom <= layout.ModelRowBounds[index].Top,
-                    $"{dpi} DPI {mode} model rows {index - 1}/{index} do not overlap");
-            }
-
-            foreach (var tailSide in Enum.GetValues<PopoverTailSide>())
-            {
-                var bodyInWindow = layout.BodyBounds(tailSide);
-                var windowBounds = new Rectangle(
-                    0,
-                    0,
-                    layout.BodySize.Width
-                        + (tailSide is PopoverTailSide.Left or PopoverTailSide.Right ? layout.TailSize : 0),
-                    layout.BodySize.Height
-                        + (tailSide is PopoverTailSide.Top or PopoverTailSide.Bottom ? layout.TailSize : 0));
-                Equal(true, windowBounds.Contains(bodyInWindow), $"{dpi} DPI {mode} {tailSide} body stays inside window");
-                Equal(
-                    new Rectangle(
-                        bodyInWindow.Left + layout.BackBounds.Left,
-                        bodyInWindow.Top + layout.BackBounds.Top,
-                        layout.BackBounds.Width,
-                        layout.BackBounds.Height),
-                    layout.InWindow(layout.BackBounds, tailSide),
-                    $"{dpi} DPI {mode} {tailSide} back hit area follows body offset");
-            }
-        }
-    }
-
-    Equal(0, CodexSpendHistoryLayout.Create(96, false, 0).BarBounds.Count, "empty spend history has no bar hit areas");
-    Equal(
-        CodexSpendHistoryLayout.MaximumTrendDays,
-        CodexSpendHistoryLayout.Create(96, false, CodexSpendHistoryLayout.MaximumTrendDays + 10).BarBounds.Count,
-        "spend-history bar hit areas are capped to the visible 30 days");
-}
-
 static int MeasureSingleLine(string text, Font font) =>
     System.Windows.Forms.TextRenderer.MeasureText(
         text,
@@ -12692,226 +9744,6 @@ static int MeasureSingleLine(string text, Font font) =>
         System.Windows.Forms.TextFormatFlags.NoPadding
         | System.Windows.Forms.TextFormatFlags.NoPrefix
         | System.Windows.Forms.TextFormatFlags.SingleLine).Width;
-
-static void TestRadarAlertContract()
-{
-    var baseline = RadarSnapshot(
-        "2026-07-19",
-        "gpt-5.6-sol",
-        "max",
-        100,
-        "green");
-    var empty = new RadarAlertState();
-    var first = RadarAlertTracker.Evaluate(empty, baseline);
-    Equal(false, first.ShouldNotify, "first snapshot is silent");
-    Equal(true, first.ShouldSeedBaseline, "first snapshot seeds baseline");
-
-    var state = RadarAlertTracker.RecordBaseline(empty, baseline, baseline.CapturedAt);
-    Equal(false, RadarAlertTracker.Evaluate(state, baseline).ShouldNotify, "same event is deduplicated");
-
-    var belowThreshold = RadarSnapshot("2026-07-20", "gpt-5.6-sol", "max", 104.9, "green");
-    Equal(false, RadarAlertTracker.Evaluate(state, belowThreshold).ShouldNotify, "score delta below five is silent");
-    var unread = RadarAlertTracker.RecordFetch(state, belowThreshold);
-    Equal(true, RadarAlertTracker.HasUnread(unread, belowThreshold, RadarSurfaceIds.Codex), "new Radar event is unread on Codex");
-    Equal(true, RadarAlertTracker.HasUnread(unread, belowThreshold, RadarSurfaceIds.DeepSeek), "new Radar event is unread on DeepSeek");
-    RadarAlertTracker.RecordViewed(unread, belowThreshold, RadarSurfaceIds.Codex);
-    Equal(false, RadarAlertTracker.HasUnread(unread, belowThreshold, RadarSurfaceIds.Codex), "viewing Codex clears only its unread event");
-    Equal(true, RadarAlertTracker.HasUnread(unread, belowThreshold, RadarSurfaceIds.DeepSeek), "DeepSeek remains unread after viewing Codex");
-    Equal(true, RadarAlertTracker.HasUnread(unread, belowThreshold), "aggregate unread remains while one surface is unread");
-    RadarAlertTracker.RecordViewed(unread, belowThreshold, RadarSurfaceIds.DeepSeek);
-    Equal(false, RadarAlertTracker.HasUnread(unread, belowThreshold), "viewing both surfaces clears aggregate unread");
-    var nextUnreadSnapshot = RadarSnapshot("2026-07-21", "gpt-5.6-sol", "max", 105, "green");
-    var nextUnread = RadarAlertTracker.RecordFetch(unread, nextUnreadSnapshot);
-    Equal(true, RadarAlertTracker.HasUnread(nextUnread, nextUnreadSnapshot, RadarSurfaceIds.Codex), "new event restores Codex unread");
-    Equal(true, RadarAlertTracker.HasUnread(nextUnread, nextUnreadSnapshot, RadarSurfaceIds.DeepSeek), "new event restores DeepSeek unread");
-    Equal(
-        false,
-        RadarAlertTracker.HasUnread(
-            RadarAlertTracker.RecordFetch(new RadarAlertState(), baseline),
-            baseline),
-        "first Radar fetch does not create a false unread dot");
-
-    var cumulativeThreshold = RadarSnapshot("2026-07-21", "gpt-5.6-sol", "max", 105, "green");
-    var scoreDecision = RadarAlertTracker.Evaluate(state, cumulativeThreshold);
-    Equal(true, scoreDecision.ShouldNotify, "score delta of five notifies");
-    Equal(RadarAlertChangeKind.Score, scoreDecision.Changes.Single().Kind, "score change is semantic");
-
-    var effortChange = RadarSnapshot("2026-07-22", "gpt-5.6-sol", "high", 100, "green");
-    var effortDecision = RadarAlertTracker.Evaluate(state, effortChange);
-    Equal(true, effortDecision.ShouldNotify, "effort change notifies");
-    Equal(RadarAlertChangeKind.Effort, effortDecision.Changes.Single().Kind, "effort change is semantic");
-
-    var nullabilityChange = RadarSnapshot("2026-07-23", "gpt-5.6-sol", "max", null, "green");
-    Equal(true, RadarAlertTracker.Evaluate(state, nullabilityChange).ShouldNotify, "score nullability change notifies");
-
-    var comparisonsOnly = baseline with
-    {
-        EventId = "model_iq:2026-07-24",
-        Comparisons =
-        [
-            new RadarModel("other", "Other", "max", 999, "red", null, null, null, null, null),
-        ],
-    };
-    Equal(false, RadarAlertTracker.Evaluate(state, comparisonsOnly).ShouldNotify, "comparison-only change is silent");
-
-    var notified = RadarAlertTracker.RecordNotification(
-        state,
-        cumulativeThreshold,
-        cumulativeThreshold.CapturedAt);
-    Equal(true, notified.NotifiedEventIds.Contains(cumulativeThreshold.EventId), "notified event retained");
-    Equal(false, RadarAlertTracker.Evaluate(notified, cumulativeThreshold).ShouldNotify, "notified event is deduplicated");
-}
-
-static void TestRadarStatePersistence()
-{
-    var directory = Path.Combine(Path.GetTempPath(), $"wmt-native-radar-{Guid.NewGuid():N}");
-    Directory.CreateDirectory(directory);
-    try
-    {
-        var store = new AppSettingsStore(directory);
-        var snapshot = RadarSnapshot("2026-07-19", "gpt-5.6-sol", "max", 100, "green");
-        var state = RadarAlertTracker.RecordBaseline(new RadarAlertState(), snapshot, snapshot.CapturedAt);
-        var unreadBase = RadarSnapshot("2026-07-20", "gpt-5.6-sol", "max", 104.9, "green");
-        var unreadSnapshot = unreadBase with
-        {
-            ResetWindow = new RadarResetWindow(
-                false,
-                null,
-                DateTimeOffset.Parse("2026-08-01T11:32:37+08:00"),
-                "https://x.com/example/status/123")
-            {
-                TargetAt = DateTimeOffset.Parse("2026-08-03T09:00:00+08:00"),
-                Scope = "周一表演式重置预告",
-            },
-            RecommendationFeed = new RadarRecommendationFeed(
-                1,
-                "latest_valid_per_task",
-                unreadBase.CapturedAt,
-                unreadBase.SourceUpdatedAt,
-                [
-                    new RadarRecommendationGroup(
-                        "future_category",
-                        "未来类别",
-                        "未来规则",
-                        [RecommendationItem(unreadBase.Primary)]),
-                ]),
-        };
-        state = RadarAlertTracker.RecordFetch(state, unreadSnapshot);
-        RadarAlertTracker.RecordViewed(state, unreadSnapshot, RadarSurfaceIds.Codex);
-        store.SaveRadarState(state);
-        var loaded = store.LoadRadarState();
-        Equal(snapshot.EventId, loaded.LastNotifiedEventId, "Radar baseline round trip");
-        Equal(unreadSnapshot.Primary.Model, loaded.LastSnapshot?.Primary.Model, "Radar snapshot round trip");
-        Equal(
-            unreadSnapshot.ResetWindow?.ClosedAt,
-            loaded.LastSnapshot?.ResetWindow?.ClosedAt,
-            "Radar reset window round trip");
-        Equal(
-            unreadSnapshot.ResetWindow?.TargetAt,
-            loaded.LastSnapshot?.ResetWindow?.TargetAt,
-            "Radar reset target time round trip");
-        Equal(
-            unreadSnapshot.ResetWindow?.Scope,
-            loaded.LastSnapshot?.ResetWindow?.Scope,
-            "Radar reset target scope round trip");
-        Equal("future_category", loaded.LastSnapshot?.RecommendationFeed?.Groups[0].Key, "Radar recommendation feed round trip");
-        Equal(unreadSnapshot.EventId, loaded.UnreadEventId, "Radar unread event round trip");
-        Equal(false, RadarAlertTracker.HasUnread(loaded, loaded.LastSnapshot, RadarSurfaceIds.Codex), "Codex viewed state round trip");
-        Equal(true, RadarAlertTracker.HasUnread(loaded, loaded.LastSnapshot, RadarSurfaceIds.DeepSeek), "DeepSeek unread survives Codex view and restart");
-        Equal(unreadSnapshot.EventId, loaded.ViewedEventIdsBySurface[RadarSurfaceIds.Codex], "Radar surface event acknowledgement round trip");
-        using (var routingDocument = JsonDocument.Parse(File.ReadAllText(store.RadarRoutingPath)))
-        {
-            var root = routingDocument.RootElement;
-            Equal(1, root.GetProperty("schemaVersion").GetInt32(), "Radar routing schema is versioned");
-            Equal(RadarScenarioEvaluator.PolicyVersion, root.GetProperty("evaluatorPolicyVersion").GetString(), "Radar routing policy is explicit");
-            Equal(unreadSnapshot.EventId, root.GetProperty("eventId").GetString(), "Radar routing event matches the saved snapshot");
-            Equal(3, root.GetProperty("scenarios").EnumerateObject().Count(), "Radar routing persists every automatic scenario");
-            var serialized = root.GetRawText();
-            Equal(false, serialized.Contains("token", StringComparison.OrdinalIgnoreCase), "Radar routing contains no token fields");
-            Equal(false, serialized.Contains("email", StringComparison.OrdinalIgnoreCase), "Radar routing contains no email fields");
-        }
-
-        var oversizedSnapshot = unreadSnapshot with
-        {
-            Primary = unreadSnapshot.Primary with
-            {
-                IqHistory = Enumerable.Range(0, 120)
-                    .Select(index => new RadarIqSample(unreadSnapshot.CapturedAt.AddHours(index), 100 + index))
-                    .ToArray(),
-            },
-            Comparisons = Enumerable.Range(0, 200)
-                .Select(index => ScenarioRadarModel($"persisted-model-{index}", "high", 100, 1, 10))
-                .ToArray(),
-            RecommendationFeed = new RadarRecommendationFeed(
-                1,
-                "oversized",
-                unreadSnapshot.CapturedAt,
-                unreadSnapshot.SourceUpdatedAt,
-                Enumerable.Range(0, 40)
-                    .Select(groupIndex => new RadarRecommendationGroup(
-                        $"persisted-group-{groupIndex}",
-                        $"Persisted group {groupIndex}",
-                        null,
-                        Enumerable.Range(0, 5)
-                            .Select(itemIndex => RecommendationItem(ScenarioRadarModel(
-                                $"persisted-feed-model-{groupIndex}-{itemIndex}",
-                                "high",
-                                100,
-                                1,
-                                10)))
-                            .ToArray()))
-                    .ToArray()),
-        };
-        store.SaveRadarState(RadarAlertTracker.RecordFetch(state, oversizedSnapshot));
-        var bounded = store.LoadRadarState().LastSnapshot!;
-        Equal(
-            RadarSnapshotLimits.MaxIqHistorySamples,
-            bounded.Primary.IqHistory.Count,
-            "persisted Radar IQ history is bounded");
-        Equal(
-            RadarSnapshotLimits.MaxComparisonModels,
-            bounded.Comparisons.Count,
-            "persisted Radar comparisons are bounded");
-        Equal(
-            RadarSnapshotLimits.MaxRecommendationItems,
-            bounded.RecommendationFeed!.Groups.Sum(group => group.Items.Count),
-            "persisted Radar recommendation items are bounded");
-
-        store.SaveRadarState(new RadarAlertState());
-        using (var missingRoutingDocument = JsonDocument.Parse(File.ReadAllText(store.RadarRoutingPath)))
-        {
-            Equal(
-                "radar_missing",
-                missingRoutingDocument.RootElement.GetProperty("error").GetString(),
-                "missing Radar snapshot invalidates the routing artifact");
-        }
-
-        File.WriteAllText(store.RadarStatePath, """
-            {
-              "notifiedEventIds": ["model_iq:remote"],
-              "lastNotifiedEventId": "model_iq:remote",
-              "lastNotifiedModelIqSnapshot": {
-                "model": "gpt-5.6-sol",
-                "reasoning_effort": "max",
-                "score": 103.6,
-                "status": "green"
-              }
-            }
-            """);
-        var imported = store.LoadRadarState();
-        Equal("max", imported.LastNotifiedModelIqSnapshot?.ReasoningEffort, "remote snake-case effort import");
-
-        const string corrupt = "{not-json";
-        File.WriteAllText(store.RadarStatePath, corrupt);
-        var recovered = store.LoadRadarState();
-        Equal<string?>(null, recovered.LastNotifiedEventId, "corrupt Radar state resets");
-        Equal(corrupt, File.ReadAllText(store.RadarStatePath + ".corrupt.bak"), "corrupt Radar state backup");
-    }
-    finally
-    {
-        Directory.Delete(directory, true);
-    }
-}
 
 static void TestSettingsV2PluginMigration()
 {
@@ -12940,7 +9772,7 @@ static void TestSettingsV2PluginMigration()
         Equal(true, loaded.IsPluginEnabled("zgstokenbar.provider.claude"), "Claude plugin migrated");
         Equal(false, loaded.IsPluginEnabled("zgstokenbar.provider.codex"), "disabled Codex migrated");
         Equal(false, loaded.IsPluginEnabled("zgstokenbar.usage.codex-local"), "Codex usage dependency migrated");
-        Equal(true, loaded.IsPluginEnabled("zgstokenbar.intelligence.radar"), "Radar plugin migrated");
+        Equal(false, loaded.PluginEnabled.ContainsKey("zgstokenbar.intelligence.radar"), "retired Radar flag is not migrated");
         Equal(true, loaded.IsPluginEnabled("zgstokenbar.provider.ai-gateway"), "AI Gateway plugin migrated");
         Equal(true, loaded.HasExplicitPluginEnablement("zgstokenbar.provider.ai-gateway"), "an enabled legacy gateway remains an explicit user choice");
         Equal(original, File.ReadAllText(settingsPath + ".v1.bak"), "v1 backup is exact");
@@ -13531,7 +10363,6 @@ static void TestPluginFilesystemFaultIsolation()
             ["zgstokenbar.provider.claude"] = true,
             ["zgstokenbar.provider.codex"] = false,
             ["zgstokenbar.usage.codex-local"] = false,
-            ["zgstokenbar.intelligence.radar"] = false,
         }),
         "test",
         hostDirectory);
@@ -13752,7 +10583,6 @@ static void TestPluginHostCatalog()
             plugins,
             BuiltinProfiles.Headless(new Dictionary<string, bool>(StringComparer.Ordinal)
             {
-                ["zgstokenbar.intelligence.radar"] = true,
                 ["zgstokenbar.provider.claude"] = true,
                 ["zgstokenbar.provider.codex"] = true,
                 ["zgstokenbar.usage.codex-local"] = true,
@@ -13822,7 +10652,6 @@ static void TestPluginHostCatalog()
                         "accent.radar",
                         [new("radar.value", new("integer", Integer: 2))]),
                 ],
-                [],
                 []));
             var radarPage = host.ReadPluginData(radarPluginId, null, 1);
             Equal(true, radarPage.NextCursor is not null, "multi-item plugin data creates a cursor");
@@ -13955,8 +10784,6 @@ static void TestSettingsNormalization()
     Equal(1d, settings.TaskbarPositions[@"DISPLAY2"], "per-monitor taskbar position clamps");
     Equal(false, settings.TaskbarPositions.ContainsKey("DISPLAY3"), "invalid per-monitor position is removed");
     Equal(true, new AppSettings().AutoRefreshClaudeOAuth, "Claude OAuth refresh defaults on");
-    Equal(false, new AppSettings().EnableRadar, "Radar is opt-in by default");
-    Equal(false, new AppSettings().EnableRadarAlerts, "Radar alerts are opt-in by default");
     Equal("midnight", new AppSettings().BackgroundPalette, "original background palette defaults on");
     var noProviders = new AppSettings { EnabledProviders = [] };
     noProviders.Normalize();
@@ -13986,9 +10813,16 @@ static void TestSettingsNormalization()
     palette.Normalize();
     Equal("midnight", palette.BackgroundPalette, "unknown background palette restores the safe default");
 
-    var radarAlertsWithoutPreview = new AppSettings { EnableRadarAlerts = true };
-    radarAlertsWithoutPreview.Normalize();
-    Equal(false, radarAlertsWithoutPreview.EnableRadarAlerts, "Radar alerts require Radar preview");
+    var legacyRadar = JsonSerializer.Deserialize<AppSettings>("""
+        {"EnableRadar":true,"EnableRadarAlerts":true,"RadarModelGroups":{"gpt":true},
+         "PluginEnabled":{"zgstokenbar.intelligence.radar":true,"zgstokenbar.metrics.system":true},
+         "PluginEnablementDecisions":["zgstokenbar.intelligence.radar"],
+         "AutoEnabledPlugins":["zgstokenbar.intelligence.radar"]}
+        """)!;
+    legacyRadar.Normalize();
+    Equal(false, legacyRadar.PluginEnabled.ContainsKey("zgstokenbar.intelligence.radar"), "retired Radar plugin state is dropped from old settings");
+    Equal(true, legacyRadar.PluginEnabled["zgstokenbar.metrics.system"], "old Radar keys do not disturb other plugin state");
+    Equal(0, legacyRadar.PluginEnablementDecisions.Length + legacyRadar.AutoEnabledPlugins.Length, "retired Radar decisions are dropped");
 
     var invalidTaskbarPosition = new AppSettings { TaskbarPosition = double.NaN };
     invalidTaskbarPosition.Normalize();
@@ -15597,7 +12431,7 @@ static void TestTaskbarStackedCodexAccounts()
     Equal<double?>(null, emptyServiceRow[0].UsedPercent, "the service fallback reports unavailable quota");
 
     using var perAreaForm = new BarForm(
-        new AppSettings { EnableRadar = false },
+        new AppSettings(),
         new QuotaSnapshot([claude, firstCodex, secondCodex], [], reset),
         renderOnly: true,
         renderDpi: 96);
@@ -15639,7 +12473,6 @@ static void TestTaskbarStackedCodexAccounts()
     using var noSystemForm = new BarForm(
         new AppSettings
         {
-            EnableRadar = false,
             PluginEnabled = new(StringComparer.Ordinal) { ["zgstokenbar.metrics.system"] = false },
         },
         new QuotaSnapshot([claude, firstCodex, secondCodex], [], reset),
@@ -15655,7 +12488,6 @@ static void TestTaskbarStackedCodexAccounts()
         new AppSettings
         {
             EnabledProviders = [],
-            EnableRadar = false,
             PluginEnabled = new(StringComparer.Ordinal) { ["zgstokenbar.metrics.system"] = false },
         },
         new QuotaSnapshot([], [], reset),
@@ -15668,7 +12500,6 @@ static void TestTaskbarStackedCodexAccounts()
     using var collapsedForm = new BarForm(
         new AppSettings
         {
-            EnableRadar = false,
             MiniAreaLayouts = new(StringComparer.Ordinal)
             {
                 [MiniAreaIds.Claude] = new(true),
@@ -15724,7 +12555,7 @@ static void TestTaskbarCodexAreaIsolation()
     Equal(3, codexGroups[0].Cards.Count, "all Codex accounts remain individually addressable");
 
     using var form = new BarForm(
-        new AppSettings { EnableRadar = false },
+        new AppSettings(),
         new QuotaSnapshot(codexAccounts, [], reset),
         renderOnly: true,
         renderDpi: 96);
@@ -15747,7 +12578,7 @@ static void TestTaskbarCodexAreaIsolation()
         "the removed second Codex area fails closed");
 
     using var singleForm = new BarForm(
-        new AppSettings { EnableRadar = false },
+        new AppSettings(),
         new QuotaSnapshot([codexAccounts[0]], [], reset),
         renderOnly: true,
         renderDpi: 96);
@@ -15983,7 +12814,6 @@ static void TestCodexPoolAccountProjection()
         new AppSettings
         {
             EnableAnimations = false,
-            EnableRadar = false,
             CodexMiniDisplayMode = CodexMiniDisplayModes.Pool,
         },
         snapshot,
@@ -16140,7 +12970,6 @@ static void TestTaskbarCodexPoolRendering()
             new AppSettings
             {
                 EnableAnimations = false,
-                EnableRadar = false,
                 CodexMiniDisplayMode = CodexMiniDisplayModes.Accounts,
             },
             snapshot,
@@ -16150,7 +12979,6 @@ static void TestTaskbarCodexPoolRendering()
             new AppSettings
             {
                 EnableAnimations = false,
-                EnableRadar = false,
                 CodexMiniDisplayMode = CodexMiniDisplayModes.Pool,
             },
             sevenDayOnlySnapshot,
@@ -16160,7 +12988,6 @@ static void TestTaskbarCodexPoolRendering()
             new AppSettings
             {
                 EnableAnimations = false,
-                EnableRadar = false,
                 CodexMiniDisplayMode = CodexMiniDisplayModes.Pool,
             },
             snapshot,
@@ -16219,7 +13046,6 @@ static void TestTaskbarMiniRenderFaultIsolation()
         new AppSettings
         {
             EnableAnimations = false,
-            EnableRadar = false,
         },
         FourCodexPoolSnapshot(DateTimeOffset.Parse("2026-08-24T08:00:00Z")),
         renderOnly: true,
@@ -16359,7 +13185,7 @@ static void TestTaskbarCompactAiGatewayBalance()
         "collapsed service-only Mini saves the card width");
 
     using var form = new BarForm(
-        new AppSettings { EnableRadar = false },
+        new AppSettings(),
         new QuotaSnapshot(
             [card],
             [new ProviderHealth(ProviderKind.AiGateway, true, "current", ProviderHealthCode.Current)],
@@ -16372,7 +13198,6 @@ static void TestTaskbarCompactAiGatewayBalance()
     using var collapsedForm = new BarForm(
         new AppSettings
         {
-            EnableRadar = false,
             MiniAreaLayouts = new(StringComparer.Ordinal)
             {
                 [MiniAreaIds.AiGateway] = new(true),
@@ -16793,7 +13618,6 @@ static void TestNativeBackgroundPaletteContract()
         Locale = "en",
         UseTaskbarRings = true,
         EnableAnimations = false,
-        EnableRadar = false,
         BackgroundPalette = "midnight",
     };
     using (var mini = new BarForm(
@@ -16807,7 +13631,6 @@ static void TestNativeBackgroundPaletteContract()
             Locale = "en",
             UseTaskbarRings = true,
             EnableAnimations = false,
-            EnableRadar = false,
             BackgroundPalette = "graphite",
         });
         mini.CreateControl();
@@ -16932,8 +13755,6 @@ static void TestNativeSettingsPanelContract()
                     new AppSettings
                     {
                         Locale = locale,
-                        EnableRadar = true,
-                        EnableRadarAlerts = true,
                     },
                     dpi,
                     renderOnly: true,
@@ -16973,9 +13794,9 @@ static void TestNativeSettingsPanelContract()
                 Equal(false, form.TopMost, "settings stay in the normal window band");
                 Equal(true, form.ShowInTaskbar, "settings remain reachable like a normal window");
                 Equal(
-                    7,
+                    6,
                     descendants.Count(control => control.Tag is string tag && tag.StartsWith("settings.page.", StringComparison.Ordinal) && tag != "settings.page.title"),
-                    $"{locale} {dpi} DPI {(constrained ? "constrained" : "default")} exposes seven settings pages");
+                    $"{locale} {dpi} DPI {(constrained ? "constrained" : "default")} exposes six settings pages");
                 var viewport = descendants.Single(control => Equals(control.Tag, "settings.content"));
                 Equal(true, viewport.Width > 0 && viewport.Height > 0, "settings viewport remains usable");
                 Equal(
@@ -17016,8 +13837,6 @@ static void TestNativeSettingsPanelContract()
                 ["zgstokenbar.usage.codex-local"] = true,
             },
             EnableAnimations = true,
-            EnableRadar = true,
-            EnableRadarAlerts = true,
             WindowX = 27,
             WindowY = 41,
             TaskbarPosition = .4,
@@ -17029,7 +13848,7 @@ static void TestNativeSettingsPanelContract()
     System.Windows.Forms.Application.DoEvents();
     LayoutControlTree(draft);
     var controls = DescendantControls(draft).ToArray();
-    var pageKeys = new[] { "general", "providers", "notifications", "display", "radar", "advanced", "about" };
+    var pageKeys = new[] { "general", "providers", "notifications", "display", "advanced", "about" };
     for (var pass = 0; pass < 4; pass++)
     {
         foreach (var pageKey in pageKeys)
@@ -17047,7 +13866,7 @@ static void TestNativeSettingsPanelContract()
         }
     }
     Equal(
-        7,
+        6,
         controls.Count(control => Equals(control.Tag, "settings.scrollbar")),
         "every settings page uses the shared themed scrollbar");
     Equal(
@@ -17125,20 +13944,6 @@ static void TestNativeSettingsPanelContract()
     PerformClick(animations);
     Equal(false, save.Enabled, "restoring the original draft disables Save");
 
-    var radar = controls.OfType<System.Windows.Forms.CheckBox>().Single(toggle => toggle.AccessibleName == "Show Radar");
-    var radarAlerts = controls.OfType<System.Windows.Forms.CheckBox>().Single(toggle => toggle.AccessibleName == "Radar alerts");
-    PerformClick(radar);
-    Equal(false, radarAlerts.Checked, "disabling Radar visually clears alert draft state");
-    Equal(false, radarAlerts.Enabled, "Radar alerts are unavailable while Radar is off");
-    PerformClick(radar);
-    Equal(true, radarAlerts.Checked, "re-enabling Radar restores the prior alert draft");
-
-    var testRaised = false;
-    draft.RadarTestNotificationRequested += (_, _) => testRaised = true;
-    draft.SelectPageForRendering("radar");
-    System.Windows.Forms.Application.DoEvents();
-    controls.OfType<System.Windows.Forms.Button>().Single(button => Equals(button.Tag, "settings.radar.test")).PerformClick();
-    Equal(true, testRaised, "Radar test notification follows the current draft without saving");
 
     Equal(false, controls.Any(control => control.Tag is string tag
         && (tag.StartsWith("economy.", StringComparison.Ordinal) || tag == "settings.economy.panel")),
@@ -17877,286 +14682,4 @@ sealed class ClaudeOAuthRefreshHandler : HttpMessageHandler
                 """),
         });
     }
-}
-
-sealed class RadarRequestHandler : HttpMessageHandler
-{
-    public string? MeasurementPayload { get; set; }
-    public int Calls { get; private set; }
-    public List<Uri> RequestUris { get; } = [];
-    public bool AcceptsJson { get; private set; } = true;
-    public bool SawNoCache { get; private set; } = true;
-    public bool HasProductUserAgent { get; private set; } = true;
-    public bool HasAuthorization { get; private set; }
-    public bool HasCookie { get; private set; }
-    public bool ReturnEmptyRecommendations { get; init; }
-    public bool ReturnEmptyRecommendationsAfterFirst { get; init; }
-    public bool RequireConcurrentSupplementalRequests { get; init; }
-    public bool ConcurrentSupplementalRequestsObserved => _supplementalRequestCount >= 2;
-    private int _recommendationCalls;
-    private int _supplementalRequestCount;
-    private readonly TaskCompletionSource _supplementalRequestsStarted = new(
-        TaskCreationOptions.RunContinuationsAsynchronously);
-
-    protected override async Task<HttpResponseMessage> SendAsync(
-        HttpRequestMessage request,
-        CancellationToken cancellationToken)
-    {
-        var isRecommendations =
-            request.RequestUri?.AbsoluteUri == RadarService.RecommendationsUri.AbsoluteUri;
-        var isMeasurements =
-            request.RequestUri?.AbsoluteUri == RadarService.MeasurementsUri.AbsoluteUri;
-
-        if (RequireConcurrentSupplementalRequests && (isRecommendations || isMeasurements))
-        {
-            if (Interlocked.Increment(ref _supplementalRequestCount) >= 2)
-            {
-                _supplementalRequestsStarted.TrySetResult();
-            }
-            await _supplementalRequestsStarted.Task.WaitAsync(
-                TimeSpan.FromSeconds(1),
-                cancellationToken);
-        }
-
-        string content;
-        lock (RequestUris)
-        {
-            Calls++;
-            if (request.RequestUri is { } uri) RequestUris.Add(uri);
-            AcceptsJson &= request.RequestUri == RadarService.SiteUri || request.Headers.Accept.Any(value =>
-                string.Equals(value.MediaType, "application/json", StringComparison.OrdinalIgnoreCase));
-            SawNoCache &= request.Headers.CacheControl?.NoCache == true;
-            HasProductUserAgent &= request.Headers.UserAgent.Any(value =>
-                string.Equals(value.Product?.Name, "ZGSTokenBar", StringComparison.Ordinal));
-            HasAuthorization |= request.Headers.Authorization is not null;
-            HasCookie |= request.Headers.Contains("Cookie");
-            if (isRecommendations) _recommendationCalls++;
-            content = isMeasurements
-                ? MeasurementPayload ?? Measurements
-                : isRecommendations
-                ? ReturnEmptyRecommendations
-                    || ReturnEmptyRecommendationsAfterFirst && _recommendationCalls > 1
-                    ? EmptyRecommendations
-                    : Recommendations
-                : PrimarySummary;
-        }
-        return new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent(content),
-        };
-    }
-
-    private const string PrimarySummary = """
-        {
-          "model_iq": {
-            "updated_at": "2026-07-19T12:00:00Z",
-            "latest": {
-              "date": "2026-07-19",
-              "model": "gpt-5.6-sol",
-              "reasoning_effort": "max",
-              "score": 100,
-              "status": "green"
-            }
-          }
-        }
-        """;
-
-    private const string Recommendations = """
-        {
-          "schema": 1,
-          "mode": "latest_valid_per_task",
-          "generated_at": "2026-08-01T13:39:13+08:00",
-          "source_updated_at": "2026-08-01T13:39:08+08:00",
-          "recommendations": [
-            {
-              "key": "daily_development",
-              "title": "日常开发",
-              "rule": "上游日常规则",
-              "items": [
-                {
-                  "model": "gpt-5.5",
-                  "effort": "xhigh",
-                  "iq": 91.07,
-                  "passed": 68,
-                  "samples": 112,
-                  "average_cost_usd": 5.870495,
-                  "cost_samples": 111,
-                  "average_duration_minutes": 23.41,
-                  "duration_samples": 112,
-                  "combined_cost_index": 7877.209,
-                  "rule": "上游速度位规则",
-                  "slot": "speed"
-                },
-                {
-                  "model": "gpt-5.6-sol",
-                  "effort": "xhigh",
-                  "iq": 96.43,
-                  "passed": 72,
-                  "samples": 112,
-                  "average_cost_usd": 6.635433,
-                  "cost_samples": 112,
-                  "average_duration_minutes": 25.2,
-                  "duration_samples": 112,
-                  "combined_cost_index": 11158.159,
-                  "rule": "上游聪明位规则",
-                  "slot": "smart"
-                }
-              ]
-            },
-            {
-              "key": "hard_problems",
-              "title": "难题攻坚",
-              "rule": "上游攻坚规则",
-              "items": [
-                {
-                  "model": "gpt-5.6-sol",
-                  "effort": "ultra",
-                  "iq": 109.82,
-                  "passed": 82,
-                  "samples": 112,
-                  "average_cost_usd": 18.804978,
-                  "cost_samples": 61,
-                  "average_duration_minutes": 52.12,
-                  "duration_samples": 112,
-                  "combined_cost_index": 290652.363,
-                  "rule": "上游攻坚规则"
-                },
-                {
-                  "model": "gpt-5.6-sol",
-                  "effort": "max",
-                  "iq": 103.12,
-                  "passed": 77,
-                  "samples": 112,
-                  "average_cost_usd": 9.549178,
-                  "cost_samples": 112,
-                  "average_duration_minutes": 33.49,
-                  "duration_samples": 112,
-                  "combined_cost_index": 38267.965,
-                  "rule": "上游攻坚规则"
-                }
-              ]
-            },
-            {
-              "key": "background_automation",
-              "title": "后台自动化",
-              "rule": "上游自动化规则",
-              "items": [
-                {
-                  "model": "gpt-5.6-luna",
-                  "effort": "max",
-                  "iq": 80.36,
-                  "passed": 60,
-                  "samples": 112,
-                  "average_cost_usd": 0.457463,
-                  "cost_samples": 112,
-                  "average_duration_minutes": 29.73,
-                  "duration_samples": 112,
-                  "combined_cost_index": 1274.144,
-                  "rule": "上游自动化规则"
-                },
-                {
-                  "model": "gpt-5.6-sol",
-                  "effort": "medium",
-                  "iq": 87.05,
-                  "passed": 65,
-                  "samples": 112,
-                  "average_cost_usd": 3.890851,
-                  "cost_samples": 110,
-                  "average_duration_minutes": 17.41,
-                  "duration_samples": 112,
-                  "combined_cost_index": 2113.88,
-                  "rule": "上游自动化规则"
-                }
-              ]
-            },
-            {
-              "key": "future_category",
-              "title": "未来类别",
-              "rule": "未来规则",
-              "items": [
-                {
-                  "model": "gpt-5.6-terra",
-                  "effort": "medium",
-                  "iq": 57.59,
-                  "passed": 43,
-                  "samples": 112,
-                  "average_cost_usd": 0.639837,
-                  "cost_samples": 110,
-                  "average_duration_minutes": 9.06,
-                  "duration_samples": 111,
-                  "combined_cost_index": 47.315,
-                  "rule": "未来规则"
-                }
-              ]
-            }
-          ]
-        }
-        """;
-
-    private const string Measurements = """
-        {
-          "schema": 2,
-          "source_updated_at": "2026-08-01T13:38:00+08:00",
-          "points": [
-            {
-              "model": "gpt-5.6-sol",
-              "effort": "max",
-              "iq": 101.5,
-              "passed": 76,
-              "valid_tasks": 112,
-              "average_price_usd": 9.5,
-              "average_minutes": 34
-            },
-            {
-              "model": "deepseek-v4-flash",
-              "effort": "max",
-              "iq": 79.02,
-              "passed": 59,
-              "valid_tasks": 112,
-              "average_price_usd": 0.10,
-              "average_minutes": 22.29
-            },
-            {
-              "model": "deepseek-v4-flash",
-              "effort": "high",
-              "iq": 50.89,
-              "passed": 38,
-              "valid_tasks": 112,
-              "average_price_usd": 0.098,
-              "average_minutes": 24.18
-            }
-          ],
-          "history": [
-            {
-              "at": "2026-08-01T12:00:00+08:00",
-              "points": [
-                { "model": "deepseek-v4-flash", "effort": "max", "iq": 80 },
-                { "model": "deepseek-v4-flash", "effort": "high", "iq": 48 }
-              ]
-            },
-            {
-              "at": "2026-08-02T12:00:00+08:00",
-              "points": [
-                { "model": "deepseek-v4-flash", "effort": "max", "iq": 78 },
-                { "model": "deepseek-v4-flash", "effort": "high", "iq": 52 }
-              ]
-            }
-          ]
-        }
-        """;
-
-    private const string EmptyRecommendations = """
-        {
-          "schema": 1,
-          "mode": "latest_valid_per_task",
-          "source_updated_at": "2026-08-01T13:40:00+08:00",
-          "recommendations": [
-            {
-              "key": "daily_development",
-              "title": "日常开发",
-              "items": []
-            }
-          ]
-        }
-        """;
 }

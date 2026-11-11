@@ -5,12 +5,6 @@ using ZGSTokenBar.PluginSdk;
 
 namespace ZGSTokenBar.App;
 
-internal sealed class RadarPreviewRequest(ProviderKind provider, string surfaceId) : EventArgs
-{
-    public ProviderKind Provider { get; } = provider;
-    public string SurfaceId { get; } = surfaceId;
-}
-
 internal sealed partial class BarForm : Form
 {
     private const string SettingsIconGlyph = "\uE713";
@@ -71,14 +65,12 @@ internal sealed partial class BarForm : Form
     private readonly Image _deepSeekLogo = LoadEmbeddedImage("ZGSTokenBar.App.Assets.deepseek-whale-icon.png");
     private readonly Image _resetClockIcon = LoadEmbeddedImage("ZGSTokenBar.App.Assets.fluent-clock-20-regular.png");
     private readonly System.Windows.Forms.Timer _animationTimer = new() { Interval = 16 };
-    private readonly System.Windows.Forms.Timer _radarResetTimer = new();
     private readonly System.Windows.Forms.Timer _popoverHoverTimer = new() { Interval = 350 };
     private readonly System.Windows.Forms.Timer _popoverStateTimer = new() { Interval = 50 };
     private readonly System.Windows.Forms.Timer _shellSettleTimer = new() { Interval = ShellSettleIntervalMs };
     private readonly WinEventDelegate _foregroundChangedHandler;
     private readonly List<(RectangleF Bounds, QuotaCard Card)> _cardBounds = [];
     private readonly List<MiniQuotaTarget> _taskbarWindowBounds = [];
-    private readonly List<MiniRadarTarget> _taskbarRadarBounds = [];
     private readonly List<(RectangleF Bounds, PluginMiniCardView Card)> _taskbarPluginBounds = [];
     private readonly List<(RectangleF Bounds, QuotaCard Card)> _taskbarCodexAccountBounds = [];
     private readonly List<MiniAreaTarget> _taskbarAreaBounds = [];
@@ -154,7 +146,6 @@ internal sealed partial class BarForm : Form
     private DateTime? _popoverLeaveStarted;
     private MiniQuotaTarget? _hoverQuotaTarget;
     private (RectangleF Bounds, QuotaCard Card)? _hoverCodexAccountTarget;
-    private MiniRadarTarget? _hoverRadarTarget;
     private (RectangleF Bounds, PluginMiniCardView Card)? _hoverPluginTarget;
     private string? _hoverMiniAreaId;
     private string? _hoverReorderAreaId;
@@ -175,10 +166,7 @@ internal sealed partial class BarForm : Form
     private QuotaPopoverForm? _quotaPopover;
     private CodexAccountsPopoverForm? _codexAccountsPopover;
     private TaskbarHintPopoverForm? _hintPopover;
-    private ProviderRadarPopoverForm? _radarPopover;
     private SystemUsagePopoverForm? _systemUsagePopover;
-    private RadarViewState _radarState = new(null, null, false, null);
-    private HashSet<ProviderKind> _radarProviders;
     private IReadOnlyDictionary<string, QuotaPaceEstimate> _quotaPaceEstimates =
         new Dictionary<string, QuotaPaceEstimate>(StringComparer.Ordinal);
     private IReadOnlyDictionary<string, CodexQuotaTokenSummary> _codexQuotaTokenSummaries =
@@ -204,28 +192,15 @@ internal sealed partial class BarForm : Form
     internal void RequestUsageSettings() => SettingsRequested?.Invoke(this, EventArgs.Empty);
     public event EventHandler<string>? PluginActivated;
     public event EventHandler<WindowPlacementCommit>? PlacementCommitted;
-    public event EventHandler<RadarPreviewRequest>? RadarPreviewRequested;
     public event EventHandler? SystemUsageDetailsRequested;
     public event EventHandler? MiniAreaLayoutChanged;
     public event EventHandler? MiniAreaOrderChanged;
-    public event EventHandler? RadarModelGroupsChanged;
-    private Dictionary<string, bool> _radarModelGroups = new(StringComparer.OrdinalIgnoreCase);
-    public IReadOnlyDictionary<string, bool> RadarModelGroups => _radarModelGroups;
     internal SystemUsageSnapshot LiveMetrics => _systemUsage;
     internal long? DisplayedTokenTotal => _codexTokenUsage?.LocalTokens;
-    internal bool RadarVisible => _radarPopover?.RadarContentVisible == true;
-    internal string[]? DisplayedRadarModelGroups => _radarPopover?.DisplayedModelGroups;
-
-    public void SetRadarModelGroups(IReadOnlyDictionary<string, bool> groups)
-    {
-        _radarModelGroups = AppSettings.CopyRadarModelGroups(groups);
-        _radarPopover?.RestoreModelGroups(_radarModelGroups);
-    }
 
     public BarForm(
         AppSettings settings,
         QuotaSnapshot snapshot,
-        IEnumerable<ProviderKind>? radarProviders = null,
         bool renderOnly = false,
         int? renderDpi = null,
         IReadOnlyList<CodexAccountInfo>? codexAccounts = null,
@@ -249,18 +224,13 @@ internal sealed partial class BarForm : Form
         _taskbarDocked = settings.TaskbarDocked;
         _miniAreaLayouts = AppSettings.CopyMiniAreaLayouts(settings.MiniAreaLayouts);
         _miniAreaOrder = AppSettings.CopyMiniAreaOrder(settings.MiniAreaOrder);
-        SetRadarModelGroups(settings.RadarModelGroups);
         _codexMiniDisplayMode = CodexMiniDisplayModes.Normalize(settings.CodexMiniDisplayMode);
         _showSystemMetrics = settings.IsPluginEnabled("zgstokenbar.metrics.system", true);
         _glassMaxRings = NormalizeGlassMax(settings.GlassDockMaxRings);
         _hiddenDockItems = new HashSet<string>(AppSettings.CopyHiddenDockItems(settings.HiddenDockItems), StringComparer.Ordinal);
         _glassExpanded = settings.GlassDockExpanded;
         _animationsEnabled = settings.EnableAnimations && SystemInformation.IsMenuAnimationEnabled;
-        _radarProviders = settings.EnableRadar
-            ? new HashSet<ProviderKind>(radarProviders ?? [])
-            : [];
         _animationTimer.Tick += (_, _) => AdvanceAnimation();
-        _radarResetTimer.Tick += (_, _) => RefreshRadarResetClock();
         _popoverHoverTimer.Tick += (_, _) => ShowHoveredPopover();
         _popoverStateTimer.Tick += (_, _) => MonitorPopover();
         _shellSettleTimer.Tick += (_, _) =>
@@ -304,10 +274,6 @@ internal sealed partial class BarForm : Form
 
     public bool IsTaskbarMode => true;
     public bool IsTaskbarDocked => _taskbarDocked;
-    public bool IsRadarPopoverVisible => _radarPopover?.Visible == true;
-    public string? VisibleRadarSurfaceId => IsRadarPopoverVisible
-        ? _hoverRadarTarget?.SurfaceId
-        : null;
     public bool AreAllMiniAreasCollapsed
     {
         get
@@ -322,8 +288,6 @@ internal sealed partial class BarForm : Form
         AppSettings.CopyMiniAreaOrder(_miniAreaOrder);
     public bool WantsSystemUsageDetails =>
         _showSystemMetrics && !_systemAnchorIsLive && (_hoverSystemUsage || _systemUsagePopover?.Visible == true);
-    internal bool IsRadarResetTimerEnabled => _radarResetTimer.Enabled;
-    internal int RadarResetTimerInterval => _radarResetTimer.Interval;
     internal void SetGlassExpandedForAcceptance(bool expanded) => SetGlassExpanded(expanded);
 
     /// <summary>Renders the hover popover a glass ring opens, or null when the ring has no scoped quota card.</summary>
@@ -423,12 +387,6 @@ internal sealed partial class BarForm : Form
     {
         _codexTokenUsage = summary;
         _systemUsage = _systemUsage with { CumulativeTokens = summary?.LocalTokens };
-        if (_radarPopover?.Visible == true
-            && _hoverRadarTarget is { SourceProvider: ProviderKind.Codex, DeepSeekOnly: false } target)
-        {
-            if (summary is null && !_radarProviders.Contains(ProviderKind.Codex)) HideRadarPopover();
-            else ShowRadarPopover(target, _popoverPinned, requestRefresh: false);
-        }
         Invalidate();
     }
 
@@ -489,12 +447,6 @@ internal sealed partial class BarForm : Form
     public void SetAiGatewayUsage(AiGatewayUsageSummary? summary)
     {
         _aiGatewayUsage = summary;
-        if (_radarPopover?.Visible == true
-            && _hoverRadarTarget is { SourceProvider: ProviderKind.AiGateway, DeepSeekOnly: true } target)
-        {
-            if (summary is null && !_radarProviders.Contains(ProviderKind.Codex)) HideRadarPopover();
-            else ShowRadarPopover(target, _popoverPinned, requestRefresh: false);
-        }
         Invalidate();
     }
 
@@ -596,47 +548,8 @@ internal sealed partial class BarForm : Form
         Invalidate();
     }
 
-    public void SetRadarState(RadarViewState state)
-    {
-        var resetAreaWasVisible = ShouldShowRadarResetArea();
-        _radarState = state;
-        var resetAreaIsVisible = ShouldShowRadarResetArea();
-        if (resetAreaWasVisible != resetAreaIsVisible)
-        {
-            ApplySnapshotLayout();
-        }
-        if (!resetAreaIsVisible
-            && string.Equals(_hoverRadarTarget?.Id, MiniAreaIds.RadarReset, StringComparison.Ordinal))
-        {
-            HideRadarPopover();
-        }
-        else if (_radarPopover?.Visible == true && _hoverRadarTarget is { } target)
-        {
-            ShowRadarPopover(target, _popoverPinned, requestRefresh: false);
-        }
-        UpdateRadarResetTimer();
-        Invalidate();
-    }
-
-    public void SetRadarProviders(IEnumerable<ProviderKind> providers)
-    {
-        var resetAreaWasVisible = ShouldShowRadarResetArea();
-        _radarProviders = new HashSet<ProviderKind>(providers);
-        var resetAreaIsVisible = ShouldShowRadarResetArea();
-        if (resetAreaWasVisible != resetAreaIsVisible) ApplySnapshotLayout();
-        if (_radarProviders.Count == 0
-            || (!resetAreaIsVisible
-                && string.Equals(_hoverRadarTarget?.Id, MiniAreaIds.RadarReset, StringComparison.Ordinal)))
-        {
-            HideRadarPopover();
-        }
-        UpdateRadarResetTimer();
-        Invalidate();
-    }
-
     public void ApplySettings(AppSettings settings)
     {
-        SetRadarModelGroups(settings.RadarModelGroups);
         _text = NativeText.For(settings.Locale);
         _backgroundTheme = QuotaBackgroundPalette.Resolve(settings.BackgroundPalette);
         BackColor = _glassDock ? Color.FromArgb(28, 22, 36) : _backgroundTheme.Outer;
@@ -675,7 +588,6 @@ internal sealed partial class BarForm : Form
         {
             HidePopovers();
         }
-        if (!settings.EnableRadar) SetRadarProviders([]);
         _animationsEnabled = settings.EnableAnimations && SystemInformation.IsMenuAnimationEnabled;
         if (!_animationsEnabled)
         {
@@ -754,8 +666,6 @@ internal sealed partial class BarForm : Form
             }
             _animationTimer.Stop();
             _animationTimer.Dispose();
-            _radarResetTimer.Stop();
-            _radarResetTimer.Dispose();
             _popoverHoverTimer.Stop();
             _popoverHoverTimer.Dispose();
             _popoverStateTimer.Stop();
@@ -766,7 +676,6 @@ internal sealed partial class BarForm : Form
             _codexAccountsPopover?.Dispose();
             _codexStrategyPopover?.Dispose();
             _hintPopover?.Dispose();
-            _radarPopover?.Dispose();
             _systemUsagePopover?.Dispose();
             _glassMenu?.Dispose();
             foreach (var icon in _glassIcons.Values) icon?.Dispose();
@@ -838,14 +747,6 @@ internal sealed partial class BarForm : Form
         RectangleF ValueBounds,
         IReadOnlyList<MiniQuotaTarget> Targets);
 
-    private sealed record MiniRadarTarget(
-        RectangleF Bounds,
-        string Id,
-        ProviderKind Provider,
-        ProviderKind SourceProvider,
-        bool DeepSeekOnly,
-        string SurfaceId);
-
     private sealed record MiniAreaTarget(
         string AreaId,
         string Title,
@@ -861,7 +762,6 @@ internal sealed partial class BarForm : Form
     private readonly record struct TaskbarHitTargetCounts(
         int Cards,
         int Windows,
-        int Radar,
         int Plugins,
         int CodexAccounts);
 
@@ -902,12 +802,6 @@ internal sealed partial class BarForm : Form
             null,
             null);
 
-        public static TaskbarMiniAreaContent ForRadarReset(string title) => new(
-            MiniAreaIds.RadarReset,
-            title,
-            TaskbarMiniLayoutMath.RadarResetContentWidth,
-            null,
-            null);
     }
 
     private enum HoverTarget
@@ -921,7 +815,6 @@ internal sealed partial class BarForm : Form
         QuotaWindow,
         CodexAccounts,
         CodexStrategy,
-        Radar,
         SystemUsage,
     }
 }

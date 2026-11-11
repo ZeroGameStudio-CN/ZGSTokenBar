@@ -113,7 +113,7 @@ internal static class LiveMetricTests
         foreach (var dpi in new[] { 96, 144, 192 })
         {
             var at = DateTimeOffset.UtcNow;
-            using var form = new BarForm(new AppSettings { Locale = "zh-CN", EnableAnimations = false, EnableRadar = false },
+            using var form = new BarForm(new AppSettings { Locale = "zh-CN", EnableAnimations = false },
                 new QuotaSnapshot([], [], at), renderOnly: true, renderDpi: dpi);
             var original = form.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.SystemMetrics);
             form.SetCodexTokenUsage(new CodexTokenUsageSummary(1000, 642203161989, 12, at));

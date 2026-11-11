@@ -5,7 +5,7 @@ using ZGSTokenBar.PluginSdk;
 
 namespace ZGSTokenBar.App;
 
-/// <summary>Popover management: hover hints and the quota, Codex accounts, radar and system-usage popovers.</summary>
+/// <summary>Popover management: hover hints and the quota, Codex accounts and system-usage popovers.</summary>
 internal sealed partial class BarForm
 {
     private void UpdateHintHover(HoverTarget target)
@@ -35,7 +35,6 @@ internal sealed partial class BarForm
         }
 
         HideSystemUsagePopover();
-        HideRadarPopover();
         HideCodexAccountsPopover();
         if (_quotaPopover?.Visible == true) HideQuotaPopover();
         _popoverHoverTimer.Start();
@@ -108,42 +107,8 @@ internal sealed partial class BarForm
         _hoverSystemUsage = hovered;
         if (!hovered) return;
         HideQuotaPopover();
-        HideRadarPopover();
         _hoverSystemUsage = true;
         SystemUsageDetailsRequested?.Invoke(this, EventArgs.Empty);
-        _popoverHoverTimer.Start();
-    }
-
-    private void UpdateRadarHover(MiniRadarTarget? target)
-    {
-        if (_popoverPinned) return;
-        if (target is null && _radarPopover?.Visible == true)
-        {
-            _popoverLeaveStarted ??= DateTime.UtcNow;
-            return;
-        }
-        var previousId = _hoverRadarTarget?.Id;
-        var nextId = target?.Id;
-        if (target is not null
-            && _radarPopover?.Visible == true
-            && string.Equals(previousId, nextId, StringComparison.Ordinal))
-        {
-            _hoverRadarTarget = target;
-            _popoverLeaveStarted = null;
-            return;
-        }
-        if (string.Equals(previousId, nextId, StringComparison.Ordinal))
-        {
-            if (target is not null) _popoverLeaveStarted = null;
-            return;
-        }
-
-        _popoverHoverTimer.Stop();
-        _hoverRadarTarget = target;
-        if (target is null) return;
-        HideSystemUsagePopover();
-        HideQuotaPopover();
-        _hoverRadarTarget = target;
         _popoverHoverTimer.Start();
     }
 
@@ -172,7 +137,6 @@ internal sealed partial class BarForm
         }
 
         HideSystemUsagePopover();
-        HideRadarPopover();
         if (_quotaPopover?.Visible == true) HideQuotaPopover();
         _popoverHoverTimer.Start();
     }
@@ -202,7 +166,6 @@ internal sealed partial class BarForm
         Invalidate();
         if (target is null) return;
         HideSystemUsagePopover();
-        HideRadarPopover();
         if (_quotaPopover?.Visible == true) HideQuotaPopover();
         _hoverQuotaTarget = target;
         _popoverHoverTimer.Start();
@@ -227,7 +190,6 @@ internal sealed partial class BarForm
         if (_hintPopover?.Visible == true || _hoverHintTarget != HoverTarget.None) HideHintPopover();
         if (_codexAccountsPopover?.Visible == true) HideCodexAccountsPopover();
         if (_quotaPopover?.Visible == true || _popoverTargetId is not null) HideQuotaPopover();
-        if (_radarPopover?.Visible == true || _hoverRadarTarget is not null) HideRadarPopover();
         _systemUsagePopover ??= new SystemUsagePopoverForm();
         _systemUsagePopover.ApplyTheme(_backgroundTheme);
         _systemUsagePopover.ShowFor(
@@ -238,7 +200,6 @@ internal sealed partial class BarForm
             _scale,
             _animationsEnabled);
         _hoverSystemUsage = true;
-        _hoverRadarTarget = null;
         _popoverTargetId = null;
         _popoverPinned = pinned;
         _popoverLeaveStarted = null;
@@ -303,13 +264,6 @@ internal sealed partial class BarForm
             ShowSystemUsagePopover(pinned: false);
             return;
         }
-        if (_hoverRadarTarget is { } radarTarget)
-        {
-            _popoverHoverTimer.Stop();
-            if (!QuotaTargetScreenBounds(radarTarget.Bounds).Contains(Cursor.Position)) return;
-            ShowRadarPopover(radarTarget, pinned: false);
-            return;
-        }
         if (_hoverCodexAccountTarget is { } codexAccountTarget)
         {
             _popoverHoverTimer.Stop();
@@ -344,7 +298,6 @@ internal sealed partial class BarForm
         _popoverHoverTimer.Stop();
         if (_hintPopover?.Visible == true || _hoverHintTarget != HoverTarget.None) HideHintPopover();
         if (_systemUsagePopover?.Visible == true || _hoverSystemUsage) HideSystemUsagePopover();
-        if (_radarPopover?.Visible == true || _hoverRadarTarget is not null) HideRadarPopover();
         if (_quotaPopover?.Visible == true) HideQuotaPopover();
         _codexAccountsPopover ??= new CodexAccountsPopoverForm();
         _codexAccountsPopover.ApplyTheme(_backgroundTheme);
@@ -370,7 +323,6 @@ internal sealed partial class BarForm
         var content = HintFor(target);
         if (content is null) return;
         HideSystemUsagePopover();
-        HideRadarPopover();
         HideCodexAccountsPopover();
         if (_quotaPopover?.Visible == true) HideQuotaPopover();
         _hintPopover ??= new TaskbarHintPopoverForm();
@@ -419,7 +371,6 @@ internal sealed partial class BarForm
         if (_codexAccountsPopover?.Visible == true) HideCodexAccountsPopover();
         if (_hintPopover?.Visible == true || _hoverHintTarget != HoverTarget.None) HideHintPopover();
         if (_systemUsagePopover?.Visible == true || _hoverSystemUsage) HideSystemUsagePopover();
-        if (_radarPopover?.Visible == true || _hoverRadarTarget is not null) HideRadarPopover();
         using var trace = PerfTrace.Measure("quota-popover.open");
         _quotaPopover ??= new QuotaPopoverForm();
         _quotaPopover.ApplyTheme(_backgroundTheme);
@@ -563,93 +514,6 @@ internal sealed partial class BarForm
         if (DateTime.UtcNow - _popoverLeaveStarted >= TimeSpan.FromMilliseconds(150)) HideQuotaPopover();
     }
 
-    private void TogglePinnedRadarPopover(MiniRadarTarget target)
-    {
-        var sameVisibleTarget = _radarPopover?.Visible == true
-            && string.Equals(_hoverRadarTarget?.Id, target.Id, StringComparison.Ordinal);
-        if (_popoverPinned && sameVisibleTarget)
-        {
-            HideRadarPopover();
-            return;
-        }
-        ShowRadarPopover(target, pinned: true, requestRefresh: !sameVisibleTarget);
-    }
-
-    private void ShowRadarPopover(
-        MiniRadarTarget target,
-        bool pinned,
-        bool requestRefresh = true)
-    {
-        HideCodexStrategyPopover();
-        HidePluginPopover();
-        _popoverHoverTimer.Stop();
-        if (_codexAccountsPopover?.Visible == true) HideCodexAccountsPopover();
-        if (_hintPopover?.Visible == true || _hoverHintTarget != HoverTarget.None) HideHintPopover();
-        if (_systemUsagePopover?.Visible == true || _hoverSystemUsage) HideSystemUsagePopover();
-        if (_quotaPopover?.Visible == true || _popoverTargetId is not null) HideQuotaPopover();
-        var radarEnabled = _radarProviders.Contains(target.SourceProvider);
-        if (requestRefresh && radarEnabled && (target.DeepSeekOnly || _radarPopover?.RadarExtensionVisible == true))
-        {
-            RadarPreviewRequested?.Invoke(
-                this,
-                new RadarPreviewRequest(target.SourceProvider, target.SurfaceId));
-        }
-        if (_radarPopover is null)
-        {
-            _radarPopover = new ProviderRadarPopoverForm();
-            _radarPopover.RadarExtensionRequested += (_, _) =>
-            {
-                if (_hoverRadarTarget is { } current)
-                    RadarPreviewRequested?.Invoke(this, new RadarPreviewRequest(current.SourceProvider, current.SurfaceId));
-            };
-            _radarPopover.RestoreModelGroups(_radarModelGroups);
-            _radarPopover.ModelGroupsChanged += (_, _) =>
-            {
-                _radarModelGroups = AppSettings.CopyRadarModelGroups(_radarPopover.ModelGroups);
-                RadarModelGroupsChanged?.Invoke(this, EventArgs.Empty);
-            };
-            _radarPopover.SpendHistoryRequested += (_, _) => PinVisibleRadarPopoverForHistory();
-            _radarPopover.ModelGroupInteraction += (_, _) => PinVisibleRadarPopoverForHistory();
-            _radarPopover.DetailsInteraction += (_, _) => PinVisibleRadarPopoverForHistory();
-        }
-        var tokenUsage = target.DeepSeekOnly
-            ? null
-            : target.SourceProvider == ProviderKind.Codex
-                ? _codexTokenUsage
-                : null;
-        var aiGatewayUsage = target.DeepSeekOnly ? _aiGatewayUsage : null;
-        _radarPopover.ShowFor(
-            this,
-            QuotaTargetScreenBounds(target.Bounds),
-            _radarState,
-            _text,
-            ProviderLogo(target.Provider),
-            _scale,
-            _animationsEnabled,
-            pinned,
-            radarEnabled,
-            tokenUsage,
-            aiGatewayUsage,
-            target.DeepSeekOnly);
-        _hoverRadarTarget = target;
-        _popoverTargetId = null;
-        _popoverPinned = pinned;
-        _popoverLeaveStarted = null;
-        _popoverMouseWasDown = Control.MouseButtons != MouseButtons.None;
-        _popoverEscapeWasDown = IsEscapeDown();
-        _popoverStateTimer.Start();
-        Invalidate();
-    }
-
-    private void PinVisibleRadarPopoverForHistory()
-    {
-        if (_hoverRadarTarget is not { } target) return;
-        ShowRadarPopover(
-            ResolveRadarTarget(target.Id) ?? target,
-            pinned: true,
-            requestRefresh: false);
-    }
-
     private void MonitorPopover()
     {
         if (_codexStrategyPopover?.IsOpen == true)
@@ -668,54 +532,7 @@ internal sealed partial class BarForm
             MonitorSystemUsagePopover();
             return;
         }
-        if (_radarPopover?.Visible == true && _hoverRadarTarget is not null)
-        {
-            MonitorRadarPopover();
-            return;
-        }
         MonitorQuotaPopover();
-    }
-
-    private void MonitorRadarPopover()
-    {
-        if (_hoverRadarTarget is not { } target || _radarPopover?.Visible != true)
-        {
-            _popoverStateTimer.Stop();
-            return;
-        }
-        var currentTarget = ResolveRadarTarget(target.Id);
-        if (currentTarget is null)
-        {
-            HideRadarPopover();
-            return;
-        }
-        _hoverRadarTarget = currentTarget;
-        var cursor = Cursor.Position;
-        var anchor = QuotaTargetScreenBounds(currentTarget.Bounds);
-        var mouseDown = Control.MouseButtons != MouseButtons.None;
-        var escapeDown = IsEscapeDown();
-        if (_popoverPinned)
-        {
-            var outsideClick = mouseDown
-                && !_popoverMouseWasDown
-                && !anchor.Contains(cursor)
-                && !_radarPopover.ContainsScreenPoint(cursor);
-            var escapePressed = escapeDown && !_popoverEscapeWasDown;
-            _popoverMouseWasDown = mouseDown;
-            _popoverEscapeWasDown = escapeDown;
-            if (outsideClick || escapePressed) HideRadarPopover();
-            return;
-        }
-        if (anchor.Contains(cursor) || _radarPopover.ContainsScreenPoint(cursor))
-        {
-            _popoverLeaveStarted = null;
-            return;
-        }
-        _popoverLeaveStarted ??= DateTime.UtcNow;
-        if (DateTime.UtcNow - _popoverLeaveStarted >= TimeSpan.FromMilliseconds(150))
-        {
-            HideRadarPopover();
-        }
     }
 
     private void RefreshQuotaPopover()
@@ -751,15 +568,7 @@ internal sealed partial class BarForm
         if (_systemUsagePopover?.Visible == true) ShowSystemUsagePopover(_popoverPinned);
         if (_quotaPopover?.Visible == true) RefreshQuotaPopover();
         if (_codexAccountsPopover?.Visible == true) RefreshCodexAccountsPopover();
-        if (_radarPopover?.Visible == true && _hoverRadarTarget is { } target)
-        {
-            ShowRadarPopover(target, _popoverPinned, requestRefresh: false);
-        }
     }
-
-    private MiniRadarTarget? ResolveRadarTarget(string id) =>
-        _taskbarRadarBounds.FirstOrDefault(target =>
-            string.Equals(target.Id, id, StringComparison.Ordinal));
 
     private MiniQuotaTarget? ResolveQuotaTarget(string id)
     {
@@ -861,28 +670,16 @@ internal sealed partial class BarForm
         Invalidate();
     }
 
-    private void HideRadarPopover()
-    {
-        var ownsPin = _hoverRadarTarget is not null && _popoverTargetId is null;
-        _popoverHoverTimer.Stop();
-        _radarPopover?.HidePopover();
-        if (ownsPin) _popoverPinned = false;
-        _hoverRadarTarget = null;
-        _popoverLeaveStarted = null;
-        if (_quotaPopover?.Visible != true) _popoverStateTimer.Stop();
-    }
-
     private void HideSystemUsagePopover()
     {
         var ownsPin = _hoverSystemUsage
-            && _popoverTargetId is null
-            && _hoverRadarTarget is null;
+            && _popoverTargetId is null;
         _popoverHoverTimer.Stop();
         _systemUsagePopover?.HidePopover();
         if (ownsPin) _popoverPinned = false;
         _hoverSystemUsage = false;
         _popoverLeaveStarted = null;
-        if (_quotaPopover?.Visible != true && _radarPopover?.Visible != true)
+        if (_quotaPopover?.Visible != true)
         {
             _popoverStateTimer.Stop();
         }
@@ -898,7 +695,6 @@ internal sealed partial class BarForm
         HideQuotaPopover();
         HideCodexAccountsPopover();
         HideHintPopover();
-        HideRadarPopover();
     }
 
     private void ClearHoverStateForTaskbarDrag()

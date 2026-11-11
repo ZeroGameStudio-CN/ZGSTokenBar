@@ -38,9 +38,6 @@ public sealed class AppSettings
     public bool EnableAnimations { get; set; } = true;
     /// <summary>Experimental: host the docked bar inside the Windows taskbar (falls back to the overlay).</summary>
     public bool EmbedInTaskbar { get; set; }
-    public bool EnableRadar { get; set; }
-    public bool EnableRadarAlerts { get; set; }
-    public Dictionary<string, bool> RadarModelGroups { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public bool EnableAiGatewayBalance { get; set; }
     public bool EnableSub2ApiPool { get; set; }
     public bool MiniProviderAreaCollapsed { get; set; }
@@ -106,10 +103,6 @@ public sealed class AppSettings
                 break;
             case "zgstokenbar.usage.codex-local":
                 break;
-            case "zgstokenbar.intelligence.radar":
-                EnableRadar = enabled;
-                if (!enabled) EnableRadarAlerts = false;
-                break;
             case "zgstokenbar.provider.ai-gateway":
                 EnableAiGatewayBalance = enabled;
                 break;
@@ -138,7 +131,6 @@ public sealed class AppSettings
             "zgstokenbar.provider.claude",
             "zgstokenbar.provider.codex",
             "zgstokenbar.usage.codex-local",
-            "zgstokenbar.intelligence.radar",
         };
         const string harnessProviderId = "zgstokenbar.provider.ai-gateway";
         if (EnableAiGatewayBalance
@@ -186,10 +178,21 @@ public sealed class AppSettings
         return !previousSeparator;
     }
 
+    /// <summary>Plugin ids of retired features (the Radar station); old settings may still list them.</summary>
+    internal static readonly string[] RetiredPluginIds = ["zgstokenbar.intelligence.radar", "zgs.intelligence.radar"];
+
+    private void DropRetiredPlugins()
+    {
+        PluginEnabled ??= new(StringComparer.Ordinal);
+        foreach (var id in RetiredPluginIds) PluginEnabled.Remove(id);
+        PluginEnablementDecisions = (PluginEnablementDecisions ?? []).Where(id => !RetiredPluginIds.Contains(id)).ToArray();
+        AutoEnabledPlugins = (AutoEnabledPlugins ?? []).Where(id => !RetiredPluginIds.Contains(id)).ToArray();
+    }
+
     public void Normalize()
     {
-        RadarModelGroups = CopyRadarModelGroups(RadarModelGroups);
         SchemaVersion = CurrentSchemaVersion;
+        DropRetiredPlugins();
         EnabledProviders = (EnabledProviders ?? [])
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .Select(value => value.Trim().ToLowerInvariant())
@@ -222,7 +225,6 @@ public sealed class AppSettings
             && (PluginEnabled.TryGetValue("zgstokenbar.usage.codex-local", out var localUsage)
                 ? localUsage
                 : true);
-        PluginEnabled["zgstokenbar.intelligence.radar"] = EnableRadar;
         PluginEnabled["zgstokenbar.provider.ai-gateway"] = EnableAiGatewayBalance;
         if (!PluginEnabled["zgstokenbar.provider.codex"])
         {
@@ -273,7 +275,6 @@ public sealed class AppSettings
         Locale = string.Equals(Locale?.Trim(), "en", StringComparison.OrdinalIgnoreCase)
             ? "en"
             : "zh-CN";
-        if (!EnableRadar) EnableRadarAlerts = false;
         if (TaskbarPosition is { } taskbarPosition)
         {
             TaskbarPosition = double.IsFinite(taskbarPosition)
@@ -335,7 +336,6 @@ public sealed class AppSettings
 
     public void CopyMiniAreaLayoutsFrom(AppSettings source)
     {
-        RadarModelGroups = CopyRadarModelGroups(source.RadarModelGroups);
         MiniAreaLayouts = CopyMiniAreaLayouts(source.MiniAreaLayouts);
         MiniAreaOrder = CopyMiniAreaOrder(source.MiniAreaOrder);
     }
@@ -345,16 +345,6 @@ public sealed class AppSettings
         (source ?? new Dictionary<string, MiniAreaLayout>())
             .Where(entry => entry.Value is not null)
             .ToDictionary(entry => entry.Key, entry => entry.Value with { }, StringComparer.Ordinal);
-
-    public static Dictionary<string, bool> CopyRadarModelGroups(IReadOnlyDictionary<string, bool>? source)
-    {
-        var result = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-        foreach (var entry in source ?? new Dictionary<string, bool>())
-        {
-            if (!string.IsNullOrWhiteSpace(entry.Key)) result[entry.Key.Trim()] = entry.Value;
-        }
-        return result;
-    }
 
     public static string[] CopyHiddenDockItems(IEnumerable<string>? source) =>
         (source ?? [])
@@ -601,8 +591,6 @@ public sealed class AppSettingsStore
     public string QuotaRateHistoryPath => Path.Combine(DataDirectory, "quota-rate-history.json");
     public string CodexTokenUsageIndexPath => Path.Combine(DataDirectory, "codex-token-usage-index.json");
     public string CodexQuotaTokenHistoryPath => Path.Combine(DataDirectory, "codex-quota-token-history.json");
-    public string RadarStatePath => Path.Combine(DataDirectory, "radar-state.json");
-    public string RadarRoutingPath => Path.Combine(DataDirectory, "radar-routing.json");
 
     public bool SettingsReadPending
     {
@@ -1095,79 +1083,6 @@ public sealed class AppSettingsStore
         }
     }
 
-    public bool TryLoadRadarState(out RadarAlertState state)
-    {
-        state = LoadRadarState();
-        lock (_writeProtectionSync) return !_writeProtectedPaths.Contains(RadarStatePath);
-    }
-
-    public RadarAlertState LoadRadarState()
-    {
-        try
-        {
-            var state = JsonSerializer.Deserialize<RadarAlertState>(
-                ReadTextWithRetry(RadarStatePath),
-                JsonOptions) ?? new RadarAlertState();
-            state.NotifiedEventIds = (state.NotifiedEventIds ?? [])
-                .Where(id => !string.IsNullOrWhiteSpace(id))
-                .Distinct(StringComparer.Ordinal)
-                .TakeLast(50)
-                .ToList();
-            state.ViewedEventIdsBySurface = NormalizeRadarViewedEvents(state.ViewedEventIdsBySurface);
-            if (state.LastSnapshot is { } snapshot) state.LastSnapshot = RadarSnapshotLimits.Trim(snapshot);
-            ClearWriteProtection(RadarStatePath);
-            return state;
-        }
-        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
-        {
-            ClearWriteProtection(RadarStatePath);
-            return new RadarAlertState();
-        }
-        catch (IOException)
-        {
-            ProtectWritePath(RadarStatePath);
-            return new RadarAlertState();
-        }
-        catch (UnauthorizedAccessException)
-        {
-            ProtectWritePath(RadarStatePath);
-            return new RadarAlertState();
-        }
-        catch (Exception exception) when (exception is JsonException or InvalidOperationException)
-        {
-            PreserveCorruptFile(RadarStatePath);
-            return new RadarAlertState();
-        }
-    }
-
-    public void SaveRadarState(RadarAlertState state)
-    {
-        EnsureWritable(RadarStatePath, "Radar state file is busy. Please retry.");
-        Directory.CreateDirectory(DataDirectory);
-        state.NotifiedEventIds = (state.NotifiedEventIds ?? []).TakeLast(50).ToList();
-        state.ViewedEventIdsBySurface = NormalizeRadarViewedEvents(state.ViewedEventIdsBySurface);
-        if (state.LastSnapshot is { } snapshot)
-        {
-            state.LastSnapshot = RadarSnapshotLimits.Trim(snapshot);
-            if (!CredentialSupport.AtomicWrite(
-                    RadarRoutingPath,
-                    JsonSerializer.Serialize(RadarRoutingSnapshotBuilder.Build(state.LastSnapshot), JsonOptions)))
-            {
-                throw new IOException("Radar routing file is busy. Please retry.");
-            }
-        }
-        else if (!CredentialSupport.AtomicWrite(
-                     RadarRoutingPath,
-                     JsonSerializer.Serialize(new { error = "radar_missing" }, JsonOptions)))
-        {
-            throw new IOException("Radar routing file is busy. Please retry.");
-        }
-        if (!CredentialSupport.AtomicWrite(RadarStatePath, JsonSerializer.Serialize(state, JsonOptions)))
-        {
-            throw new IOException("Radar state file is busy. Please retry.");
-        }
-    }
-
     private static string ReadTextWithRetry(string path)
     {
         for (var attempt = 0; ; attempt++)
@@ -1203,13 +1118,6 @@ public sealed class AppSettingsStore
             if (_writeProtectedPaths.Contains(path)) throw new IOException(message);
         }
     }
-
-    private static Dictionary<string, string> NormalizeRadarViewedEvents(
-        IReadOnlyDictionary<string, string>? values) =>
-        (values ?? new Dictionary<string, string>())
-            .Where(entry => !string.IsNullOrWhiteSpace(entry.Key)
-                && !string.IsNullOrWhiteSpace(entry.Value))
-            .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal);
 
     private AppSettings? TryLoadSettingsFile(string path, out string? invalidContents)
     {

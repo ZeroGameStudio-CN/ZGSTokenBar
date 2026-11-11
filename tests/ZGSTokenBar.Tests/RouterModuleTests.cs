@@ -643,7 +643,7 @@ internal static class RouterModuleTests
             host.StartAsync(stop.Token).AsTask().GetAwaiter().GetResult();
             var subscription = host.Subscribe(includeValues: true);
             void Publish(long count) => host.Publish(new(RouterPlugin.Id, DateTimeOffset.UtcNow,
-                new(PluginHealthCode.Current, true, true, DateTimeOffset.UtcNow, "router.current"), [Card("running", count)], [], []));
+                new(PluginHealthCode.Current, true, true, DateTimeOffset.UtcNow, "router.current"), [Card("running", count)], []));
             // Overflow the real bounded Host channel before the consumer starts.
             for (var i = 0; i < 100; i++) Publish(i);
             var recoveries = 0;

@@ -97,7 +97,6 @@ internal sealed partial class BarForm
     {
         _cardBounds.Clear();
         _taskbarWindowBounds.Clear();
-        _taskbarRadarBounds.Clear();
         _taskbarPluginBounds.Clear();
         _taskbarCodexAccountBounds.Clear();
         _codexStrategyBounds = RectangleF.Empty;
@@ -229,10 +228,6 @@ internal sealed partial class BarForm
                 DrawPluginMiniCard(graphics, bounds, pluginCard, layout.Collapsed);
                 _taskbarPluginBounds.Add((bounds, pluginCard));
             }
-            else if (string.Equals(area.AreaId, MiniAreaIds.RadarReset, StringComparison.Ordinal))
-            {
-                DrawRadarResetCard(graphics, bounds, layout.Collapsed);
-            }
             else if (string.Equals(area.AreaId, MiniAreaIds.SystemMetrics, StringComparison.Ordinal))
             {
                 _systemUsageBounds = bounds;
@@ -318,7 +313,6 @@ internal sealed partial class BarForm
     private TaskbarHitTargetCounts CaptureTaskbarHitTargetCounts() => new(
         _cardBounds.Count,
         _taskbarWindowBounds.Count,
-        _taskbarRadarBounds.Count,
         _taskbarPluginBounds.Count,
         _taskbarCodexAccountBounds.Count);
 
@@ -326,7 +320,6 @@ internal sealed partial class BarForm
     {
         TrimToCount(_cardBounds, counts.Cards);
         TrimToCount(_taskbarWindowBounds, counts.Windows);
-        TrimToCount(_taskbarRadarBounds, counts.Radar);
         TrimToCount(_taskbarPluginBounds, counts.Plugins);
         TrimToCount(_taskbarCodexAccountBounds, counts.CodexAccounts);
     }

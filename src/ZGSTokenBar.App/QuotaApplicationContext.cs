@@ -19,14 +19,11 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         "zgstokenbar.provider.claude",
         "zgstokenbar.provider.codex",
         "zgstokenbar.usage.codex-local",
-        "zgstokenbar.intelligence.radar",
     ];
     private readonly AppSettingsStore _store;
     private readonly PluginCredentialStore _pluginCredentialStore = new();
     private readonly QuotaCoordinator _coordinator = new();
-    private readonly RadarService _radarService = new();
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
-    private readonly SemaphoreSlim _radarGate = new(1, 1);
     private readonly SemaphoreSlim _codexTokenUsageGate = new(1, 1);
     private readonly SemaphoreSlim _systemUsageGate = new(1, 1);
     private readonly SemaphoreSlim _updateGate = new(1, 1);
@@ -35,7 +32,6 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
     private readonly QuotaPaceTracker _quotaPaceTracker;
     private readonly CodexQuotaTokenTracker _codexQuotaTokenTracker;
     private readonly CodexTokenUsageLedger _codexTokenUsageLedger;
-    private bool _radarRestorePending;
     private readonly SystemUsageSampler _systemUsageSampler = new();
     private readonly NetworkTrafficLedger _networkTraffic;
     private readonly ObservedOutputRate _observedOutput = new();
@@ -43,7 +39,6 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
     private readonly BarForm _bar;
     private readonly NotifyIcon _tray;
     private readonly ToolStripMenuItem _refreshMenuItem;
-    private readonly ToolStripMenuItem _radarMenuItem;
     private readonly ToolStripMenuItem _updateMenuItem;
     private readonly ToolStripMenuItem _settingsMenuItem;
     private readonly ToolStripMenuItem _quitMenuItem;
@@ -53,7 +48,6 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
     private readonly System.Windows.Forms.Timer _confirmationTimer;
     private readonly System.Windows.Forms.Timer _refreshTimer;
     private readonly System.Windows.Forms.Timer _providerActivityTimer;
-    private readonly System.Windows.Forms.Timer _radarTimer;
     private readonly System.Windows.Forms.Timer _updateTimer;
     private readonly RegisteredWaitHandle _activationWait;
     private readonly ZgsTokenBarHost _pluginHost;
@@ -73,10 +67,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
     private long _codexAccountsReadAt;
     // Account activity needs a process snapshot; poll it slowly unless Cockpit's files change.
     private const long CodexAccountPollMs = 30_000;
-    private RadarAlertState _radarState;
-    private RadarViewState _radarViewState;
     private SettingsForm? _settingsDialog;
-    private bool _radarBalloonActive;
     private bool _updateBalloonActive;
     private ReleaseUpdateInfo? _availableUpdate;
     private Version? _notifiedUpdateVersion;
@@ -108,15 +99,6 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _codexQuotaTokenTracker = new CodexQuotaTokenTracker(_store.LoadCodexQuotaTokenHistory());
         _codexTokenUsageLedger = new CodexTokenUsageLedger(_store);
         _cachedCodexTokenUsage = _codexTokenUsageLedger.Snapshot(now);
-        _radarRestorePending = !_store.TryLoadRadarState(out _radarState);
-        _radarService.RestoreRecommendationCache(_radarState.LastSnapshot);
-        _radarViewState = WithRadarUnreadState(
-            new(
-                _radarState.LastSnapshot,
-                _radarState.LastSuccessfulFetchAt,
-                false,
-                null),
-            _radarState);
         if (_allowGlobalStartupRegistration && !_store.SettingsReadPending)
         {
             StartupManager.Apply(_settings.OpenAtLogin);
@@ -127,7 +109,6 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _bar = new BarForm(
             _settings,
             _snapshot,
-            _settings.EnableRadar ? [_radarService.Provider] : [],
             codexAccounts: _codexAccounts,
             activeProviders: _activeProviders);
         _otherToolsModule = new OtherToolsModule(_bar, ApplyGenericPluginCards);
@@ -141,16 +122,12 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _bar.ProbeSettingsSaveRequested += (_, layoutChange) => ProbeSettingsSave(layoutChange);
         _bar.OverviewRequested += (_, _) => _otherToolsModule.ShowOverview();
         _bar.PlacementCommitted += (_, commit) => SavePlacement(commit);
-        _bar.RadarPreviewRequested += (_, request) =>
-            RequestRadarPreview(request.Provider, request.SurfaceId);
         _bar.SystemUsageDetailsRequested += (_, _) => _ = RefreshSystemUsageDetailsAsync();
         _bar.MiniAreaLayoutChanged += (_, _) => SaveMiniAreaLayout();
         _bar.MiniAreaOrderChanged += (_, _) => SaveMiniAreaOrder();
         _bar.GlassExpandedChanged += (_, expanded) => SaveGlassExpanded(expanded);
-        _bar.RadarModelGroupsChanged += (_, _) => SaveRadarModelGroups();
         _bar.FormClosing += BarFormClosing;
         _bar.FormClosed += (_, _) => Quit();
-        _bar.SetRadarState(_radarViewState);
 
         var pluginEnabled = new Dictionary<string, bool>(StringComparer.Ordinal)
         {
@@ -158,7 +135,6 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
             ["zgstokenbar.provider.claude"] = _settings.IsEnabled(ProviderKind.Claude),
             ["zgstokenbar.provider.codex"] = _settings.IsEnabled(ProviderKind.Codex),
             ["zgstokenbar.usage.codex-local"] = _settings.IsEnabled(ProviderKind.Codex),
-            ["zgstokenbar.intelligence.radar"] = _settings.EnableRadar,
             ["zgstokenbar.provider.ai-gateway"] = _settings.IsEnabled(ProviderKind.AiGateway),
         };
         foreach (var entry in _settings.PluginEnabled)
@@ -199,10 +175,6 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
                 now,
                 cached: _cachedCodexTokenUsage is not null));
         }
-        if (HasPlugin("zgstokenbar.intelligence.radar") && _radarViewState.Snapshot is { } restoredRadar)
-        {
-            _pluginHost.Publish(CorePluginProjection.Radar("zgstokenbar.intelligence.radar", restoredRadar));
-        }
         _apiServer = new ZgsNamedPipeServer(_pluginHost);
         _pluginSubscription = _pluginHost.Subscribe(includeValues: true);
         ApplyGenericPluginCards();
@@ -213,11 +185,6 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
             null,
             (_, _) => _ = RefreshAsync(userInitiated: true));
         menu.Items.Add(_refreshMenuItem);
-        _radarMenuItem = new ToolStripMenuItem(_text.OpenRadarWebsite, null, (_, _) => OpenRadarWebsite())
-        {
-            Visible = _settings.EnableRadar,
-        };
-        menu.Items.Add(_radarMenuItem);
         _updateMenuItem = new ToolStripMenuItem(string.Empty, null, (_, _) => OpenUpdatePage())
         {
             Visible = false,
@@ -248,7 +215,6 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _tray.BalloonTipClicked += (_, _) =>
         {
             if (_updateBalloonActive) OpenUpdatePage();
-            else if (_radarBalloonActive) OpenRadarWebsite();
         };
 
         _clockTimer = new System.Windows.Forms.Timer { Enabled = true };
@@ -276,18 +242,15 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _providerActivityTimer.Tick += (_, _) =>
         {
             _ = UpdateProviderActivityAsync(requestRefresh: true);
-            if ((_bar.RadarVisible || _cachedCodexTokenUsage?.PendingConversationCount > 0)
+            if (_cachedCodexTokenUsage?.PendingConversationCount > 0
                 && _activeProviders.Contains(ProviderKind.Codex))
                 _ = RefreshCodexConversationsAsync();
         };
-        _radarTimer = new System.Windows.Forms.Timer { Interval = 60_000 };
-        _radarTimer.Tick += (_, _) => _ = RefreshRadarAsync();
         _updateTimer = new System.Windows.Forms.Timer { Interval = 6 * 60 * 60 * 1000 };
         _updateTimer.Tick += (_, _) => _ = CheckForUpdatesAsync();
         _updateTimer.Start();
         ApplyRefreshInterval();
         _providerActivityTimer.Start();
-        ApplyRadarInterval();
         ApplyClockInterval();
 
         _bar.Show();
@@ -331,7 +294,6 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _bar.BeginInvoke(() => _ = RefreshAsync());
         _bar.BeginInvoke(() => _ = CheckForUpdatesAsync());
         if (openSettingsOnStart) _bar.BeginInvoke(OpenSettings);
-        if (_settings.EnableRadar) _bar.BeginInvoke(() => _ = RefreshRadarAsync());
     }
 
     private void EnsureVisible()
@@ -366,7 +328,6 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _quitting = true;
         _shutdown.Cancel();
         _refreshTimer.Stop();
-        _radarTimer.Stop();
         _updateTimer.Stop();
         _clockTimer.Stop();
         _confirmationTimer.Stop();
@@ -377,8 +338,6 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         {
             await _refreshGate.WaitAsync();
             _refreshGate.Release();
-            await _radarGate.WaitAsync();
-            _radarGate.Release();
             await _codexTokenUsageGate.WaitAsync();
             _codexTokenUsageGate.Release();
             await _systemUsageGate.WaitAsync();
@@ -417,7 +376,6 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
             _shutdown.Cancel();
             _refreshTimer.Dispose();
             _providerActivityTimer.Dispose();
-            _radarTimer.Dispose();
             _updateTimer.Dispose();
             _clockTimer.Dispose();
             _confirmationTimer.Dispose();
@@ -426,9 +384,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
             _tray.Dispose();
             _bar.Dispose();
             _coordinator.Dispose();
-            _radarService.Dispose();
             _refreshGate.Dispose();
-            _radarGate.Dispose();
             _codexTokenUsageGate.Dispose();
             _systemUsageGate.Dispose();
             _updateGate.Dispose();
