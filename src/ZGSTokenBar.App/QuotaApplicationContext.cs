@@ -289,7 +289,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         _providerActivityTimer = new System.Windows.Forms.Timer { Interval = 5_000 };
         _providerActivityTimer.Tick += (_, _) =>
         {
-            UpdateProviderActivity(requestRefresh: true);
+            _ = UpdateProviderActivityAsync(requestRefresh: true);
             if ((_bar.RadarVisible || _cachedCodexTokenUsage?.PendingConversationCount > 0)
                 && _activeProviders.Contains(ProviderKind.Codex))
                 _ = RefreshCodexConversationsAsync();
@@ -359,15 +359,24 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
                 ApplySettingsSnapshot(restored);
                 await SyncPluginEnablementAsync(suppressErrors: false, _shutdown.Token);
             }
-            UpdateProviderActivity(requestRefresh: false);
+            await UpdateProviderActivityAsync(requestRefresh: false);
+            if (_shutdown.IsCancellationRequested || _bar.IsDisposed) return;
             _bar.SetRefreshing(true);
-            var activeCandidate = await _coordinator.RefreshAsync(
-                _settings,
-                _snapshot,
-                _shutdown.Token,
-                allowClaudeOAuthRefresh: userInitiated,
-                forceProviderRefresh: userInitiated || forceProviderRefresh,
-                activeProviders: _activeProviders);
+            // The coordinator's synchronous prefix (process snapshots, account files, credential
+            // stats) must never run on the UI thread: when the bar is embedded in the taskbar a
+            // busy UI thread also stalls Explorer's input for the shared queue.
+            var settings = _settings;
+            var previousSnapshot = _snapshot;
+            var activeProviders = _activeProviders;
+            var activeCandidate = await Task.Run(
+                () => _coordinator.RefreshAsync(
+                    settings,
+                    previousSnapshot,
+                    _shutdown.Token,
+                    allowClaudeOAuthRefresh: userInitiated,
+                    forceProviderRefresh: userInitiated || forceProviderRefresh,
+                    activeProviders: activeProviders),
+                _shutdown.Token);
             if (_shutdown.IsCancellationRequested || _bar.IsDisposed) return;
             var observedAt = DateTimeOffset.UtcNow;
             var candidate = MergeActiveProviderResults(
@@ -644,7 +653,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         }
         ApplyRefreshInterval();
         _bar.ApplySettings(_settings);
-        UpdateProviderActivity(requestRefresh: false);
+        _ = UpdateProviderActivityAsync(requestRefresh: false);
         _bar.SetQuotaPaceEstimates(QuotaPaceEstimates(_snapshot, DateTimeOffset.UtcNow));
         _bar.SetRadarProviders(_settings.EnableRadar ? [_radarService.Provider] : []);
         ApplyRadarInterval();
@@ -858,22 +867,54 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         return (accounts.Item1, accounts.Item2, instances.Item1, instances.Item2);
     }
 
-    private void UpdateProviderActivity(bool requestRefresh)
+    private Task? _providerActivityTask;
+
+    /// <summary>
+    /// Detects running providers and Codex accounts off the UI thread (Toolhelp snapshots and
+    /// account-file reads cost 30-150 ms), then applies the result on the UI thread. Overlapping
+    /// callers share the probe already in flight instead of starting another one.
+    /// </summary>
+    private Task UpdateProviderActivityAsync(bool requestRefresh)
     {
-        if (_quitting || _bar.IsDisposed) return;
+        if (_quitting || _bar.IsDisposed) return Task.CompletedTask;
         if (_store.SettingsReadPending)
         {
             if (requestRefresh) _ = RefreshAsync();
+            return Task.CompletedTask;
+        }
+
+        if (_providerActivityTask is { IsCompleted: false } running) return running;
+        return _providerActivityTask = UpdateProviderActivityCoreAsync(requestRefresh);
+    }
+
+    private async Task UpdateProviderActivityCoreAsync(bool requestRefresh)
+    {
+        var settings = _settings;
+        var previousStamp = _codexAccountStamp;
+        var readAt = _codexAccountsReadAt;
+        var tick = Environment.TickCount64;
+        (ValueTuple<long, long, long, long> Stamp, IReadOnlyList<CodexAccountInfo>? Accounts, HashSet<ProviderKind> Providers) probe;
+        try
+        {
+            probe = await Task.Run(() =>
+            {
+                var stamp = CodexAccountFilesStamp();
+                var accounts = !requestRefresh || stamp != previousStamp || tick - readAt >= CodexAccountPollMs
+                    ? CockpitCodexAccountDirectory.Read()
+                    : null;
+                return (stamp, accounts, ActiveProviders(settings));
+            }, _shutdown.Token);
+        }
+        catch (OperationCanceledException)
+        {
             return;
         }
 
-        var stamp = CodexAccountFilesStamp();
-        var tick = Environment.TickCount64;
-        if (!requestRefresh || stamp != _codexAccountStamp || tick - _codexAccountsReadAt >= CodexAccountPollMs)
+        if (_quitting || _bar.IsDisposed || _shutdown.IsCancellationRequested) return;
+        if (probe.Accounts is { } nextAccounts)
         {
-            _codexAccountStamp = stamp;
+            _codexAccountStamp = probe.Stamp;
             _codexAccountsReadAt = tick;
-            var nextAccounts = CockpitCodexAccountDirectory.Read();
             if (!AccountsEqual(_codexAccounts, nextAccounts))
             {
                 _codexAccounts = nextAccounts;
@@ -881,7 +922,10 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
             }
         }
 
-        var nextProviders = ActiveProviders(_settings);
+        // Settings may have changed while the probe ran; keep only providers still enabled.
+        var nextProviders = ReferenceEquals(settings, _settings)
+            ? probe.Providers
+            : probe.Providers.Where(_settings.IsEnabled).ToHashSet();
         if (nextProviders.SetEquals(_activeProviders)) return;
 
         var codexWasActive = _activeProviders.Contains(ProviderKind.Codex);
@@ -1117,7 +1161,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         try
         {
             var summary = await Task.Run(
-                () => _codexTokenUsageLedger.Refresh(observedAt, _shutdown.Token),
+                () => BackgroundWork.BelowNormal(() => _codexTokenUsageLedger.Refresh(observedAt, _shutdown.Token)),
                 _shutdown.Token);
             _cachedCodexTokenUsage = summary;
             if (!_shutdown.IsCancellationRequested
@@ -1158,7 +1202,7 @@ internal sealed class QuotaApplicationContext : ApplicationContext, IDesktopCont
         try
         {
             var summary = await Task.Run(
-                () => _codexTokenUsageLedger.RefreshConversations(DateTimeOffset.UtcNow, _shutdown.Token),
+                () => BackgroundWork.BelowNormal(() => _codexTokenUsageLedger.RefreshConversations(DateTimeOffset.UtcNow, _shutdown.Token)),
                 _shutdown.Token);
             if (_shutdown.IsCancellationRequested || _bar.IsDisposed || summary is null
                 || !_activeProviders.Contains(ProviderKind.Codex)) return;

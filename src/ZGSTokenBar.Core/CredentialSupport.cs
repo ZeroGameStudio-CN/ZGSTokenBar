@@ -107,6 +107,44 @@ internal static class CredentialSupport
     }
 
     /// <summary>Atomic replace with UTF-8 bytes; the caller must hold <see cref="AcquireWriteLockFor"/>.</summary>
+    /// <summary>
+    /// Atomic replace for large documents: the caller streams into the temporary file through a
+    /// large buffer, so multi-MB JSON never materializes as one LOH array (which forces blocking
+    /// gen2 collections in this non-concurrent-GC process and stalls the UI thread).
+    /// </summary>
+    internal static void AtomicWriteLockedStream(string path, Action<Stream> write)
+    {
+        var directory = Path.GetDirectoryName(path)!;
+        var temporaryPath = Path.Combine(
+            directory,
+            $".{Path.GetFileName(path)}.{Environment.ProcessId}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            using (var stream = new FileStream(
+                temporaryPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                64 * 1024,
+                FileOptions.SequentialScan))
+            {
+                write(stream);
+                stream.Flush(true);
+            }
+
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(temporaryPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            }
+
+            File.Move(temporaryPath, path, true);
+        }
+        finally
+        {
+            try { File.Delete(temporaryPath); } catch { }
+        }
+    }
+
     internal static void AtomicWriteLockedBytes(string path, byte[] contents)
     {
         var directory = Path.GetDirectoryName(path)!;

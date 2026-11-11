@@ -47,6 +47,11 @@ public sealed class CodexConversationUsageReader
 {
     internal const int ScanBudgetBytes = 8 * 1024 * 1024;
     private const int BootstrapBytes = 2 * 1024 * 1024;
+    // Cold work (new sessions, invalidated checkpoints, long catch-up replays) shares one byte
+    // budget per Refresh so a cold start spreads over several ticks instead of parsing every
+    // recent session in one burst. Live appends to caught-up sessions are never deferred.
+    internal const int DefaultRefreshColdBudgetBytes = 4 * 1024 * 1024;
+    internal int RefreshColdBudgetBytes { get; init; } = DefaultRefreshColdBudgetBytes;
     // Sessions untouched for a while are only re-stated on a slower cadence; a resumed old
     // session is still picked up within ColdRecheckMs.
     private static readonly long ColdFileAgeTicks = TimeSpan.FromMinutes(10).Ticks;
@@ -63,6 +68,7 @@ public sealed class CodexConversationUsageReader
         var turns = new List<CodexConversationTurn>();
         var retained = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         PendingSessions = 0;
+        long coldSpent = 0;
         foreach (var path in paths.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -90,6 +96,15 @@ public sealed class CodexConversationUsageReader
                     if (state.ToTurn(now) is { } unchanged) turns.Add(unchanged);
                     continue;
                 }
+                var cold = state is not { CaughtUp: true, ReadFailed: false };
+                if (cold && coldSpent >= RefreshColdBudgetBytes)
+                {
+                    // Budget for this tick is used up; the next refresh continues here.
+                    PendingSessions++;
+                    if (state?.ToTurn(now) is { } deferred && state.Offset >= state.Length) turns.Add(deferred);
+                    continue;
+                }
+
                 using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
                     FileShare.ReadWrite | FileShare.Delete);
                 var length = stream.Length;
@@ -106,6 +121,7 @@ public sealed class CodexConversationUsageReader
                         state.LineTooLong = stream.ReadByte() != '\n';
                         var bootstrapRead = Scan(stream, length, state, now, cancellationToken, BootstrapBytes);
                         ScannedBytes += bootstrapRead;
+                        coldSpent += bootstrapRead;
                         budget -= bootstrapRead;
                         // A complete recent turn needs no historical replay. Long turns fall back to bounded catch-up.
                         if (state.Active is null || !state.Active.HasCounterBaseline) state = new FileState(SessionId(path));
@@ -117,6 +133,7 @@ public sealed class CodexConversationUsageReader
                     state.CaughtUp = false;
                     var consumed = Scan(stream, length, state, now, cancellationToken, budget);
                     ScannedBytes += consumed;
+                    if (cold) coldSpent += consumed;
                     ParsedFiles++;
                     state.Length = length;
                     state.WriteTicks = file.LastWriteTimeUtc.Ticks;

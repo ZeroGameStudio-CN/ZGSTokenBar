@@ -102,8 +102,13 @@ internal sealed class OtherToolsModule : IDisposable
                 new HttpUsageTransport(_http),
                 ProcessUsageEnvironment.Instance,
                 _enabled(UsageProviderIds.Claude));
-            var fetched = await UsageProviderEngine.LoadAsync(request, CancellationToken.None).ConfigureAwait(true);
-            fetched = await WithCliAsync(fetched).ConfigureAwait(true);
+            // Account discovery (SQLite probes, credential stats) runs synchronously inside
+            // LoadAsync before its first await; keep it and the CLI fallbacks off the UI thread.
+            var fetched = await Task.Run(async () =>
+            {
+                var board = await UsageProviderEngine.LoadAsync(request, CancellationToken.None).ConfigureAwait(false);
+                return await WithCliAsync(board).ConfigureAwait(false);
+            }).ConfigureAwait(true);
             if (_disposed) return;
             _fetched = fetched;
             Publish();

@@ -98,14 +98,66 @@ public static class UsageAccountDirectory
     {
         var accounts = new List<UsageCredential>();
         var home = environment.Get("GROK_HOME");
-        var auth = Path.Combine(string.IsNullOrWhiteSpace(home) ? Path.Combine(paths.Home, ".grok") : home, "auth.json");
-        accounts.AddRange(ReadGrokAuth(auth));
+        var root = string.IsNullOrWhiteSpace(home) ? Path.Combine(paths.Home, ".grok") : home;
+        var fromAuth = ReadGrokAuth(Path.Combine(root, "auth.json"));
+        // auth.json only carries the sign-in type (auth_mode, e.g. "OIDC"), never the plan.
+        // The Grok CLI caches the plan's display name in settings_cache.json (no secrets);
+        // it describes the one signed-in identity, so only attach it when that is unambiguous.
+        if (fromAuth.Count == 1 && ReadGrokPlan(Path.Combine(root, "settings_cache.json")) is { } plan)
+        {
+            var only = fromAuth[0];
+            var fields = new Dictionary<string, string>(only.Fields, StringComparer.Ordinal) { ["plan"] = plan };
+            fromAuth = [new UsageCredential(only.AccountId, only.Label, only.SourceKind, only.Secret, fields, only.UnavailableReason)];
+        }
+
+        accounts.AddRange(fromAuth);
         if (environment.Get("GROK_OAUTH_TOKEN") is { Length: > 0 } token)
         {
             accounts.Add(new UsageCredential("grok-env", "Grok", "environment", token));
         }
 
         return accounts;
+    }
+
+    /// <summary>
+    /// Reads the plan display name ("SuperGrok Heavy", …) from the Grok CLI's settings cache.
+    /// The file is <c>{ payload: "&lt;json&gt;", signature: [...] }</c>; the plan sits at
+    /// <c>payload.settings.subscription_tier_display</c> (or <c>subscription_tier</c>).
+    /// </summary>
+    internal static string? ReadGrokPlan(string path)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            if (!info.Exists || info.Length is 0 or > 1024 * 1024) return null;
+            using var outer = JsonDocument.Parse(File.ReadAllBytes(path));
+            if (outer.RootElement.ValueKind != JsonValueKind.Object) return null;
+            JsonDocument? owned = null;
+            try
+            {
+                var payload = outer.RootElement.TryGetProperty("payload", out var raw) ? raw : outer.RootElement;
+                if (payload.ValueKind == JsonValueKind.String)
+                {
+                    owned = JsonDocument.Parse(payload.GetString() ?? "");
+                    payload = owned.RootElement;
+                }
+
+                if (payload.ValueKind != JsonValueKind.Object) return null;
+                var settings = payload.TryGetProperty("settings", out var inner) && inner.ValueKind == JsonValueKind.Object
+                    ? inner
+                    : payload;
+                var plan = StringOf(settings, "subscription_tier_display", "subscription_tier");
+                return plan is { Length: > 0 and <= 48 } ? plan : null;
+            }
+            finally
+            {
+                owned?.Dispose();
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return null;
+        }
     }
 
     internal static IReadOnlyList<UsageCredential> ReadGrokAuth(string path)
@@ -145,7 +197,7 @@ public static class UsageAccountDirectory
             expired ? null : secret,
             new Dictionary<string, string>(StringComparer.Ordinal)
             {
-                ["plan"] = StringOf(node, "auth_mode") ?? "",
+                ["auth_mode"] = StringOf(node, "auth_mode") ?? "",
             },
             expired ? "credential_expired" : null);
     }

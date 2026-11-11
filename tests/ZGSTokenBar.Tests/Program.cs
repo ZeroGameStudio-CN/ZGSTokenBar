@@ -19,6 +19,39 @@ using ZGSTokenBar.Plugin.AiGatewayObserver;
 
 if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJobExitCode;
 
+if (args.Length == 2 && args[0] == "--grok-plan-hover")
+{
+    // Offscreen render of the unified Grok hover card: the plan pill comes from the Grok CLI's
+    // settings cache; a legacy sign-in type ("OIDC") badge must render without a pill.
+    Directory.CreateDirectory(args[1]);
+    var grokHome = Environment.GetEnvironmentVariable("GROK_HOME") is { Length: > 0 } custom
+        ? custom
+        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".grok");
+    var plan = UsageAccountDirectory.ReadGrokPlan(Path.Combine(grokHome, "settings_cache.json"));
+    var captured = DateTimeOffset.UtcNow;
+    var window = new QuotaWindow("Weekly", 34, captured.AddDays(3).AddHours(5), TimeSpan.FromDays(7));
+    using var resetClock = new System.Drawing.Bitmap(11, 11);
+    foreach (var (name, badge) in new[] { ("hover-grok", plan), ("hover-grok-legacy-oidc", "OIDC") })
+    {
+        var card = new QuotaCard("usage:" + UsageProviderIds.Grok + ":grok", ProviderKind.Claude, "Grok", badge, "#111113", true, [window])
+        {
+            CapturedAt = captured,
+            AccountHint = CodexAccountFormatting.MaskEmail("grok.user@example.com"),
+        };
+        using var popover = new QuotaPopoverForm();
+        using var bitmap = popover.RenderForTest(
+            new QuotaPopoverContent(card, window, null, captured, null, false),
+            NativeText.For("zh-CN"),
+            ProviderIcons.For(UsageProviderIds.Grok)!,
+            resetClock,
+            192,
+            captured);
+        bitmap.Save(Path.Combine(args[1], name + ".png"), System.Drawing.Imaging.ImageFormat.Png);
+        Console.WriteLine($"{name}: badge={badge ?? "<none>"} pill={QuotaPopoverForm.CardPlanLabel(card) ?? "<hidden>"}");
+    }
+    return 0;
+}
+
 if (args.Length > 0 && args[0] == "--codex-usage-strategy")
 {
     CodexUsageStrategyTests.Run(args.Length == 2 ? args[1] : null);
@@ -525,6 +558,7 @@ var tests = new (string Name, Action Run)[]
     ("Taskbar Mini popover placement", TestTaskbarMiniPopoverPlacement),
     ("Taskbar embed attach, detach and parent loss", TestTaskbarEmbeddingWithFakeTaskbar),
     ("Glass dock rate and router slots are layout-stable", TestGlassDockStableSlots),
+        ("Grok plan comes from the settings cache, never the sign-in type", TestGrokPlanFromSettingsCache),
     ("Quota remaining color gradient", TestQuotaRemainingColorGradient),
     ("Native background palette contract", TestNativeBackgroundPaletteContract),
     ("Native settings panel contract", TestNativeSettingsPanelContract),
@@ -16406,6 +16440,32 @@ static void TestTaskbarEmbeddingWithFakeTaskbar()
     System.Windows.Forms.Application.DoEvents();
     Check(child.IsHandleCreated && !TaskbarEmbedding.IsChild(child.Handle), "the window is rebuilt as a top-level overlay after the parent is gone");
     Check(TaskbarEmbedding.Attach(child.Handle, parent, out failure) is null && failure == "taskbar-missing", "attaching to a dead taskbar falls back");
+}
+
+static void TestGrokPlanFromSettingsCache()
+{
+    var root = Path.Combine(Path.GetTempPath(), "zgs-grok-plan-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(root);
+    try
+    {
+        var auth = Path.Combine(root, "auth.json");
+        File.WriteAllText(auth, """{"key":"test-secret","auth_mode":"OIDC","email":"a@example.com"}""");
+        var accounts = UsageAccountDirectory.ReadGrokAuth(auth);
+        Check(accounts.Count == 1 && !accounts[0].Fields.TryGetValue("plan", out _), "auth_mode is not reported as a plan");
+        var cache = Path.Combine(root, "settings_cache.json");
+        var payload = System.Text.Json.JsonSerializer.Serialize("""{"fetched_at":"x","settings":{"subscription_tier":null,"subscription_tier_display":"SuperGrok Heavy"}}""");
+        File.WriteAllText(cache, "{\"payload\":" + payload + ",\"signature\":[1,2]}");
+        Check(UsageAccountDirectory.ReadGrokPlan(cache) == "SuperGrok Heavy", "plan display name is read from the signed settings payload");
+        File.WriteAllText(cache, "{\"payload\":\"{\\\"settings\\\":{\\\"subscription_tier_display\\\":null}}\"}");
+        Check(UsageAccountDirectory.ReadGrokPlan(cache) is null, "a missing plan hides the pill");
+        File.WriteAllText(cache, "not json");
+        Check(UsageAccountDirectory.ReadGrokPlan(cache) is null, "a corrupt cache is ignored");
+        Check(UsageAccountDirectory.ReadGrokPlan(Path.Combine(root, "missing.json")) is null, "a missing cache is ignored");
+    }
+    finally
+    {
+        Directory.Delete(root, true);
+    }
 }
 
 static void TestGlassDockStableSlots()

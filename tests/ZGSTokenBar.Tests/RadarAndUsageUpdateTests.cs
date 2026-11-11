@@ -16,6 +16,7 @@ internal static class RadarAndUsageUpdateTests
         TrialParsingAndFallback();
         ConversationAccounting();
         LongConversationContinuity();
+        ColdStartScanBudgetSpreadsSessions();
         ConversationLifecycle();
         ConversationMetrics();
         ConversationServiceTiers();
@@ -151,6 +152,34 @@ internal static class RadarAndUsageUpdateTests
                 "a missing initial counter cannot fabricate speed");
             File.WriteAllText(path, new string(' ', 3 * 1024 * 1024) + "\n" + Tokens(Now, 5000, 50));
             Check(reader.Refresh([path], Now).Count == 0, "a bounded tail without turn start has no inferred timing");
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    private static void ColdStartScanBudgetSpreadsSessions()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "zgstokenbar-cold-budget-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var paths = Enumerable.Range(1, 3).Select(index =>
+            {
+                var path = Path.Combine(root, $"rollout-00000000-0000-0000-0000-00000000010{index}.jsonl");
+                File.WriteAllText(path, Event(Now, new { type = "task_started", turn_id = "t" + index })
+                    + Tokens(Now.AddSeconds(10), 100 * index, 100 * index)
+                    + Event(Now.AddSeconds(20), new { type = "task_complete", turn_id = "t" + index }), new UTF8Encoding(false));
+                return path;
+            }).ToArray();
+            var reader = new CodexConversationUsageReader { RefreshColdBudgetBytes = 1 };
+            Check(reader.Refresh(paths, Now.AddSeconds(30)).Count == 1 && reader.PendingSessions == 2,
+                "a cold start parses one new session per tick once the shared budget is spent");
+            reader.Refresh(paths, Now.AddSeconds(31));
+            var all = reader.Refresh(paths, Now.AddSeconds(32));
+            Check(all.Count == 3 && reader.PendingSessions == 0, "deferred sessions are caught up on later ticks");
+            File.AppendAllText(paths[2], Tokens(Now.AddSeconds(25), 400, 100));
+            File.AppendAllText(paths[0], Tokens(Now.AddSeconds(25), 200, 100));
+            Check(reader.Refresh(paths, Now.AddSeconds(33)).Count == 3 && reader.PendingSessions == 0,
+                "live appends to caught-up sessions are never deferred by the cold budget");
         }
         finally { Directory.Delete(root, true); }
     }

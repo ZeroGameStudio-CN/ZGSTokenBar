@@ -947,15 +947,24 @@ public sealed class AppSettingsStore
         }
         else
         {
-            byte[]? contents;
-            try { contents = file.Exists ? File.ReadAllBytes(path) : null; }
+            FileStream? stream;
+            try
+            {
+                stream = file.Exists
+                    ? new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 64 * 1024, FileOptions.SequentialScan)
+                    : null;
+            }
             catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
             {
-                contents = null;
+                stream = null;
             }
             try
             {
-                current = contents is null ? new() : ParseCodexTokenUsageIndex(contents);
+                using (stream)
+                {
+                    // Streamed parse: no whole-file byte[] on the large-object heap.
+                    current = stream is null ? new() : ParseCodexTokenUsageIndex(stream);
+                }
             }
             catch (Exception exception) when (exception is JsonException or InvalidOperationException)
             {
@@ -966,9 +975,9 @@ public sealed class AppSettingsStore
         var result = refresh(current);
         if (result.Changed)
         {
-            CredentialSupport.AtomicWriteLockedBytes(
+            CredentialSupport.AtomicWriteLockedStream(
                 path,
-                JsonSerializer.SerializeToUtf8Bytes(result.Index, SettingsJsonContext.CodexTokenUsageIndex));
+                stream => JsonSerializer.Serialize(stream, result.Index, SettingsJsonContext.CodexTokenUsageIndex));
             file.Refresh();
             if (file.Exists) _codexTokenUsageIndexCache = (file.Length, file.LastWriteTimeUtc.Ticks, result.Index);
         }
@@ -980,14 +989,13 @@ public sealed class AppSettingsStore
         return result;
     }
 
-    private static CodexTokenUsageIndex ParseCodexTokenUsageIndex(byte[] utf8)
+    private static CodexTokenUsageIndex ParseCodexTokenUsageIndex(Stream utf8)
     {
-        ReadOnlySpan<byte> json = utf8;
-        if (json.StartsWith((ReadOnlySpan<byte>)[0xEF, 0xBB, 0xBF])) json = json[3..];
-        var index = JsonSerializer.Deserialize(json, SettingsJsonContext.CodexTokenUsageIndex)
+        var index = JsonSerializer.Deserialize(utf8, SettingsJsonContext.CodexTokenUsageIndex)
             ?? throw new JsonException("Invalid Codex token usage index.");
         return ValidateCodexTokenUsageIndex(index);
     }
+
 
     private static CodexTokenUsageIndex ParseCodexTokenUsageIndex(string json)
     {

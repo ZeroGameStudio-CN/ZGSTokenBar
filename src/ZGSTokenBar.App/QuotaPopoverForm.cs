@@ -507,8 +507,15 @@ internal sealed class QuotaPopoverForm : Form
         if (string.IsNullOrWhiteSpace(card.Badge)) return null;
         if (card.Provider == ProviderKind.Codex) return PlanBadgePresentation.Label(card.Badge);
         var label = card.Badge.Trim().ToUpperInvariant();
-        return label.Length > 14 ? label[..14] : label;
+        // A sign-in type is not a plan; older snapshots stored Grok's auth_mode here.
+        if (SignInTypes.Contains(label)) return null;
+        return label.Length > 18 ? label[..18].TrimEnd() : label;
     }
+
+    private static readonly HashSet<string> SignInTypes = new(StringComparer.Ordinal)
+    {
+        "OIDC", "OAUTH", "OAUTH2", "API_KEY", "APIKEY", "API KEY", "SSO", "DEVICE", "BROWSER", "TOKEN",
+    };
 
     private static void DrawTokenIcon(Graphics graphics, RectangleF bounds, Color color)
     {
