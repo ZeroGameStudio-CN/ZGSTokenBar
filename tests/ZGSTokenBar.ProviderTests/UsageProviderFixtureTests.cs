@@ -17,6 +17,7 @@ public static class UsageProviderFixtureTests
         VerifyEngine().GetAwaiter().GetResult();
         VerifyProjectionAndSvg();
         VerifyGlassDock();
+        VerifyRegistry().GetAwaiter().GetResult();
         if (args is { Length: 1 }) WriteGallery(args[0]);
         Console.WriteLine("PASS usage provider fixtures");
         return 0;
@@ -206,6 +207,47 @@ public static class UsageProviderFixtureTests
                 && repeated.Count(account => account.AccountId.Equals("ada", StringComparison.OrdinalIgnoreCase)) == 1, "duplicate accounts collapse");
             Check(repeated.Single(account => account.AccountId.Equals("ada", StringComparison.OrdinalIgnoreCase)).Freshness == UsageFreshness.Current,
                 "the current duplicate wins");
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    private static async Task VerifyRegistry()
+    {
+        var ids = UsageProviderRegistry.All.Select(provider => provider.Definition.Id).ToArray();
+        Check(ids.Distinct(StringComparer.Ordinal).Count() == ids.Length, "provider ids are unique");
+        Check(ProviderCatalog.All.Select(definition => definition.Id).SequenceEqual(ids), "the catalog is the registry, in order");
+        Check(ids.All(id => UsageProviderRegistry.Find(id)?.Definition.Id == id), "every provider is found by id");
+        Check(UsageProviderRegistry.All.All(provider => provider.RefreshInterval > TimeSpan.Zero), "every provider has a refresh interval");
+        Check(UsageProviderRegistry.Find(UsageProviderIds.Codex)!.FetchesUsage == false, "codex stays projected");
+        Check(UsageProviderRegistry.All.Where(provider => provider.FetchesUsage).All(provider =>
+            provider.BuildRequest(new UsageCredential("a", "a", "test", Secret, new Dictionary<string, string> { ["team"] = "team1" })) is { } request
+                && UsageEndpoints.IsAllowed(request.Method, request.Url)), "every provider request is on the endpoint allowlist");
+
+        var root = Temp();
+        try
+        {
+            var runs = new List<string>();
+            var fallback = new UsageCliFallback((executable, arguments) =>
+            {
+                runs.Add(string.Join(' ', arguments));
+                return Task.FromResult<string?>(arguments.Contains("/usage") ? null : "{}");
+            });
+            var bin = Path.Combine(root, "agy", "bin");
+            Directory.CreateDirectory(bin);
+            File.WriteAllText(Path.Combine(bin, "agy.exe"), "");
+            var context = new UsageDetectContext(new UsagePaths(root, root, root), new MapUsageEnvironment(new Dictionary<string, string>()), true);
+            var now = DateTimeOffset.Parse("2026-11-10T00:00:00Z");
+            await fallback.ApplyAsync(UsageBoard.Empty, context, id => id == UsageProviderIds.Antigravity, now);
+            Check(runs.Count == 2, "every CLI attempt is tried until one parses");
+            await fallback.ApplyAsync(UsageBoard.Empty, context, id => id == UsageProviderIds.Antigravity, now.AddMinutes(5));
+            Check(runs.Count == 2, "a slow CLI's reading is reused inside its cache window");
+            await fallback.ApplyAsync(UsageBoard.Empty, context, id => id == UsageProviderIds.Antigravity, now.AddMinutes(11));
+            Check(runs.Count == 4, "the CLI runs again once the cache window passes");
+            await fallback.ApplyAsync(UsageBoard.Empty, context, _ => false, now.AddMinutes(30));
+            Check(runs.Count == 4, "a disabled provider never spawns its CLI");
         }
         finally
         {

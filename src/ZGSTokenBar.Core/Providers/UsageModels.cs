@@ -74,7 +74,6 @@ public sealed record ProviderDefinition(
     string DisplayName,
     string Accent,
     int Order,
-    string FetcherKey,
     UsageSurface Surface,
     string Source);
 
@@ -94,29 +93,9 @@ public static class UsageProviderIds
 
 public static class ProviderCatalog
 {
+    /// <summary>Provider metadata in board order; the providers themselves live in <see cref="UsageProviderRegistry"/>.</summary>
     public static IReadOnlyList<ProviderDefinition> All { get; } =
-    [
-        new(UsageProviderIds.Grok, "Grok", "#38bdf8", 900, "grok", UsageSurface.Mini,
-            "GET https://cli-chat-proxy.grok.com/v1/billing?format=credits with ~/.grok/auth.json, else grok usage --json"),
-        new(UsageProviderIds.Claude, "Claude", "#d97757", 100, "claude-extra", UsageSurface.Projected,
-            "Existing OAuth usage read; extra accounts from ~/.claude/accounts"),
-        new(UsageProviderIds.Codex, "Codex", "#10a37f", 110, "none", UsageSurface.Projected,
-            "Existing ChatGPT wham/usage read, one snapshot per local account"),
-        new(UsageProviderIds.Cursor, "Cursor", "#8b5cf6", 920, "cursor", UsageSurface.Mini,
-            "GET https://cursor.com/api/usage-summary with the local Cursor session"),
-        new(UsageProviderIds.Antigravity, "Antigravity", "#4285f4", 910, "antigravity", UsageSurface.Mini,
-            "agy /usage text or Cloud Code retrieveUserQuotaSummary"),
-        new(UsageProviderIds.Copilot, "Copilot", "#6e40c9", 930, "copilot", UsageSurface.Mini,
-            "GET https://api.github.com/copilot_internal/user with the GitHub CLI token"),
-        new(UsageProviderIds.DeepSeek, "DeepSeek", "#4d6bfe", 940, "deepseek", UsageSurface.Mini,
-            "GET https://api.deepseek.com/user/balance; Harness balance still projects in"),
-        new(UsageProviderIds.OpenCode, "OpenCode", "#f97316", 950, "opencode", UsageSurface.Mini,
-            "GET https://opencode.ai/zen/go/v1/usage with the local OpenCode key"),
-        new(UsageProviderIds.Xai, "xAI", "#a3e635", 960, "xai", UsageSurface.Mini,
-            "GET https://management-api.x.ai/v1/billing/teams/{team}/prepaid/balance"),
-        new(UsageProviderIds.OpenRouter, "OpenRouter", "#6467f2", 970, "openrouter", UsageSurface.Mini,
-            "GET https://openrouter.ai/api/v1/credits"),
-    ];
+        UsageProviderRegistry.All.Select(provider => provider.Definition).ToArray();
 
     private static readonly HashSet<string> MiniIds = All
         .Where(provider => provider.Surface == UsageSurface.Mini)
@@ -131,8 +110,7 @@ public static class ProviderCatalog
     public static bool IsUsageProvider(string? id) =>
         id is not null && All.Any(provider => string.Equals(provider.Id, id, StringComparison.Ordinal));
 
-    public static ProviderDefinition? Find(string id) =>
-        All.FirstOrDefault(provider => string.Equals(provider.Id, id, StringComparison.Ordinal));
+    public static ProviderDefinition? Find(string id) => UsageProviderRegistry.Find(id)?.Definition;
 }
 
 public static class UsageAccounts

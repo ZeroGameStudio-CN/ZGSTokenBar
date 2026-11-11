@@ -73,19 +73,7 @@ public static class UsageAccountDirectory
         IUsageEnvironment environment,
         bool skipPrimaryClaude)
     {
-        var discovered = provider.FetcherKey switch
-        {
-            "grok" => Grok(paths, environment),
-            "claude-extra" => Claude(paths, skipPrimaryClaude),
-            "cursor" => Cursor(paths),
-            "copilot" => Copilot(paths),
-            "deepseek" => Keyed(environment, "DEEPSEEK_API_KEY", "deepseek-api", "DeepSeek"),
-            "opencode" => OpenCode(paths),
-            "xai" => Xai(paths, environment),
-            "openrouter" => Keyed(environment, "OPENROUTER_API_KEY", "openrouter-api", "OpenRouter"),
-            "antigravity" => Antigravity(paths),
-            _ => [],
-        };
+        var discovered = UsageProviderRegistry.Find(provider.Id)?.Detect(new UsageDetectContext(paths, environment, skipPrimaryClaude)) ?? [];
         return discovered
             .Concat(Declared(provider.Id, paths))
             .GroupBy(account => account.AccountId, StringComparer.OrdinalIgnoreCase)
@@ -94,7 +82,7 @@ public static class UsageAccountDirectory
             .ToArray();
     }
 
-    private static IReadOnlyList<UsageCredential> Grok(UsagePaths paths, IUsageEnvironment environment)
+    internal static IReadOnlyList<UsageCredential> DetectGrok(UsagePaths paths, IUsageEnvironment environment)
     {
         var accounts = new List<UsageCredential>();
         var home = environment.Get("GROK_HOME");
@@ -209,7 +197,7 @@ public static class UsageAccountDirectory
             expired ? "credential_expired" : null);
     }
 
-    private static IReadOnlyList<UsageCredential> Claude(UsagePaths paths, bool skipPrimary)
+    internal static IReadOnlyList<UsageCredential> DetectClaude(UsagePaths paths, bool skipPrimary)
     {
         var root = Path.Combine(paths.Home, ".claude");
         var accounts = new List<UsageCredential>();
@@ -241,7 +229,7 @@ public static class UsageAccountDirectory
         }
     }
 
-    private static IReadOnlyList<UsageCredential> Cursor(UsagePaths paths)
+    internal static IReadOnlyList<UsageCredential> DetectCursor(UsagePaths paths)
     {
         var accounts = new List<UsageCredential>();
         foreach (var candidate in new[]
@@ -265,7 +253,7 @@ public static class UsageAccountDirectory
         return accounts;
     }
 
-    private static IReadOnlyList<UsageCredential> Copilot(UsagePaths paths)
+    internal static IReadOnlyList<UsageCredential> DetectCopilot(UsagePaths paths)
     {
         foreach (var candidate in new[]
         {
@@ -350,7 +338,7 @@ public static class UsageAccountDirectory
         return new UsageCredential(user ?? "github", user ?? "GitHub", "github-cli", token);
     }
 
-    private static IReadOnlyList<UsageCredential> OpenCode(UsagePaths paths)
+    internal static IReadOnlyList<UsageCredential> DetectOpenCode(UsagePaths paths)
     {
         foreach (var candidate in new[]
         {
@@ -374,7 +362,7 @@ public static class UsageAccountDirectory
         return [];
     }
 
-    private static IReadOnlyList<UsageCredential> Xai(UsagePaths paths, IUsageEnvironment environment)
+    internal static IReadOnlyList<UsageCredential> DetectXai(UsagePaths paths, IUsageEnvironment environment)
     {
         var key = environment.Get("XAI_API_KEY");
         var team = environment.Get("XAI_TEAM_ID");
@@ -396,7 +384,7 @@ public static class UsageAccountDirectory
         })];
     }
 
-    private static IReadOnlyList<UsageCredential> Antigravity(UsagePaths paths)
+    internal static IReadOnlyList<UsageCredential> DetectAntigravity(UsagePaths paths)
     {
         foreach (var candidate in new[]
         {
@@ -442,7 +430,7 @@ public static class UsageAccountDirectory
         }
     }
 
-    private static IReadOnlyList<UsageCredential> Keyed(
+    internal static IReadOnlyList<UsageCredential> DetectKeyed(
         IUsageEnvironment environment,
         string variable,
         string source,

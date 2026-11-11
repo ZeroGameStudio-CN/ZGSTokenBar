@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using ZGSTokenBar.Core;
 using ZGSTokenBar.PluginSdk;
 
@@ -34,7 +33,7 @@ internal sealed class OtherToolsModule : IDisposable
         _bar.PluginPopoverRequested += OnPopoverRequested;
         _timer.Tick += (_, _) =>
         {
-            _timer.Interval = 120_000;
+            _timer.Interval = (int)UsageProviderRegistry.RefreshInterval.TotalMilliseconds;
             _ = RefreshAsync();
         };
         _timer.Start();
@@ -75,19 +74,16 @@ internal sealed class OtherToolsModule : IDisposable
 
     private UsageProviderSnapshot? Placeholder(ProviderDefinition definition)
     {
-        var present = definition.Id switch
-        {
-            GrokId => UsageProbes.GrokPresent(_paths, ProcessUsageEnvironment.Instance),
-            AntigravityId => UsageProbes.AntigravityPresent(_paths),
-            _ => false,
-        };
-        if (!present) return null;
-        return new UsageProviderSnapshot(definition.Id, definition.DisplayName, definition.Accent, definition.Order,
+        var provider = UsageProviderRegistry.Find(definition.Id);
+        if (provider is null || !provider.IsInstalled(DetectContext())) return null;
+        return UsageProviderEngine.Snapshot(definition,
         [
             new UsageAccountSnapshot(definition.Id, definition.DisplayName, null, "probe", [], null, null, [],
                 UsageFreshness.Loading, null, null),
         ]);
     }
+
+    private UsageDetectContext DetectContext() => new(_paths, ProcessUsageEnvironment.Instance, _enabled(UsageProviderIds.Claude));
 
     private async Task RefreshAsync()
     {
@@ -107,7 +103,7 @@ internal sealed class OtherToolsModule : IDisposable
             var fetched = await Task.Run(async () =>
             {
                 var board = await UsageProviderEngine.LoadAsync(request, CancellationToken.None).ConfigureAwait(false);
-                return await WithCliAsync(board).ConfigureAwait(false);
+                return await _cli.ApplyAsync(board, DetectContext(), _enabled, DateTimeOffset.UtcNow).ConfigureAwait(false);
             }).ConfigureAwait(true);
             if (_disposed) return;
             _fetched = fetched;
@@ -122,102 +118,7 @@ internal sealed class OtherToolsModule : IDisposable
         }
     }
 
-    private static readonly TimeSpan AntigravityCliInterval = TimeSpan.FromMinutes(10);
-    private (DateTimeOffset At, UsageParseResult? Parsed)? _antigravityCli;
-
-    private async Task<UsageBoard> WithCliAsync(UsageBoard board)
-    {
-        if (_enabled(GrokId) && !HasReading(board, GrokId) && UsageProbes.GrokExecutable(_paths, ProcessUsageEnvironment.Instance) is { } grok)
-        {
-            board = Replace(board, GrokId, UsageParsers.ParseGrok(await RunAsync(grok, "usage", "--json")), "grok-cli");
-        }
-
-        if (_enabled(AntigravityId)
-            && !HasReading(board, AntigravityId)
-            && UsageProbes.AntigravityExecutable(_paths) is { } antigravity)
-        {
-            // agy spends ~10 s of CPU starting up; its limits move slowly, so reuse a fresh reading
-            // instead of spawning it on every 2-minute refresh.
-            if (_antigravityCli is not { } cached || DateTimeOffset.UtcNow - cached.At > AntigravityCliInterval)
-            {
-                var output = await RunAsync(antigravity, "-p", "/usage", "--print-timeout", "20s");
-                var parsed = UsageParsers.ParseAntigravity(output)
-                    ?? UsageParsers.ParseAntigravity(await RunAsync(antigravity, "-p", "/quota", "--output-format", "json"));
-                cached = (DateTimeOffset.UtcNow, parsed);
-                _antigravityCli = cached;
-            }
-
-            board = Replace(board, AntigravityId, cached.Parsed, "agy-cli");
-        }
-
-        return board;
-    }
-
-    private static UsageBoard Replace(UsageBoard board, string providerId, UsageParseResult? parsed, string source)
-    {
-        var definition = ProviderCatalog.Find(providerId);
-        if (definition is null || (parsed is null && board.Providers.Any(provider => provider.ProviderId == providerId)))
-        {
-            return board;
-        }
-        var account = new UsageAccountSnapshot(
-            source,
-            definition.DisplayName,
-            parsed?.Plan,
-            source,
-            parsed?.Windows ?? [],
-            parsed?.Credits,
-            null,
-            parsed?.Products ?? [],
-            parsed is null ? UsageFreshness.Unavailable : UsageFreshness.Current,
-            DateTimeOffset.UtcNow,
-            parsed is null ? "unavailable" : parsed.ErrorKey);
-        var snapshot = new UsageProviderSnapshot(definition.Id, definition.DisplayName, definition.Accent, definition.Order, [account]);
-        var others = board.Providers.Where(provider => !string.Equals(provider.ProviderId, providerId, StringComparison.Ordinal)).ToArray();
-        return UsageProviderEngine.Merge(new UsageBoard(others), [snapshot]);
-    }
-
-    private static bool HasReading(UsageBoard board, string providerId) =>
-        board.Providers.Any(provider => provider.ProviderId == providerId
-            && provider.Accounts.Any(account => account.Freshness == UsageFreshness.Current
-                && (account.Windows.Any(window => window.UsedPercent is not null) || account.Credits is not null)));
-
-    private static async Task<string?> RunAsync(string executable, params string[] args)
-    {
-        try
-        {
-            using var process = new Process
-            {
-                StartInfo = new ProcessStartInfo(executable)
-                {
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                },
-            };
-            foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
-            if (!process.Start()) return null;
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
-            try
-            {
-                await process.WaitForExitAsync(timeout.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                process.Kill(entireProcessTree: true);
-                return null;
-            }
-
-            if (process.ExitCode != 0) return null;
-            var output = await process.StandardOutput.ReadToEndAsync();
-            return output.Length <= 65_536 ? output : null;
-        }
-        catch (Exception error) when (error is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
-        {
-            return null;
-        }
-    }
+    private readonly UsageCliFallback _cli = new();
 
     private void RequestRefresh()
     {

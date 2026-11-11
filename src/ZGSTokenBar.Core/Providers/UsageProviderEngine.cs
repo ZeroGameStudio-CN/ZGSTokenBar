@@ -50,6 +50,8 @@ public static class UsageEndpoints
             if (Host(host, "api.deepseek.com")) return path == "/user/balance";
             if (Host(host, "opencode.ai")) return path == "/zen/go/v1/usage";
             if (Host(host, "openrouter.ai")) return path == "/api/v1/credits";
+            // Extra Claude accounts (~/.claude/accounts) use the same OAuth usage read as the primary login.
+            if (Host(host, "api.anthropic.com")) return path == "/api/oauth/usage";
             if (Host(host, "management-api.x.ai"))
             {
                 return path.StartsWith("/v1/billing/teams/", StringComparison.Ordinal)
@@ -148,10 +150,11 @@ public static class UsageProviderEngine
     public static async Task<UsageBoard> LoadAsync(UsageLoadRequest request, CancellationToken cancellationToken)
     {
         var providers = new List<UsageProviderSnapshot>();
-        foreach (var definition in ProviderCatalog.All)
+        foreach (var provider in UsageProviderRegistry.All)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!request.IsEnabled(definition.Id) || definition.FetcherKey == "none") continue;
+            var definition = provider.Definition;
+            if (!request.IsEnabled(definition.Id) || !provider.FetchesUsage) continue;
             var accounts = new List<UsageAccountSnapshot>();
             foreach (var credential in UsageAccountDirectory.Discover(
                 definition,
@@ -160,33 +163,19 @@ public static class UsageProviderEngine
                 request.SkipPrimaryClaude))
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                accounts.Add(await ReadAccountAsync(definition, credential, request, cancellationToken).ConfigureAwait(false));
+                accounts.Add(await ReadAccountAsync(provider, credential, request, cancellationToken).ConfigureAwait(false));
             }
 
-            if (definition.FetcherKey == "grok" && accounts.Count > 0)
-            {
-                var home = request.Environment.Get("GROK_HOME");
-                var ledger = UsageLedgerReader.ReadGrok(
-                    string.IsNullOrWhiteSpace(home) ? Path.Combine(request.Paths.Home, ".grok") : home,
-                    request.Now);
-                if (ledger is not null)
-                {
-                    accounts[0] = accounts[0] with { Ledger = ledger };
-                }
-            }
-
-            var normalized = UsageAccounts.Normalize(accounts);
+            var normalized = UsageAccounts.Normalize(provider.Enrich(accounts, request));
             if (normalized.Count == 0) continue;
-            providers.Add(new UsageProviderSnapshot(
-                definition.Id,
-                definition.DisplayName,
-                definition.Accent,
-                definition.Order,
-                normalized));
+            providers.Add(Snapshot(definition, normalized));
         }
 
         return new UsageBoard(providers);
     }
+
+    public static UsageProviderSnapshot Snapshot(ProviderDefinition definition, IReadOnlyList<UsageAccountSnapshot> accounts) =>
+        new(definition.Id, definition.DisplayName, definition.Accent, definition.Order, accounts);
 
     public static UsageBoard Merge(UsageBoard fetched, IReadOnlyList<UsageProviderSnapshot>? external)
     {
@@ -206,32 +195,18 @@ public static class UsageProviderEngine
     }
 
     private static async Task<UsageAccountSnapshot> ReadAccountAsync(
-        ProviderDefinition definition,
+        IUsageProvider provider,
         UsageCredential credential,
         UsageLoadRequest request,
         CancellationToken cancellationToken)
     {
-        // An expired Grok CLI access token is renewed with the CLI's own refresh token (and written
-        // back for the CLI), so a signed-in CLI never shows "sign-in expired" just for being idle.
-        if (credential.Secret is null
-            && definition.FetcherKey == "grok"
-            && credential.Fields.TryGetValue(GrokTokenRefresher.PathField, out var authPath)
-            && credential.Fields.TryGetValue(GrokTokenRefresher.EntryField, out var authEntry)
-            && await GrokTokenRefresher.RefreshAsync(authPath, authEntry, request.Transport, request.Now, cancellationToken)
-                .ConfigureAwait(false) is { } renewed)
-        {
-            var fields = credential.Fields
-                .Where(field => field.Key is not GrokTokenRefresher.PathField and not GrokTokenRefresher.EntryField)
-                .ToDictionary(field => field.Key, field => field.Value, StringComparer.Ordinal);
-            credential = new UsageCredential(credential.AccountId, credential.Label, credential.SourceKind, renewed, fields);
-        }
-
+        credential = await provider.PrepareAsync(credential, request, cancellationToken).ConfigureAwait(false);
         if (credential.Secret is null)
         {
             return Account(credential, null, UsageFreshness.MissingCredentials, request.Now, credential.UnavailableReason ?? "missing_credentials");
         }
 
-        var http = Build(definition.FetcherKey, credential);
+        var http = provider.BuildRequest(credential);
         if (http is null)
         {
             return Account(credential, null, UsageFreshness.Unavailable, request.Now, "endpoint_blocked");
@@ -243,7 +218,7 @@ public static class UsageProviderEngine
             return Account(credential, null, Freshness(result), request.Now, result.ErrorKey ?? StatusKey(result.Status));
         }
 
-        var parsed = Parse(definition.FetcherKey, result.Body);
+        var parsed = provider.Parse(result.Body);
         return parsed is null
             ? Account(credential, null, UsageFreshness.Unavailable, request.Now, "unavailable")
             : Account(
@@ -296,105 +271,6 @@ public static class UsageProviderEngine
         429 => "rate_limited",
         _ => "http_error",
     };
-
-    private static UsageParseResult? Parse(string fetcher, string? json) => fetcher switch
-    {
-        "grok" => UsageParsers.ParseGrok(json),
-        "cursor" => UsageParsers.ParseCursor(json),
-        "copilot" => UsageParsers.ParseCopilot(json),
-        "deepseek" => UsageParsers.ParseDeepSeek(json),
-        "opencode" => UsageParsers.ParseOpenCode(json),
-        "xai" => UsageParsers.ParseXai(json),
-        "openrouter" => UsageParsers.ParseOpenRouter(json),
-        "antigravity" => UsageParsers.ParseAntigravity(json),
-        "claude-extra" => ParseClaude(json),
-        _ => null,
-    };
-
-    private static UsageParseResult? ParseClaude(string? json)
-    {
-        try
-        {
-            return json is null ? null : UsageParsers.FromClaude(ClaudeUsageParser.Parse(json));
-        }
-        catch (Exception error) when (error is System.Text.Json.JsonException or FormatException or InvalidOperationException)
-        {
-            return null;
-        }
-    }
-
-    private static UsageHttpRequest? Build(string fetcher, UsageCredential credential)
-    {
-        var bearer = "Bearer " + credential.Secret;
-        return fetcher switch
-        {
-            "grok" => Get(
-                "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
-                new Dictionary<string, string>(StringComparer.Ordinal)
-                {
-                    ["Authorization"] = bearer,
-                    ["Accept"] = "application/json",
-                    ["x-xai-token-auth"] = "xai-grok-cli",
-                }),
-            "cursor" => Get(
-                "https://cursor.com/api/usage-summary",
-                new Dictionary<string, string>(StringComparer.Ordinal)
-                {
-                    ["Cookie"] = "WorkosCursorSessionToken=" + Uri.EscapeDataString(
-                        (credential.Fields.TryGetValue("user", out var user) ? user : credential.AccountId)
-                        + "::"
-                        + credential.Secret),
-                    ["Accept"] = "application/json",
-                }),
-            "copilot" => Get(
-                "https://api.github.com/copilot_internal/user",
-                new Dictionary<string, string>(StringComparer.Ordinal)
-                {
-                    ["Authorization"] = bearer,
-                    ["Accept"] = "application/json",
-                    ["User-Agent"] = "GitHubCopilotChat/0.26.7",
-                    ["Editor-Version"] = "vscode/1.96.2",
-                    ["Editor-Plugin-Version"] = "copilot-chat/0.26.7",
-                }),
-            "deepseek" => Get(
-                "https://api.deepseek.com/user/balance",
-                Bearer(bearer)),
-            "opencode" => Get(
-                "https://opencode.ai/zen/go/v1/usage",
-                Bearer(bearer)),
-            "openrouter" => Get(
-                "https://openrouter.ai/api/v1/credits",
-                Bearer(bearer)),
-            "xai" => credential.Fields.TryGetValue("team", out var team)
-                ? Get("https://management-api.x.ai/v1/billing/teams/" + team + "/prepaid/balance", Bearer(bearer))
-                : null,
-            "antigravity" => new UsageHttpRequest(
-                "POST",
-                new Uri("https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"),
-                Bearer(bearer),
-                "{}"),
-            "claude-extra" => Get(
-                "https://api.anthropic.com/api/oauth/usage",
-                new Dictionary<string, string>(StringComparer.Ordinal)
-                {
-                    ["Authorization"] = bearer,
-                    ["Accept"] = "application/json",
-                    ["anthropic-version"] = "2023-06-01",
-                    ["anthropic-beta"] = "oauth-2025-04-20",
-                    ["User-Agent"] = "claude-code/1.0",
-                }),
-            _ => null,
-        };
-    }
-
-    private static Dictionary<string, string> Bearer(string bearer) => new(StringComparer.Ordinal)
-    {
-        ["Authorization"] = bearer,
-        ["Accept"] = "application/json",
-    };
-
-    private static UsageHttpRequest Get(string url, IReadOnlyDictionary<string, string> headers) =>
-        new("GET", new Uri(url), headers);
 }
 
 public static class UsageProbes
