@@ -56,7 +56,7 @@ internal sealed class SystemUsagePopoverForm : Form
     private bool _sessionsVisible;
     private bool _sessionsRecent;
     private const int MaximumSessionRows = 5;
-    private const int SessionRowHeight = 48;
+    private const int SessionRowHeight = 34;
     private const int SessionHeaderHeight = 30;
     private NativeText _text = NativeText.For("zh-CN");
     private PopoverTailSide _tailSide = PopoverTailSide.Bottom;
@@ -177,7 +177,7 @@ internal sealed class SystemUsagePopoverForm : Form
 
     internal int SessionRowCountForAcceptance => _sessions.Length;
 
-    private const int TokenSectionHeight = 122;
+    private const int TokenSectionHeight = 88;
 
     private int SessionSectionHeight => !_sessionsVisible ? 0
         : SessionHeaderHeight + Math.Max(1, _sessions.Length) * SessionRowHeight + 8;
@@ -416,7 +416,17 @@ internal sealed class SystemUsagePopoverForm : Form
         Panel(38, 112);
         TextAt(_metrics[0].Label, _metricLabelFont, muted, 24, 49, 136, 13);
         TextAt(zh ? "3 秒窗口" : "3s window", _subtitleFont, muted, 176, 49, 100, 13, StringAlignment.Far);
-        TextAt(_metrics[0].Value, _liveValueFont, primary, 24, 67, 252, 29);
+        TextAt(_metrics[0].Value, _liveValueFont, primary, 24, 67, 160, 29);
+        // Today's tokens and today's prompt-cache hit rate sit beside the big number, so the two
+        // numbers people look for first are in the headline card.
+        var cache = _content?.Cache;
+        TextAt(zh ? "今日 Token" : "Today", _subtitleFont, muted, 186, 66, 90, 12, StringAlignment.Far);
+        TextAt(_content?.TodayTokens is { } today ? NativeText.FormatTokenCount(today) : "—", _metricValueFont, primary, 176, 78, 100, 15, StringAlignment.Far);
+        using (var hitBrush = new SolidBrush(RecordedAccent))
+        {
+            TextAt((zh ? "缓存 " : "cache ") + NativeText.FormatCacheHitPercent(cache?.TodayHitPercent),
+                _subtitleFont, cache?.TodayHitPercent is null ? muted : hitBrush, 176, 94, 100, 12, StringAlignment.Far);
+        }
         var rail = At(24, 105, 252, 3);
         using var railBrush = new SolidBrush(UiPalette.Slate500.WithAlpha(48));
         graphics.FillRoundedRectangle(railBrush, rail, 1.5f);
@@ -442,26 +452,17 @@ internal sealed class SystemUsagePopoverForm : Form
         TextAt(live?.Generating.ToString() ?? "—", _metricValueFont, primary, 114, 170, 28, 14, StringAlignment.Far);
         TextAt(live?.Tools.ToString() ?? "—", _metricValueFont, primary, 248, 170, 28, 14, StringAlignment.Far);
 
-        // Today's tokens and the last 24 hours, hour by hour (UiKit area curve; never on the bar itself).
+        // The last 24 hours, hour by hour (UiKit area curve; never on the bar itself). Today's total
+        // and cache rate live in the headline card, so this card is only the curve.
         Panel(206, TokenSectionHeight - 8);
-        TextAt(zh ? "今日 Token" : "Today tokens", _metricLabelFont, muted, 24, 215, 120, 13);
-        TextAt(_content?.TodayTokens is { } today ? NativeText.FormatTokenCount(today) : "—", _metricValueFont, primary, 150, 213, 126, 16, StringAlignment.Far);
         var hourly = _content?.HourlyTokens;
         var peak = hourly is { Count: > 0 } ? hourly.Max() : 0;
-        TextAt(zh ? "近 24 小时 · 每小时" : "Last 24 h · hourly", _subtitleFont, muted, 24, 231, 150, 12);
+        TextAt(zh ? "近 24 小时 · 每小时" : "Last 24 h · hourly", _metricLabelFont, muted, 24, 215, 150, 13);
         TextAt(peak > 0 ? (zh ? $"峰值 {NativeText.FormatTokenCount(peak)}/时" : $"peak {NativeText.FormatTokenCount(peak)}/h") : "",
-            _subtitleFont, muted, 150, 231, 126, 12, StringAlignment.Far);
-        DrawHourlyCurve(graphics, At(24, 247, 252, 38), hourly);
-        TextAt("-24h", _subtitleFont, muted, 24, 287, 60, 11);
-        TextAt(zh ? "现在" : "now", _subtitleFont, muted, 216, 287, 60, 11, StringAlignment.Far);
-        // Prompt cache: today's read / write tokens and the hit rate (today, then all retained).
-        var cache = _content?.Cache;
-        TextAt(zh ? "缓存" : "Cache", _metricLabelFont, muted, 24, 305, 40, 13);
-        TextAt((zh ? "读 " : "read ") + Tokens(cache?.TodayRead) + (zh ? " · 写 " : " · write ") + Tokens(cache?.TodayWrite),
-            _subtitleFont, primary, 64, 306, 120, 12);
-        TextAt((zh ? "命中 " : "hit ") + NativeText.FormatCacheHitPercent(cache?.TodayHitPercent)
-                + (zh ? " · 总 " : " · all ") + NativeText.FormatCacheHitPercent(cache?.TotalHitPercent),
-            _subtitleFont, primary, 176, 306, 100, 12, StringAlignment.Far);
+            _subtitleFont, muted, 150, 216, 126, 12, StringAlignment.Far);
+        DrawHourlyCurve(graphics, At(24, 233, 252, 36), hourly);
+        TextAt("-24h", _subtitleFont, muted, 24, 271, 60, 11);
+        TextAt(zh ? "现在" : "now", _subtitleFont, muted, 216, 271, 60, 11, StringAlignment.Far);
         dy = TokenSectionHeight;
 
         if (_sessionsVisible)
@@ -504,8 +505,6 @@ internal sealed class SystemUsagePopoverForm : Form
         TextAt(zh ? "流量仅统计 Bar 运行时 · 与 Token 独立" : "Traffic while Bar runs · independent of tokens", _subtitleFont, muted, 16, 389, 210, 12);
         TextAt(snapshot.CapturedAt.ToLocalTime().ToString("HH:mm:ss"), _subtitleFont, muted, 230, 389, 54, 12, StringAlignment.Far);
     }
-
-    private static string Tokens(long? value) => value is { } tokens ? NativeText.FormatTokenCount(tokens) : "—";
 
     /// <summary>Area curve of hourly tokens: shared accent, faint baseline, the current hour marked.</summary>
     internal static void DrawHourlyCurve(Graphics graphics, RectangleF bounds, IReadOnlyList<long>? hourly)
@@ -581,25 +580,9 @@ internal sealed class SystemUsagePopoverForm : Form
             DrawString(graphics, live is null ? "—" : _text.CodexTurnLiveSpeed(turn), _metricValueFont,
                 live is null ? muted : accent, new RectangleF(panel.Right - 88, top + 2, 76, 15), StringAlignment.Far);
 
-            var meta = string.Join(" · ", new[]
-            {
-                string.Join(' ', new[] { turn.Model, turn.Effort }.Where(part => !string.IsNullOrWhiteSpace(part))),
-                _text.CodexTurnState(turn),
-                _text.CodexTurnTime(turn),
-            }.Where(part => !string.IsNullOrWhiteSpace(part)));
-            graphics.DrawString(meta, _subtitleFont, muted,
-                new RectangleF(panel.X + 21, top + 17, panel.Width - 33, 13), trimmed);
-            // Third line: tokens, whole-turn speed, time to first token and prompt-cache hit rate.
-            var output = !turn.UsageComplete && turn.OutputTokens == 0 ? "—"
-                : NativeText.FormatTokenCount(turn.OutputTokens) + (turn.UsageComplete ? "" : "+");
-            var input = turn.InputTokens is { } prompt ? NativeText.FormatTokenCount(prompt) : "—";
-            var average = turn.OutputTokensPerSecond is { } speed && double.IsFinite(speed) ? $"{speed:0.#}/s" : "—";
-            var first = turn.FirstTokenSeconds is { } seconds ? $"{seconds:0.0}s" : "—";
-            var stats = zh
-                ? $"Token {input}→{output} · 均速 {average} · 首字 {first} · 缓存 {NativeText.FormatCacheHitPercent(turn.CacheHitPercent)}"
-                : $"Tok {input}→{output} · avg {average} · TTFT {first} · cache {NativeText.FormatCacheHitPercent(turn.CacheHitPercent)}";
-            graphics.DrawString(stats, _subtitleFont, primary,
-                new RectangleF(panel.X + 21, top + 31, panel.Width - 33, 13), trimmed);
+            // Second (last) line: only the prompt-cache hit rate, under the speed.
+            DrawString(graphics, (zh ? "缓存 " : "cache ") + NativeText.FormatCacheHitPercent(turn.CacheHitPercent), _subtitleFont, muted,
+                new RectangleF(panel.Right - 112, top + 17, 100, 13), StringAlignment.Far);
         }
     }
 

@@ -406,7 +406,24 @@ internal sealed partial class BarForm
         target.Card.Provider == ProviderKind.AiGateway ? _aiGatewayUsage : null,
         target.Card.Provider == ProviderKind.Codex
             ? _codexQuotaTokenSummaries.GetValueOrDefault(target.PaceKey)
-            : null);
+            : null,
+        ResetCardsFor(target.Card, now));
+
+    /// <summary>
+    /// The account's reset cards, as the Codex usage response (rate_limit_reset_credits) or Cockpit's
+    /// quota cache reported them; null when neither carried a count.
+    /// </summary>
+    private CodexResetCards? ResetCardsFor(QuotaCard card, DateTimeOffset now)
+    {
+        if (card.Provider != ProviderKind.Codex || card.IsService) return null;
+        var account = _snapshot.CodexAccounts.FirstOrDefault(item => string.Equals(item.CardKey, card.Key, StringComparison.Ordinal));
+        if (account?.ResetCreditsAvailable is not { } count) return null;
+        var expiry = account.ResetCreditBatches
+            .Where(batch => batch.ExpiresAt > now && batch.Count > 0)
+            .Select(batch => (DateTimeOffset?)batch.ExpiresAt)
+            .Min() ?? (account.NextResetCreditExpiry > now ? account.NextResetCreditExpiry : null);
+        return new CodexResetCards(Math.Max(0, count), account.ApplicableResetCredits, expiry);
+    }
 
     /// <summary>
     /// Codex subscription end comes from the Cockpit account metadata (subscription_active_until) already
@@ -477,6 +494,7 @@ internal sealed partial class BarForm
                 values.Append(CultureInfo.InvariantCulture, $"  window {window.Label} used={window.UsedPercent?.ToString("0.##", CultureInfo.InvariantCulture) ?? "-"} reset={Time(window.ResetsAt)} duration={window.Duration}\n");
             }
             values.Append(CultureInfo.InvariantCulture, $"  credits={(content.Card.Credits is { } credits ? $"has={credits.HasCredits} unlimited={credits.Unlimited} balance={credits.Balance?.ToString(CultureInfo.InvariantCulture) ?? "-"}" : "-")}\n");
+            values.Append(CultureInfo.InvariantCulture, $"  resetCards={(content.ResetCards is { } cards ? $"count={cards.Count} applicable={cards.Applicable?.ToString(CultureInfo.InvariantCulture) ?? "-"} nextExpiry={Time(cards.NextExpiry)}" : "-")}\n");
             values.Append(CultureInfo.InvariantCulture, $"  subscription={(content.Card.Subscription is { } period ? $"start={Time(period.Start)} end={Time(period.End)} kind={period.Kind} source={period.Source}" : "-")}\n");
             values.Append(CultureInfo.InvariantCulture, $"  pace={content.Pace?.Status.ToString() ?? "-"} \"{pace.Left}\" \"{pace.Right}\"\n");
             if (!written.Add(name)) continue;

@@ -11,7 +11,15 @@ internal sealed record QuotaPopoverContent(
     QuotaPaceEstimate? Pace,
     bool Pinned,
     AiGatewayUsageSummary? AiGatewayUsage = null,
-    CodexQuotaTokenSummary? CodexQuotaTokens = null);
+    CodexQuotaTokenSummary? CodexQuotaTokens = null,
+    CodexResetCards? ResetCards = null);
+
+/// <summary>
+/// Codex reset cards (重置卡) of one account: the count from the usage response's
+/// <c>rate_limit_reset_credits.available_count</c> (or Cockpit's <c>reset_credits_available</c>)
+/// and the earliest known card expiry.
+/// </summary>
+internal sealed record CodexResetCards(int Count, int? Applicable, DateTimeOffset? NextExpiry);
 
 internal sealed class QuotaPopoverForm : Form
 {
@@ -123,6 +131,7 @@ internal sealed class QuotaPopoverForm : Form
     private static int DetailRowCount(QuotaPopoverContent content) =>
         DetailWindows(content.Card).Count
         + (content.Card.Provider == ProviderKind.Codex && content.Card.Credits is not null ? 1 : 0)
+        + (content.Card.Provider == ProviderKind.Codex && content.ResetCards is not null ? 1 : 0)
         + 1; // subscription row (a dash when the source has no dates)
 
     internal static int AccountAvailabilityBodyHeight(
@@ -497,6 +506,18 @@ internal sealed class QuotaPopoverForm : Form
             rowY += DetailRowHeight;
             rows++;
         }
+        if (content.Card.Provider == ProviderKind.Codex && content.ResetCards is { } cards)
+        {
+            var hasCards = cards.Count > 0;
+            DrawResetCardIcon(graphics, new RectangleF(left, rowY + 4, 10, 10), hasCards ? CardTeal : CardMuted);
+            DrawString(graphics, _text.IsChinese ? "重置卡" : "Reset cards", _cardRowFont, mutedBrush,
+                new RectangleF(left + 16, rowY, 90, DetailRowHeight), StringAlignment.Near);
+            DrawString(graphics, ResetCardsText(cards, now, _text.IsChinese), _cardRowStrongFont,
+                hasCards ? valueBrush : dimBrush,
+                new RectangleF(right - 160, rowY, 160, DetailRowHeight), StringAlignment.Far);
+            rowY += DetailRowHeight;
+            rows++;
+        }
         {
             var (label, value) = SubscriptionText(content.Card.Subscription, now, _text.IsChinese);
             DrawCalendarIcon(graphics, new RectangleF(left, rowY + 4, 10, 10), value is null ? CardMuted : CardValue);
@@ -541,6 +562,25 @@ internal sealed class QuotaPopoverForm : Form
     }
 
     /// <summary>Label and value of the subscription row; value is null when the source has no dates.</summary>
+    /// <summary>"2 张 · 11/20 到期" / "2 cards · exp 11/20"; "0 张" when the account has none.</summary>
+    internal static string ResetCardsText(CodexResetCards cards, DateTimeOffset now, bool chinese)
+    {
+        var count = chinese ? $"{cards.Count} 张" : $"{cards.Count} card{(cards.Count == 1 ? "" : "s")}";
+        if (cards.Count <= 0 || cards.NextExpiry is not { } expiry || expiry <= now) return count;
+        var local = expiry.ToLocalTime().ToString("M/d", System.Globalization.CultureInfo.InvariantCulture);
+        return chinese ? $"{count} · {local} 到期" : $"{count} · exp {local}";
+    }
+
+    /// <summary>A small card with a circular arrow: the reset-card mark.</summary>
+    private static void DrawResetCardIcon(Graphics graphics, RectangleF bounds, Color color)
+    {
+        using var pen = new Pen(color, 1.2f);
+        var card = new RectangleF(bounds.X + .5f, bounds.Y + 1.5f, bounds.Width - 1, bounds.Height - 3);
+        using (var path = UiPaint.RoundedPath(card, 1.6f)) graphics.DrawPath(pen, path);
+        var arc = RectangleF.Inflate(new RectangleF(card.X + card.Width / 2 - 2.2f, card.Y + card.Height / 2 - 2.2f, 4.4f, 4.4f), 0, 0);
+        graphics.DrawArc(pen, arc, -60, 280);
+    }
+
     internal static (string Label, string? Value) SubscriptionText(UsageSubscriptionPeriod? period, DateTimeOffset now, bool chinese)
     {
         var culture = System.Globalization.CultureInfo.InvariantCulture;
