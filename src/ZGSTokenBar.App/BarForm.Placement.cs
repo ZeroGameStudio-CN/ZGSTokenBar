@@ -143,6 +143,7 @@ internal sealed partial class BarForm
         }
         if (!_renderOnly) RequestTopologyRefresh(topologyMayHaveChanged: false);
         StartHoverCaptureIfRequested();
+        StartPerfProbeIfRequested();
     }
 
     protected override void OnHandleDestroyed(EventArgs e)
