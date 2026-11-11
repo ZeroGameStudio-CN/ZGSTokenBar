@@ -37,7 +37,7 @@ internal sealed partial class BarForm
     {
         var balance = card.Balance;
         var color = balance is null
-            ? Color.FromArgb(100, 116, 139)
+            ? UiPalette.Slate500
             : AiGatewayCompactStatusColor(balance.Status);
         DrawCollapsedProviderSummary(
             graphics,
@@ -63,7 +63,7 @@ internal sealed partial class BarForm
         var value = CompactRemaining(remaining);
         var color = remaining is not null
             ? QuotaColorScale.ForRemaining(remaining.Value)
-            : Color.FromArgb(100, 116, 139);
+            : UiPalette.Slate500;
         var primaryCard = cards.FirstOrDefault(card => card.Active) ?? cards[0];
         DrawCollapsedProviderSummary(graphics, bounds, primaryCard, value, color);
     }
@@ -101,7 +101,7 @@ internal sealed partial class BarForm
         return (
             CompactRemaining(remaining),
             remaining is null
-                ? Color.FromArgb(100, 116, 139)
+                ? UiPalette.Slate500
                 : QuotaColorScale.ForRemaining(remaining.Value));
     }
 
@@ -119,34 +119,34 @@ internal sealed partial class BarForm
 
     private static Color AiGatewayCompactStatusColor(AiGatewayBalanceStatus? status) => status switch
     {
-        AiGatewayBalanceStatus.Available => Color.FromArgb(52, 211, 153),
-        AiGatewayBalanceStatus.Stale => Color.FromArgb(251, 191, 36),
-        AiGatewayBalanceStatus.Unavailable => Color.FromArgb(251, 113, 133),
-        _ => Color.FromArgb(100, 116, 139),
+        AiGatewayBalanceStatus.Available => UiPalette.Emerald400,
+        AiGatewayBalanceStatus.Stale => UiPalette.Amber400,
+        AiGatewayBalanceStatus.Unavailable => UiPalette.Rose400,
+        _ => UiPalette.Slate500,
     };
 
     private static Color Sub2ApiPoolCompactStatusColor(Sub2ApiPoolStatus status) => status switch
     {
-        Sub2ApiPoolStatus.Available => Color.FromArgb(52, 211, 153),
-        Sub2ApiPoolStatus.Stale => Color.FromArgb(251, 191, 36),
-        Sub2ApiPoolStatus.Unavailable => Color.FromArgb(251, 113, 133),
-        _ => Color.FromArgb(100, 116, 139),
+        Sub2ApiPoolStatus.Available => UiPalette.Emerald400,
+        Sub2ApiPoolStatus.Stale => UiPalette.Amber400,
+        Sub2ApiPoolStatus.Unavailable => UiPalette.Rose400,
+        _ => UiPalette.Slate500,
     };
 
     private static Color Sub2ApiUsageCompactStatusColor(Sub2ApiUsageStatus status) => status switch
     {
-        Sub2ApiUsageStatus.Available => Color.FromArgb(52, 211, 153),
-        Sub2ApiUsageStatus.Stale => Color.FromArgb(251, 191, 36),
-        Sub2ApiUsageStatus.Unavailable => Color.FromArgb(251, 113, 133),
-        _ => Color.FromArgb(100, 116, 139),
+        Sub2ApiUsageStatus.Available => UiPalette.Emerald400,
+        Sub2ApiUsageStatus.Stale => UiPalette.Amber400,
+        Sub2ApiUsageStatus.Unavailable => UiPalette.Rose400,
+        _ => UiPalette.Slate500,
     };
 
     private static Color Sub2ApiQuotaCompactStatusColor(Sub2ApiQuotaStatus status) => status switch
     {
-        Sub2ApiQuotaStatus.Available => Color.FromArgb(52, 211, 153),
-        Sub2ApiQuotaStatus.Stale => Color.FromArgb(251, 191, 36),
-        Sub2ApiQuotaStatus.Unavailable => Color.FromArgb(251, 113, 133),
-        _ => Color.FromArgb(100, 116, 139),
+        Sub2ApiQuotaStatus.Available => UiPalette.Emerald400,
+        Sub2ApiQuotaStatus.Stale => UiPalette.Amber400,
+        Sub2ApiQuotaStatus.Unavailable => UiPalette.Rose400,
+        _ => UiPalette.Slate500,
     };
 
     private void DrawTaskbarCodexPool(
@@ -175,11 +175,11 @@ internal sealed partial class BarForm
     {
         using var rowPath = RoundedRectangle(targetRow.Bounds, 4);
         using var rowFill = new SolidBrush(_backgroundTheme.QuotaGroup);
-        using var rowBorder = new Pen(Color.FromArgb(58, 51, 65, 85), 1);
+        using var rowBorder = new Pen(UiPalette.Slate700.WithAlpha(58), 1);
         graphics.FillPath(rowFill, rowPath);
         graphics.DrawPath(rowBorder, rowPath);
 
-        using var labelBrush = new SolidBrush(Color.FromArgb(203, 213, 225));
+        using var labelBrush = new SolidBrush(UiPalette.Slate300);
         DrawString(
             graphics,
             targetRow.Row.Label,
@@ -198,7 +198,7 @@ internal sealed partial class BarForm
                 target.Bounds.Y + (target.Bounds.Height - railHeight) / 2,
                 target.Bounds.Width,
                 railHeight);
-            using var trackBrush = new SolidBrush(Color.FromArgb(30, 41, 59));
+            using var trackBrush = new SolidBrush(UiPalette.Slate800);
             graphics.FillRoundedRectangle(trackBrush, railBounds, 2);
 
             double? remaining = null;
@@ -213,7 +213,7 @@ internal sealed partial class BarForm
             {
                 var color = MixColor(
                     QuotaColorScale.ForRemaining(segmentRemaining),
-                    Color.FromArgb(248, 250, 252),
+                    UiPalette.Slate50,
                     SnapshotPulse(target.Id) * .22f);
                 using var activeBrush = new SolidBrush(color);
                 graphics.FillRoundedRectangle(
@@ -242,7 +242,7 @@ internal sealed partial class BarForm
         var aggregate = targetRow.Row.AggregateRemainingPercent;
         var aggregateColor = aggregate is { } remainingPercent
             ? QuotaColorScale.ForRemaining(remainingPercent)
-            : Color.FromArgb(100, 116, 139);
+            : UiPalette.Slate500;
         DrawTaskbarCodexPoolCapacitySummary(graphics, targetRow, aggregateColor);
     }
 
@@ -278,7 +278,7 @@ internal sealed partial class BarForm
             targetRow.ValueBounds.Height);
 
         using var remainingBrush = new SolidBrush(remainingColor);
-        using var capacityBrush = new SolidBrush(Color.FromArgb(148, 163, 184));
+        using var capacityBrush = new SolidBrush(UiPalette.Slate400);
         DrawString(
             graphics,
             remainingText,
@@ -388,8 +388,8 @@ internal sealed partial class BarForm
                 var style = TaskbarAccountPlanStyle(cards[index]);
                 using var cellPath = RoundedRectangle(cell, Math.Min(3, cell.Height / 3));
                 using var gridFill = new SolidBrush(style?.Fill ?? _backgroundTheme.Outer);
-                using var gridBorder = new Pen(style?.Border ?? Color.FromArgb(71, 85, 105), 1);
-                using var gridText = new SolidBrush(style?.Text ?? Color.FromArgb(153, 246, 228));
+                using var gridBorder = new Pen(style?.Border ?? UiPalette.Slate600, 1);
+                using var gridText = new SolidBrush(style?.Text ?? UiPalette.Teal200);
                 graphics.FillPath(gridFill, cellPath);
                 graphics.DrawPath(gridBorder, cellPath);
                 DrawString(
@@ -406,8 +406,8 @@ internal sealed partial class BarForm
         var bounds = new RectangleF(cardBounds.X + 31, cardBounds.Y + 2, 10, 32);
         using var path = RoundedRectangle(bounds, 4);
         using var fill = new SolidBrush(_backgroundTheme.Outer);
-        using var border = new Pen(Color.FromArgb(71, 85, 105), 1);
-        using var separator = new Pen(Color.FromArgb(48, 71, 85, 105), 1);
+        using var border = new Pen(UiPalette.Slate600, 1);
+        using var separator = new Pen(UiPalette.Slate600.WithAlpha(48), 1);
         graphics.FillPath(fill, path);
         var clipState = graphics.Save();
         graphics.SetClip(path);
@@ -432,7 +432,7 @@ internal sealed partial class BarForm
         {
             var row = TaskbarAccountOrdinalRowBounds(cardBounds, index, cards.Count);
             var style = TaskbarAccountPlanStyle(cards[index]);
-            using var text = new SolidBrush(style?.Text ?? Color.FromArgb(153, 246, 228));
+            using var text = new SolidBrush(style?.Text ?? UiPalette.Teal200);
             DrawString(
                 graphics,
                 CodexAccountOrdinal(cards[index]) ?? (index + 1).ToString(),
@@ -644,16 +644,16 @@ internal sealed partial class BarForm
         var used = AnimatedUsed(target.Card.Key, target.Window);
         var remaining = used is null ? (double?)null : Math.Clamp(100 - used.Value, 0, 100);
         var valueColor = remaining is null
-            ? Color.FromArgb(100, 116, 139)
+            ? UiPalette.Slate500
             : QuotaColorScale.ForRemaining(remaining.Value);
         valueColor = MixColor(
             valueColor,
-            Color.FromArgb(248, 250, 252),
+            UiPalette.Slate50,
             SnapshotPulse(target.Id) * .22f);
 
         using var path = RoundedRectangle(target.Bounds, Math.Min(3, target.Bounds.Height / 3));
         using var fill = new SolidBrush(_backgroundTheme.QuotaGroup);
-        using var border = new Pen(Color.FromArgb(58, 51, 65, 85), 1);
+        using var border = new Pen(UiPalette.Slate700.WithAlpha(58), 1);
         graphics.FillPath(fill, path);
         graphics.DrawPath(border, path);
 

@@ -129,19 +129,20 @@ internal sealed class UsageBoardForm : Form, IPluginPopoverContent
         Color Text, Color Muted, Color Track, Color ChipFill, Color ChipBorder,
         Color Red, Color Amber, Color Green)
     {
+        // Dark board = the hover-card tokens (graphite canvas, hairline, shared state colours).
         internal static readonly Palette Dark = new(
-            Color.FromArgb(17, 19, 25), Color.FromArgb(25, 28, 36), Color.FromArgb(38, 255, 255, 255),
-            Color.FromArgb(16, 255, 255, 255), Color.FromArgb(14, 255, 255, 255),
-            Color.FromArgb(241, 245, 249), Color.FromArgb(148, 163, 184), Color.FromArgb(28, 255, 255, 255),
-            Color.FromArgb(14, 255, 255, 255), Color.FromArgb(30, 255, 255, 255),
-            Color.FromArgb(255, 90, 95), Color.FromArgb(252, 196, 64), Color.FromArgb(52, 211, 153));
+            UiTokens.CardSurface, Color.FromArgb(25, 28, 36), UiTokens.Hairline,
+            Color.White.WithAlpha(16), Color.White.WithAlpha(14),
+            UiTokens.TextStrong, UiTokens.Muted, Color.White.WithAlpha(28),
+            Color.White.WithAlpha(14), Color.White.WithAlpha(30),
+            UiTokens.Negative, UiTokens.Warning, UiTokens.Positive);
 
         internal static readonly Palette Light = new(
-            Color.FromArgb(246, 247, 250), Color.White, Color.FromArgb(36, 15, 23, 42),
-            Color.FromArgb(22, 15, 23, 42), Color.FromArgb(16, 15, 23, 42),
-            Color.FromArgb(15, 23, 42), Color.FromArgb(100, 116, 139), Color.FromArgb(20, 15, 23, 42),
-            Color.FromArgb(255, 255, 255), Color.FromArgb(34, 15, 23, 42),
-            Color.FromArgb(220, 38, 38), Color.FromArgb(194, 120, 3), Color.FromArgb(5, 150, 105));
+            Color.FromArgb(246, 247, 250), Color.White, UiPalette.Slate900.WithAlpha(36),
+            UiPalette.Slate900.WithAlpha(22), UiPalette.Slate900.WithAlpha(16),
+            UiPalette.Slate900, UiPalette.Slate500, UiPalette.Slate900.WithAlpha(20),
+            Color.FromArgb(255, 255, 255), UiPalette.Slate900.WithAlpha(34),
+            UiPalette.Red600, Color.FromArgb(194, 120, 3), UiPalette.Emerald600);
 
         internal static Palette For(bool light) => light ? Light : Dark;
 

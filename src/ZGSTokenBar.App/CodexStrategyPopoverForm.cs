@@ -26,7 +26,7 @@ internal sealed class CodexStrategyPopoverForm : Form
     private static readonly Color Accent = Color.FromArgb(147, 197, 253);
     private static readonly Color Muted = Color.FromArgb(161, 174, 193);
     private static readonly Color DeadlineColor = Color.FromArgb(251, 191, 108);
-    private static readonly Color CriticalColor = Color.FromArgb(251, 113, 133);
+    private static readonly Color CriticalColor = UiPalette.Rose400;
     private float _scale = 1;
     private int ContentHeight => 14 + _rows.Sum(row => row.Height);
     private NativeText _text = NativeText.For("zh-CN");
@@ -235,7 +235,7 @@ internal sealed class CodexStrategyPopoverForm : Form
         surface.AddPath(bodyPath, false);
         surface.AddPolygon(tail);
         using var fill = new SolidBrush(BackColor);
-        using var border = new Pen(Color.FromArgb(86, 100, 116, 139), 1);
+        using var border = new Pen(UiPalette.Slate500.WithAlpha(86), 1);
         graphics.FillPath(fill, surface);
         graphics.DrawPath(border, bodyPath);
         graphics.DrawLines(border, tail);
@@ -301,7 +301,7 @@ internal sealed class CodexStrategyPopoverForm : Form
         }
         if (row.Kind == RowKind.Section)
         {
-            using var line = new Pen(Color.FromArgb(52, 148, 163, 184));
+            using var line = new Pen(UiPalette.Slate400.WithAlpha(52));
             graphics.DrawLine(line, bounds.Left, bounds.Top + 3, bounds.Right, bounds.Top + 3);
             DrawText(graphics, values[0], _strongFont, ForeColor,
                 new RectangleF(bounds.X, bounds.Y + 6, bounds.Width * .6f, bounds.Height - 6));
@@ -389,7 +389,7 @@ internal sealed class CodexStrategyPopoverForm : Form
         }
         else
         {
-            using var line = new Pen(Color.FromArgb(28, 148, 163, 184));
+            using var line = new Pen(UiPalette.Slate400.WithAlpha(28));
             graphics.DrawLine(line, bounds.Left + 8, bounds.Bottom - 1, bounds.Right - 8, bounds.Bottom - 1);
         }
         var detailY = bounds.Top + (row.Kind == RowKind.Recommendation ? 28 : 23);
@@ -529,7 +529,7 @@ internal sealed class CodexStrategyPopoverForm : Form
         Text = TitleFor(text);
         BackColor = theme.Popover;
         _theme = theme;
-        ForeColor = Color.FromArgb(241, 245, 249);
+        ForeColor = UiPalette.Slate100;
         _rows.Clear();
         var now = strategy.EvaluatedAt;
 

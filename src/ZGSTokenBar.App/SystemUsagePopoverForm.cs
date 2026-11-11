@@ -33,7 +33,7 @@ internal sealed class SystemUsagePopoverForm : Form
     private readonly Font _liveValueFont = new("Segoe UI", 25f, FontStyle.Bold, GraphicsUnit.Pixel);
     private readonly Font _tableValueFont = new("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Pixel);
     private static readonly Color RecordedAccent = Color.FromArgb(110, 231, 183);
-    private static readonly Color EstimateAccent = Color.FromArgb(251, 191, 36);
+    private static readonly Color EstimateAccent = UiPalette.Amber400;
     private static readonly Color ReceiveAccent = Color.FromArgb(125, 211, 252);
     private static readonly Color SendAccent = Color.FromArgb(196, 181, 253);
     private readonly AlignedStringFormats _textFormats = new();
@@ -70,7 +70,7 @@ internal sealed class SystemUsagePopoverForm : Form
         _entranceTimer.Tick += (_, _) => AdvanceEntrance();
         _exitTimer.Tick += (_, _) => AdvanceExit();
         AutoScaleMode = AutoScaleMode.None;
-        BackColor = _backgroundTheme.Popover;
+        BackColor = UiTokens.CardSurface;
         FormBorderStyle = FormBorderStyle.None;
         MaximizeBox = false;
         MinimizeBox = false;
@@ -101,7 +101,7 @@ internal sealed class SystemUsagePopoverForm : Form
     internal void ApplyTheme(QuotaBackgroundTheme theme)
     {
         _backgroundTheme = theme;
-        BackColor = theme.Popover;
+        BackColor = UiTokens.CardSurface;
         Invalidate();
     }
 
@@ -242,7 +242,7 @@ internal sealed class SystemUsagePopoverForm : Form
     {
         UpdateContent(content, text);
         _backgroundTheme = theme;
-        BackColor = theme.Popover;
+        BackColor = UiTokens.CardSurface;
         _scale = Math.Max(1, dpi / 96f);
         _tailSide = PopoverTailSide.Bottom;
         _tailOffset = LogicalBodyWidth / 2f;
@@ -283,23 +283,12 @@ internal sealed class SystemUsagePopoverForm : Form
     {
         base.OnPaint(e);
         var graphics = e.Graphics;
-        graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
-        graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-        graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+        UiPaint.PrepareQuality(graphics);
         graphics.ScaleTransform(_scale, _scale);
 
         var body = BodyBounds();
-        using var bodyPath = RoundedRectangle(RectangleF.Inflate(body, -.5f, -.5f), 10);
-        var tail = TailPoints(body);
-        using var surfacePath = new GraphicsPath { FillMode = FillMode.Winding };
-        surfacePath.AddPath(bodyPath, false);
-        surfacePath.AddPolygon(tail);
-        using var fill = new SolidBrush(_backgroundTheme.Popover);
-        using var border = new Pen(Color.FromArgb(86, 100, 116, 139), 1);
-        graphics.FillPath(fill, surfacePath);
-        graphics.DrawPath(border, bodyPath);
-        graphics.DrawLines(border, tail);
+        // The shared hover-card surface: graphite card, white hairline, pointer tail.
+        UiPaint.TailedSurface(graphics, body, TailPoints(body), UiTokens.CardSurface, UiTokens.Hairline, UiTokens.RadiusPanel);
         DrawContent(graphics, body);
     }
 
@@ -322,9 +311,9 @@ internal sealed class SystemUsagePopoverForm : Form
     private void DrawContent(Graphics graphics, RectangleF body)
     {
         if (_content is not { } content) return;
-        using var primary = new SolidBrush(Color.FromArgb(241, 245, 249));
-        using var muted = new SolidBrush(Color.FromArgb(148, 163, 184));
-        using var divider = new Pen(Color.FromArgb(36, 100, 116, 139), 1);
+        using var primary = new SolidBrush(UiPalette.Slate100);
+        using var muted = new SolidBrush(UiPalette.Slate400);
+        using var divider = new Pen(UiPalette.Slate500.WithAlpha(36), 1);
 
         if (content.LiveRates)
         {
@@ -369,8 +358,8 @@ internal sealed class SystemUsagePopoverForm : Form
                 body.Width - 32,
                 Math.Max(28, body.Bottom - body.Y - 274));
             using var emptyPath = RoundedRectangle(emptyBounds, 7);
-            using var emptyFill = new SolidBrush(Color.FromArgb(18, 100, 116, 139));
-            using var emptyBorder = new Pen(Color.FromArgb(28, 100, 116, 139), 1);
+            using var emptyFill = new SolidBrush(UiPalette.Slate500.WithAlpha(18));
+            using var emptyBorder = new Pen(UiPalette.Slate500.WithAlpha(28), 1);
             graphics.FillPath(emptyFill, emptyPath);
             graphics.DrawPath(emptyBorder, emptyPath);
             DrawString(graphics, _text.SystemUsageTopProcessesUnavailable, _detailFont, muted,
@@ -401,7 +390,7 @@ internal sealed class SystemUsagePopoverForm : Form
         using var estimated = new SolidBrush(EstimateAccent);
         using var receive = new SolidBrush(ReceiveAccent);
         using var send = new SolidBrush(SendAccent);
-        using var divider = new Pen(Color.FromArgb(42, 100, 116, 139), 1);
+        using var divider = new Pen(UiPalette.Slate500.WithAlpha(42), 1);
         var dy = 0f;
         RectangleF At(float x, float y, float width, float height) => new(body.X + x, body.Y + y + dy, width, height);
         void TextAt(string value, Font font, Brush brush, float x, float y, float width, float height,
@@ -419,7 +408,7 @@ internal sealed class SystemUsagePopoverForm : Form
         TextAt(zh ? "3 秒窗口" : "3s window", _subtitleFont, muted, 176, 49, 100, 13, StringAlignment.Far);
         TextAt(_metrics[0].Value, _liveValueFont, primary, 24, 67, 252, 29);
         var rail = At(24, 105, 252, 3);
-        using var railBrush = new SolidBrush(Color.FromArgb(48, 100, 116, 139));
+        using var railBrush = new SolidBrush(UiPalette.Slate500.WithAlpha(48));
         graphics.FillRoundedRectangle(railBrush, rail, 1.5f);
         if (live?.Total is > 0)
         {
@@ -507,8 +496,8 @@ internal sealed class SystemUsagePopoverForm : Form
 
         using var recorded = new SolidBrush(RecordedAccent);
         using var estimated = new SolidBrush(EstimateAccent);
-        using var idle = new SolidBrush(Color.FromArgb(100, 116, 139));
-        using var rowDivider = new Pen(Color.FromArgb(28, 148, 163, 184), 1);
+        using var idle = new SolidBrush(UiPalette.Slate500);
+        using var rowDivider = new Pen(UiPalette.Slate400.WithAlpha(28), 1);
         using var trimmed = new StringFormat(StringFormatFlags.NoWrap)
         {
             Trimming = StringTrimming.EllipsisCharacter,
@@ -551,22 +540,15 @@ internal sealed class SystemUsagePopoverForm : Form
         Brush primary,
         Brush muted)
     {
-        var color = metric.Percent is { } percent ? UsageColor(percent) : Color.FromArgb(100, 116, 139);
+        var color = metric.Percent is { } percent ? UsageColor(percent) : UiPalette.Slate500;
         using var valueBrush = new SolidBrush(color);
         DrawString(graphics, metric.Label, _metricLabelFont, primary,
             new RectangleF(bounds.X, bounds.Y, 44, 14), StringAlignment.Near);
         DrawString(graphics, metric.Value, _metricValueFont, valueBrush,
             new RectangleF(bounds.Right - 44, bounds.Y - 1, 44, 16), StringAlignment.Far);
 
-        var rail = new RectangleF(bounds.X + 44, bounds.Y + 6, bounds.Width - 96, 3);
-        using var railBrush = new SolidBrush(Color.FromArgb(48, 100, 116, 139));
-        graphics.FillRoundedRectangle(railBrush, rail, 1.5f);
-        if (metric.Percent is { } usage && usage > 0)
-        {
-            graphics.FillRoundedRectangle(valueBrush,
-                new RectangleF(rail.X, rail.Y, rail.Width * (float)Math.Clamp(usage / 100, 0, 1), rail.Height),
-                1.5f);
-        }
+        UiPaint.ProgressBar(graphics, new RectangleF(bounds.X + 44, bounds.Y + 6, bounds.Width - 96, 3),
+            metric.Percent / 100, color, UiPalette.Slate500.WithAlpha(48));
         DrawString(graphics, metric.Detail, _subtitleFont, muted,
             new RectangleF(bounds.X + 44, bounds.Y + 18, bounds.Width - 44, 14), StringAlignment.Near);
     }
@@ -687,9 +669,9 @@ internal sealed class SystemUsagePopoverForm : Form
 
     private static Color UsageColor(double usage) => usage switch
     {
-        >= 90 => Color.FromArgb(251, 113, 133),
-        >= 70 => Color.FromArgb(251, 191, 36),
-        _ => Color.FromArgb(52, 211, 153),
+        >= 90 => UiPalette.Rose400,
+        >= 70 => UiPalette.Amber400,
+        _ => UiPalette.Emerald400,
     };
 
     private static GraphicsPath RoundedRectangle(RectangleF bounds, float radius) => UiPaint.RoundedPath(bounds, radius);
@@ -700,10 +682,8 @@ internal sealed class SystemUsagePopoverForm : Form
         Font font,
         Brush brush,
         RectangleF bounds,
-        StringAlignment alignment)
-    {
-        graphics.DrawString(text, font, brush, bounds, _textFormats.For(alignment));
-    }
+        StringAlignment alignment) =>
+        UiPaint.Text(graphics, text, font, brush, bounds, alignment);
 
     protected override void Dispose(bool disposing)
     {

@@ -144,12 +144,12 @@ test('Codex account hover uses the shared dark popover chrome and ordinal anchor
   assert.match(barForm, /var quotaTarget = radarTarget is null && codexAccountTarget is null/);
   assert.match(barForm, /private void ShowCodexAccountsPopover/);
   assert.match(accountsPopover, /TaskbarMiniPopoverMath\.Place/);
-  assert.match(accountsPopover, /_backgroundTheme\.Popover/);
+  assert.match(accountsPopover, /UiTokens\.CardSurface/);
   assert.match(accountsPopover, /CodexAccountFormatting\.MaskEmail/);
   assert.match(accountsPopover, /QuotaText\(account\)/);
   assert.match(accountsPopover, /API key/);
   assert.match(hintPopover, /TaskbarMiniPopoverMath\.Place/);
-  assert.match(hintPopover, /_backgroundTheme\.Popover/);
+  assert.match(hintPopover, /UiTokens\.CardSurface/);
   assert.match(barForm, /UpdateHintHover\(next\)/);
   assert.match(barForm, /MiniAreaLayoutChanged/);
   assert.match(barForm, /MiniAreaOrderChanged/);
@@ -358,7 +358,7 @@ test('Radar uses upstream measurements but keeps exactly four local scenario pic
   assert.match(radarRenderer, /text\.RadarConfidenceNote/);
   assert.match(radarRenderer, /layout\.ResetBounds/);
   assert.match(nativeText, /RadarResetWindow\(RadarResetWindow\?/);
-  assert.match(radarRenderer, /ResetOpenColor = Color\.FromArgb\(251, 113, 133\)/);
+  assert.match(radarRenderer, /ResetOpenColor = UiPalette\.Rose400/);
   assert.match(radarRenderer, /private static void DrawFilledCircle/);
   assert.match(radarRenderer, /new Rectangle\(dotX, dotY, diameter, diameter\),\s+ResetOpenColor/);
   assert.match(radarRenderer, /DrawDistinctionIcons/);
@@ -498,7 +498,7 @@ test('Sub2API popover dispatch and renderers use the shared anonymous presentati
   assert.match(availabilityRenderer, /_text\.Sub2ApiAccountAvailabilityPercent\(account\)/);
   assert.match(availabilityRenderer, /includeProgressRail[\s\S]*?MeanRemainingPercent\(availability\)/);
   assert.match(availabilityRenderer, /account\.RemainingPercent is \{ \} remaining[\s\S]*?ForRemaining\(remaining\)/);
-  assert.match(availabilityRenderer, /account\.RemainingPercent is \{ \} remaining[\s\S]*?Color\.FromArgb/);
+  assert.match(availabilityRenderer, /account\.RemainingPercent is \{ \} remaining[\s\S]*?UiPalette\./);
   assert.doesNotMatch(availabilityRenderer, /ForRemaining\(account\.RemainingPercent/);
   assert.match(nativeText, /account\.RemainingPercent is \{ \} remaining[\s\S]*?T\("未知", "Unknown"\)/);
 

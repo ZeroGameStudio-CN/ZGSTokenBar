@@ -48,7 +48,7 @@ internal sealed class TaskbarHintPopoverForm : Form
         _entranceTimer.Tick += (_, _) => AdvanceEntrance();
         _exitTimer.Tick += (_, _) => AdvanceExit();
         AutoScaleMode = AutoScaleMode.None;
-        BackColor = _backgroundTheme.Popover;
+        BackColor = UiTokens.CardSurface;
         FormBorderStyle = FormBorderStyle.None;
         MaximizeBox = false;
         MinimizeBox = false;
@@ -79,7 +79,7 @@ internal sealed class TaskbarHintPopoverForm : Form
     internal void ApplyTheme(QuotaBackgroundTheme theme)
     {
         _backgroundTheme = theme;
-        BackColor = theme.Popover;
+        BackColor = UiTokens.CardSurface;
         Invalidate();
     }
 
@@ -146,7 +146,7 @@ internal sealed class TaskbarHintPopoverForm : Form
         _title = title;
         _detailLines = Lines(detail);
         _backgroundTheme = theme;
-        BackColor = theme.Popover;
+        BackColor = UiTokens.CardSurface;
         _scale = Math.Max(1, dpi / 96f);
         _logicalBodyWidth = CalculateLogicalBodyWidth();
         _logicalBodyHeight = BodyHeight(detail);
@@ -191,23 +191,12 @@ internal sealed class TaskbarHintPopoverForm : Form
     {
         base.OnPaint(e);
         var graphics = e.Graphics;
-        graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
-        graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-        graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+        UiPaint.PrepareQuality(graphics);
         graphics.ScaleTransform(_scale, _scale);
 
         var body = BodyBounds();
-        using var bodyPath = RoundedRectangle(RectangleF.Inflate(body, -.5f, -.5f), 10);
-        var tail = TailPoints(body);
-        using var surfacePath = new GraphicsPath { FillMode = FillMode.Winding };
-        surfacePath.AddPath(bodyPath, false);
-        surfacePath.AddPolygon(tail);
-        using var fill = new SolidBrush(_backgroundTheme.Popover);
-        using var border = new Pen(Color.FromArgb(86, 100, 116, 139), 1);
-        graphics.FillPath(fill, surfacePath);
-        graphics.DrawPath(border, bodyPath);
-        graphics.DrawLines(border, tail);
+        // The shared hover-card surface: graphite card, white hairline, pointer tail.
+        UiPaint.TailedSurface(graphics, body, TailPoints(body), UiTokens.CardSurface, UiTokens.Hairline, UiTokens.RadiusPanel);
 
         DrawContent(graphics, body);
     }
@@ -232,8 +221,8 @@ internal sealed class TaskbarHintPopoverForm : Form
     {
         var x = body.X + 14;
         var y = body.Y + LogicalTopPadding;
-        using var titleBrush = new SolidBrush(Color.FromArgb(241, 245, 249));
-        using var detailBrush = new SolidBrush(Color.FromArgb(203, 213, 225));
+        using var titleBrush = new SolidBrush(UiPalette.Slate100);
+        using var detailBrush = new SolidBrush(UiPalette.Slate300);
         DrawString(
             graphics,
             _title,
@@ -351,16 +340,8 @@ internal sealed class TaskbarHintPopoverForm : Form
         Font font,
         Brush brush,
         RectangleF bounds,
-        StringAlignment alignment)
-    {
-        using var format = new StringFormat
-        {
-            Alignment = alignment,
-            LineAlignment = StringAlignment.Center,
-            FormatFlags = StringFormatFlags.NoWrap,
-        };
-        graphics.DrawString(value, font, brush, bounds, format);
-    }
+        StringAlignment alignment) =>
+        UiPaint.Text(graphics, value, font, brush, bounds, alignment, ellipsis: false);
 
     protected override void Dispose(bool disposing)
     {

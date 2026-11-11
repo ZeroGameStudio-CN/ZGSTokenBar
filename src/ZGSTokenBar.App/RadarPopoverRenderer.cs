@@ -7,12 +7,12 @@ namespace ZGSTokenBar.App;
 internal sealed partial class RadarPopoverRenderer : IDisposable
 {
     private static readonly Color StrongestColor = Color.FromArgb(246, 196, 83);
-    private static readonly Color ResetOpenColor = Color.FromArgb(251, 113, 133);
+    private static readonly Color ResetOpenColor = UiPalette.Rose400;
     private static readonly Color[] RecommendationColors =
     [
-        Color.FromArgb(52, 211, 153),
+        UiPalette.Emerald400,
         Color.FromArgb(34, 211, 238),
-        Color.FromArgb(167, 139, 250),
+        UiPalette.Violet400,
         Color.FromArgb(244, 114, 182),
     ];
     private static readonly Color[] MultiDistinctionColors =
@@ -92,9 +92,9 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
         {
             var collapse = Offset(layout.RadarCollapseBounds, body.Location);
             using var shape = RoundedRectangle(collapse, Scale(layout.Dpi, 5));
-            using var fill = new SolidBrush(Color.FromArgb(20, 148, 163, 184));
+            using var fill = new SolidBrush(UiPalette.Slate400.WithAlpha(20));
             graphics.FillPath(fill, shape);
-            DrawText(graphics, text.CodexRadarExpansion(true), fonts.Meta, Color.FromArgb(203, 213, 225), collapse,
+            DrawText(graphics, text.CodexRadarExpansion(true), fonts.Meta, UiPalette.Slate300, collapse,
                 CellTextFlags | TextFormatFlags.HorizontalCenter);
         }
 
@@ -109,7 +109,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
                 graphics,
                 message,
                 fonts.Model,
-                Color.FromArgb(148, 163, 184),
+                UiPalette.Slate400,
                 Offset(layout.EmptyBounds, body.Location),
                 CellTextFlags);
         }
@@ -126,8 +126,8 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             graphics.Restore(tableState);
             if (!layout.ScrollTrackBounds.IsEmpty)
             {
-                using var track = new SolidBrush(Color.FromArgb(30, 41, 59));
-                using var thumb = new SolidBrush(Color.FromArgb(100, 116, 139));
+                using var track = new SolidBrush(UiPalette.Slate800);
+                using var thumb = new SolidBrush(UiPalette.Slate500);
                 graphics.FillRectangle(track, Offset(layout.ScrollTrackBounds, body.Location));
                 graphics.FillRectangle(thumb, Offset(layout.ScrollThumbBounds, body.Location));
             }
@@ -137,7 +137,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
                     graphics,
                     text.RadarError(error),
                     fonts.Meta,
-                    Color.FromArgb(251, 191, 36),
+                    UiPalette.Amber400,
                     Offset(layout.ErrorBounds, body.Location),
                     CellTextFlags);
             }
@@ -184,25 +184,25 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             graphics,
             text.CodexSpendHistoryTitle,
             fonts.Title,
-            Color.FromArgb(248, 250, 252),
+            UiPalette.Slate50,
             Offset(layout.TitleBounds, origin),
             CellTextFlags);
         DrawText(
             graphics,
             text.CodexSpendHistorySubtitle(tokenUsage.SessionCount),
             fonts.Meta,
-            pinned ? Color.FromArgb(165, 180, 252) : Color.FromArgb(148, 163, 184),
+            pinned ? UiPalette.Indigo300 : UiPalette.Slate400,
             Offset(layout.SubtitleBounds, origin),
             CellTextFlags);
         DrawText(
             graphics,
             text.CodexSpendHistoryBack,
             fonts.Badge,
-            Color.FromArgb(165, 180, 252),
+            UiPalette.Indigo300,
             Offset(layout.BackBounds, origin),
             CellTextFlags | TextFormatFlags.Right);
 
-        using (var divider = new Pen(Color.FromArgb(42, 71, 85, 105)))
+        using (var divider = new Pen(UiPalette.Slate600.WithAlpha(42)))
         {
             var dividerY = origin.Y + ScaleCoordinate(layout.Dpi, 44);
             graphics.DrawLine(
@@ -272,8 +272,8 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
         NativeText text)
     {
         var accent = period?.HasUnpricedUsage == true
-            ? Color.FromArgb(251, 191, 36)
-            : Color.FromArgb(129, 140, 248);
+            ? UiPalette.Amber400
+            : UiPalette.Indigo400;
         var surfaceBounds = new Rectangle(
             bounds.X,
             bounds.Y,
@@ -300,8 +300,8 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             label,
             fonts.Badge,
             period?.HasUnpricedUsage == true
-                ? Color.FromArgb(251, 191, 36)
-                : Color.FromArgb(165, 180, 252),
+                ? UiPalette.Amber400
+                : UiPalette.Indigo300,
             new Rectangle(
                 left,
                 bounds.Top + ScaleCoordinate(dpi, 3),
@@ -314,7 +314,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             primary && bounds.Width >= Scale(dpi, 100)
                 ? fonts.SpendNumber
                 : fonts.EmphasizedNumber,
-            Color.FromArgb(241, 245, 249),
+            UiPalette.Slate100,
             new Rectangle(
                 left,
                 bounds.Top + ScaleCoordinate(dpi, 17),
@@ -336,7 +336,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             graphics,
             text.CodexSpendTrendTitle,
             fonts.Badge,
-            Color.FromArgb(165, 180, 252),
+            UiPalette.Indigo300,
             Offset(layout.TrendTitleBounds, origin),
             CellTextFlags);
 
@@ -351,15 +351,15 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
                 : $"{text.CodexSpendDate(selected.LocalDate)}  {text.CodexApiEquivalent(selected.Spend)}",
             fonts.EmphasizedNumber,
             selected?.Spend.HasUnpricedUsage == true
-                ? Color.FromArgb(251, 191, 36)
-                : Color.FromArgb(203, 213, 225),
+                ? UiPalette.Amber400
+                : UiPalette.Slate300,
             Offset(layout.SelectedDayBounds, origin),
             CellTextFlags | TextFormatFlags.Right);
 
         var chart = Offset(layout.TrendChartBounds, origin);
         var plotTop = chart.Top + ScaleCoordinate(layout.Dpi, 2);
         var plotBottom = chart.Bottom - ScaleCoordinate(layout.Dpi, 3);
-        using (var grid = new Pen(Color.FromArgb(28, 71, 85, 105)))
+        using (var grid = new Pen(UiPalette.Slate600.WithAlpha(28)))
         {
             for (var index = 0; index < 3; index++)
             {
@@ -388,7 +388,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             var isSelected = index == selectedIndex;
             if (isSelected)
             {
-                using var selection = new SolidBrush(Color.FromArgb(20, 165, 180, 252));
+                using var selection = new SolidBrush(UiPalette.Indigo300.WithAlpha(20));
                 graphics.FillRectangle(
                     selection,
                     new Rectangle(slot.Left - Scale(layout.Dpi, 1), plotTop, slot.Width + Scale(layout.Dpi, 2), plotBottom - plotTop + 1));
@@ -401,10 +401,10 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
                     Math.Max(1, slot.Width),
                     height);
                 using var fill = new SolidBrush(isSelected
-                    ? Color.FromArgb(235, 165, 180, 252)
+                    ? UiPalette.Indigo300.WithAlpha(235)
                     : isRecent
-                        ? Color.FromArgb(190, 129, 140, 248)
-                        : Color.FromArgb(78, 100, 116, 139));
+                        ? UiPalette.Indigo400.WithAlpha(190)
+                        : UiPalette.Slate500.WithAlpha(78));
                 graphics.FillRectangle(fill, bar);
             }
             if (day.Spend.HasUnpricedUsage)
@@ -412,7 +412,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
                 var markerY = height > 0
                     ? plotBottom - height
                     : plotBottom - Scale(layout.Dpi, 1);
-                using var marker = new Pen(Color.FromArgb(251, 191, 36), Scale(layout.Dpi, 1));
+                using var marker = new Pen(UiPalette.Amber400, Scale(layout.Dpi, 1));
                 graphics.DrawLine(marker, slot.Left, markerY, slot.Right - 1, markerY);
             }
         }
@@ -430,7 +430,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             graphics,
             text.CodexSpendModelsTitle,
             fonts.Badge,
-            Color.FromArgb(165, 180, 252),
+            UiPalette.Indigo300,
             Offset(layout.ModelsTitleBounds, origin),
             CellTextFlags);
 
@@ -445,7 +445,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
                 graphics,
                 "—",
                 fonts.Model,
-                Color.FromArgb(100, 116, 139),
+                UiPalette.Slate500,
                 Offset(layout.ModelRowBounds[0], origin),
                 CellTextFlags);
             return;
@@ -473,11 +473,11 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
                     ? text.CodexUnknownModel
                     : model.Model,
                 index == 0 ? fonts.EmphasizedModel : fonts.Model,
-                Color.FromArgb(203, 213, 225),
+                UiPalette.Slate300,
                 new Rectangle(row.Left, row.Top, labelWidth, row.Height),
                 CellTextFlags);
 
-            using (var trackFill = new SolidBrush(Color.FromArgb(42, 71, 85, 105)))
+            using (var trackFill = new SolidBrush(UiPalette.Slate600.WithAlpha(42)))
             {
                 graphics.FillRectangle(trackFill, track);
             }
@@ -488,13 +488,13 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
                     Scale(layout.Dpi, 2),
                     (int)Math.Round(track.Width * (double)(amount / maximum), MidpointRounding.AwayFromZero));
                 using var fill = new SolidBrush(index == 0
-                    ? Color.FromArgb(205, 129, 140, 248)
+                    ? UiPalette.Indigo400.WithAlpha(205)
                     : Color.FromArgb(135, 99, 102, 241));
                 graphics.FillRectangle(fill, new Rectangle(track.X, track.Y, Math.Min(track.Width, fillWidth), track.Height));
             }
             if (model.Spend.HasUnpricedUsage)
             {
-                using var marker = new SolidBrush(Color.FromArgb(251, 191, 36));
+                using var marker = new SolidBrush(UiPalette.Amber400);
                 graphics.FillEllipse(
                     marker,
                     track.Right - Scale(layout.Dpi, 4),
@@ -507,8 +507,8 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
                 text.CodexApiEquivalent(model.Spend),
                 fonts.EmphasizedNumber,
                 model.Spend.HasUnpricedUsage
-                    ? Color.FromArgb(251, 191, 36)
-                    : Color.FromArgb(203, 213, 225),
+                    ? UiPalette.Amber400
+                    : UiPalette.Slate300,
                 new Rectangle(row.Right - amountWidth, row.Top, amountWidth, row.Height),
                 CellTextFlags | TextFormatFlags.Right);
         }
@@ -537,18 +537,18 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             graphics,
             text.CodexTokenTitle,
             fonts.Title,
-            Color.FromArgb(248, 250, 252),
+            UiPalette.Slate50,
             Offset(layout.TitleBounds, origin),
             CellTextFlags);
         DrawText(
             graphics,
             text.CodexTokenPopoverSubtitle(pinned),
             fonts.Badge,
-            Color.FromArgb(148, 163, 184),
+            UiPalette.Slate400,
             Offset(layout.SubtitleBounds, origin),
             CellTextFlags);
 
-        using var divider = new Pen(Color.FromArgb(38, 71, 85, 105));
+        using var divider = new Pen(UiPalette.Slate600.WithAlpha(38));
         graphics.DrawLine(
             divider,
             origin.X + ScaleCoordinate(layout.Dpi, 12),
@@ -556,10 +556,10 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             origin.X + ScaleCoordinate(layout.Dpi, 228),
             origin.Y + ScaleCoordinate(layout.Dpi, 44));
 
-        var labelColor = Color.FromArgb(148, 163, 184);
+        var labelColor = UiPalette.Slate400;
         var logicalWidth = (int)Math.Round(layout.BodySize.Width * 96d / layout.Dpi);
         var metricWidth = (logicalWidth - 32) / 2;
-        var valueColor = Color.FromArgb(226, 232, 240);
+        var valueColor = UiPalette.Slate200;
         var today = text.CodexTodayTokens(tokenUsage.TodayTokens);
         var local = text.CodexLocalTokens(tokenUsage.LocalTokens);
         var todayCache = text.CodexTodayCacheHitRate(tokenUsage.TodayCacheHitPercent);
@@ -573,7 +573,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             today.Value,
             text.CodexTotalMetricLabel,
             local.Value,
-            Color.FromArgb(129, 140, 248),
+            UiPalette.Indigo400,
             labelColor,
             valueColor,
             fonts);
@@ -586,7 +586,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             todayCache.Value,
             text.CodexTotalMetricLabel,
             totalCache.Value,
-            Color.FromArgb(52, 211, 153),
+            UiPalette.Emerald400,
             labelColor,
             valueColor,
             fonts);
@@ -608,25 +608,25 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
         CodexConversationView? conversationView, IReadOnlyList<CodexModelSpeedGroup>? cachedModelGroups)
     {
         if (logo is not null) graphics.DrawImage(logo, Offset(layout.LogoBounds, origin));
-        DrawText(graphics, text.CodexTokenTitle, fonts.Title, Color.FromArgb(226, 232, 240),
+        DrawText(graphics, text.CodexTokenTitle, fonts.Title, UiPalette.Slate200,
             Offset(layout.TitleBounds, origin), CellTextFlags);
         DrawText(graphics, conversationView is null ? text.CodexTokenPopoverSubtitle(pinned)
-            : text.CodexHistoryCoverage(conversationView.Rows.Count, conversationView.ObservedCount), fonts.Meta, Color.FromArgb(148, 163, 184),
+            : text.CodexHistoryCoverage(conversationView.Rows.Count, conversationView.ObservedCount), fonts.Meta, UiPalette.Slate400,
             Offset(layout.SubtitleBounds, origin), CellTextFlags);
         if (!layout.RadarToggleBounds.IsEmpty)
         {
             var button = Offset(layout.RadarToggleBounds, origin);
             using var shape = RoundedRectangle(button, Scale(layout.Dpi, 5));
-            using var fill = new SolidBrush(Color.FromArgb(20, 148, 163, 184));
+            using var fill = new SolidBrush(UiPalette.Slate400.WithAlpha(20));
             graphics.FillPath(fill, shape);
-            DrawText(graphics, text.CodexRadarExpansion(radarExpanded), fonts.Meta, Color.FromArgb(203, 213, 225),
+            DrawText(graphics, text.CodexRadarExpansion(radarExpanded), fonts.Meta, UiPalette.Slate300,
                 button, CellTextFlags | TextFormatFlags.HorizontalCenter);
         }
         if (!layout.ConversationToolbarBounds.IsEmpty)
             DrawConversationTools(graphics, layout, origin, conversationView ?? CodexConversationView.Create(usage, new(), usage?.CapturedAt ?? DateTimeOffset.UtcNow), text, fonts);
         if (usage is null)
         {
-            DrawText(graphics, text.CodexNoRecentTurns, fonts.Model, Color.FromArgb(148, 163, 184),
+            DrawText(graphics, text.CodexNoRecentTurns, fonts.Model, UiPalette.Slate400,
                 Offset(layout.EmptyBounds, origin), CellTextFlags);
             return;
         }
@@ -636,7 +636,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             var speedBounds = Offset(layout.ModelSpeedBounds, origin);
             var rows = modelSpeeds ?? CodexConversationSpeeds.Build(usage, usage.CapturedAt);
             var groups = cachedModelGroups ?? CodexConversationSpeeds.GroupModels(rows);
-            DrawText(graphics, (conversationView is null ? text.CodexModelSpeedsTitle(groups.Count) : text.CodexFilteredModelSpeeds(groups.Count)) + " · tok/s", fonts.Badge, Color.FromArgb(148, 163, 184),
+            DrawText(graphics, (conversationView is null ? text.CodexModelSpeedsTitle(groups.Count) : text.CodexFilteredModelSpeeds(groups.Count)) + " · tok/s", fonts.Badge, UiPalette.Slate400,
                 speedBounds with { Height = Scale(layout.Dpi, 14) }, CellTextFlags);
             var columns = Math.Min(3, Math.Max(1, groups.Count));
             var tileWidth = speedBounds.Width / columns;
@@ -656,19 +656,19 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
                     var setting = new Rectangle(tile.Left, tile.Top + Scale(layout.Dpi, 24 + rowIndex * 20), settingWidth, Scale(layout.Dpi, 17));
                     var color = ModelIdentityColors.Effort(row.Effort!);
                     DrawText(graphics, text.CodexModelSpeedSetting(row), fonts.Meta, color, setting, CellTextFlags);
-                    DrawText(graphics, text.CodexModelSpeedCompactValue(row), fonts.Meta, Color.FromArgb(203, 213, 225),
+                    DrawText(graphics, text.CodexModelSpeedCompactValue(row), fonts.Meta, UiPalette.Slate300,
                         new Rectangle(setting.Right + Scale(layout.Dpi, 8), setting.Top,
                             Math.Max(1, tile.Right - setting.Right - Scale(layout.Dpi, 8)), setting.Height), CellTextFlags);
                 }
             }
         }
-        DrawText(graphics, text.CodexGlobalStatistics, fonts.Meta, Color.FromArgb(148, 163, 184),
+        DrawText(graphics, text.CodexGlobalStatistics, fonts.Meta, UiPalette.Slate400,
             Offset(layout.FooterScopeBounds, origin), CellTextFlags);
         var footer = Offset(layout.FooterCompactBounds, origin);
         var gap = Scale(layout.Dpi, 8);
         var width = (footer.Width - gap * 2) / 3;
-        var labels = Color.FromArgb(148, 163, 184);
-        var values = Color.FromArgb(226, 232, 240);
+        var labels = UiPalette.Slate400;
+        var values = UiPalette.Slate200;
         DrawTokenMetricGroup(graphics, layout.Dpi, footer with { Width = width }, text.CodexCompactSpendMetricTitle,
             text.CodexTodayMetricLabel, text.CodexApiEquivalent(usage.TodaySpend),
             text.CodexLast30DaysMetricLabel, text.CodexApiEquivalent(usage.Last30DaysSpend), labels, labels, values, fonts);
@@ -691,11 +691,11 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             recentTurnOffset,
             turns.Count,
             layout.RecentPageSize);
-        var labelColor = Color.FromArgb(148, 163, 184);
+        var labelColor = UiPalette.Slate400;
         var columns = layout.RecentColumns;
         DrawText(graphics, (conversationView is null ? text.CodexRecentTurnsTitle : text.CodexMatchingTurns) + (usage.PendingConversationCount > 0
                 ? " · " + text.CodexConversationsIndexing(usage.PendingConversationCount) : ""),
-            fonts.Badge, Color.FromArgb(165, 180, 252),
+            fonts.Badge, UiPalette.Indigo300,
             new Rectangle(origin.X + columns[0].Left, bounds.Top,
                 columns[^1].Right - columns[0].Left - Scale(layout.Dpi, 68),
                 Scale(layout.Dpi, 16)), CellTextFlags);
@@ -704,7 +704,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             var previous = Offset(layout.RecentPreviousBounds, origin);
             var next = Offset(layout.RecentNextBounds, origin);
             using var pager = RoundedRectangle(Rectangle.FromLTRB(previous.Left, previous.Top, next.Right, next.Bottom), Scale(layout.Dpi, 5));
-            using var pagerFill = new SolidBrush(Color.FromArgb(12, 148, 163, 184));
+            using var pagerFill = new SolidBrush(UiPalette.Slate400.WithAlpha(12));
             graphics.FillPath(pagerFill, pager);
             DrawText(graphics, "‹", fonts.Model, page.HasPrevious ? Color.White : labelColor, previous,
                 CellTextFlags | TextFormatFlags.HorizontalCenter);
@@ -730,8 +730,8 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
                 new Rectangle(origin.X + column.Right - Scale(layout.Dpi, 9), bounds.Top + Scale(layout.Dpi, 13), Scale(layout.Dpi, 9), Scale(layout.Dpi, 12)), CellTextFlags);
         }
         var y = bounds.Top + Scale(layout.Dpi, RadarPopoverLayout.ConversationHeaderHeight);
-        using var divider = new Pen(Color.FromArgb(24, 71, 85, 105));
-        using var alternateRow = new SolidBrush(Color.FromArgb(10, 148, 163, 184));
+        using var divider = new Pen(UiPalette.Slate600.WithAlpha(24));
+        using var alternateRow = new SolidBrush(UiPalette.Slate400.WithAlpha(10));
         var rowHeight = Scale(layout.Dpi, layout.RecentRowHeight);
         if (page.Count == 0 && layout.ConversationPrimary)
             DrawText(graphics, usage.PendingConversationCount > 0 ? text.CodexConversationsIndexing(usage.PendingConversationCount)
@@ -755,13 +755,13 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
                 y += rowHeight;
                 continue;
             }
-            DrawText(graphics, text.CodexTurnTime(turn), fonts.Number, Color.FromArgb(203, 213, 225),
+            DrawText(graphics, text.CodexTurnTime(turn), fonts.Number, UiPalette.Slate300,
                 new Rectangle(origin.X + columns[0].Left, y + Scale(layout.Dpi, 9),
                     columns[0].Width, Scale(layout.Dpi, 14)), CellTextFlags);
             DrawText(graphics, text.CodexTurnDate(turn), fonts.Meta, labelColor,
                 new Rectangle(origin.X + columns[0].Left, y + Scale(layout.Dpi, 24),
                     columns[0].Width, Scale(layout.Dpi, 13)), CellTextFlags);
-            DrawText(graphics, text.CodexTurnName(turn), fonts.EmphasizedModel, Color.FromArgb(226, 232, 240),
+            DrawText(graphics, text.CodexTurnName(turn), fonts.EmphasizedModel, UiPalette.Slate200,
                 new Rectangle(origin.X + columns[1].Left, y + Scale(layout.Dpi, 2),
                     columns[1].Width, Scale(layout.Dpi, 14)), CellTextFlags);
             DrawText(graphics, $"{turn.Model ?? "—"} · {turn.Effort ?? "—"}", fonts.Meta, labelColor,
@@ -773,7 +773,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             DrawRecentBadge(graphics, layout.Dpi,
                 detailBounds with { Width = Math.Max(1, detailBounds.Width - statusWidth - Scale(layout.Dpi, 4)) },
                 text.CodexTurnTier(turn), fonts.Meta,
-                turn.ServiceTier is "fast" or "ultrafast" ? Color.FromArgb(167, 139, 250) : labelColor);
+                turn.ServiceTier is "fast" or "ultrafast" ? UiPalette.Violet400 : labelColor);
             var values = new[]
             {
                 turn.NewInputTokens is { } input ? NativeText.FormatTokenCount(input) : "—",
@@ -787,8 +787,8 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             for (var column = 2; column < columns.Count; column++)
                 DrawText(graphics, values[column - 2], column == 5 ? fonts.EmphasizedNumber : fonts.Number,
                     values[column - 2] == "—" ? labelColor
-                        : column == 6 ? Color.FromArgb(52, 211, 153)
-                        : column == 5 ? Color.FromArgb(226, 232, 240) : Color.FromArgb(203, 213, 225),
+                        : column == 6 ? UiPalette.Emerald400
+                        : column == 5 ? UiPalette.Slate200 : UiPalette.Slate300,
                     new Rectangle(origin.X + columns[column].Left, y, columns[column].Width,
                         rowHeight), CellTextFlags | RecentColumnAlignment(column));
             y += rowHeight;
@@ -799,9 +799,9 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
         int rowHeight, IReadOnlyList<RadarPopoverColumn> columns, CodexConversationTurn turn,
         RadarPopoverFonts fonts, NativeText text)
     {
-        var muted = Color.FromArgb(148, 163, 184);
-        var valueColor = Color.FromArgb(203, 213, 225);
-        DrawText(graphics, text.CodexTurnName(turn), fonts.EmphasizedModel, Color.FromArgb(226, 232, 240),
+        var muted = UiPalette.Slate400;
+        var valueColor = UiPalette.Slate300;
+        DrawText(graphics, text.CodexTurnName(turn), fonts.EmphasizedModel, UiPalette.Slate200,
             new Rectangle(x + columns[0].Left, y + Scale(layout.Dpi, 3), columns[0].Width, Scale(layout.Dpi, 18)), CellTextFlags);
         var meta = new Rectangle(x + columns[0].Left, y + Scale(layout.Dpi, 24), columns[0].Width, Scale(layout.Dpi, 16));
         var tier = text.CodexKnownTier(turn);
@@ -829,8 +829,8 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
         }
         var statusColor = turn.State switch
         {
-            "running" => Color.FromArgb(52, 211, 153),
-            "interrupted" => Color.FromArgb(251, 191, 36),
+            "running" => UiPalette.Emerald400,
+            "interrupted" => UiPalette.Amber400,
             _ => muted,
         };
         DrawText(graphics, "● " + text.CodexTurnState(turn), fonts.Meta, statusColor,
@@ -854,7 +854,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
         {
             if (columns[column].Width <= 0 || values[column - 3] == "—") continue;
             DrawText(graphics, values[column - 3], column == 7 ? fonts.EmphasizedNumber : fonts.Number,
-                column == 10 ? turn.LiveRate?.Estimated > 0 ? Color.FromArgb(251, 191, 36) : Color.FromArgb(52, 211, 153) : valueColor,
+                column == 10 ? turn.LiveRate?.Estimated > 0 ? UiPalette.Amber400 : UiPalette.Emerald400 : valueColor,
                 new Rectangle(x + columns[column].Left, y, columns[column].Width, rowHeight),
                 CellTextFlags | RecentColumnAlignment(column, true));
         }
@@ -874,9 +874,9 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
     {
         var color = turn.State switch
         {
-            "running" => Color.FromArgb(52, 211, 153),
-            "interrupted" => Color.FromArgb(251, 191, 36),
-            "stale" => Color.FromArgb(148, 163, 184),
+            "running" => UiPalette.Emerald400,
+            "interrupted" => UiPalette.Amber400,
+            "stale" => UiPalette.Slate400,
             _ => Color.FromArgb(120, 139, 158),
         };
         return DrawRecentBadge(graphics, dpi, bounds, text.CodexTurnState(turn), fonts.Meta, color,
@@ -930,8 +930,8 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             Math.Max(1, bounds.Width - 1),
             Math.Max(1, bounds.Height - 1));
         using var surface = RoundedRectangle(surfaceBounds, Scale(dpi, 6));
-        using var fill = new SolidBrush(Color.FromArgb(25, 30, 41, 59));
-        using var border = new Pen(Color.FromArgb(55, 71, 85, 105));
+        using var fill = new SolidBrush(UiPalette.Slate800.WithAlpha(25));
+        using var border = new Pen(UiPalette.Slate600.WithAlpha(55));
         graphics.FillPath(fill, surface);
         graphics.DrawPath(border, surface);
 
@@ -943,7 +943,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             Scale(dpi, 14));
         DrawText(graphics, title, fonts.Badge, accentColor, titleBounds, CellTextFlags);
 
-        using var divider = new Pen(Color.FromArgb(35, 71, 85, 105));
+        using var divider = new Pen(UiPalette.Slate600.WithAlpha(35));
         var dividerY = bounds.Top + ScaleCoordinate(dpi, 20);
         graphics.DrawLine(divider, bounds.Left + padding, dividerY, bounds.Right - padding, dividerY);
 
@@ -1028,7 +1028,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
         graphics.FillPath(fill, path);
         graphics.DrawPath(border, path);
 
-        using var divider = new Pen(Color.FromArgb(52, 71, 85, 105));
+        using var divider = new Pen(UiPalette.Slate600.WithAlpha(52));
         var dividerX = bounds.Left - Scale(layout.Dpi, 8);
         graphics.DrawLine(divider, dividerX, bounds.Top, dividerX, bounds.Bottom);
     }
@@ -1074,7 +1074,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             graphics,
             title,
             fonts.Title,
-            Color.FromArgb(248, 250, 252),
+            UiPalette.Slate50,
             Offset(layout.TitleBounds, origin),
             CellTextFlags);
         DrawText(
@@ -1082,7 +1082,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             canSwitchBenchmark ? text.RadarBenchmarkSwitch(presentation?.TrialObservedAt is not null)
                 : presentation?.TrialObservedAt is { } trialAt ? text.RadarTrialSubtitle(trialAt) : text.RadarPopoverSubtitle(pinned),
             fonts.Badge,
-            Color.FromArgb(129, 140, 248),
+            UiPalette.Indigo400,
             Offset(layout.SubtitleBounds, origin),
             CellTextFlags);
 
@@ -1121,7 +1121,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             graphics,
             canSwitchBenchmark && !state.Loading && state.Error is null ? checkedLabel : $"{stateLabel} · {checkedLabel}",
             fonts.Badge,
-            fresh ? Color.FromArgb(52, 211, 153) : Color.FromArgb(251, 191, 36),
+            fresh ? UiPalette.Emerald400 : UiPalette.Amber400,
             Offset(layout.StateBounds, origin),
             BaseTextFlags | TextFormatFlags.Right);
     }
@@ -1141,7 +1141,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
         var bounds = Offset(layout.ResetBounds, origin);
         var open = window?.Open == true;
         var font = open ? fonts.ResetOpen : fonts.Badge;
-        var color = open ? ResetOpenColor : Color.FromArgb(148, 163, 184);
+        var color = open ? ResetOpenColor : UiPalette.Slate400;
         if (open)
         {
             var labelWidth = TextRenderer.MeasureText(
@@ -1182,8 +1182,8 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
     {
         var bounds = Offset(layout.ResetBounds, origin);
         using var path = RoundedRectangle(bounds, Scale(layout.Dpi, 7));
-        using var fill = new SolidBrush(Color.FromArgb(28, 251, 113, 133));
-        using var border = new Pen(Color.FromArgb(116, 251, 113, 133));
+        using var fill = new SolidBrush(UiPalette.Rose400.WithAlpha(28));
+        using var border = new Pen(UiPalette.Rose400.WithAlpha(116));
         graphics.FillPath(fill, path);
         graphics.DrawPath(border, path);
 
@@ -1232,7 +1232,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
         NativeText text,
         bool trial = false)
     {
-        var color = Color.FromArgb(148, 163, 184);
+        var color = UiPalette.Slate400;
         DrawColumnText(graphics, text.RadarModelHeader, fonts.Badge, color, layout.Columns.Model, layout.TableHeaderBounds, origin);
         DrawColumnText(graphics, trial ? text.RadarTrialScoreHeader : text.RadarIqHeader, fonts.Badge, color, layout.Columns.IqCurrent, layout.TableHeaderBounds, origin);
         DrawColumnText(graphics, trial ? "" : text.RadarIqAverageHeader, fonts.Badge, color, layout.Columns.IqAverage, layout.TableHeaderBounds, origin);
@@ -1250,7 +1250,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
 
         var previousSmoothing = graphics.SmoothingMode;
         graphics.SmoothingMode = SmoothingMode.None;
-        using var separator = new Pen(Color.FromArgb(38, 71, 85, 105));
+        using var separator = new Pen(UiPalette.Slate600.WithAlpha(38));
         graphics.DrawLine(
             separator,
             origin.X + layout.TableHeaderBounds.Left,
@@ -1279,10 +1279,10 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             var model = presentation.Rows.First(row => string.Equals(row.Model.Model, group.ModelKey, StringComparison.OrdinalIgnoreCase)).Model;
             var label = RadarPresentation.FormatModelLabel(model with { ReasoningEffort = null, Label = model.Model });
             DrawText(graphics, group.Collapsed ? "\uE76C" : "\uE70D", fonts.Icon,
-                Color.FromArgb(148, 163, 184),
+                UiPalette.Slate400,
                 new Rectangle(bounds.Left, bounds.Top, Scale(layout.Dpi, 22), bounds.Height),
                 CellTextFlags | TextFormatFlags.HorizontalCenter);
-            DrawText(graphics, label, fonts.EmphasizedModel, Color.FromArgb(226, 232, 240),
+            DrawText(graphics, label, fonts.EmphasizedModel, UiPalette.Slate200,
                 new Rectangle(bounds.Left + Scale(layout.Dpi, 24), bounds.Top,
                     bounds.Width - Scale(layout.Dpi, 30), bounds.Height), CellTextFlags);
         }
@@ -1307,7 +1307,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
                 + row.RecommendationGroupIndexes.Count;
             var multipleDistinctions = distinctionCount > 1;
             var distinguished = distinctionCount > 0;
-            var labelColor = Color.FromArgb(226, 232, 240);
+            var labelColor = UiPalette.Slate200;
             var recommendationColor = row.RecommendationGroupIndexes.Count == 0
                 ? labelColor
                 : RecommendationColor(row.RecommendationGroupIndexes[0]);
@@ -1575,7 +1575,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
         bool spendCardHovered,
         RadarPresentationResult? presentation)
     {
-        var footerColor = Color.FromArgb(148, 163, 184);
+        var footerColor = UiPalette.Slate400;
         if (tokenUsage is not null && !layout.FooterCompactBounds.IsEmpty)
         {
             DrawCompactUsageFooter(
@@ -1601,7 +1601,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
         var legendBounds = Offset(layout.FooterLegendBounds, origin);
         if (!layout.FooterLegendBounds.IsEmpty)
         {
-            using var divider = new Pen(Color.FromArgb(42, 71, 85, 105));
+            using var divider = new Pen(UiPalette.Slate600.WithAlpha(42));
             var dividerY = legendBounds.Top - Scale(layout.Dpi, 2);
             graphics.DrawLine(divider, legendBounds.Left, dividerY, legendBounds.Right, dividerY);
         }
@@ -1793,7 +1793,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             graphics,
             $"今 {text.CodexApiEquivalent(tokenUsage.TodaySpend)}",
             fonts.Model,
-            Color.FromArgb(226, 232, 240),
+            UiPalette.Slate200,
             new Rectangle(bounds.Left + padding, bounds.Top + Scale(dpi, 10),
                 bounds.Width - padding * 2, Scale(dpi, 9)),
             CellTextFlags);
@@ -1801,7 +1801,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             graphics,
             $"30日 {text.CodexApiEquivalent(tokenUsage.Last30DaysSpend)}",
             fonts.Model,
-            Color.FromArgb(203, 213, 225),
+            UiPalette.Slate300,
             new Rectangle(bounds.Left + padding, bounds.Top + Scale(dpi, 19),
                 bounds.Width - padding * 2, Scale(dpi, 9)),
             CellTextFlags);
@@ -1871,14 +1871,14 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             graphics,
             label,
             fonts.Meta,
-            Color.FromArgb(148, 163, 184),
+            UiPalette.Slate400,
             new Rectangle(bounds.Left, bounds.Top, labelWidth, bounds.Height),
             CellTextFlags);
         DrawText(
             graphics,
             value,
             fonts.EmphasizedNumber,
-            Color.FromArgb(226, 232, 240),
+            UiPalette.Slate200,
             new Rectangle(bounds.Left + labelWidth + Scale(dpi, 2), bounds.Top,
                 Math.Max(1, bounds.Right - bounds.Left - labelWidth - Scale(dpi, 2)), bounds.Height),
             CellTextFlags | TextFormatFlags.Right);
@@ -1899,7 +1899,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             bounds.Y,
             Math.Max(1, bounds.Width - 1),
             Math.Max(1, bounds.Height - 1));
-        var accentColor = Color.FromArgb(129, 140, 248);
+        var accentColor = UiPalette.Indigo400;
         using var surface = RoundedRectangle(surfaceBounds, Scale(dpi, 6));
         using var fill = new SolidBrush(Color.FromArgb(
             hovered && showHistoryAction ? 45 : 32,
@@ -1945,7 +1945,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             graphics,
             text.CodexSpendMetricTitle,
             fonts.Badge,
-            Color.FromArgb(165, 180, 252),
+            UiPalette.Indigo300,
             new Rectangle(headerBounds.Left, headerBounds.Top, titleWidth, headerBounds.Height),
             CellTextFlags);
         if (!showHistoryAction || wideCard)
@@ -1957,7 +1957,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
                 graphics,
                 text.CodexSessionCount(tokenUsage.SessionCount),
                 fonts.Meta,
-                Color.FromArgb(100, 116, 139),
+                UiPalette.Slate500,
                 new Rectangle(
                     headerBounds.Left + titleWidth,
                     headerBounds.Top,
@@ -1973,7 +1973,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
                 fonts.Badge,
                 hovered
                     ? Color.FromArgb(224, 231, 255)
-                    : Color.FromArgb(165, 180, 252),
+                    : UiPalette.Indigo300,
                 new Rectangle(
                     headerBounds.Right - actionWidth,
                     headerBounds.Top,
@@ -1997,7 +1997,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             text.CodexTodayMetricLabel,
             text.CodexApiEquivalent(tokenUsage.TodaySpend),
             fonts.SpendNumber,
-            Color.FromArgb(248, 250, 252),
+            UiPalette.Slate50,
             fonts);
         DrawSpendSummaryField(
             graphics,
@@ -2010,7 +2010,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             text.CodexLast30DaysMetricLabel,
             text.CodexApiEquivalent(tokenUsage.Last30DaysSpend),
             fonts.EmphasizedNumber,
-            Color.FromArgb(203, 213, 225),
+            UiPalette.Slate300,
             fonts);
 
         using var verticalDivider = new Pen(Color.FromArgb(38, accentColor.R, accentColor.G, accentColor.B));
@@ -2044,7 +2044,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             graphics,
             label,
             fonts.Meta,
-            Color.FromArgb(148, 163, 184),
+            UiPalette.Slate400,
             new Rectangle(bounds.Left, bounds.Top, labelWidth, bounds.Height),
             CellTextFlags);
         DrawText(
@@ -2072,7 +2072,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
         var bounds = Offset(layout.FooterSourceBounds, origin);
         var groupGap = Scale(layout.Dpi, 16);
         var groupWidth = (bounds.Width - groupGap) / 2;
-        var valueColor = Color.FromArgb(226, 232, 240);
+        var valueColor = UiPalette.Slate200;
         DrawTokenRadarFooterGroup(
             graphics,
             layout.Dpi,
@@ -2082,7 +2082,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             NativeText.FormatTokenCount(tokenUsage.TodayTokens),
             text.CodexTotalMetricLabel,
             NativeText.FormatTokenCount(tokenUsage.LocalTokens),
-            Color.FromArgb(129, 140, 248),
+            UiPalette.Indigo400,
             labelColor,
             valueColor,
             fonts);
@@ -2095,7 +2095,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             NativeText.FormatCacheHitPercent(tokenUsage.TodayCacheHitPercent),
             text.CodexTotalMetricLabel,
             NativeText.FormatCacheHitPercent(tokenUsage.TotalCacheHitPercent),
-            Color.FromArgb(52, 211, 153),
+            UiPalette.Emerald400,
             labelColor,
             valueColor,
             fonts);
@@ -2113,7 +2113,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
         var bounds = Offset(layout.FooterSourceBounds, origin);
         var groupGap = Scale(layout.Dpi, 16);
         var groupWidth = (bounds.Width - groupGap) / 2;
-        var valueColor = Color.FromArgb(226, 232, 240);
+        var valueColor = UiPalette.Slate200;
         DrawTokenRadarFooterGroup(
             graphics,
             layout.Dpi,
@@ -2123,7 +2123,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             NativeText.FormatTokenCount(usage.Today.TotalTokens),
             text.CodexTotalMetricLabel,
             NativeText.FormatTokenCount(usage.Total.TotalTokens),
-            Color.FromArgb(129, 140, 248),
+            UiPalette.Indigo400,
             labelColor,
             valueColor,
             fonts);
@@ -2136,7 +2136,7 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
             NativeText.FormatCacheHitPercent(ToDouble(usage.Today.CacheHitRatePercent)),
             text.CodexTotalMetricLabel,
             NativeText.FormatCacheHitPercent(ToDouble(usage.Total.CacheHitRatePercent)),
-            Color.FromArgb(52, 211, 153),
+            UiPalette.Emerald400,
             labelColor,
             valueColor,
             fonts);
@@ -2325,10 +2325,10 @@ internal sealed partial class RadarPopoverRenderer : IDisposable
 
     private static Color StatusColor(RadarStatusIndicator indicator) => indicator switch
     {
-        RadarStatusIndicator.Stable => Color.FromArgb(52, 211, 153),
-        RadarStatusIndicator.Watch => Color.FromArgb(251, 191, 36),
-        RadarStatusIndicator.Degraded => Color.FromArgb(251, 113, 133),
-        _ => Color.FromArgb(148, 163, 184),
+        RadarStatusIndicator.Stable => UiPalette.Emerald400,
+        RadarStatusIndicator.Watch => UiPalette.Amber400,
+        RadarStatusIndicator.Degraded => UiPalette.Rose400,
+        _ => UiPalette.Slate400,
     };
 
     private static void DrawTail(

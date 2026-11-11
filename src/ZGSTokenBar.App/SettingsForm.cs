@@ -1148,20 +1148,21 @@ internal sealed class SettingsForm : Form
                 SystemColors.Highlight,
                 SystemColors.HighlightText,
                 SystemColors.HotTrack)
+            // Shared kit tokens: neutral window chrome, the same text/accent/warning as every hover card.
             : new(
-                Color.FromArgb(24, 24, 28),
-                Color.FromArgb(18, 18, 20),
-                Color.FromArgb(21, 21, 24),
-                Color.FromArgb(31, 31, 35),
-                Color.FromArgb(39, 39, 45),
-                Color.FromArgb(44, 44, 49),
-                Color.FromArgb(44, 44, 49),
-                Color.FromArgb(104, 108, 118),
-                Color.FromArgb(242, 243, 245),
-                Color.FromArgb(160, 164, 173),
-                Color.FromArgb(76, 141, 255),
+                UiTokens.WindowContent,
+                UiTokens.WindowSidebar,
+                UiTokens.WindowFooter,
+                UiTokens.WindowSurface,
+                UiTokens.WindowHover,
+                UiTokens.WindowBorder,
+                UiTokens.WindowBorder,
+                UiTokens.WindowScrollThumb,
+                UiTokens.TextStrong,
+                UiTokens.Muted,
+                UiTokens.AccentFill,
                 Color.White,
-                Color.FromArgb(229, 163, 59));
+                UiTokens.Warning);
     }
 
     private sealed class BorderPanel : Panel

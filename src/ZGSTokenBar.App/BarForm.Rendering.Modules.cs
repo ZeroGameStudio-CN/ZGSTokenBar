@@ -15,13 +15,13 @@ internal sealed partial class BarForm
         var timing = RadarResetTiming.Resolve(window);
         var stale = _radarState.Error is not null || _radarState.IsStale(now);
         var statusColor = stale
-            ? Color.FromArgb(148, 163, 184)
+            ? UiPalette.Slate400
             : timing.Kind switch
             {
-                RadarResetTimingKind.Exact when timing.ExactTargetAt <= now => Color.FromArgb(251, 191, 36),
-                RadarResetTimingKind.Exact => Color.FromArgb(52, 211, 153),
-                RadarResetTimingKind.EstimatedDate => Color.FromArgb(251, 191, 36),
-                _ => Color.FromArgb(148, 163, 184),
+                RadarResetTimingKind.Exact when timing.ExactTargetAt <= now => UiPalette.Amber400,
+                RadarResetTimingKind.Exact => UiPalette.Emerald400,
+                RadarResetTimingKind.EstimatedDate => UiPalette.Amber400,
+                _ => UiPalette.Slate400,
             };
 
         using var path = RoundedRectangle(bounds, 6);
@@ -56,8 +56,8 @@ internal sealed partial class BarForm
         else
         {
             using var titleBrush = new SolidBrush(stale
-                ? Color.FromArgb(148, 163, 184)
-                : Color.FromArgb(203, 213, 225));
+                ? UiPalette.Slate400
+                : UiPalette.Slate300);
             using var valueBrush = new SolidBrush(statusColor);
             DrawString(
                 graphics,
@@ -150,8 +150,8 @@ internal sealed partial class BarForm
             return;
         }
 
-        using var title = new SolidBrush(Color.FromArgb(203, 213, 225));
-        using var value = new SolidBrush(Color.FromArgb(248, 250, 252));
+        using var title = new SolidBrush(UiPalette.Slate300);
+        using var value = new SolidBrush(UiPalette.Slate50);
         DrawString(
             graphics,
             view.Title,
@@ -170,7 +170,7 @@ internal sealed partial class BarForm
         if (summary?.Status == "usage-remaining" && summary.Value.Number is { } remainingPercent)
         {
             var track = new RectangleF(bounds.X + 34, bounds.Bottom - 7, Math.Max(8, bounds.Width - 40), 3);
-            using var trackBrush = new SolidBrush(Color.FromArgb(30, 41, 59));
+            using var trackBrush = new SolidBrush(UiPalette.Slate800);
             graphics.FillRoundedRectangle(trackBrush, track, 1.5f);
             if (remainingPercent > 0)
             {
@@ -186,10 +186,10 @@ internal sealed partial class BarForm
     private void DrawLiveMetricsCard(Graphics graphics, RectangleF bounds, bool collapsed)
     {
         DrawTaskbarCardShell(graphics, bounds);
-        using var primary = new SolidBrush(Color.FromArgb(203, 213, 225));
-        using var muted = new SolidBrush(Color.FromArgb(148, 163, 184));
+        using var primary = new SolidBrush(UiPalette.Slate300);
+        using var muted = new SolidBrush(UiPalette.Slate400);
         using var observed = new SolidBrush(Color.FromArgb(110, 231, 183));
-        using var estimated = new SolidBrush(Color.FromArgb(251, 191, 36));
+        using var estimated = new SolidBrush(UiPalette.Amber400);
         using var receive = new SolidBrush(Color.FromArgb(125, 211, 252));
         using var send = new SolidBrush(Color.FromArgb(196, 181, 253));
         var currentRate = _systemUsage.CurrentOutputRate;
@@ -214,7 +214,7 @@ internal sealed partial class BarForm
             ? (_text.IsChinese ? $"生成 {live.Generating} · 工具 {live.Tools}" : $"Gen {live.Generating} · Tools {live.Tools}") : "—";
         DrawString(graphics, detail, _subtitleFont, muted,
             new RectangleF(bounds.X + 5, bounds.Y + 16, bounds.Width - 9, 10), StringAlignment.Near);
-        using var divider = new Pen(Color.FromArgb(38, 100, 116, 139), 1);
+        using var divider = new Pen(UiPalette.Slate500.WithAlpha(38), 1);
         graphics.DrawLine(divider, bounds.X + 5, bounds.Y + 26, bounds.Right - 5, bounds.Y + 26);
         var receiveText = "↓" + NetworkUsageSampler.Compact(_systemUsage.CurrentNetworkReceive) + "/s";
         var sendText = "↑" + NetworkUsageSampler.Compact(_systemUsage.CurrentNetworkSend) + "/s";
@@ -252,7 +252,7 @@ internal sealed partial class BarForm
     {
         var trackWidth = Math.Min(20f, bounds.Width - 12);
         var trackX = bounds.Left + (bounds.Width - trackWidth) / 2;
-        using var trackBrush = new SolidBrush(Color.FromArgb(44, 100, 116, 139));
+        using var trackBrush = new SolidBrush(UiPalette.Slate500.WithAlpha(44));
         for (var index = 0; index < 4; index++)
         {
             var track = new RectangleF(trackX, bounds.Top + 8 + index * 5.5f, trackWidth, 2.5f);
@@ -312,7 +312,7 @@ internal sealed partial class BarForm
         var y = cardBounds.Y + 3 + index * 8.2f;
         var rowHeight = 6.5f;
         var track = new RectangleF(cardBounds.X + 25, y, cardBounds.Width - 29, rowHeight);
-        using var trackBrush = new SolidBrush(Color.FromArgb(38, 100, 116, 139));
+        using var trackBrush = new SolidBrush(UiPalette.Slate500.WithAlpha(38));
         graphics.FillRoundedRectangle(trackBrush, track, 3);
         if (percent is { } usage && usage > 0)
         {
@@ -328,10 +328,10 @@ internal sealed partial class BarForm
                 3);
         }
 
-        using var labelBrush = new SolidBrush(Color.FromArgb(148, 163, 184));
+        using var labelBrush = new SolidBrush(UiPalette.Slate400);
         using var valueBrush = new SolidBrush(percent is null
-            ? Color.FromArgb(100, 116, 139)
-            : Color.FromArgb(226, 232, 240));
+            ? UiPalette.Slate500
+            : UiPalette.Slate200);
         DrawString(
             graphics,
             label,

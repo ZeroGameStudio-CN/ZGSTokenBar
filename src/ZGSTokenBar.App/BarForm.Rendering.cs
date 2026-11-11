@@ -39,7 +39,7 @@ internal sealed partial class BarForm
             new RectangleF(0.5f, 0.5f, logicalWidth - 1, logicalHeight - 1),
             8);
         using var panelBrush = new SolidBrush(_backgroundTheme.Outer);
-        using var panelBorder = new Pen(Color.FromArgb(56, 148, 163, 184), 1);
+        using var panelBorder = new Pen(UiPalette.Slate400.WithAlpha(56), 1);
         graphics.FillPath(panelBrush, panelPath);
         graphics.DrawPath(panelBorder, panelPath);
 
@@ -56,8 +56,8 @@ internal sealed partial class BarForm
 
     private void DrawLabel(Graphics graphics)
     {
-        using var primary = new SolidBrush(Color.FromArgb(248, 250, 252));
-        using var muted = new SolidBrush(Color.FromArgb(148, 163, 184));
+        using var primary = new SolidBrush(UiPalette.Slate50);
+        using var muted = new SolidBrush(UiPalette.Slate400);
         DrawString(graphics, _text.Quota, _titleFont, primary, new RectangleF(6, 6, 78, 15), StringAlignment.Near);
         DrawString(
             graphics,
@@ -85,8 +85,8 @@ internal sealed partial class BarForm
             var bounds = new RectangleF(x, 9, BarLayoutMath.OverflowWidth, 24);
             using var path = RoundedRectangle(bounds, 6);
             using var fill = new SolidBrush(_backgroundTheme.QuotaGroup);
-            using var border = new Pen(Color.FromArgb(42, 148, 163, 184));
-            using var text = new SolidBrush(Color.FromArgb(148, 163, 184));
+            using var border = new Pen(UiPalette.Slate400.WithAlpha(42));
+            using var text = new SolidBrush(UiPalette.Slate400);
             graphics.FillPath(fill, path);
             graphics.DrawPath(border, path);
             DrawString(graphics, $"+{_hiddenCardCount}", _overflowFont, text, bounds, StringAlignment.Center);
@@ -130,8 +130,8 @@ internal sealed partial class BarForm
             var overflowBounds = new RectangleF(x, 10, TaskbarMiniLayoutMath.OverflowWidth, 24);
             using var path = RoundedRectangle(overflowBounds, 6);
             using var fill = new SolidBrush(_backgroundTheme.QuotaGroup);
-            using var border = new Pen(Color.FromArgb(42, 148, 163, 184));
-            using var text = new SolidBrush(Color.FromArgb(148, 163, 184));
+            using var border = new Pen(UiPalette.Slate400.WithAlpha(42));
+            using var text = new SolidBrush(UiPalette.Slate400);
             graphics.FillPath(fill, path);
             graphics.DrawPath(border, path);
             DrawString(graphics, $"+{_hiddenCardCount}", _overflowFont, text, overflowBounds, StringAlignment.Center);
@@ -281,7 +281,7 @@ internal sealed partial class BarForm
     {
         using var path = RoundedRectangle(bounds, 6);
         using var fill = new SolidBrush(_backgroundTheme.ProviderGroup);
-        using var border = new Pen(Color.FromArgb(24, 51, 65, 85), 1);
+        using var border = new Pen(UiPalette.Slate700.WithAlpha(24), 1);
         graphics.FillPath(fill, path);
         graphics.DrawPath(border, path);
     }
@@ -293,7 +293,7 @@ internal sealed partial class BarForm
             _backgroundTheme.Outer,
             _backgroundTheme.QuotaGroup,
             .72f));
-        using var border = new Pen(Color.FromArgb(76, 100, 116, 139), 1);
+        using var border = new Pen(UiPalette.Slate500.WithAlpha(76), 1);
         graphics.FillPath(fill, path);
         graphics.DrawPath(border, path);
     }
@@ -305,8 +305,8 @@ internal sealed partial class BarForm
             _backgroundTheme.Outer,
             Color.FromArgb(127, 29, 29),
             .28f));
-        using var border = new Pen(Color.FromArgb(128, 251, 113, 133), 1);
-        using var mark = new Pen(Color.FromArgb(220, 251, 113, 133), 1.5f);
+        using var border = new Pen(UiPalette.Rose400.WithAlpha(128), 1);
+        using var mark = new Pen(UiPalette.Rose400.WithAlpha(220), 1.5f);
         graphics.FillPath(fill, path);
         graphics.DrawPath(border, path);
         var centerX = target.Bounds.Left + target.Bounds.Width / 2;
@@ -358,10 +358,8 @@ internal sealed partial class BarForm
         Font font,
         Brush brush,
         RectangleF bounds,
-        StringAlignment alignment)
-    {
-        graphics.DrawString(text, font, brush, bounds, _textFormats.For(alignment));
-    }
+        StringAlignment alignment) =>
+        UiPaint.Text(graphics, text, font, brush, bounds, alignment);
 
     private static float MeasureWidth(Graphics graphics, string text, Font font) =>
         graphics.MeasureString(text, font, int.MaxValue, StringFormat.GenericTypographic).Width;
@@ -400,9 +398,9 @@ internal sealed partial class BarForm
 
     private static Color UsageColor(double usage) => usage switch
     {
-        >= 90 => Color.FromArgb(251, 113, 133),
-        >= 70 => Color.FromArgb(251, 191, 36),
-        _ => Color.FromArgb(52, 211, 153),
+        >= 90 => UiPalette.Rose400,
+        >= 70 => UiPalette.Amber400,
+        _ => UiPalette.Emerald400,
     };
 
     /// <summary>Largest edge kept for embedded icons; the biggest on-screen use is ~64 device px.</summary>
@@ -483,10 +481,10 @@ internal sealed partial class BarForm
 
     private static Color PluginCompactStatusColor(string? status) => status switch
     {
-        "available" => Color.FromArgb(52, 211, 153),
-        "cached" or "stale" => Color.FromArgb(251, 191, 36),
-        "unavailable" => Color.FromArgb(251, 113, 133),
-        _ => Color.FromArgb(100, 116, 139),
+        "available" => UiPalette.Emerald400,
+        "cached" or "stale" => UiPalette.Amber400,
+        "unavailable" => UiPalette.Rose400,
+        _ => UiPalette.Slate500,
     };
 
     private Image ProviderLogo(ProviderKind provider) => provider switch

@@ -25,8 +25,8 @@ internal sealed partial class BarForm
         foreach (var status in health)
         {
             using var brush = new SolidBrush(status.Connected
-                ? Color.FromArgb(52, 211, 153)
-                : Color.FromArgb(100, 116, 139));
+                ? UiPalette.Emerald400
+                : UiPalette.Slate500);
             graphics.FillEllipse(brush, x, 18, BarLayoutMath.HealthDotWidth, BarLayoutMath.HealthDotWidth);
             x += BarLayoutMath.HealthDotWidth + BarLayoutMath.HealthDotGap;
         }
@@ -58,8 +58,8 @@ internal sealed partial class BarForm
         var (fillColor, borderEmphasis) = ControlVisual(target);
         using var fill = new SolidBrush(fillColor);
         using var border = new Pen(MixColor(
-            Color.FromArgb(42, 148, 163, 184),
-            Color.FromArgb(130, 129, 140, 248),
+            UiPalette.Slate400.WithAlpha(42),
+            UiPalette.Indigo400.WithAlpha(130),
             borderEmphasis));
         graphics.FillPath(fill, path);
         graphics.DrawPath(border, path);
@@ -79,10 +79,10 @@ internal sealed partial class BarForm
         DrawTaskbarControlSegment(graphics, _settingsBounds, HoverTarget.Settings);
         graphics.Restore(state);
 
-        using var separator = new Pen(Color.FromArgb(42, 100, 116, 139));
+        using var separator = new Pen(UiPalette.Slate500.WithAlpha(42));
         if (drawShell)
         {
-            using var border = new Pen(Color.FromArgb(54, 100, 116, 139));
+            using var border = new Pen(UiPalette.Slate500.WithAlpha(54));
             graphics.DrawPath(border, path);
         }
         graphics.DrawLine(separator, groupBounds.Left + 5, _settingsBounds.Top, groupBounds.Right - 5, _settingsBounds.Top);
@@ -105,7 +105,7 @@ internal sealed partial class BarForm
         var emphasis = Math.Max(hover, refreshPulse);
         var fillColor = MixColor(
             _backgroundTheme.QuotaGroup,
-            Color.FromArgb(226, 232, 240),
+            UiPalette.Slate200,
             emphasis * .08f);
         if (pressed) fillColor = MixColor(fillColor, Color.FromArgb(49, 46, 129), .55f);
         return (fillColor, Math.Max(emphasis * .75f, pressed ? 1 : 0));
@@ -120,8 +120,8 @@ internal sealed partial class BarForm
         float iconSize = ControlIconSize)
     {
         var color = refreshing
-            ? Color.FromArgb(129, 140, 248)
-            : MixColor(Color.FromArgb(148, 163, 184), Color.FromArgb(226, 232, 240), hover);
+            ? UiPalette.Indigo400
+            : MixColor(UiPalette.Slate400, UiPalette.Slate200, hover);
         var iconBounds = CenteredSquare(bounds, iconSize);
         var center = new PointF(
             iconBounds.Left + iconBounds.Width / 2,
@@ -174,8 +174,8 @@ internal sealed partial class BarForm
         bool taskbarCompact = false)
     {
         var color = MixColor(
-            Color.FromArgb(148, 163, 184),
-            Color.FromArgb(226, 232, 240),
+            UiPalette.Slate400,
+            UiPalette.Slate200,
             hover);
         DrawSystemIcon(
             graphics,
@@ -202,8 +202,8 @@ internal sealed partial class BarForm
             graphics.FillRoundedRectangle(hoverBrush, bounds, 4);
         }
         var color = MixColor(
-            Color.FromArgb(118, 148, 163, 184),
-            Color.FromArgb(226, 232, 240),
+            UiPalette.Slate400.WithAlpha(118),
+            UiPalette.Slate200,
             hover);
         using var separator = new Pen(Color.FromArgb(
             (int)Math.Round(42 + hover * 46),
@@ -255,12 +255,12 @@ internal sealed partial class BarForm
         }
         else
         {
-            using var fill = new SolidBrush(Color.FromArgb(10, 148, 163, 184));
+            using var fill = new SolidBrush(UiPalette.Slate400.WithAlpha(10));
             graphics.FillRoundedRectangle(fill, bounds, 4);
         }
         var color = active
             ? Color.FromArgb(147, 197, 253)
-            : MixColor(Color.FromArgb(176, 148, 163, 184), Color.FromArgb(226, 232, 240), hover);
+            : MixColor(UiPalette.Slate400.WithAlpha(176), UiPalette.Slate200, hover);
         using var brush = new SolidBrush(color);
         var diameter = active || hover > 0 ? 2.2f : 2f;
         var left = bounds.Left + (bounds.Width - diameter * 2 - 1.35f) / 2;
@@ -308,8 +308,8 @@ internal sealed partial class BarForm
             || string.Equals(_resizingMiniAreaId, target.AreaId, StringComparison.Ordinal);
         using var pen = new Pen(
             active
-                ? Color.FromArgb(150, 148, 163, 184)
-                : Color.FromArgb(34, 100, 116, 139),
+                ? UiPalette.Slate400.WithAlpha(150)
+                : UiPalette.Slate500.WithAlpha(34),
             active ? 1.4f : 1f)
         {
             StartCap = LineCap.Round,

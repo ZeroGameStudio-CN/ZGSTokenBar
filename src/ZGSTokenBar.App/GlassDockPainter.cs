@@ -170,14 +170,14 @@ internal static class GlassDockPainter
         var ringBounds = new RectangleF(slot.X + (slot.Width - size) / 2f, ringTop, size, size);
         if (item.Hovered)
         {
-            using var hover = new SolidBrush(light ? Color.FromArgb(34, 15, 23, 42) : Color.FromArgb(34, 255, 255, 255));
+            using var hover = new SolidBrush(light ? UiPalette.Slate900.WithAlpha(34) : Color.FromArgb(34, 255, 255, 255));
             graphics.FillEllipse(hover, RectangleF.Inflate(ringBounds, 1, 1));
         }
 
         var color = Band(ring.RemainingPercent, light);
         var stroke = below ? Math.Clamp(size * .1f, 2.5f, 3.2f) : 3.2f;
         var ellipse = RectangleF.Inflate(ringBounds, -stroke / 2 - .5f, -stroke / 2 - .5f);
-        using (var track = new Pen(light ? Color.FromArgb(40, 15, 23, 42) : Color.FromArgb(46, 255, 255, 255), stroke))
+        using (var track = new Pen(light ? UiPalette.Slate900.WithAlpha(40) : Color.FromArgb(46, 255, 255, 255), stroke))
         {
             graphics.DrawEllipse(track, ellipse);
         }
@@ -245,12 +245,12 @@ internal static class GlassDockPainter
             var badge = corner
                 ? new RectangleF(Math.Max(ringBounds.Right - badgeSide + 2f, float.IsNaN(chipRight) ? 0f : chipRight - 1.5f), ringBounds.Bottom - badgeSide + 2.5f, badgeSide, badgeSide)
                 : new RectangleF(ringBounds.Right - badgeSide + .5f, ringBounds.Bottom - badgeSide + 1.5f, badgeSide, badgeSide);
-            using var badgeFill = new SolidBrush(light ? Color.FromArgb(255, 30, 41, 59) : Color.FromArgb(255, 241, 245, 249));
+            using var badgeFill = new SolidBrush(light ? UiPalette.Slate800 : UiPalette.Slate100);
             using var badgeEdge = new Pen(Separator(light), 1.4f);
             graphics.FillEllipse(badgeFill, badge);
             graphics.DrawEllipse(badgeEdge, badge);
             using var badgeFont = new Font("Segoe UI", below ? 7.5f : 8f, FontStyle.Bold, GraphicsUnit.Pixel);
-            using var badgeText = new SolidBrush(light ? Color.White : Color.FromArgb(15, 23, 42));
+            using var badgeText = new SolidBrush(light ? Color.White : UiPalette.Slate900);
             DrawCentered(graphics, ring.AccountNumber.ToString(CultureInfo.InvariantCulture), badgeFont, badgeText, RectangleF.Inflate(badge, 1, 0));
         }
     }
@@ -303,7 +303,7 @@ internal static class GlassDockPainter
             using (var brush = new SolidBrush(fill)) graphics.FillPath(brush, path);
             var outline = critical && style.CriticalOutlineAlpha > 0
                 ? Color.FromArgb(style.CriticalOutlineAlpha, style.CriticalText)
-                : light ? Color.FromArgb(70, 15, 23, 42) : Color.FromArgb(70, 255, 255, 255);
+                : light ? UiPalette.Slate900.WithAlpha(70) : Color.FromArgb(70, 255, 255, 255);
             if (!(critical && style.CriticalFill is not null))
             {
                 using var edge = new Pen(outline, 1f);
@@ -313,7 +313,7 @@ internal static class GlassDockPainter
 
         var ink = critical
             ? (light && style.CriticalFill is null ? Color.FromArgb(200, 38, 48) : style.CriticalText)
-            : light ? Color.FromArgb(15, 23, 42) : Color.FromArgb(250, 250, 252);
+            : light ? UiPalette.Slate900 : Color.FromArgb(250, 250, 252);
         var x = pill.X + 2.2f;
         var numberHeight = numberFont.GetHeight(graphics);
         var centerY = pill.Y + pill.Height / 2f;
@@ -359,7 +359,7 @@ internal static class GlassDockPainter
 
         graphics.DrawString(number, numberFont, brush, left, numberTop, format);
         if (!hasSign) return;
-        using var signBrush = new SolidBrush(light ? Color.FromArgb(170, 15, 23, 42) : Color.FromArgb(190, 255, 255, 255));
+        using var signBrush = new SolidBrush(light ? UiPalette.Slate900.WithAlpha(170) : Color.FromArgb(190, 255, 255, 255));
         var baseline = numberTop + numberHeight * .80f;
         graphics.DrawString("%", signFont, signBrush, left + numberWidth + .3f, baseline - signFont.GetHeight(graphics) * .80f, format);
     }
@@ -492,7 +492,7 @@ internal static class GlassDockPainter
             plate = Color.FromArgb(((key >> 8) & 15) * 16 + 8, ((key >> 4) & 15) * 16 + 8, (key & 15) * 16 + 8);
         }
 
-        var ink = light ? Color.FromArgb(15, 23, 42) : Color.White;
+        var ink = light ? UiPalette.Slate900 : Color.White;
         var glyph = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
         for (var y = 0; y < height; y++)
         {
@@ -525,10 +525,10 @@ internal static class GlassDockPainter
         var rect = new RectangleF(bounds.X, bounds.Y, bounds.Width, bounds.Height);
         using var path = Rounded(rect, rect.Height / 2);
         using var fill = new SolidBrush(scene.ChipHovered
-            ? light ? Color.FromArgb(70, 15, 23, 42) : Color.FromArgb(70, 255, 255, 255)
-            : light ? Color.FromArgb(34, 15, 23, 42) : Color.FromArgb(36, 255, 255, 255));
+            ? light ? UiPalette.Slate900.WithAlpha(70) : Color.FromArgb(70, 255, 255, 255)
+            : light ? UiPalette.Slate900.WithAlpha(34) : Color.FromArgb(36, 255, 255, 255));
         graphics.FillPath(fill, path);
-        using var text = new SolidBrush(light ? Color.FromArgb(235, 15, 23, 42) : Color.FromArgb(240, 255, 255, 255));
+        using var text = new SolidBrush(light ? UiPalette.Slate900.WithAlpha(235) : Color.FromArgb(240, 255, 255, 255));
         using var font = new Font("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Pixel);
         var label = scene.Expanded ? "‹" : "+" + scene.Plan.OverflowCount.ToString(CultureInfo.InvariantCulture);
         DrawCentered(graphics, label, font, text, rect);
@@ -544,7 +544,7 @@ internal static class GlassDockPainter
         var rowHeight = bounds.Height / (float)rows.Length;
         using var labelFont = new Font("Segoe UI", 7.5f, FontStyle.Bold, GraphicsUnit.Pixel);
         using var labelBrush = new SolidBrush(Muted(scene.Light));
-        using var trackBrush = new SolidBrush(scene.Light ? Color.FromArgb(36, 15, 23, 42) : Color.FromArgb(40, 255, 255, 255));
+        using var trackBrush = new SolidBrush(scene.Light ? UiPalette.Slate900.WithAlpha(36) : Color.FromArgb(40, 255, 255, 255));
         using var format = new StringFormat(StringFormat.GenericTypographic) { LineAlignment = StringAlignment.Center, FormatFlags = StringFormatFlags.NoWrap };
         const float labelWidth = 20f;
         const float barHeight = 3.5f;
@@ -573,7 +573,7 @@ internal static class GlassDockPainter
         using var small = new Font("Segoe UI", 8f, FontStyle.Regular, GraphicsUnit.Pixel);
         var color = scene.TokensPerSecond is null
             ? Muted(scene.Light)
-            : scene.Light ? Color.FromArgb(15, 23, 42) : Color.FromArgb(248, 250, 252);
+            : scene.Light ? UiPalette.Slate900 : UiPalette.Slate50;
         using var text = new SolidBrush(color);
         using var muted = new SolidBrush(Muted(scene.Light));
         var box = RateNumberBox(graphics, bounds, font);
@@ -625,7 +625,7 @@ internal static class GlassDockPainter
     private static void DrawHover(Graphics graphics, RectangleF bounds, bool light)
     {
         using var path = Rounded(bounds, Math.Min(10, bounds.Height / 2));
-        using var fill = new SolidBrush(light ? Color.FromArgb(30, 15, 23, 42) : Color.FromArgb(30, 255, 255, 255));
+        using var fill = new SolidBrush(light ? UiPalette.Slate900.WithAlpha(30) : Color.FromArgb(30, 255, 255, 255));
         graphics.FillPath(fill, path);
     }
 
@@ -655,29 +655,29 @@ internal static class GlassDockPainter
     private static Color ValueColor(GlassDockRing ring, bool light)
     {
         if (GlassDockLayout.Band(ring.RemainingPercent) == "red") return Band(ring.RemainingPercent, light);
-        return light ? Color.FromArgb(15, 23, 42) : Color.FromArgb(248, 250, 252);
+        return light ? UiPalette.Slate900 : UiPalette.Slate50;
     }
 
     /// <summary>Colour of the thin moat drawn around badges so they separate cleanly from the ring.</summary>
     private static Color Separator(bool light) => light ? Color.FromArgb(240, 244, 246, 250) : Color.FromArgb(240, 34, 37, 48);
 
-    private static Color Ink(bool light) => light ? Color.FromArgb(15, 23, 42) : Color.FromArgb(255, 255, 255);
+    private static Color Ink(bool light) => light ? UiPalette.Slate900 : Color.FromArgb(255, 255, 255);
 
-    private static Color Muted(bool light) => light ? Color.FromArgb(190, 51, 65, 85) : Color.FromArgb(190, 203, 213, 225);
+    private static Color Muted(bool light) => light ? UiPalette.Slate700.WithAlpha(190) : UiPalette.Slate300.WithAlpha(190);
 
     private static Color LoadColor(double value, bool light) => value switch
     {
-        > 80 => light ? Color.FromArgb(220, 38, 38) : Color.FromArgb(255, 107, 107),
+        > 80 => light ? UiPalette.Red600 : Color.FromArgb(255, 107, 107),
         > 50 => light ? Color.FromArgb(202, 138, 4) : Color.FromArgb(252, 196, 64),
-        _ => light ? Color.FromArgb(5, 150, 105) : Color.FromArgb(52, 211, 153),
+        _ => light ? UiPalette.Emerald600 : UiPalette.Emerald400,
     };
 
     private static Color Band(double? remaining, bool light) => GlassDockLayout.Band(remaining) switch
     {
-        "red" => light ? Color.FromArgb(220, 38, 38) : Color.FromArgb(255, 99, 99),
+        "red" => light ? UiPalette.Red600 : Color.FromArgb(255, 99, 99),
         "amber" => light ? Color.FromArgb(194, 120, 3) : Color.FromArgb(252, 196, 64),
-        "green" => light ? Color.FromArgb(5, 150, 105) : Color.FromArgb(52, 220, 150),
-        _ => light ? Color.FromArgb(100, 116, 139) : Color.FromArgb(203, 213, 225),
+        "green" => light ? UiPalette.Emerald600 : Color.FromArgb(52, 220, 150),
+        _ => light ? UiPalette.Slate500 : UiPalette.Slate300,
     };
 
     private static Color Accent(string accent, bool light)
@@ -690,7 +690,7 @@ internal static class GlassDockPainter
         {
         }
 
-        return light ? Color.FromArgb(79, 70, 229) : Color.FromArgb(129, 140, 248);
+        return light ? Color.FromArgb(79, 70, 229) : UiPalette.Indigo400;
     }
 
     internal static GraphicsPath Rounded(RectangleF bounds, float radius) => UiPaint.RoundedPath(bounds, radius);

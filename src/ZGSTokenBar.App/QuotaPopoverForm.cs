@@ -135,7 +135,7 @@ internal sealed class QuotaPopoverForm : Form
         _entranceTimer.Tick += (_, _) => AdvanceEntrance();
         _exitTimer.Tick += (_, _) => AdvanceExit();
         AutoScaleMode = AutoScaleMode.None;
-        BackColor = _backgroundTheme.Popover;
+        BackColor = UiTokens.CardSurface;
         FormBorderStyle = FormBorderStyle.None;
         MaximizeBox = false;
         MinimizeBox = false;
@@ -307,26 +307,12 @@ internal sealed class QuotaPopoverForm : Form
     {
         base.OnPaint(e);
         var graphics = e.Graphics;
-        graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
-        graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-        graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+        UiPaint.PrepareQuality(graphics);
         graphics.ScaleTransform(_scale, _scale);
 
         var body = BodyBounds();
-        using var bodyPath = RoundedRectangle(RectangleF.Inflate(body, -.5f, -.5f), 10);
-        var tail = TailPoints(body);
-        using var surfacePath = new GraphicsPath();
-        surfacePath.FillMode = FillMode.Winding;
-        surfacePath.AddPath(bodyPath, false);
-        surfacePath.AddPolygon(tail);
-        // Solid graphite card in every theme, matching the dock and the overview panel.
-        using var fill = new SolidBrush(CardSurface);
-        // Hairline like the taskbar dock's card.
-        using var border = new Pen(Color.FromArgb(40, 255, 255, 255), 1);
-        graphics.FillPath(fill, surfacePath);
-        graphics.DrawPath(border, bodyPath);
-        graphics.DrawLines(border, tail);
+        // The shared hover-card surface: graphite card, white hairline, pointer tail.
+        UiPaint.TailedSurface(graphics, body, TailPoints(body), UiTokens.CardSurface, UiTokens.Hairline, UiTokens.RadiusPanel);
 
         DrawContent(graphics, body);
     }
@@ -360,12 +346,12 @@ internal sealed class QuotaPopoverForm : Form
         DrawQuotaCard(graphics, body, content);
     }
 
-    internal static readonly Color CardSurface = Color.FromArgb(19, 21, 28);
+    internal static Color CardSurface => UiTokens.CardSurface;
     private static readonly Color CardTitle = Color.FromArgb(243, 245, 249);
-    private static readonly Color CardValue = Color.FromArgb(226, 232, 240);
+    private static readonly Color CardValue = UiPalette.Slate200;
     private static readonly Color CardMuted = Color.FromArgb(148, 157, 176);
     private static readonly Color CardDim = Color.FromArgb(100, 110, 130);
-    private static readonly Color CardTeal = Color.FromArgb(94, 234, 212);
+    private static readonly Color CardTeal = UiPalette.Teal300;
     private static readonly Color CardHairline = Color.FromArgb(22, 255, 255, 255);
 
     /// <summary>
@@ -435,15 +421,8 @@ internal sealed class QuotaPopoverForm : Form
             new RectangleF(right - 140, y + 70, 140, 12), StringAlignment.Far);
 
         // Progress rail.
-        var rail = new RectangleF(left, y + 88, right - left, 6);
-        using (var railBrush = new SolidBrush(Color.FromArgb(18, 255, 255, 255)))
-            graphics.FillRoundedRectangle(railBrush, rail, 3);
-        if (remaining is > 0)
-        {
-            using var activeBrush = new SolidBrush(valueColor);
-            graphics.FillRoundedRectangle(activeBrush,
-                new RectangleF(rail.X, rail.Y, Math.Max(6, rail.Width * (float)(remaining.Value / 100)), rail.Height), 3);
-        }
+        UiPaint.ProgressBar(graphics, new RectangleF(left, y + 88, right - left, 6),
+            remaining / 100, valueColor, Color.White.WithAlpha(18), minFill: 6);
         graphics.DrawLine(hairline, left, y + 104.5f, right, y + 104.5f);
 
         // Row 1: pace.
@@ -633,9 +612,9 @@ internal sealed class QuotaPopoverForm : Form
         var x = body.X;
         var y = body.Y;
         graphics.DrawImage(_providerLogo!, new RectangleF(x + 12, y + 10, 24, 24));
-        using var titleBrush = new SolidBrush(Color.FromArgb(241, 245, 249));
-        using var mutedBrush = new SolidBrush(Color.FromArgb(148, 163, 184));
-        using var valueBrush = new SolidBrush(Color.FromArgb(94, 234, 212));
+        using var titleBrush = new SolidBrush(UiPalette.Slate100);
+        using var mutedBrush = new SolidBrush(UiPalette.Slate400);
+        using var valueBrush = new SolidBrush(UiPalette.Teal300);
         DrawString(
             graphics,
             content.Card.DisplayLabel,
@@ -653,7 +632,7 @@ internal sealed class QuotaPopoverForm : Form
 
         var statusBounds = new RectangleF(body.Right - 62, y + 9, 50, 16);
         using var statusFill = new SolidBrush(_backgroundTheme.QuotaGroup);
-        using var statusBorder = new Pen(Color.FromArgb(71, 85, 105), 1);
+        using var statusBorder = new Pen(UiPalette.Slate600, 1);
         using var statusPath = RoundedRectangle(statusBounds, 5);
         graphics.FillPath(statusFill, statusPath);
         graphics.DrawPath(statusBorder, statusPath);
@@ -697,11 +676,11 @@ internal sealed class QuotaPopoverForm : Form
         var x = body.X;
         var y = body.Y;
         graphics.DrawImage(_providerLogo!, new RectangleF(x + 12, y + 10, 24, 24));
-        using var titleBrush = new SolidBrush(Color.FromArgb(241, 245, 249));
-        using var mutedBrush = new SolidBrush(Color.FromArgb(148, 163, 184));
+        using var titleBrush = new SolidBrush(UiPalette.Slate100);
+        using var mutedBrush = new SolidBrush(UiPalette.Slate400);
         using var valueBrush = new SolidBrush(balance.Status == AiGatewayBalanceStatus.Available
-            ? Color.FromArgb(94, 234, 212)
-            : Color.FromArgb(251, 191, 36));
+            ? UiPalette.Teal300
+            : UiPalette.Amber400);
         DrawString(
             graphics,
             _text.AiGateway,
@@ -719,7 +698,7 @@ internal sealed class QuotaPopoverForm : Form
 
         var statusBounds = new RectangleF(body.Right - 62, y + 9, 50, 16);
         using var statusFill = new SolidBrush(_backgroundTheme.QuotaGroup);
-        using var statusBorder = new Pen(Color.FromArgb(71, 85, 105), 1);
+        using var statusBorder = new Pen(UiPalette.Slate600, 1);
         using var statusPath = RoundedRectangle(statusBounds, 5);
         graphics.FillPath(statusFill, statusPath);
         graphics.DrawPath(statusBorder, statusPath);
@@ -797,8 +776,8 @@ internal sealed class QuotaPopoverForm : Form
         var x = body.X;
         var y = body.Y;
         graphics.DrawImage(_providerLogo!, new RectangleF(x + 12, y + 10, 24, 24));
-        using var titleBrush = new SolidBrush(Color.FromArgb(241, 245, 249));
-        using var mutedBrush = new SolidBrush(Color.FromArgb(148, 163, 184));
+        using var titleBrush = new SolidBrush(UiPalette.Slate100);
+        using var mutedBrush = new SolidBrush(UiPalette.Slate400);
         using var valueBrush = new SolidBrush(Sub2ApiPoolStatusColor(pool.Status));
         DrawString(
             graphics,
@@ -817,7 +796,7 @@ internal sealed class QuotaPopoverForm : Form
 
         var statusBounds = new RectangleF(body.Right - 62, y + 9, 50, 16);
         using var statusFill = new SolidBrush(_backgroundTheme.QuotaGroup);
-        using var statusBorder = new Pen(Color.FromArgb(71, 85, 105), 1);
+        using var statusBorder = new Pen(UiPalette.Slate600, 1);
         using var statusPath = RoundedRectangle(statusBounds, 5);
         graphics.FillPath(statusFill, statusPath);
         graphics.DrawPath(statusBorder, statusPath);
@@ -875,8 +854,8 @@ internal sealed class QuotaPopoverForm : Form
         var x = body.X;
         var y = body.Y;
         graphics.DrawImage(_providerLogo!, new RectangleF(x + 12, y + 10, 24, 24));
-        using var titleBrush = new SolidBrush(Color.FromArgb(241, 245, 249));
-        using var mutedBrush = new SolidBrush(Color.FromArgb(148, 163, 184));
+        using var titleBrush = new SolidBrush(UiPalette.Slate100);
+        using var mutedBrush = new SolidBrush(UiPalette.Slate400);
         using var valueBrush = new SolidBrush(Sub2ApiUsageStatusColor(usage.Status));
         DrawString(
             graphics,
@@ -895,7 +874,7 @@ internal sealed class QuotaPopoverForm : Form
 
         var statusBounds = new RectangleF(body.Right - 62, y + 9, 50, 16);
         using var statusFill = new SolidBrush(_backgroundTheme.QuotaGroup);
-        using var statusBorder = new Pen(Color.FromArgb(71, 85, 105), 1);
+        using var statusBorder = new Pen(UiPalette.Slate600, 1);
         using var statusPath = RoundedRectangle(statusBounds, 5);
         graphics.FillPath(statusFill, statusPath);
         graphics.DrawPath(statusBorder, statusPath);
@@ -975,8 +954,8 @@ internal sealed class QuotaPopoverForm : Form
         var x = body.X;
         var y = body.Y;
         graphics.DrawImage(_providerLogo!, new RectangleF(x + 12, y + 10, 24, 24));
-        using var titleBrush = new SolidBrush(Color.FromArgb(241, 245, 249));
-        using var mutedBrush = new SolidBrush(Color.FromArgb(148, 163, 184));
+        using var titleBrush = new SolidBrush(UiPalette.Slate100);
+        using var mutedBrush = new SolidBrush(UiPalette.Slate400);
         using var valueBrush = new SolidBrush(Sub2ApiQuotaStatusColor(quota.Status));
         DrawString(
             graphics,
@@ -995,7 +974,7 @@ internal sealed class QuotaPopoverForm : Form
 
         var statusBounds = new RectangleF(body.Right - 62, y + 9, 50, 16);
         using var statusFill = new SolidBrush(_backgroundTheme.QuotaGroup);
-        using var statusBorder = new Pen(Color.FromArgb(71, 85, 105), 1);
+        using var statusBorder = new Pen(UiPalette.Slate600, 1);
         using var statusPath = RoundedRectangle(statusBounds, 5);
         graphics.FillPath(statusFill, statusPath);
         graphics.DrawPath(statusBorder, statusPath);
@@ -1081,8 +1060,8 @@ internal sealed class QuotaPopoverForm : Form
         var x = body.X;
         var y = body.Y;
         graphics.DrawImage(_providerLogo!, new RectangleF(x + 12, y + 10, 24, 24));
-        using var titleBrush = new SolidBrush(Color.FromArgb(241, 245, 249));
-        using var mutedBrush = new SolidBrush(Color.FromArgb(148, 163, 184));
+        using var titleBrush = new SolidBrush(UiPalette.Slate100);
+        using var mutedBrush = new SolidBrush(UiPalette.Slate400);
         using var valueBrush = new SolidBrush(Sub2ApiQuotaStatusColor(availability.Status));
         DrawString(
             graphics,
@@ -1101,7 +1080,7 @@ internal sealed class QuotaPopoverForm : Form
 
         var statusBounds = new RectangleF(body.Right - 62, y + 9, 50, 16);
         using var statusFill = new SolidBrush(_backgroundTheme.QuotaGroup);
-        using var statusBorder = new Pen(Color.FromArgb(71, 85, 105), 1);
+        using var statusBorder = new Pen(UiPalette.Slate600, 1);
         using var statusPath = RoundedRectangle(statusBounds, 5);
         graphics.FillPath(statusFill, statusPath);
         graphics.DrawPath(statusBorder, statusPath);
@@ -1138,7 +1117,7 @@ internal sealed class QuotaPopoverForm : Form
             var rowY = y + AccountAvailabilityFirstRowY + row * AccountAvailabilityRowHeight;
             var accountColor = account.RemainingPercent is { } remaining
                 ? QuotaColorScale.ForRemaining(remaining)
-                : Color.FromArgb(148, 163, 184);
+                : UiPalette.Slate400;
             using var accountBrush = new SolidBrush(accountColor);
             DrawString(
                 graphics,
@@ -1205,8 +1184,8 @@ internal sealed class QuotaPopoverForm : Form
         var x = body.X;
         var y = body.Y;
         graphics.DrawImage(_providerLogo!, new RectangleF(x + 12, y + 10, 24, 24));
-        using var titleBrush = new SolidBrush(Color.FromArgb(241, 245, 249));
-        using var mutedBrush = new SolidBrush(Color.FromArgb(148, 163, 184));
+        using var titleBrush = new SolidBrush(UiPalette.Slate100);
+        using var mutedBrush = new SolidBrush(UiPalette.Slate400);
         using var valueBrush = new SolidBrush(Sub2ApiQuotaStatusColor(status));
         DrawString(
             graphics,
@@ -1225,7 +1204,7 @@ internal sealed class QuotaPopoverForm : Form
 
         var statusBounds = new RectangleF(body.Right - 62, y + 9, 50, 16);
         using var statusFill = new SolidBrush(_backgroundTheme.QuotaGroup);
-        using var statusBorder = new Pen(Color.FromArgb(71, 85, 105), 1);
+        using var statusBorder = new Pen(UiPalette.Slate600, 1);
         using var statusPath = RoundedRectangle(statusBounds, 5);
         graphics.FillPath(statusFill, statusPath);
         graphics.DrawPath(statusBorder, statusPath);
@@ -1293,8 +1272,8 @@ internal sealed class QuotaPopoverForm : Form
         var x = body.X;
         var y = body.Y;
         graphics.DrawImage(_providerLogo!, new RectangleF(x + 12, y + 10, 24, 24));
-        using var titleBrush = new SolidBrush(Color.FromArgb(241, 245, 249));
-        using var mutedBrush = new SolidBrush(Color.FromArgb(148, 163, 184));
+        using var titleBrush = new SolidBrush(UiPalette.Slate100);
+        using var mutedBrush = new SolidBrush(UiPalette.Slate400);
         using var valueBrush = new SolidBrush(Sub2ApiQuotaStatusColor(Sub2ApiQuotaStatus.Unavailable));
         DrawString(
             graphics,
@@ -1313,7 +1292,7 @@ internal sealed class QuotaPopoverForm : Form
 
         var statusBounds = new RectangleF(body.Right - 62, y + 9, 50, 16);
         using var statusFill = new SolidBrush(_backgroundTheme.QuotaGroup);
-        using var statusBorder = new Pen(Color.FromArgb(71, 85, 105), 1);
+        using var statusBorder = new Pen(UiPalette.Slate600, 1);
         using var statusPath = RoundedRectangle(statusBounds, 5);
         graphics.FillPath(statusFill, statusPath);
         graphics.DrawPath(statusBorder, statusPath);
@@ -1354,40 +1333,32 @@ internal sealed class QuotaPopoverForm : Form
         double remaining,
         Color valueColor)
     {
-        var trough = new RectangleF(bounds.X, bounds.Y + 1, bounds.Width, 4);
-        using var troughBrush = new SolidBrush(Color.FromArgb(30, 41, 59));
-        graphics.FillRoundedRectangle(troughBrush, trough, 2);
-        var active = Math.Clamp(remaining, 0, 100);
-        if (active <= 0) return;
-        using var activeBrush = new SolidBrush(valueColor);
-        graphics.FillRoundedRectangle(
-            activeBrush,
-            new RectangleF(bounds.X, bounds.Y + 1, bounds.Width * (float)(active / 100), 4),
-            2);
+        UiPaint.ProgressBar(graphics, new RectangleF(bounds.X, bounds.Y + 1, bounds.Width, 4),
+            Math.Clamp(remaining, 0, 100) / 100, valueColor, UiPalette.Slate800);
     }
 
     private static Color Sub2ApiPoolStatusColor(Sub2ApiPoolStatus status) => status switch
     {
-        Sub2ApiPoolStatus.Available => Color.FromArgb(94, 234, 212),
-        Sub2ApiPoolStatus.Stale => Color.FromArgb(251, 191, 36),
-        Sub2ApiPoolStatus.Unavailable => Color.FromArgb(251, 113, 133),
-        _ => Color.FromArgb(148, 163, 184),
+        Sub2ApiPoolStatus.Available => UiPalette.Teal300,
+        Sub2ApiPoolStatus.Stale => UiPalette.Amber400,
+        Sub2ApiPoolStatus.Unavailable => UiPalette.Rose400,
+        _ => UiPalette.Slate400,
     };
 
     private static Color Sub2ApiUsageStatusColor(Sub2ApiUsageStatus status) => status switch
     {
-        Sub2ApiUsageStatus.Available => Color.FromArgb(94, 234, 212),
-        Sub2ApiUsageStatus.Stale => Color.FromArgb(251, 191, 36),
-        Sub2ApiUsageStatus.Unavailable => Color.FromArgb(251, 113, 133),
-        _ => Color.FromArgb(148, 163, 184),
+        Sub2ApiUsageStatus.Available => UiPalette.Teal300,
+        Sub2ApiUsageStatus.Stale => UiPalette.Amber400,
+        Sub2ApiUsageStatus.Unavailable => UiPalette.Rose400,
+        _ => UiPalette.Slate400,
     };
 
     private static Color Sub2ApiQuotaStatusColor(Sub2ApiQuotaStatus status) => status switch
     {
-        Sub2ApiQuotaStatus.Available => Color.FromArgb(94, 234, 212),
-        Sub2ApiQuotaStatus.Stale => Color.FromArgb(251, 191, 36),
-        Sub2ApiQuotaStatus.Unavailable => Color.FromArgb(251, 113, 133),
-        _ => Color.FromArgb(148, 163, 184),
+        Sub2ApiQuotaStatus.Available => UiPalette.Teal300,
+        Sub2ApiQuotaStatus.Stale => UiPalette.Amber400,
+        Sub2ApiQuotaStatus.Unavailable => UiPalette.Rose400,
+        _ => UiPalette.Slate400,
     };
 
     internal static string AccountSubtitle(QuotaCard card, NativeText text)
@@ -1442,7 +1413,7 @@ internal sealed class QuotaPopoverForm : Form
             return;
         }
 
-        using var accountBrush = new SolidBrush(Color.FromArgb(203, 213, 225));
+        using var accountBrush = new SolidBrush(UiPalette.Slate300);
         DrawString(
             graphics,
             accountHint,
@@ -1473,7 +1444,7 @@ internal sealed class QuotaPopoverForm : Form
 
     private static void DrawPinIcon(Graphics graphics, RectangleF bounds)
     {
-        using var pen = new Pen(Color.FromArgb(148, 163, 184), 1.2f)
+        using var pen = new Pen(UiPalette.Slate400, 1.2f)
         {
             StartCap = LineCap.Round,
             EndCap = LineCap.Round,
@@ -1556,10 +1527,8 @@ internal sealed class QuotaPopoverForm : Form
         Font font,
         Brush brush,
         RectangleF bounds,
-        StringAlignment alignment)
-    {
-        graphics.DrawString(text, font, brush, bounds, _textFormats.For(alignment));
-    }
+        StringAlignment alignment) =>
+        UiPaint.Text(graphics, text, font, brush, bounds, alignment);
 
     protected override void Dispose(bool disposing)
     {

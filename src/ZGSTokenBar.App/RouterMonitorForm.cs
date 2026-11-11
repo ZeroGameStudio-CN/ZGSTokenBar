@@ -270,7 +270,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        using var path = SurfacePath(); using var border = new Pen(Color.FromArgb(86, 100, 116, 139));
+        using var path = SurfacePath(); using var border = new Pen(UiPalette.Slate500.WithAlpha(86));
         e.Graphics.DrawPath(border, path);
     }
     protected override void OnMouseWheel(MouseEventArgs e)
@@ -381,7 +381,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _tips.SetToolTip(_headline, observation); _tips.SetToolTip(_metrics, observation);
         _queueHeading.Text = "排队  ·  " + RouterJson.Integer(snapshot.View, "queuedCount");
         _freshness.Text = snapshot.IsFresh(DateTimeOffset.UtcNow) ? "更新于 " + snapshot.ReceivedAt.ToLocalTime().ToString("HH:mm:ss") : "数据过期 · 状态未确认";
-        _freshness.ForeColor = snapshot.IsFresh(DateTimeOffset.UtcNow) ? Color.FromArgb(148, 163, 184) : Color.Salmon;
+        _freshness.ForeColor = snapshot.IsFresh(DateTimeOffset.UtcNow) ? UiPalette.Slate400 : Color.Salmon;
         UpdateControls();
     }
 
@@ -757,7 +757,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, BorderStyle = BorderStyle.None,
         CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal, ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None,
         ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize,
-        EnableHeadersVisualStyles = false, ColumnHeadersDefaultCellStyle = new() { BackColor = Color.FromArgb(30, 41, 59), ForeColor = Color.FromArgb(203, 213, 225), Padding = new Padding(4) },
+        EnableHeadersVisualStyles = false, ColumnHeadersDefaultCellStyle = new() { BackColor = UiPalette.Slate800, ForeColor = UiPalette.Slate300, Padding = new Padding(4) },
         DefaultCellStyle = new() { BackColor = Color.FromArgb(22, 30, 42), ForeColor = Color.FromArgb(229, 234, 243), SelectionBackColor = Color.FromArgb(42, 62, 89), SelectionForeColor = Color.White, Padding = new Padding(4) },
         AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None, ScrollBars = ScrollBars.None,
     };

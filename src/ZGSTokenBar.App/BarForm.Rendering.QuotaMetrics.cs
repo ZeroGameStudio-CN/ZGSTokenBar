@@ -30,10 +30,10 @@ internal sealed partial class BarForm
         graphics.Restore(state);
 
         using var border = new Pen(MixColor(
-            Color.FromArgb(58, 51, 65, 85),
-            Color.FromArgb(154, 226, 232, 240),
+            UiPalette.Slate700.WithAlpha(58),
+            UiPalette.Slate200.WithAlpha(154),
             Math.Max(Math.Max(firstHover, secondHover) * .45f, Math.Max(firstPulse, secondPulse) * .55f)), 1);
-        using var separator = new Pen(Color.FromArgb(58, 71, 85, 105), 1);
+        using var separator = new Pen(UiPalette.Slate600.WithAlpha(58), 1);
         graphics.DrawPath(border, path);
         graphics.DrawLine(separator, first.Bounds.Right, bounds.Top + 3, first.Bounds.Right, bounds.Bottom - 3);
 
@@ -71,14 +71,14 @@ internal sealed partial class BarForm
         var used = AnimatedUsed(target.Card.Key, target.Window);
         var remaining = used is null ? (double?)null : Math.Clamp(100 - used.Value, 0, 100);
         var valueColor = remaining is null
-            ? Color.FromArgb(100, 116, 139)
+            ? UiPalette.Slate500
             : MixColor(
                 QuotaColorScale.ForRemaining(remaining.Value),
-                Color.FromArgb(248, 250, 252),
+                UiPalette.Slate50,
                 SnapshotPulse(target.Id) * .22f);
         var label = QuotaDisplayFormatting.FormatWindowTiny(target.Window);
         var labelWidth = label.Length > 1 ? 18f : 12f;
-        using var labelBrush = new SolidBrush(Color.FromArgb(203, 213, 225));
+        using var labelBrush = new SolidBrush(UiPalette.Slate300);
         using var valueBrush = new SolidBrush(valueColor);
         DrawString(
             graphics,
@@ -138,17 +138,17 @@ internal sealed partial class BarForm
         var used = AnimatedUsed(cardKey, window);
         var remaining = used is null ? (double?)null : Math.Clamp(100 - used.Value, 0, 100);
         var valueColor = blockedByWeekly || remaining is null
-            ? Color.FromArgb(100, 116, 139)
+            ? UiPalette.Slate500
             : QuotaColorScale.ForRemaining(remaining.Value);
-        valueColor = MixColor(valueColor, Color.FromArgb(248, 250, 252), updatePulse * .22f);
+        valueColor = MixColor(valueColor, UiPalette.Slate50, updatePulse * .22f);
 
         using var path = RoundedRectangle(bounds, 4);
         using var fill = new SolidBrush(MixColor(
             _backgroundTheme.QuotaGroup,
-            Color.FromArgb(226, 232, 240),
+            UiPalette.Slate200,
             hover * .08f));
         using var border = new Pen(MixColor(
-            Color.FromArgb(58, 51, 65, 85),
+            UiPalette.Slate700.WithAlpha(58),
             Color.FromArgb(154, valueColor.R, valueColor.G, valueColor.B),
             Math.Max(hover * .62f, updatePulse * .85f)), 1);
         graphics.FillPath(fill, path);
@@ -163,12 +163,12 @@ internal sealed partial class BarForm
         DrawTaskbarProgressRail(graphics, bounds, remaining, valueColor);
 
         using var labelBrush = new SolidBrush(blockedByWeekly
-            ? Color.FromArgb(100, 116, 139)
-            : Color.FromArgb(226, 232, 240));
+            ? UiPalette.Slate500
+            : UiPalette.Slate200);
         using var valueBrush = new SolidBrush(valueColor);
         using var resetBrush = new SolidBrush(blockedByWeekly || window.ResetsAt is null
-            ? Color.FromArgb(100, 116, 139)
-            : Color.FromArgb(226, 232, 240));
+            ? UiPalette.Slate500
+            : UiPalette.Slate200);
         DrawString(
             graphics,
             QuotaDisplayFormatting.FormatWindowShort(window),
@@ -215,11 +215,11 @@ internal sealed partial class BarForm
         using var path = RoundedRectangle(bounds, 4);
         using var fill = new SolidBrush(MixColor(
             _backgroundTheme.QuotaGroup,
-            Color.FromArgb(226, 232, 240),
+            UiPalette.Slate200,
             hover * .08f));
         using var border = new Pen(MixColor(
-            Color.FromArgb(58, 51, 65, 85),
-            Color.FromArgb(154, 100, 116, 139),
+            UiPalette.Slate700.WithAlpha(58),
+            UiPalette.Slate500.WithAlpha(154),
             Math.Max(hover * .62f, .1f)), 1);
         graphics.FillPath(fill, path);
         graphics.DrawPath(border, path);
@@ -244,7 +244,7 @@ internal sealed partial class BarForm
             ? Sub2ApiUsageCompactStatusColor(usage.Status)
             : pool is not null
                 ? Sub2ApiPoolCompactStatusColor(pool.Status)
-                : Color.FromArgb(100, 116, 139), 2 + hover * .35f)
+                : UiPalette.Slate500, 2 + hover * .35f)
         {
             StartCap = LineCap.Round,
             EndCap = LineCap.Round,
@@ -304,7 +304,7 @@ internal sealed partial class BarForm
         }
         if (target.Card.Provider != ProviderKind.AiGateway)
         {
-            using var labelBrush = new SolidBrush(Color.FromArgb(203, 213, 225));
+            using var labelBrush = new SolidBrush(UiPalette.Slate300);
             DrawString(
                 graphics,
                 target.Card.DisplayLabel,
@@ -315,7 +315,7 @@ internal sealed partial class BarForm
             return;
         }
 
-        using var valueBrush = new SolidBrush(Color.FromArgb(148, 163, 184));
+        using var valueBrush = new SolidBrush(UiPalette.Slate400);
         var value = target.Card.Balance is { } balance
             ? AiGatewayBalanceFormatting.Amount(balance.TotalBalance)
             : _text.ApiServiceConfiguredShort;
@@ -420,7 +420,7 @@ internal sealed partial class BarForm
             when presentation.Usage is { } usage => Sub2ApiUsageCompactStatusColor(usage.Status),
         Sub2ApiServicePresentationKind.Pool
             when presentation.Pool is { } pool => Sub2ApiPoolCompactStatusColor(pool.Status),
-        _ => Color.FromArgb(251, 113, 133),
+        _ => UiPalette.Rose400,
     };
 
     private void DrawTaskbarServiceCompactMetric(
@@ -431,7 +431,7 @@ internal sealed partial class BarForm
         Color valueColor)
     {
         const float valueWidth = 44f;
-        using var labelBrush = new SolidBrush(Color.FromArgb(203, 213, 225));
+        using var labelBrush = new SolidBrush(UiPalette.Slate300);
         using var valueBrush = new SolidBrush(valueColor);
         if (bounds.Width < 84f)
         {
@@ -465,7 +465,7 @@ internal sealed partial class BarForm
     {
         var state = graphics.Save();
         graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
-        using var brush = new SolidBrush(Color.FromArgb(100, 116, 139));
+        using var brush = new SolidBrush(UiPalette.Slate500);
         graphics.DrawString(LockIconGlyph, _miniSystemIconFont, brush, bounds, _systemIconFormat);
         graphics.Restore(state);
     }
@@ -496,7 +496,7 @@ internal sealed partial class BarForm
         double? remaining,
         Color valueColor)
     {
-        using var troughPen = new Pen(Color.FromArgb(30, 41, 59), 3)
+        using var troughPen = new Pen(UiPalette.Slate800, 3)
         {
             StartCap = LineCap.Round,
             EndCap = LineCap.Round,
@@ -518,7 +518,7 @@ internal sealed partial class BarForm
             }
             if (clampedRemaining < 100)
             {
-                using var usedPen = new Pen(Color.FromArgb(71, 85, 105), 2)
+                using var usedPen = new Pen(UiPalette.Slate600, 2)
                 {
                     StartCap = clampedRemaining <= 0 ? LineCap.Round : LineCap.Flat,
                     EndCap = LineCap.Round,
@@ -564,8 +564,8 @@ internal sealed partial class BarForm
     private void DrawAccountOrdinalBadge(Graphics graphics, RectangleF badgeBounds, string ordinal)
     {
         using var badgeBrush = new SolidBrush(_backgroundTheme.Outer);
-        using var border = new Pen(Color.FromArgb(71, 85, 105), 1);
-        using var textBrush = new SolidBrush(Color.FromArgb(153, 246, 228));
+        using var border = new Pen(UiPalette.Slate600, 1);
+        using var textBrush = new SolidBrush(UiPalette.Teal200);
         graphics.FillEllipse(badgeBrush, badgeBounds);
         graphics.DrawEllipse(border, badgeBounds);
         DrawString(graphics, ordinal, _accountOrdinalFont, textBrush, badgeBounds, StringAlignment.Center);
@@ -583,7 +583,7 @@ internal sealed partial class BarForm
     {
         using var path = RoundedRectangle(bounds, 7);
         using var fill = new SolidBrush(_backgroundTheme.ProviderGroup);
-        using var border = new Pen(Color.FromArgb(36, 148, 163, 184));
+        using var border = new Pen(UiPalette.Slate400.WithAlpha(36));
         graphics.FillPath(fill, path);
         graphics.DrawPath(border, path);
 
@@ -595,7 +595,7 @@ internal sealed partial class BarForm
             ? 0
             : Math.Min(48, Math.Max(22, MeasureWidth(graphics, card.Badge!, _badgeFont) + 6));
         var titleWidth = bounds.Width - 23 - badgeWidth;
-        using var titleBrush = new SolidBrush(Color.FromArgb(248, 250, 252));
+        using var titleBrush = new SolidBrush(UiPalette.Slate50);
         DrawString(
             graphics,
             card.DisplayLabel,
@@ -608,15 +608,15 @@ internal sealed partial class BarForm
         {
             var badgeBounds = new RectangleF(bounds.Right - badgeWidth - 6, bounds.Y + 3, badgeWidth, 10);
             using var badgePath = RoundedRectangle(badgeBounds, 3);
-            using var badgeFill = new SolidBrush(Color.FromArgb(34, 51, 65, 85));
-            using var badgeText = new SolidBrush(Color.FromArgb(203, 213, 225));
+            using var badgeFill = new SolidBrush(UiPalette.Slate700.WithAlpha(34));
+            using var badgeText = new SolidBrush(UiPalette.Slate300);
             graphics.FillPath(badgeFill, badgePath);
             DrawString(graphics, card.Badge!, _badgeFont, badgeText, badgeBounds, StringAlignment.Center);
         }
 
         if (card.IsService)
         {
-            using var serviceBrush = new SolidBrush(Color.FromArgb(148, 163, 184));
+            using var serviceBrush = new SolidBrush(UiPalette.Slate400);
             if (card.Sub2ApiQuota is { } quota && Sub2ApiQuotaFormatting.PreferredWindow(quota) is not null)
             {
                 DrawString(
@@ -720,7 +720,7 @@ internal sealed partial class BarForm
             new RectangleF(x, y - 1, segmentWidth, 9),
             card,
             first);
-        using var separator = new Pen(Color.FromArgb(58, 71, 85, 105), 1);
+        using var separator = new Pen(UiPalette.Slate600.WithAlpha(58), 1);
         var separatorX = x + segmentWidth + gap / 2;
         graphics.DrawLine(separator, separatorX, y, separatorX, y + 6);
         DrawCompactQuotaMetric(
@@ -744,13 +744,13 @@ internal sealed partial class BarForm
         var used = AnimatedUsed(card.Key, window);
         var remaining = used is null ? (double?)null : Math.Clamp(100 - used.Value, 0, 100);
         var valueColor = remaining is null
-            ? Color.FromArgb(100, 116, 139)
+            ? UiPalette.Slate500
             : MixColor(
                 QuotaColorScale.ForRemaining(remaining.Value),
-                Color.FromArgb(248, 250, 252),
+                UiPalette.Slate50,
                 SnapshotPulse(WindowKey(card.Key, window.Label)) * .22f);
-        using var labelBrush = new SolidBrush(Color.FromArgb(203, 213, 225));
-        using var trackBrush = new SolidBrush(Color.FromArgb(30, 41, 59));
+        using var labelBrush = new SolidBrush(UiPalette.Slate300);
+        using var trackBrush = new SolidBrush(UiPalette.Slate800);
         using var valueBrush = new SolidBrush(valueColor);
         DrawString(
             graphics,
@@ -792,8 +792,8 @@ internal sealed partial class BarForm
         var blockedByWeekly = weeklyBlockReset is not null;
         var isWeek = window.Label is "1w" or "week" or "7d" or "30d";
         using var labelBrush = new SolidBrush(blockedByWeekly
-            ? Color.FromArgb(100, 116, 139)
-            : Color.FromArgb(226, 232, 240));
+            ? UiPalette.Slate500
+            : UiPalette.Slate200);
         if (blockedByWeekly)
         {
             DrawTaskbarLockIcon(graphics, new RectangleF(x, y - 1, 8, 9));
@@ -813,7 +813,7 @@ internal sealed partial class BarForm
         var trackX = x + 28;
         var trackWidth = Math.Max(12, width - 28 - metricsWidth - 3);
         var track = new RectangleF(trackX, y + 1, trackWidth, 5);
-        using var trackBrush = new SolidBrush(Color.FromArgb(30, 41, 59));
+        using var trackBrush = new SolidBrush(UiPalette.Slate800);
         graphics.FillRoundedRectangle(trackBrush, track, isWeek ? 2 : 3);
 
         var used = AnimatedUsed(cardKey, window);
@@ -827,15 +827,15 @@ internal sealed partial class BarForm
             if (resetRemaining is { } reset && reset >= TimeSpan.Zero && reset <= window.Duration)
             {
                 elapsedPercent = Math.Clamp((window.Duration - reset).TotalMilliseconds / window.Duration.TotalMilliseconds * 100, 0, 100);
-                using var elapsedBrush = new SolidBrush(Color.FromArgb(51, 65, 85));
+                using var elapsedBrush = new SolidBrush(UiPalette.Slate700);
                 graphics.FillRectangle(elapsedBrush, track.X, track.Y, track.Width * (float)(elapsedPercent.Value / 100), track.Height);
             }
 
             var remainingColor = blockedByWeekly
-                ? Color.FromArgb(100, 116, 139)
+                ? UiPalette.Slate500
                 : MixColor(
                     QuotaColorScale.ForRemaining(remaining),
-                    Color.FromArgb(248, 250, 252),
+                    UiPalette.Slate50,
                     SnapshotPulse(WindowKey(cardKey, window.Label)) * .22f);
             using var remainingBrush = new SolidBrush(remainingColor);
             var remainingBounds = new RectangleF(track.X, track.Y, track.Width * (float)(remaining / 100), track.Height);
@@ -844,16 +844,16 @@ internal sealed partial class BarForm
             {
                 var markerX = track.X + track.Width * (float)(elapsedPercent.Value / 100);
                 using var markerPen = new Pen(clampedUsed - elapsedPercent.Value > 10
-                    ? Color.FromArgb(251, 113, 133)
-                    : Color.FromArgb(100, 116, 139));
+                    ? UiPalette.Rose400
+                    : UiPalette.Slate500);
                 graphics.DrawLine(markerPen, markerX, track.Y, markerX, track.Bottom);
             }
 
             using var percentBrush = new SolidBrush(remainingColor);
-            using var separatorBrush = new SolidBrush(Color.FromArgb(72, 148, 163, 184));
+            using var separatorBrush = new SolidBrush(UiPalette.Slate400.WithAlpha(72));
             using var resetBrush = new SolidBrush(blockedByWeekly || resetAt is null
-                ? Color.FromArgb(100, 116, 139)
-                : Color.FromArgb(226, 232, 240));
+                ? UiPalette.Slate500
+                : UiPalette.Slate200);
             var metricsX = track.Right + 3;
             DrawString(
                 graphics,
@@ -879,7 +879,7 @@ internal sealed partial class BarForm
         }
         else
         {
-            using var waitingBrush = new SolidBrush(Color.FromArgb(100, 116, 139));
+            using var waitingBrush = new SolidBrush(UiPalette.Slate500);
             graphics.FillRectangle(waitingBrush, track.X, track.Y, Math.Max(8, track.Width * .18f), track.Height);
             DrawString(
                 graphics,

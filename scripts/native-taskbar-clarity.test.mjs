@@ -15,6 +15,7 @@ const radarRenderer = fs.readFileSync('src/ZGSTokenBar.App/RadarPopoverRenderer.
 const spendHistoryLayout = fs.readFileSync('src/ZGSTokenBar.Core/CodexSpendHistoryLayout.cs', 'utf8');
 const radarResetTiming = fs.readFileSync('src/ZGSTokenBar.App/RadarResetTiming.cs', 'utf8');
 const nativeProject = fs.readFileSync('src/ZGSTokenBar.App/ZGSTokenBar.App.csproj', 'utf8');
+const uiKit = fs.readFileSync('src/ZGSTokenBar.App/UiKit.cs', 'utf8');
 const settingsForm = fs.readFileSync('src/ZGSTokenBar.App/SettingsForm.cs', 'utf8');
 const nativeText = fs.readFileSync('src/ZGSTokenBar.App/NativeText.cs', 'utf8');
 const appSettings = fs.readFileSync('src/ZGSTokenBar.Core/AppSettings.cs', 'utf8');
@@ -62,16 +63,16 @@ test('available quota details stay bright while blocked and missing states are m
   const start = barForm.indexOf('    private void DrawTaskbarCapsule(');
   const end = barForm.indexOf('    private void DrawTaskbarProgressRail(', start);
   const body = barForm.slice(start, end);
-  assert.match(body, /labelBrush = new SolidBrush\(blockedByWeekly[\s\S]*?100, 116, 139[\s\S]*?226, 232, 240/);
-  assert.match(body, /resetBrush = new SolidBrush\(blockedByWeekly \|\| window\.ResetsAt is null[\s\S]*?100, 116, 139[\s\S]*?226, 232, 240/);
-  assert.match(popoverForm, /resetValueBrush = new SolidBrush\([\s\S]*?WeeklyBlockResetAt[\s\S]*?Window\.ResetsAt is null[\s\S]*?100, 116, 139[\s\S]*?226, 232, 240/);
+  assert.match(body, /labelBrush = new SolidBrush\(blockedByWeekly[\s\S]*?UiPalette\.Slate500[\s\S]*?UiPalette\.Slate200/);
+  assert.match(body, /resetBrush = new SolidBrush\(blockedByWeekly \|\| window\.ResetsAt is null[\s\S]*?UiPalette\.Slate500[\s\S]*?UiPalette\.Slate200/);
+  assert.match(popoverForm, /resetValueBrush = new SolidBrush\([\s\S]*?WeeklyBlockResetAt[\s\S]*?Window\.ResetsAt is null[\s\S]*?UiPalette\.Slate500[\s\S]*?UiPalette\.Slate200/);
 
   const fullStart = barForm.indexOf('    private void DrawQuotaRow(');
   const fullEnd = barForm.indexOf('    private void DrawHealth(', fullStart);
   const fullBody = barForm.slice(fullStart, fullEnd);
   assert.match(fullBody, /QuotaDisplayFormatting\.WeeklyBlockReset\(card, window, now\)/);
   assert.match(fullBody, /blockedByWeekly[\s\S]*?DrawTaskbarLockIcon/);
-  assert.match(fullBody, /remainingColor = blockedByWeekly[\s\S]*?100, 116, 139[\s\S]*?QuotaColorScale\.ForRemaining/);
+  assert.match(fullBody, /remainingColor = blockedByWeekly[\s\S]*?UiPalette\.Slate500[\s\S]*?QuotaColorScale\.ForRemaining/);
   assert.match(fullBody, /FormatCompactReset\(resetAt, now\)/);
 });
 
@@ -82,7 +83,7 @@ test('Radar row emphasis follows distinctions instead of source position', () =>
   assert.match(body, /distinctionCount = \(strongest \? 1 : 0\)[\s\S]*?row\.RecommendationGroupIndexes\.Count/);
   assert.match(body, /multipleDistinctions = distinctionCount > 1/);
   assert.match(body, /distinguished = distinctionCount > 0/);
-  assert.match(body, /labelColor = Color\.FromArgb\(226, 232, 240\)/);
+  assert.match(body, /labelColor = UiPalette\.Slate200/);
   assert.match(body, /modelFont = distinguished \? fonts\.EmphasizedModel : fonts\.Model/);
   assert.match(body, /recommendationColor = row\.RecommendationGroupIndexes\.Count[\s\S]*?RecommendationColor/);
   assert.match(body, /modelColor = strongest[\s\S]*?\? StrongestColor[\s\S]*?: recommendationColor/);
@@ -98,8 +99,8 @@ test('Codex spend history reserves a compact 30-day chart and three-model compos
   assert.match(spendHistoryLayout, /CreateBarBounds\(chartBounds, dayCount/);
   assert.match(spendHistoryLayout, /Rect\(12, 201, innerWidth, 18\)[\s\S]*?Rect\(12, 222, innerWidth, 18\)[\s\S]*?Rect\(12, 243, innerWidth, 18\)/);
   assert.match(radarRenderer, /var firstRecentIndex = Math\.Max\(0, count - 7\)/);
-  assert.match(radarRenderer, /isRecent[\s\S]*?Color\.FromArgb\(190, 129, 140, 248\)/);
-  assert.match(radarRenderer, /HasUnpricedUsage[\s\S]*?Color\.FromArgb\(251, 191, 36\)/);
+  assert.match(radarRenderer, /isRecent[\s\S]*?UiPalette\.Indigo400\.WithAlpha\(190\)/);
+  assert.match(radarRenderer, /HasUnpricedUsage[\s\S]*?UiPalette\.Amber400/);
   assert.match(radarRenderer, /\.Take\(layout\.ModelRowBounds\.Count\)/);
 });
 
@@ -121,7 +122,7 @@ test('Radar uses distinct local scenario markers in the compact footer', () => {
   const footerStart = radarRenderer.indexOf('    private static void DrawFooter(');
   const footerEnd = radarRenderer.indexOf('    private static void DrawColumnText(', footerStart);
   const footerBody = radarRenderer.slice(footerStart, footerEnd);
-  assert.match(radarRenderer, /RecommendationColors =[\s\S]*?52, 211, 153[\s\S]*?34, 211, 238[\s\S]*?244, 114, 182/);
+  assert.match(radarRenderer, /RecommendationColors =[\s\S]*?UiPalette\.Emerald400[\s\S]*?34, 211, 238[\s\S]*?244, 114, 182/);
   assert.match(radarRenderer, /MultiDistinctionColors =[\s\S]*?StrongestColor[\s\S]*?RecommendationColors/);
   assert.match(footerBody, /RadarStrongestTitle[\s\S]*?RadarDailyScenarioTitle[\s\S]*?RadarPlanningScenarioTitle[\s\S]*?RadarBackgroundScenarioTitle/);
   assert.match(footerBody, /DrawStar[\s\S]*?DrawRecommendationMarker/);
@@ -160,9 +161,9 @@ test('taskbar Mini rails show remaining quota without the removed budget goal', 
   const railEnd = barForm.indexOf('    private void DrawResetClockIcon(', capsuleEnd);
   const railBody = barForm.slice(capsuleEnd, railEnd);
   assert.notEqual(railEnd, -1);
-  assert.match(railBody, /new Pen\(Color\.FromArgb\(30, 41, 59\), 3\)/);
+  assert.match(railBody, /new Pen\(UiPalette\.Slate800, 3\)/);
   assert.match(railBody, /new Pen\(valueColor, 2\)/);
-  assert.match(railBody, /new Pen\(Color\.FromArgb\(71, 85, 105\), 2\)/);
+  assert.match(railBody, /new Pen\(UiPalette\.Slate600, 2\)/);
   assert.match(railBody, /EndCap = clampedRemaining >= 100 \? LineCap\.Round : LineCap\.Flat/);
   assert.match(railBody, /StartCap = clampedRemaining <= 0 \? LineCap\.Round : LineCap\.Flat/);
 
@@ -185,7 +186,7 @@ test('native quota surfaces use one opaque four-level background palette', () =>
   assert.match(barForm, /panelBrush = new SolidBrush\(_backgroundTheme\.Outer\)/);
   assert.match(barForm, /fill = new SolidBrush\(_backgroundTheme\.ProviderGroup\)/);
   assert.match(barForm, /_backgroundTheme\.QuotaGroup/);
-  assert.match(popoverForm, /fill = new SolidBrush\(_backgroundTheme\.Popover\)/);
+  assert.match(popoverForm, /UiPaint\.TailedSurface\(graphics, body, TailPoints\(body\), UiTokens\.CardSurface, UiTokens\.Hairline/);
   assert.match(popoverForm, /statusFill = new SolidBrush\(_backgroundTheme\.QuotaGroup\)/);
   assert.match(settingsForm, /QuotaBackgroundPalette\.All/);
   assert.match(settingsForm, /new PaletteChoiceButton\([\s\S]*?palette\.QuotaGroup/);
@@ -369,7 +370,7 @@ test('Codex pool grouping replaces only the Codex area and keeps the Mini height
   assert.doesNotMatch(poolRowDrawing, /FormatResetShort|NextResetAt|ResetBounds/);
   assert.match(poolRowDrawing, /DrawTaskbarCodexPoolCapacitySummary\(graphics, targetRow, aggregateColor\)/);
   assert.match(poolRowDrawing, /var capacityText = summary\[separatorIndex\.\.\]/);
-  assert.match(poolRowDrawing, /new SolidBrush\(Color\.FromArgb\(148, 163, 184\)\)/);
+  assert.match(poolRowDrawing, /new SolidBrush\(UiPalette\.Slate400\)/);
   assert.match(codexPoolPresentation, /equivalents \* 100:0/);
   assert.match(codexPoolPresentation, /row\.AvailableAccountCount \* 100/);
   assert.match(barForm, /var singleRow = rows\.Count == 1;/);
@@ -401,8 +402,8 @@ test('quota popover keeps the pace forecast without the redundant budget row', (
   assert.match(popoverForm, /DrawTrendPaceIcon/);
   assert.doesNotMatch(popoverForm, /DrawCyclePaceIcon|DrawBudgetMarker|QuotaCurrentGoal|QuotaCycle/);
   assert.match(popoverForm, /var currentPace = content\.Pace\?\.ForDisplay\(now\)/);
-  assert.match(popoverForm, /troughBrush = new SolidBrush\(Color\.FromArgb\(30, 41, 59\)\)/);
-  assert.match(popoverForm, /trackBrush = new SolidBrush\(Color\.FromArgb\(71, 85, 105\)\)/);
+  assert.match(popoverForm, /UiPaint\.ProgressBar\([\s\S]*?UiPalette\.Slate800\)/);
+  assert.match(popoverForm, /trackBrush = new SolidBrush\(UiPalette\.Slate600\)/);
   assert.match(nativeText, /"1h"/);
   assert.match(nativeText, /15m初步/);
   assert.match(nativeText, /重置约剩/);
@@ -505,7 +506,7 @@ test('Codex row hover exposes a privacy-safe Cockpit account summary', () => {
   assert.doesNotMatch(barForm, /ToolTip|TooltipFor|_lastToolTip/);
   assert.match(codexAccountsPopoverForm, /class CodexAccountsPopoverForm/);
   assert.match(codexAccountsPopoverForm, /TaskbarMiniPopoverMath\.Place/);
-  assert.match(codexAccountsPopoverForm, /_backgroundTheme\.Popover/);
+  assert.match(codexAccountsPopoverForm, /UiTokens\.CardSurface/);
   assert.match(codexAccountsPopoverForm, /_text\.CodexAccountsHeading/);
   assert.doesNotMatch(codexAccountsPopoverForm, /CodexAccountMapping|LogicalMappingHeight/);
   assert.match(nativeText, /public string CodexAccountsHeading/);
@@ -523,7 +524,7 @@ test('Codex row hover exposes a privacy-safe Cockpit account summary', () => {
   assert.match(planBadgePresentation, /"FREE" or "API KEY"/);
   assert.match(popoverForm, /accountHint/);
   assert.match(hintPopoverForm, /class TaskbarHintPopoverForm/);
-  assert.match(hintPopoverForm, /_backgroundTheme\.Popover/);
+  assert.match(hintPopoverForm, /UiTokens\.CardSurface/);
   assert.match(barForm, /ShowHintPopover\(hintTarget\)/);
   assert.match(barForm, /OpenSettingsHint/);
 });
@@ -776,12 +777,11 @@ test('settings use a compact navigation shell with explicit draft semantics', ()
 });
 
 test('settings visual treatment uses the approved dark palette and local controls only', () => {
-  assert.match(settingsForm, /Color\.FromArgb\(24, 24, 28\)/);
-  assert.match(settingsForm, /Color\.FromArgb\(18, 18, 20\)/);
-  assert.match(settingsForm, /Color\.FromArgb\(44, 44, 49\)/);
-  assert.match(settingsForm, /Color\.FromArgb\(242, 243, 245\)/);
-  assert.match(settingsForm, /Color\.FromArgb\(160, 164, 173\)/);
-  assert.match(settingsForm, /Color\.FromArgb\(76, 141, 255\)/);
+  assert.match(settingsForm, /UiTokens\.WindowContent,\s*UiTokens\.WindowSidebar,\s*UiTokens\.WindowFooter/);
+  assert.match(settingsForm, /UiTokens\.TextStrong,\s*UiTokens\.Muted,\s*UiTokens\.AccentFill/);
+  assert.match(uiKit, /WindowContent = Color\.FromArgb\(24, 24, 28\)/);
+  assert.match(uiKit, /WindowSidebar = Color\.FromArgb\(18, 18, 20\)/);
+  assert.match(uiKit, /WindowBorder = Color\.FromArgb\(44, 44, 49\)/);
   assert.match(settingsForm, /SystemInformation\.HighContrast/);
   assert.match(settingsForm, /points \* \(96f \/ 72f\) \* scale[\s\S]*?GraphicsUnit\.Pixel/);
   assert.doesNotMatch(settingsForm, /GraphicsUnit\.Point/);

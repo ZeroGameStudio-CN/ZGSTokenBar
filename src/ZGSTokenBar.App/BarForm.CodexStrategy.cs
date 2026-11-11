@@ -47,7 +47,7 @@ internal sealed partial class BarForm
     {
         _codexStrategyBounds = bounds;
         var count = CodexStrategy.Urgent.Count;
-        var color = count > 0 ? Color.FromArgb(251, 191, 108) : Color.FromArgb(148, 163, 184);
+        var color = count > 0 ? Color.FromArgb(251, 191, 108) : UiPalette.Slate400;
         var highlight = _hoverCodexStrategy || _codexStrategyPopover?.IsOpen == true
             ? 1f : HoverProgress(HoverTarget.CodexStrategy);
         if (highlight > 0)
