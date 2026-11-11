@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import { readPartialType } from './source-files.mjs';
 
 const settings = fs.readFileSync('src/ZGSTokenBar.Core/AppSettings.cs', 'utf8');
 const settingsForm = fs.readFileSync('src/ZGSTokenBar.App/SettingsForm.cs', 'utf8');
-const barForm = fs.readFileSync('src/ZGSTokenBar.App/BarForm.cs', 'utf8');
-const appContext = fs.readFileSync('src/ZGSTokenBar.App/QuotaApplicationContext.cs', 'utf8');
+const barForm = readPartialType('src/ZGSTokenBar.App/BarForm.cs');
+const appContext = readPartialType('src/ZGSTokenBar.App/QuotaApplicationContext.cs');
 const nativeText = fs.readFileSync('src/ZGSTokenBar.App/NativeText.cs', 'utf8');
 const placement = fs.readFileSync('src/ZGSTokenBar.App/TaskbarPlacement.cs', 'utf8');
 const topology = fs.readFileSync('src/ZGSTokenBar.App/DisplayTopology.cs', 'utf8');

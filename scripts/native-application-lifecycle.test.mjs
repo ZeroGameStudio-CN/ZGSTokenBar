@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import { readPartialType } from './source-files.mjs';
 
 const program = fs.readFileSync('src/ZGSTokenBar.App/Program.cs', 'utf8');
-const application = fs.readFileSync('src/ZGSTokenBar.App/QuotaApplicationContext.cs', 'utf8');
-const barForm = fs.readFileSync('src/ZGSTokenBar.App/BarForm.cs', 'utf8');
+const application = readPartialType('src/ZGSTokenBar.App/QuotaApplicationContext.cs', ['SettingsWindowPlacement.cs', 'SettingsChangeDetector.cs']);
+const barForm = readPartialType('src/ZGSTokenBar.App/BarForm.cs');
 const settings = fs.readFileSync('src/ZGSTokenBar.App/SettingsForm.cs', 'utf8');
 const startup = fs.readFileSync('src/ZGSTokenBar.App/StartupManager.cs', 'utf8');
 const hostJobIsolation = fs.readFileSync('src/ZGSTokenBar.App/HostJobLifetimeIsolation.cs', 'utf8');

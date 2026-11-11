@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import { readPartialType } from './source-files.mjs';
 
 const read = (path) => fs.readFileSync(path, 'utf8');
 const sampler = read('src/ZGSTokenBar.App/SystemUsageSampler.cs');
-const bar = read('src/ZGSTokenBar.App/BarForm.cs');
+const bar = readPartialType('src/ZGSTokenBar.App/BarForm.cs');
 const popover = read('src/ZGSTokenBar.App/SystemUsagePopoverForm.cs');
-const application = read('src/ZGSTokenBar.App/QuotaApplicationContext.cs');
+const application = readPartialType('src/ZGSTokenBar.App/QuotaApplicationContext.cs');
 const sampling = read('src/ZGSTokenBar.App/SystemUsageSampling.cs');
 const models = read('src/ZGSTokenBar.Core/Models.cs');
 const text = read('src/ZGSTokenBar.App/NativeText.cs');

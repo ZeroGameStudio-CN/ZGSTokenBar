@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import { readPartialType } from './source-files.mjs';
 
-const barForm = fs.readFileSync('src/ZGSTokenBar.App/BarForm.cs', 'utf8');
-const applicationContext = fs.readFileSync('src/ZGSTokenBar.App/QuotaApplicationContext.cs', 'utf8');
+const barForm = readPartialType('src/ZGSTokenBar.App/BarForm.cs');
+const applicationContext = readPartialType('src/ZGSTokenBar.App/QuotaApplicationContext.cs');
 const codexQuotaService = fs.readFileSync('src/ZGSTokenBar.Core/CodexQuotaService.cs', 'utf8');
 const models = fs.readFileSync('src/ZGSTokenBar.Core/Models.cs', 'utf8');
 const productReadme = fs.readFileSync('README.md', 'utf8');

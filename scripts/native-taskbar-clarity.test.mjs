@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import { readPartialType } from './source-files.mjs';
 
 const models = fs.readFileSync('src/ZGSTokenBar.Core/Models.cs', 'utf8');
-const barForm = fs.readFileSync('src/ZGSTokenBar.App/BarForm.cs', 'utf8');
-const applicationContext = fs.readFileSync('src/ZGSTokenBar.App/QuotaApplicationContext.cs', 'utf8');
+const barForm = readPartialType('src/ZGSTokenBar.App/BarForm.cs');
+const applicationContext = readPartialType('src/ZGSTokenBar.App/QuotaApplicationContext.cs', ['SettingsWindowPlacement.cs', 'SettingsChangeDetector.cs']);
 const popoverForm = fs.readFileSync('src/ZGSTokenBar.App/QuotaPopoverForm.cs', 'utf8');
 const codexAccountsPopoverForm = fs.readFileSync('src/ZGSTokenBar.App/CodexAccountsPopoverForm.cs', 'utf8');
 const planBadgePresentation = fs.readFileSync('src/ZGSTokenBar.App/PlanBadgePresentation.cs', 'utf8');
@@ -799,7 +800,8 @@ test('settings visual treatment uses the approved dark palette and local control
   assert.notEqual(openSettingsStart, -1);
   assert.notEqual(openSettingsEnd, -1);
   const openSettings = applicationContext.slice(openSettingsStart, openSettingsEnd);
-  assert.match(openSettings, /dialog\.Show\(\)/);
+  assert.match(openSettings, /RestoreSettingsWindow\(dialog, area\)/);
+  assert.match(applicationContext, /internal static class SettingsWindowPlacement[\s\S]*?dialog\.Show\(\)/);
   assert.doesNotMatch(openSettings, /dialog\.ShowDialog/);
   assert.match(settingsForm, /e\.Graphics\.Clear\(_theme\.Sidebar\)/);
   assert.match(settingsForm, /e\.Graphics\.Clear\(_theme\.Content\)/);

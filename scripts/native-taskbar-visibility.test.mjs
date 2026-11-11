@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import { readPartialType } from './source-files.mjs';
 
-const barForm = fs.readFileSync('src/ZGSTokenBar.App/BarForm.cs', 'utf8');
+const barForm = readPartialType('src/ZGSTokenBar.App/BarForm.cs');
 const placement = fs.readFileSync('src/ZGSTokenBar.App/TaskbarPlacement.cs', 'utf8');
 
 test('taskbar Mini restores a system-minimized window during its placement tick', () => {

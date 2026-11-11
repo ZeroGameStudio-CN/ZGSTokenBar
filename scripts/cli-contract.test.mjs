@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { readPartialType } from './source-files.mjs';
 
 const cli = fs.readdirSync('tools/ZGSTokenBar.Cli')
   .filter(file => file.endsWith('.cs'))
@@ -12,7 +13,7 @@ const cli = fs.readdirSync('tools/ZGSTokenBar.Cli')
   .join('\n');
 const cliProject = fs.readFileSync('tools/ZGSTokenBar.Cli/ZGSTokenBar.Cli.csproj', 'utf8');
 const app = fs.readFileSync('src/ZGSTokenBar.App/Program.cs', 'utf8');
-const context = fs.readFileSync('src/ZGSTokenBar.App/QuotaApplicationContext.cs', 'utf8');
+const context = readPartialType('src/ZGSTokenBar.App/QuotaApplicationContext.cs');
 const host = fs.readFileSync('src/ZGSTokenBar.Host/ZgsTokenBarHost.cs', 'utf8');
 const packaging = fs.readFileSync('scripts/build-native-portable.ps1', 'utf8');
 const graduationGate = fs.readFileSync('scripts/graduation-gate.mjs', 'utf8');

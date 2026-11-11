@@ -1,17 +1,18 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import { readPartialType } from './source-files.mjs';
 
 const read = (path) => fs.readFileSync(path, 'utf8');
 const settings = read('src/ZGSTokenBar.Core/AppSettings.cs');
 const models = read('src/ZGSTokenBar.Core/Models.cs');
 const text = read('src/ZGSTokenBar.App/NativeText.cs');
 const settingsForm = read('src/ZGSTokenBar.App/SettingsForm.cs');
-const bar = read('src/ZGSTokenBar.App/BarForm.cs');
+const bar = readPartialType('src/ZGSTokenBar.App/BarForm.cs');
 const quota = read('src/ZGSTokenBar.App/QuotaPopoverForm.cs');
 const systemUsage = read('src/ZGSTokenBar.App/SystemUsagePopoverForm.cs');
 const radar = read('src/ZGSTokenBar.App/RadarPopoverRenderer.cs');
-const application = read('src/ZGSTokenBar.App/QuotaApplicationContext.cs');
+const application = readPartialType('src/ZGSTokenBar.App/QuotaApplicationContext.cs');
 
 test('native settings preserve migration behavior and normalize supported locales', () => {
   assert.match(settings, /public string Locale \{ get; set; \} = "zh-CN"/);
