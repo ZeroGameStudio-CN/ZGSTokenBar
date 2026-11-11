@@ -300,15 +300,8 @@ internal sealed class UsageBoardForm : Form, IPluginPopoverContent
         _hits.Add((bounds, action));
     }
 
-    private static void DrawRing(Graphics graphics, Palette palette, RectangleF bounds, double? remaining)
-    {
-        using var track = new Pen(palette.Track, 3f);
-        graphics.DrawEllipse(track, bounds);
-        if (remaining is not { } value || value <= 0) return;
-        using var pen = new Pen(palette.ForRemaining(value), 3f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
-        if (value >= 100) graphics.DrawEllipse(pen, bounds);
-        else graphics.DrawArc(pen, bounds, -90, (float)(360 * value / 100));
-    }
+    private static void DrawRing(Graphics graphics, Palette palette, RectangleF bounds, double? remaining) =>
+        UiPaint.Ring(graphics, bounds, remaining / 100, remaining is { } value ? palette.ForRemaining(value) : palette.Track, palette.Track, 3f);
 
     private static double? Tightest(UsageProviderSnapshot provider)
     {
@@ -417,25 +410,5 @@ internal sealed class UsageBoardForm : Form, IPluginPopoverContent
         return new Font(FontFamily.GenericSansSerif, pixels, style, GraphicsUnit.Pixel);
     }
 
-    private static GraphicsPath Rounded(RectangleF bounds, float radius)
-    {
-        var path = new GraphicsPath();
-        var diameter = Math.Min(radius * 2, Math.Min(bounds.Width, bounds.Height));
-        if (diameter <= 0)
-        {
-            path.AddRectangle(bounds);
-            return path;
-        }
-
-        var arc = new RectangleF(bounds.X, bounds.Y, diameter, diameter);
-        path.AddArc(arc, 180, 90);
-        arc.X = bounds.Right - diameter;
-        path.AddArc(arc, 270, 90);
-        arc.Y = bounds.Bottom - diameter;
-        path.AddArc(arc, 0, 90);
-        arc.X = bounds.Left;
-        path.AddArc(arc, 90, 90);
-        path.CloseFigure();
-        return path;
-    }
+    private static GraphicsPath Rounded(RectangleF bounds, float radius) => UiPaint.RoundedPath(bounds, radius);
 }

@@ -309,6 +309,9 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
                     grid.Palette = _palette; grid.BackgroundColor = SurfaceFor(grid); grid.GridColor = _palette.Border;
                     grid.ColumnHeadersDefaultCellStyle.BackColor = _palette.Surface;
                     grid.ColumnHeadersDefaultCellStyle.ForeColor = _palette.Muted;
+                    // Headers never take the selection colour (the current cell's column lit up blue).
+                    grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = _palette.Surface;
+                    grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = _palette.Muted;
                     grid.ColumnHeadersDefaultCellStyle.Padding = new Padding((int)(4 * scale), (int)(6 * scale), (int)(4 * scale), (int)(6 * scale));
                     grid.DefaultCellStyle.BackColor = _palette.Background; grid.DefaultCellStyle.ForeColor = _palette.Text;
                     grid.DefaultCellStyle.SelectionBackColor = RouterVisualPalette.Mix(_palette.Background, _palette.Accent, .11f);
@@ -321,7 +324,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
                 case System.Windows.Forms.Label label:
                     label.BackColor = SurfaceFor(label);
                     label.ForeColor = label == _task ? _palette.Text : label == _queueHeading || label == _historyHeading
-                        ? Color.FromArgb(165, 180, 252) : _palette.Muted; break;
+                        ? _palette.Text : _palette.Muted; break;
                 case Panel panel: panel.BackColor = SurfaceFor(panel); break;
             }
         }
@@ -344,14 +347,11 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
             : RouterJson.Boolean(row, "cleanupVerified") ? "completed" : "warning");
         if (column == "state")
         {
-            var w = Math.Min(e.CellBounds.Width - 8 * s, TextRenderer.MeasureText(text, _history.Font).Width + 16 * s);
-            var h = Math.Min(e.CellBounds.Height - 6 * s, 23 * s);
+            var size = UiPaint.PillSize(text, _history.Font, s);
+            var w = Math.Min(e.CellBounds.Width - 8 * s, size.Width);
+            var h = Math.Min(e.CellBounds.Height - 6 * s, size.Height);
             var bounds = new RectangleF(e.CellBounds.X + (e.CellBounds.Width - w) / 2, e.CellBounds.Y + (e.CellBounds.Height - h) / 2, w, h);
-            graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            using var path = RouterVisualGeometry.Rounded(bounds, 5 * s);
-            using var fill = new SolidBrush(RouterVisualPalette.Mix(_palette.Background, color, .10f)); graphics.FillPath(fill, path);
-            TextRenderer.DrawText(graphics, text, _history.Font, Rectangle.Round(bounds), color,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+            UiPaint.Pill(graphics, bounds, text, _history.Font, color, _palette.Background, s);
         }
         else TextRenderer.DrawText(graphics, text, _history.Font, e.CellBounds, color,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
@@ -591,6 +591,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
             if (generation != _generation || historyGeneration != _historyGeneration || IsDisposed) return;
             if (!_historyBuffer.TryRead(key, offset, _historyPageSize, out var slice) || slice is null)
                 throw new InvalidDataException("History window does not cover the requested page.");
+            var selectedHistory = Selected(_history);
             _history.SuspendLayout();
             try
             {
@@ -603,7 +604,10 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
                     _history.Rows[n].Tag = row;
                     _history.Rows[n].Cells[0].ToolTipText = RouterJson.Text(row, "createdLocal");
                     _history.Rows[n].Cells[4].ToolTipText = TimingDetails(row);
+                    _history.Rows[n].Selected = selectedHistory.Length > 0 && RouterJson.Text(row, "id") == selectedHistory;
                 }
+                // A refresh keeps the user's pick; otherwise no row is pre-highlighted.
+                if (selectedHistory.Length == 0) { _history.ClearSelection(); _history.CurrentCell = null; }
             }
             finally { _history.ResumeLayout(); }
             var metadata = slice.Metadata; var total = slice.Total; _historyOffset = slice.Offset; _history.Tag = total;

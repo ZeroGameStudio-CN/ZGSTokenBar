@@ -108,6 +108,13 @@ if (args.Length == 2 && args[0] == "--router-history-benchmark")
     return 0;
 }
 
+if (args.Length == 2 && args[0] == "--router-capture")
+{
+    System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
+    RouterModuleTests.Capture(args[1]);
+    return 0;
+}
+
 if (args.Length > 0 && args[0] == "--router-module")
 {
     System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
@@ -561,6 +568,7 @@ var tests = new (string Name, Action Run)[]
     ("Grok plan comes from the settings cache, never the sign-in type", TestGrokPlanFromSettingsCache),
     ("Expired Grok CLI session is renewed with its refresh token", TestGrokExpiredSessionIsRenewed),
     ("Popovers never get a cyclic or self owner", TestPopoverOwnerNeverCyclic),
+    ("Shared UI kit geometry and tokens are consistent", TestSharedUiKitGeometry),
     ("Local provider sources are auto-detected", TestLocalProviderSourcesAutoDetected),
     ("Quota remaining color gradient", TestQuotaRemainingColorGradient),
     ("Native background palette contract", TestNativeBackgroundPaletteContract),
@@ -16538,6 +16546,27 @@ static void TestGrokExpiredSessionIsRenewed()
     }
 }
 
+
+static void TestSharedUiKitGeometry()
+{
+    using (var square = UiPaint.RoundedPath(new RectangleF(0, 0, 20, 10), 0))
+        Check(square.PointCount == 4, "a zero radius is a plain rectangle");
+    using (var pill = UiPaint.RoundedPath(new RectangleF(0, 0, 40, 10), 50))
+    {
+        var b = pill.GetBounds();
+        Check(Math.Abs(b.Width - 40) < .01 && Math.Abs(b.Height - 10) < .01, "an oversized radius is clamped to the bounds");
+    }
+    using (var small = UiPaint.RoundedPath(new Rectangle(0, 0, 30, 12), 0))
+        Check(small.GetBounds().Width >= 29, "int variant keeps its minimum corner");
+    Check(RouterVisualPalette.State("failed") == UiTokens.State("failed"), "Router state colours come from the shared tokens");
+    Check(new RouterVisualPalette(Color.Black).Surface == UiTokens.Surface(Color.Black), "Router surfaces come from the shared tokens");
+    using var bitmap = new Bitmap(40, 40);
+    using var g = Graphics.FromImage(bitmap);
+    UiPaint.Ring(g, new RectangleF(4, 4, 30, 30), .5, Color.White, Color.Gray, 3f);
+    UiPaint.Ring(g, new RectangleF(4, 4, 30, 30), null, Color.White, Color.Gray, 3f);
+    UiPaint.Ring(g, new RectangleF(4, 4, 30, 30), 1.5, Color.White, Color.Gray, 3f);
+    Check(bitmap.GetPixel(19, 4).A > 0, "the ring paints its track");
+}
 
 static void TestPopoverOwnerNeverCyclic()
 {

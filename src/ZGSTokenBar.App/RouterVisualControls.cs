@@ -6,39 +6,19 @@ namespace ZGSTokenBar.App;
 // Presentation primitives for the Router popup. No execution or transport state lives here.
 internal sealed record RouterVisualPalette(Color Background)
 {
-    internal Color Surface => Mix(Background, Color.White, .035f);
-    internal Color Input => Mix(Background, Color.White, .065f);
-    internal Color Border => Mix(Background, Color.White, .10f);
-    internal Color Text => Color.FromArgb(224, 232, 242);
-    internal Color Muted => Color.FromArgb(142, 155, 174);
-    internal Color Accent => Color.FromArgb(139, 187, 255);
-    internal static Color Mix(Color first, Color second, float amount) => Color.FromArgb(
-        (int)(first.R + (second.R - first.R) * amount),
-        (int)(first.G + (second.G - first.G) * amount),
-        (int)(first.B + (second.B - first.B) * amount));
-    internal static Color State(string? tone) => tone switch
-    {
-        "positive" or "running" or "completed" => Color.FromArgb(111, 213, 173),
-        "warning" or "cleanup" or "cancelled" => Color.FromArgb(232, 191, 113),
-        "negative" or "attention" or "failed" or "danger" => Color.FromArgb(241, 145, 151),
-        "idle" or "pending" or "offline" => Color.FromArgb(155, 168, 185),
-        _ => Color.FromArgb(139, 187, 255),
-    };
+    internal Color Surface => UiTokens.Surface(Background);
+    internal Color Input => UiTokens.Input(Background);
+    internal Color Border => UiTokens.Border(Background);
+    internal Color Text => UiTokens.Text;
+    internal Color Muted => UiTokens.Muted;
+    internal Color Accent => UiTokens.Accent;
+    internal static Color Mix(Color first, Color second, float amount) => UiTokens.Mix(first, second, amount);
+    internal static Color State(string? tone) => UiTokens.State(tone);
 }
 
 internal static class RouterVisualGeometry
 {
-    internal static GraphicsPath Rounded(RectangleF bounds, float radius)
-    {
-        var path = new GraphicsPath();
-        var d = Math.Min(radius * 2, Math.Min(bounds.Width, bounds.Height));
-        path.AddArc(bounds.Left, bounds.Top, d, d, 180, 90);
-        path.AddArc(bounds.Right - d, bounds.Top, d, d, 270, 90);
-        path.AddArc(bounds.Right - d, bounds.Bottom - d, d, d, 0, 90);
-        path.AddArc(bounds.Left, bounds.Bottom - d, d, d, 90, 90);
-        path.CloseFigure();
-        return path;
-    }
+    internal static GraphicsPath Rounded(RectangleF bounds, float radius) => UiPaint.RoundedPath(bounds, radius);
     internal const float LogicalFontPixels = 11f;
     internal static float Scale(Control control) => Math.Max(1, control.Font.Unit == GraphicsUnit.Pixel
         ? control.Font.Size / LogicalFontPixels : control.Font.SizeInPoints * 96 / 72 / LogicalFontPixels);
@@ -134,17 +114,13 @@ internal sealed class RouterStatusBadge : Control
     internal RouterVisualPalette Palette { get; set; } = new(Color.FromArgb(9, 11, 15));
     internal RouterStatusBadge() { AutoSize = true; Height = 25; SetStyle(ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true); }
     public override Size GetPreferredSize(Size proposedSize)
-    { var s = RouterVisualGeometry.Scale(this); return new(TextRenderer.MeasureText(Text, Font).Width + (int)(26 * s), (int)(25 * s)); }
+    { var s = RouterVisualGeometry.Scale(this); var size = UiPaint.PillSize(Text, Font, s, dot: true); return new((int)Math.Ceiling(size.Width), (int)(25 * s)); }
     protected override void OnTextChanged(EventArgs e) { base.OnTextChanged(e); Size = GetPreferredSize(Size.Empty); Invalidate(); }
     protected override void OnPaint(PaintEventArgs e)
     {
-        var s = RouterVisualGeometry.Scale(this); var g = e.Graphics;
-        g.Clear(Parent?.BackColor ?? Palette.Background); g.SmoothingMode = SmoothingMode.AntiAlias;
-        using var path = RouterVisualGeometry.Rounded(new RectangleF(0, 0, Width - 1, Height - 1), 6 * s);
-        using var fill = new SolidBrush(RouterVisualPalette.Mix(Palette.Background, Accent, .10f)); g.FillPath(fill, path);
-        using var dot = new SolidBrush(Accent); g.FillEllipse(dot, 8 * s, Height / 2f - 2.2f * s, 4.4f * s, 4.4f * s);
-        TextRenderer.DrawText(g, Text, Font, new Rectangle((int)(18 * s), 0, Width - (int)(20 * s), Height), Accent,
-            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        var s = RouterVisualGeometry.Scale(this);
+        e.Graphics.Clear(Parent?.BackColor ?? Palette.Background);
+        UiPaint.Pill(e.Graphics, new RectangleF(0, 0, Width - 1, Height - 1), Text, Font, Accent, Palette.Background, s, dot: true);
     }
 }
 
@@ -159,10 +135,10 @@ internal sealed class RouterSurface : Panel
     internal RouterSurface() { DoubleBuffered = true; }
     protected override void OnPaintBackground(PaintEventArgs e)
     {
-        e.Graphics.Clear(Parent?.BackColor ?? Palette.Background); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        using var path = RouterVisualGeometry.Rounded(new RectangleF(.5f, .5f, Width - 1, Height - 1), 8 * RouterVisualGeometry.Scale(this));
-        using var fill = new SolidBrush(Input ? Palette.Input : Palette.Surface); using var border = new Pen(EmphasizedBorder ? RouterVisualPalette.Mix(Palette.Background, Color.White, .18f) : Palette.Border);
-        e.Graphics.FillPath(fill, path); e.Graphics.DrawPath(border, path);
+        e.Graphics.Clear(Parent?.BackColor ?? Palette.Background);
+        var border = EmphasizedBorder ? RouterVisualPalette.Mix(Palette.Background, Color.White, .18f) : Palette.Border;
+        UiPaint.CardShell(e.Graphics, new RectangleF(.5f, .5f, Width - 1, Height - 1), Input ? Palette.Input : Palette.Surface, border,
+            UiTokens.RadiusCard * RouterVisualGeometry.Scale(this));
     }
 }
 
