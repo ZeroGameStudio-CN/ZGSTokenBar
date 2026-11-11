@@ -256,7 +256,7 @@ internal sealed class OtherToolsModule : IDisposable
             : anchor.Bottom;
         _popup.Location = new Point(x, y);
         _popup.FormClosed += (_, _) => _light = _popup?.Light == true;
-        _popup.Show(BarForm.PopoverOwnerFor(_bar));
+        _popup.ShowPopover(BarForm.PopoverOwnerFor(_bar));
     }
 
     private void OnPopoverRequested(object? sender, PluginPopoverRequest request)
@@ -274,7 +274,7 @@ internal sealed class OtherToolsModule : IDisposable
             : request.Anchor.Bottom;
         _popup.Location = new Point(x, y);
         _popup.FormClosed += (_, _) => _light = _popup?.Light == true;
-        _popup.Show(BarForm.PopoverOwnerFor(_bar));
+        _popup.ShowPopover(BarForm.PopoverOwnerFor(_bar));
         request.Popup = _popup;
     }
 

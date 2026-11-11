@@ -560,6 +560,7 @@ var tests = new (string Name, Action Run)[]
     ("Glass dock rate and router slots are layout-stable", TestGlassDockStableSlots),
     ("Grok plan comes from the settings cache, never the sign-in type", TestGrokPlanFromSettingsCache),
     ("Expired Grok CLI session is renewed with its refresh token", TestGrokExpiredSessionIsRenewed),
+    ("Popovers never get a cyclic or self owner", TestPopoverOwnerNeverCyclic),
     ("Quota remaining color gradient", TestQuotaRemainingColorGradient),
     ("Native background palette contract", TestNativeBackgroundPaletteContract),
     ("Native settings panel contract", TestNativeSettingsPanelContract),
@@ -16536,6 +16537,40 @@ static void TestGrokExpiredSessionIsRenewed()
     }
 }
 
+
+static void TestPopoverOwnerNeverCyclic()
+{
+    using var popover = new System.Windows.Forms.Form { ShowInTaskbar = false, StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new Point(-4000, -4000), Size = new Size(40, 40) };
+    using var flyout = new System.Windows.Forms.Form { ShowInTaskbar = false, StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new Point(-4000, -4000), Size = new Size(40, 40) };
+    popover.Show();
+    flyout.Show(popover);
+    popover.Hide();
+    // The crash: re-showing a popover with a window it owns as the owner.
+    var threw = false;
+    try { popover.Show(flyout); } catch (ArgumentException) { threw = true; }
+    Check(threw, "WinForms rejects a window owned by the form as its owner (the reported crash)");
+    if (popover.Visible) popover.Hide();
+    Check(PopoverShow.SafeOwner(popover, flyout) == PopoverOwnerWindow.Instance, "an owned window is never used as the owner");
+    Check(PopoverShow.SafeOwner(popover, popover) == PopoverOwnerWindow.Instance, "a form never owns itself");
+    Check(PopoverShow.SafeOwner(popover, null) == PopoverOwnerWindow.Instance, "no owner means the hidden popover owner, not the active window");
+    popover.ShowPopover(flyout);
+    Check(popover.Visible && popover.Owner is null, "the popover still shows, owned by the hidden owner");
+    popover.Hide();
+    Check(BarForm.PopoverOwnerFor(null) == PopoverOwnerWindow.Instance, "embedded or ownerless popovers get the hidden owner");
+    var log = Path.Combine(Path.GetTempPath(), "zgs-errors-" + Guid.NewGuid().ToString("N") + ".log");
+    var previous = AppDiagnostics.LogPath;
+    AppDiagnostics.LogPath = log;
+    try
+    {
+        AppDiagnostics.Record("test", new InvalidOperationException("boom"));
+        Check(File.ReadAllText(log).Contains("[test] System.InvalidOperationException: boom", StringComparison.Ordinal), "faults are logged instead of shown");
+    }
+    finally
+    {
+        AppDiagnostics.LogPath = previous;
+        File.Delete(log);
+    }
+}
 
 static void TestGlassDockStableSlots()
 {

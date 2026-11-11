@@ -16,6 +16,8 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        // Before any window exists: log faults instead of showing the stock .NET exception dialog.
+        AppDiagnostics.Install();
         var dataDirectory = ResolveDataDirectoryOverride(args);
         var allowGlobalStartupRegistration = dataDirectory is null;
         if (HostJobLifetimeIsolation.TryRelaunchOutsideTerminatingJob(

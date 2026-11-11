@@ -29,11 +29,13 @@ internal sealed partial class BarForm
     internal string TaskbarEmbedStatus { get; private set; } = "off";
 
     /// <summary>
-    /// Popovers stay owner-less while embedded: an owner that is a child of Explorer would make
-    /// Shell_TrayWnd their owner, tying their lifetime to Explorer's.
+    /// While embedded the bar cannot own popovers (that would make Shell_TrayWnd their owner and tie
+    /// their lifetime to Explorer's), and a null owner is worse: WinForms then borrows the active
+    /// window, which can be a window the popover itself owns ("a form cannot own itself or its
+    /// owner"). Embedded popovers are owned by a hidden top-level window of this process instead.
     /// </summary>
-    internal static IWin32Window? PopoverOwnerFor(Control? owner) =>
-        owner is BarForm { EmbeddedInTaskbar: true } ? null : owner;
+    internal static IWin32Window PopoverOwnerFor(Control? owner) =>
+        owner is null or BarForm { EmbeddedInTaskbar: true } ? PopoverOwnerWindow.Instance : owner;
 
     /// <summary>Window origin in screen coordinates whether embedded (child) or top-level.</summary>
     private Point ScreenLocation => EmbeddedInTaskbar ? PointToScreen(Point.Empty) : Location;

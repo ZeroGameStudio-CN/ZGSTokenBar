@@ -145,14 +145,14 @@ internal sealed class CodexAccountsPopoverForm : Form
             _entranceStarted = DateTime.UtcNow;
             Opacity = .01;
             Location = _entranceLocation;
-            Show(BarForm.PopoverOwnerFor(owner));
+            this.ShowPopover(BarForm.PopoverOwnerFor(owner));
             if (!TaskbarPlacement.ShowAt(Handle, _entranceLocation, placement.WindowSize)) Location = _entranceLocation;
             _entranceTimer.Start();
             return;
         }
 
         Opacity = 1;
-        if (!wasVisible) Show(BarForm.PopoverOwnerFor(owner));
+        if (!wasVisible) this.ShowPopover(BarForm.PopoverOwnerFor(owner));
         if (!TaskbarPlacement.ShowAt(Handle, _restingLocation, placement.WindowSize)) Location = _restingLocation;
     }
 
