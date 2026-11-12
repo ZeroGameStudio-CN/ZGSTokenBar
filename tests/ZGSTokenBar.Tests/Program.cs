@@ -54,7 +54,6 @@ if (args.Length == 2 && args[0] == "--grok-plan-hover")
 
 if (args.Length > 0 && args[0] == "--codex-usage-strategy")
 {
-    CodexUsageStrategyTests.Run(args.Length == 2 ? args[1] : null);
     TestCockpitProCodexAccountMerge();
     return 0;
 }
@@ -497,10 +496,10 @@ var tests = new (string Name, Action Run)[]
     ("Native localization catalog", TestNativeLocalization),
     ("Quota pace popover presentation", TestQuotaPacePopoverPresentation),
     ("Codex account popover presentation", TestCodexAccountPopoverPresentation),
-    ("Codex account usage strategy", () => CodexUsageStrategyTests.Run()),
     ("Taskbar hint popover presentation", TestTaskbarHintPopoverPresentation),
     ("Taskbar popover motion geometry", TestTaskbarPopoverMotionGeometry),
     ("Settings normalization", TestSettingsNormalization),
+    ("Legacy Codex display mode key is ignored", TestLegacyCodexDisplayModeKeyIgnored),
     ("Settings data directory override", TestSettingsDataDirectoryOverride),
     ("Windows startup registration policy", TestWindowsStartupRegistrationPolicy),
     ("Host job lifetime isolation policy", TestHostJobLifetimeIsolationPolicy),
@@ -527,21 +526,14 @@ var tests = new (string Name, Action Run)[]
     ("Atomic credential writes", TestAtomicCredentialWrites),
     ("Settings corruption recovery", TestSettingsCorruptionRecovery),
     ("Adaptive bar sizing", TestAdaptiveSizing),
-    ("Codex Mini display mode settings", TestCodexMiniDisplayModeSettings),
     ("System usage sampling math", TestSystemUsageSamplingMath),
     ("System usage background serialization", TestSystemUsageBackgroundSerialization),
     ("System usage sampling allocation", TestSystemUsageSamplingAllocation),
     ("System usage popover presentation", TestSystemUsagePopoverPresentation),
     ("Taskbar visible quota windows", TestTaskbarVisibleQuotaWindows),
-    ("Taskbar stacked Codex accounts", TestTaskbarStackedCodexAccounts),
     ("Taskbar Codex area isolation", TestTaskbarCodexAreaIsolation),
-    ("Taskbar Codex pool grouping", TestTaskbarCodexPoolGrouping),
-    ("Codex pool account projection", TestCodexPoolAccountProjection),
-    ("Codex pool presentation", TestCodexPoolPresentation),
-    ("Taskbar Codex pool rendering", TestTaskbarCodexPoolRendering),
     ("Taskbar Mini render fault isolation", TestTaskbarMiniRenderFaultIsolation),
     ("Retired delegation integration stays absent", TestRetiredDelegationIntegration),
-    ("Taskbar compact provider summaries", TestTaskbarCompactProviderSummaries),
     ("Taskbar compact AI Gateway balance", TestTaskbarCompactAiGatewayBalance),
     ("Taskbar monitor selection", TestTaskbarMonitorSelection),
     ("Taskbar Mini collapse anchor", TestTaskbarMiniCollapseAnchor),
@@ -1730,9 +1722,6 @@ static void TestSub2ApiPool()
         [plusCard, attachedAccountAvailability.Cards.Single()],
         [new ProviderHealth(ProviderKind.Codex, true, "current", ProviderHealthCode.Current)],
         now);
-    var stackedGroup = TaskbarMiniGrouping.Create(stackedSnapshot.Cards).Single();
-    Equal(true, stackedGroup.IsStackedCodex, "Sub2API shares the two-row Codex Mini module");
-    Equal("codex.api-service", stackedGroup.Cards[1].Key, "Sub2API occupies the second Codex Mini row");
 
     using (var stackedMini = new BarForm(
         new AppSettings { Locale = "zh-CN", EnableAnimations = false },
@@ -3299,10 +3288,7 @@ static void TestFailedActiveCodexAccountRemainsVisible()
 
         var merged = QuotaCoordinator.MergeResults([result], null, now);
         Equal(2, merged.Cards.Count, "snapshot merge retains the failed active Pro beside the live Pro");
-        var groups = TaskbarMiniGrouping.Create(merged.Cards);
-        Equal(1, groups.Count, "observer configuration alone does not create a Sub2API Mini module");
-        Equal(2, groups[0].Cards.Count, "the first Codex Mini module contains both Pro accounts");
-        Equal(true, groups[0].Cards.All(card => !card.IsService && card.Badge == "pro"), "both Pro rows remain ordinary accounts");
+        Equal(true, merged.Cards.All(card => !card.IsService && card.Badge == "pro"), "both Pro rows remain ordinary accounts");
     }
     finally
     {
@@ -3373,7 +3359,6 @@ static void TestCockpitApiServiceCard()
         Equal(ProviderHealthCode.Unavailable, result.Health.Code, "API-only health remains unavailable for quota");
         Equal(0, result.CodexAccounts.Count, "API service does not enter quota summaries");
         Equal(0, handler.Calls, "API-only configuration performs no provider request");
-        Equal("API", TaskbarMiniGrouping.CodexRowWindows(card).Single().Label, "Mini preserves the API service row");
         Equal("API 服务已配置", NativeText.For("zh-CN").ApiServiceConfigured, "Chinese service status is explicit");
         Equal("API service configured", NativeText.For("en").ApiServiceConfigured, "English service status is explicit");
 
@@ -7981,96 +7966,9 @@ static void RenderTaskbarMiniCaptures(string outputDirectory)
                         outputDirectory,
                         $"taskbar-mini-{scenario.Name}{localeSuffix}{paletteSuffix}-{dpi}dpi.png"));
                     bitmap.Save(path, ImageFormat.Png);
-                    var groups = TaskbarMiniGrouping.Create(snapshot.Cards);
-                    Console.WriteLine($"{path} {bitmap.Width}x{bitmap.Height} slots={groups.Count} palette={paletteId}");
+                    Console.WriteLine($"{path} {bitmap.Width}x{bitmap.Height} palette={paletteId}");
                 }
             }
-        }
-    }
-
-    var fourCodexPoolSnapshot = FourCodexPoolSnapshot(DateTimeOffset.UtcNow);
-    var fourCodexPoolAccounts = Enumerable.Range(1, 4)
-        .Select(index => new CodexAccountInfo(
-            $"pool-account-{index}",
-            $"pool-{index}@example.test",
-            "pro",
-            index == 1))
-        .ToArray();
-    var poolCaptureScenarios = new[]
-    {
-        (Suffix: string.Empty, Snapshot: fourCodexPoolSnapshot),
-        (Suffix: "-7d-only", Snapshot: fourCodexPoolSnapshot with
-        {
-            Cards = fourCodexPoolSnapshot.Cards
-                .Select(card => card with
-                {
-                    Windows = card.Windows
-                        .Where(window => window.Duration != TimeSpan.FromHours(5))
-                        .ToArray(),
-                })
-                .ToArray(),
-            CodexAccounts = fourCodexPoolSnapshot.CodexAccounts
-                .Select(quota => quota with
-                {
-                    Windows = quota.Windows
-                        .Where(window => window.Duration != TimeSpan.FromHours(5))
-                        .ToArray(),
-                })
-                .ToArray(),
-        }),
-        (Suffix: "-7d-partial", Snapshot: fourCodexPoolSnapshot with
-        {
-            Cards = fourCodexPoolSnapshot.Cards
-                .Take(3)
-                .Select(card => card with
-                {
-                    Windows = card.Windows
-                        .Where(window => window.Duration != TimeSpan.FromHours(5))
-                        .ToArray(),
-                })
-                .ToArray(),
-            CodexAccounts = fourCodexPoolSnapshot.CodexAccounts
-                .Take(3)
-                .Select(quota => quota with
-                {
-                    Windows = quota.Windows
-                        .Where(window => window.Duration != TimeSpan.FromHours(5))
-                        .ToArray(),
-                })
-                .ToArray(),
-        }),
-    };
-    foreach (var scenario in poolCaptureScenarios)
-    {
-        foreach (var dpi in new[] { 96, 144, 192 })
-        {
-            using var form = new BarForm(
-                new AppSettings
-                {
-                    Locale = "zh-CN",
-                    UseTaskbarRings = true,
-                    EnableAnimations = false,
-                    CodexMiniDisplayMode = CodexMiniDisplayModes.Pool,
-                },
-                scenario.Snapshot,
-                renderOnly: true,
-                renderDpi: dpi,
-                codexAccounts: fourCodexPoolAccounts);
-            form.SetSystemUsage(systemUsage);
-            form.CreateControl();
-            using var bitmap = new Bitmap(
-                form.ClientSize.Width,
-                form.ClientSize.Height,
-                PixelFormat.Format32bppPArgb);
-            form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
-            var path = Path.GetFullPath(Path.Combine(
-                outputDirectory,
-                $"taskbar-mini-four-codex-pool{scenario.Suffix}-zh-CN-{dpi}dpi.png"));
-            bitmap.Save(path, ImageFormat.Png);
-            var groups = TaskbarMiniGrouping.Create(
-                scenario.Snapshot.Cards,
-                CodexMiniDisplayModes.Pool);
-            Console.WriteLine($"{path} {bitmap.Width}x{bitmap.Height} slots={groups.Count} codex=pool accounts=4");
         }
     }
 
@@ -9123,105 +9021,6 @@ static QuotaSnapshot TaskbarMiniCaptureSnapshot(bool includeClaude, int codexCou
         now);
 }
 
-static CodexTokenUsageSummary SpendHistoryCaptureUsage(DateTimeOffset capturedAt)
-{
-    decimal?[] dailyCosts =
-    [
-        .42m, .64m, null, .31m, .85m, .56m, .72m, null, 1.10m, .96m,
-        1.25m, .44m, null, 1.68m, 1.32m, 0m, 1.84m, 1.20m, null, 2.10m,
-        1.76m, 2.43m, 2.06m, 2.82m, 3.10m, null, 3.62m, 2.96m, 4.08m, 4.76m,
-    ];
-    var days = dailyCosts
-        .Select((cost, index) =>
-        {
-            var localDate = capturedAt.Date
-                .AddDays(index - dailyCosts.Length + 1)
-                .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-            if (cost is null) return new CodexSpendDay(localDate, CodexSpendPeriod.Empty);
-
-            var inputTokens = 560_000L + index * 74_000L;
-            var cachedInputTokens = inputTokens * (index % 4 + 4) / 10;
-            var outputTokens = 180_000L + index * 21_000L;
-            var totalTokens = inputTokens + outputTokens;
-            var unpricedTokens = index switch
-            {
-                15 => totalTokens,
-                24 => 420_000L,
-                _ => 0L,
-            };
-            return new CodexSpendDay(
-                localDate,
-                new CodexSpendPeriod(
-                    inputTokens,
-                    cachedInputTokens,
-                    outputTokens,
-                    outputTokens / 3,
-                    0,
-                    totalTokens - unpricedTokens,
-                    unpricedTokens,
-                    cost.Value));
-        })
-        .ToArray();
-
-    static CodexSpendPeriod SumPeriods(IEnumerable<CodexSpendPeriod> values)
-    {
-        var periods = values.ToArray();
-        return new CodexSpendPeriod(
-            periods.Sum(period => period.InputTokens),
-            periods.Sum(period => period.CachedInputTokens),
-            periods.Sum(period => period.OutputTokens),
-            periods.Sum(period => period.ReasoningOutputTokens),
-            periods.Sum(period => period.UnattributedTokens),
-            periods.Sum(period => period.PricedTokens),
-            periods.Sum(period => period.UnpricedTokens),
-            periods.Sum(period => period.PricedApiEquivalentUsd),
-            periods.Sum(period => period.CacheWriteInputTokens));
-    }
-
-    var last30Days = SumPeriods(days.Select(day => day.Spend));
-    var last7Days = SumPeriods(days.TakeLast(7).Select(day => day.Spend));
-    CodexSpendPeriod ModelSpend(int percent, decimal costShare, bool partial)
-    {
-        var inputTokens = last30Days.InputTokens * percent / 100;
-        var outputTokens = last30Days.OutputTokens * percent / 100;
-        var unattributedTokens = last30Days.UnattributedTokens * percent / 100;
-        var totalTokens = inputTokens + outputTokens + unattributedTokens;
-        var unpricedTokens = partial
-            ? Math.Min(totalTokens, last30Days.UnpricedTokens)
-            : 0;
-        return new CodexSpendPeriod(
-            inputTokens,
-            last30Days.CachedInputTokens * percent / 100,
-            outputTokens,
-            last30Days.ReasoningOutputTokens * percent / 100,
-            unattributedTokens,
-            totalTokens - unpricedTokens,
-            unpricedTokens,
-            decimal.Round(last30Days.PricedApiEquivalentUsd * costShare, 4),
-            last30Days.CacheWriteInputTokens * percent / 100);
-    }
-
-    var models = new[]
-    {
-        new CodexSpendModel("gpt-5.6-sol", ModelSpend(50, .52m, partial: false)),
-        new CodexSpendModel("gpt-5.6-terra", ModelSpend(30, .31m, partial: false)),
-        new CodexSpendModel("gpt-5.6-luna", ModelSpend(20, .17m, partial: true)),
-    };
-    return new CodexTokenUsageSummary(
-        days[^1].Spend.TotalTokens,
-        last30Days.TotalTokens,
-        2_179,
-        capturedAt,
-        last30Days.InputTokens,
-        last30Days.CachedInputTokens,
-        days[^1].Spend.InputTokens,
-        days[^1].Spend.CachedInputTokens,
-        days[^1].Spend,
-        days[^2].Spend,
-        last30Days,
-        new CodexSpendHistory(days, models, last7Days));
-}
-
 static void RenderLocalizationCaptures(string outputDirectory)
 {
     Directory.CreateDirectory(outputDirectory);
@@ -9842,15 +9641,6 @@ static void TestTaskbarHintPopoverPresentation()
             .Any(x => Enumerable.Range(0, bitmap.Height).Any(y => bitmap.GetPixel(x, y).A > 0)),
         "hint popover produces visible pixels");
 }
-
-static int MeasureSingleLine(string text, Font font) =>
-    System.Windows.Forms.TextRenderer.MeasureText(
-        text,
-        font,
-        Size.Empty,
-        System.Windows.Forms.TextFormatFlags.NoPadding
-        | System.Windows.Forms.TextFormatFlags.NoPrefix
-        | System.Windows.Forms.TextFormatFlags.SingleLine).Width;
 
 static void TestSettingsV2PluginMigration()
 {
@@ -10998,53 +10788,24 @@ static void TestSettingsNormalization()
         "Mini area order keeps valid future modules and removes duplicates");
 }
 
-static void TestCodexMiniDisplayModeSettings()
+static void TestLegacyCodexDisplayModeKeyIgnored()
 {
-    Equal(
-        CodexMiniDisplayModes.Accounts,
-        new AppSettings().CodexMiniDisplayMode,
-        "Codex Mini defaults to the existing per-account presentation");
-    Equal(
-        CodexMiniDisplayModes.Accounts,
-        CodexMiniDisplayModes.Normalize(null),
-        "missing Codex Mini display mode uses the account presentation");
-    Equal(
-        CodexMiniDisplayModes.Accounts,
-        CodexMiniDisplayModes.Normalize("future-mode"),
-        "unknown Codex Mini display mode fails back to accounts");
-    Equal(
-        CodexMiniDisplayModes.Pool,
-        CodexMiniDisplayModes.Normalize(" POOL "),
-        "Codex Mini pool mode normalizes case and whitespace");
-
-    var normalized = new AppSettings { CodexMiniDisplayMode = " POOL " };
-    normalized.Normalize();
-    Equal(
-        CodexMiniDisplayModes.Pool,
-        normalized.CodexMiniDisplayMode,
-        "settings normalization preserves the supported pool mode");
-    normalized.CodexMiniDisplayMode = "unsupported";
-    normalized.Normalize();
-    Equal(
-        CodexMiniDisplayModes.Accounts,
-        normalized.CodexMiniDisplayMode,
-        "settings normalization restores accounts for unsupported modes");
-
-    var directory = Path.Combine(Path.GetTempPath(), $"wmt-codex-mini-mode-{Guid.NewGuid():N}");
+    // Round 19 removed the account/pool display mode; an old settings.json must still load cleanly
+    // and the retired key disappears on the next save.
+    var directory = Path.Combine(Path.GetTempPath(), $"wmt-legacy-codex-mode-{Guid.NewGuid():N}");
     Directory.CreateDirectory(directory);
     try
     {
         var store = new AppSettingsStore(directory);
-        store.Save(new AppSettings { CodexMiniDisplayMode = CodexMiniDisplayModes.Pool });
+        File.WriteAllText(store.SettingsPath, """
+            { "schemaVersion": 2, "codexMiniDisplayMode": "pool", "locale": "en", "refreshMinutes": 7 }
+            """);
+        var loaded = store.Load();
+        Equal("en", loaded.Locale, "a legacy display-mode key does not break settings load");
+        Equal(7, loaded.RefreshMinutes, "settings beside the legacy key are preserved");
+        store.Save(loaded);
         using var document = JsonDocument.Parse(File.ReadAllBytes(store.SettingsPath));
-        Equal(
-            CodexMiniDisplayModes.Pool,
-            document.RootElement.GetProperty("codexMiniDisplayMode").GetString(),
-            "Codex Mini display mode is written to settings JSON");
-        Equal(
-            CodexMiniDisplayModes.Pool,
-            store.Load().CodexMiniDisplayMode,
-            "Codex Mini display mode survives the settings JSON round trip");
+        Equal(false, document.RootElement.TryGetProperty("codexMiniDisplayMode", out _), "the retired key is dropped on save");
     }
     finally
     {
@@ -12455,178 +12216,6 @@ static void TestTaskbarVisibleQuotaWindows()
     Equal("1w", unavailable[1].Label, "Mini keeps the unavailable weekly label");
 }
 
-static void TestTaskbarStackedCodexAccounts()
-{
-    var reset = DateTimeOffset.Parse("2026-08-01T12:00:00Z");
-    var claude = new QuotaCard(
-        "claude",
-        ProviderKind.Claude,
-        "Claude",
-        null,
-        "#f97316",
-        true,
-        []);
-    var firstCodex = new QuotaCard(
-        "codex.1",
-        ProviderKind.Codex,
-        "Codex · 1",
-        "pro",
-        "#10a37f",
-        true,
-        [new QuotaWindow("7d", 7, reset, TimeSpan.FromDays(7))]);
-    var secondCodex = new QuotaCard(
-        "codex.2",
-        ProviderKind.Codex,
-        "Codex · 2",
-        "pro",
-        "#10a37f",
-        false,
-        [
-            new QuotaWindow("5h", 0, reset, TimeSpan.FromHours(5)),
-            new QuotaWindow("7d", 100, reset, TimeSpan.FromDays(7)),
-        ]);
-
-    var groups = TaskbarMiniGrouping.Create([claude, firstCodex, secondCodex]);
-    Equal(2, groups.Count, "two Codex accounts share one Mini card slot");
-    Equal(false, groups[0].IsStackedCodex, "Claude keeps its own Mini card slot");
-    Equal(true, groups[1].IsStackedCodex, "Codex accounts render as stacked rows");
-    Equal(2, groups[1].Cards.Count, "both Codex accounts remain individually addressable");
-    Equal(450, TaskbarMiniLayoutMath.ContentWidth(groups.Count), "stacking keeps independent provider and system handles");
-
-    var proLow = firstCodex with
-    {
-        Key = "codex.pro-low",
-        Label = "Codex · 3",
-        Windows = [new QuotaWindow("7d", 80, reset, TimeSpan.FromDays(7))],
-    };
-    var proHigh = firstCodex with
-    {
-        Key = "codex.pro-high",
-        Label = "Codex · 2",
-        Windows = [new QuotaWindow("7d", 10, reset, TimeSpan.FromDays(7))],
-    };
-    var plusHighest = firstCodex with
-    {
-        Key = "codex.plus-highest",
-        Label = "Codex · 1",
-        Badge = "plus",
-        Windows = [new QuotaWindow("7d", 1, reset, TimeSpan.FromDays(7))],
-    };
-    var orderedCodex = TaskbarMiniGrouping.Create([plusHighest, proLow, proHigh]).Single().Cards;
-    Equal(
-        "codex.pro-high,codex.pro-low,codex.plus-highest",
-        string.Join(',', orderedCodex.Select(card => card.Key)),
-        "Pro accounts precede Plus and each plan sorts by displayed remaining quota");
-    Equal<double?>(90, TaskbarMiniGrouping.DisplayedRemainingPercent(proHigh), "sorting uses the compact displayed remaining quota");
-
-    var firstRow = TaskbarMiniGrouping.CodexRowWindows(firstCodex);
-    Equal(1, firstRow.Count, "missing Codex five-hour window stays hidden");
-    Equal("7d", firstRow[0].Label, "weekly Codex window fills the account row");
-    Equal<double?>(7, firstRow[0].UsedPercent, "weekly Codex value remains tied to its account");
-
-    var secondRow = TaskbarMiniGrouping.CodexRowWindows(secondCodex);
-    Equal(2, secondRow.Count, "available Codex five-hour window opens automatically");
-    Equal("5h", secondRow[0].Label, "five-hour Codex window renders first");
-    Equal("7d", secondRow[1].Label, "weekly Codex window renders second");
-
-    var emptyServiceRow = TaskbarMiniGrouping.CodexRowWindows(new QuotaCard(
-        "codex.service",
-        ProviderKind.Codex,
-        "Codex API",
-        null,
-        "#10a37f",
-        false,
-        [])
-    {
-        IsService = true,
-    });
-    Equal(1, emptyServiceRow.Count, "an empty Codex service keeps a drawable fallback row");
-    Equal<double?>(null, emptyServiceRow[0].UsedPercent, "the service fallback reports unavailable quota");
-
-    using var perAreaForm = new BarForm(
-        new AppSettings(),
-        new QuotaSnapshot([claude, firstCodex, secondCodex], [], reset),
-        renderOnly: true,
-        renderDpi: 96);
-    Equal(true, perAreaForm.ClientSize.Width <= GlassDockLayout.Width, "the glass dock stays a fixed width");
-    var systemArea = perAreaForm.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.SystemMetrics);
-    Equal(false, systemArea.Collapsed, "system area starts expanded");
-    Equal(88, systemArea.Width, "system area reports the shared default width");
-    Equal(
-        true,
-        perAreaForm.MoveMiniAreaFromCommand(MiniAreaIds.Codex, MiniAreaIds.Claude),
-        "provider module order accepts a move before its sibling");
-    Equal(
-        MiniAreaIds.Codex,
-        perAreaForm.GetMiniAreaStates()[0].AreaId,
-        "provider module order is reflected by the Mini state directory");
-    Equal(
-        true,
-        perAreaForm.MoveMiniAreaFromCommand(MiniAreaIds.SystemMetrics, MiniAreaIds.Codex),
-        "system metrics joins the shared module ordering");
-    Equal(
-        MiniAreaIds.SystemMetrics,
-        perAreaForm.GetMiniAreaStates()[0].AreaId,
-        "system metrics can move before provider modules");
-    Equal(true, perAreaForm.SetMiniAreaFromCommand(MiniAreaIds.Claude, true, null), "Claude area collapse is accepted");
-    Equal(true, perAreaForm.ClientSize.Width <= GlassDockLayout.Width, "collapsing Claude does not resize the dock");
-    Equal(false, perAreaForm.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Codex).Collapsed, "Codex remains expanded");
-    Equal(true, perAreaForm.SetMiniAreaFromCommand(MiniAreaIds.Codex, null, 200), "Codex area width is accepted");
-    Equal(true, perAreaForm.ClientSize.Width <= GlassDockLayout.Width, "Codex area width does not resize the dock");
-    Equal(200, perAreaForm.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Codex).Width, "Codex width is reported through the area contract");
-    Equal(true, perAreaForm.SetMiniAreaFromCommand(MiniAreaIds.SystemMetrics, true, null), "system area collapse is accepted");
-    Equal(true, perAreaForm.ClientSize.Width <= GlassDockLayout.Width, "collapsing system usage does not resize the dock");
-    Equal(true, perAreaForm.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Claude).Collapsed, "system collapse preserves Claude state");
-    Equal(200, perAreaForm.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Codex).Width, "system collapse preserves Codex width");
-    Equal(true, perAreaForm.SetMiniAreaFromCommand(MiniAreaIds.SystemMetrics, false, 120), "system area width is accepted");
-    Equal(true, perAreaForm.ClientSize.Width <= GlassDockLayout.Width, "system area width does not resize the dock");
-    Equal(120, perAreaForm.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.SystemMetrics).Width, "system width is reported through the area contract");
-    Equal(false, perAreaForm.SetMiniAreaFromCommand("missing.area", true, null), "unknown area fails closed");
-
-    using var noSystemForm = new BarForm(
-        new AppSettings
-        {
-            PluginEnabled = new(StringComparer.Ordinal) { ["zgstokenbar.metrics.system"] = false },
-        },
-        new QuotaSnapshot([claude, firstCodex, secondCodex], [], reset),
-        renderOnly: true,
-        renderDpi: 96);
-    Equal(
-        false,
-        noSystemForm.GetMiniAreaStates().Any(area => area.AreaId == MiniAreaIds.SystemMetrics),
-        "disabled system metrics do not create a Mini area");
-    Equal(false, noSystemForm.WantsSystemUsageDetails, "disabled system metrics never request detailed sampling");
-
-    using var controlsOnlyForm = new BarForm(
-        new AppSettings
-        {
-            EnabledProviders = [],
-            PluginEnabled = new(StringComparer.Ordinal) { ["zgstokenbar.metrics.system"] = false },
-        },
-        new QuotaSnapshot([], [], reset),
-        renderOnly: true,
-        renderDpi: 96,
-        activeProviders: new HashSet<ProviderKind>());
-    Equal(0, controlsOnlyForm.GetMiniAreaStates().Count, "all business modules can be disabled together");
-    Equal(true, controlsOnlyForm.ClientSize.Width > 0, "refresh and settings controls remain reachable with every module off");
-
-    using var collapsedForm = new BarForm(
-        new AppSettings
-        {
-            MiniAreaLayouts = new(StringComparer.Ordinal)
-            {
-                [MiniAreaIds.Claude] = new(true),
-                [MiniAreaIds.Codex] = new(true),
-                [MiniAreaIds.SystemMetrics] = new(true),
-            },
-        },
-        new QuotaSnapshot([claude, firstCodex, secondCodex], [], reset),
-        renderOnly: true,
-        renderDpi: 96);
-    Equal(true, collapsedForm.ClientSize.Width <= GlassDockLayout.Width, "collapsed areas keep the same dock width");
-    Equal(true, collapsedForm.AreAllMiniAreasCollapsed, "all-area state includes system metrics");
-}
-
 static void TestTaskbarCodexAreaIsolation()
 {
     var reset = DateTimeOffset.Parse("2026-08-01T12:00:00Z");
@@ -12657,15 +12246,6 @@ static void TestTaskbarCodexAreaIsolation()
             false,
             [new QuotaWindow("7d", 27, reset, TimeSpan.FromDays(7))]),
     };
-
-    var groups = TaskbarMiniGrouping.Create(codexAccounts);
-    var codexGroups = groups.Where(group => group.Cards[0].Provider == ProviderKind.Codex).ToArray();
-    Equal(1, codexGroups.Length, "three Codex accounts share one Mini module");
-    Equal(
-        MiniAreaIds.Codex,
-        codexGroups[0].AreaId,
-        "the combined Codex Mini keeps the stable area id");
-    Equal(3, codexGroups[0].Cards.Count, "all Codex accounts remain individually addressable");
 
     using var form = new BarForm(
         new AppSettings(),
@@ -12702,456 +12282,6 @@ static void TestTaskbarCodexAreaIsolation()
     Equal(MiniAreaIds.Codex, singleCodexAreas[0].AreaId, "a single Codex module keeps the legacy area id");
     Equal(true, singleForm.SetMiniAreaFromCommand(MiniAreaIds.Codex, true, null), "the legacy Codex area remains command-addressable");
     Equal(false, singleForm.SetMiniAreaFromCommand($"{MiniAreaIds.Codex}.2", true, null), "a missing second Codex area fails closed");
-}
-
-static void TestTaskbarCodexPoolGrouping()
-{
-    var now = DateTimeOffset.Parse("2026-08-24T08:00:00Z");
-    var cards = FourCodexPoolSnapshot(now).Cards;
-
-    var accountGroups = TaskbarMiniGrouping.Create(cards, CodexMiniDisplayModes.Accounts);
-    Equal(1, accountGroups.Count, "four Codex accounts share one Mini module in accounts mode");
-    Equal(
-        4,
-        accountGroups[0].Cards.Count,
-        "accounts mode keeps every account individually addressable");
-    Equal(true, accountGroups[0].IsStackedCodex, "accounts mode uses the compact stacked renderer");
-    Equal(false, accountGroups[0].IsCodexPool, "accounts mode does not aggregate account quota");
-
-    var poolGroups = TaskbarMiniGrouping.Create(cards, CodexMiniDisplayModes.Pool);
-    Equal(1, poolGroups.Count, "four ordinary Codex accounts merge into one pool module");
-    Equal(MiniAreaIds.Codex, poolGroups[0].AreaId, "the pool keeps the primary Codex area id");
-    Equal(true, poolGroups[0].IsCodexPool, "the merged group is identified as a Codex pool");
-    Equal(false, poolGroups[0].IsStackedCodex, "the pool does not reuse the two-account renderer");
-    Equal(4, poolGroups[0].Cards.Count, "all four ordinary Codex accounts remain in the pool group");
-
-    var apiService = new QuotaCard(
-        "codex.api-service",
-        ProviderKind.Codex,
-        "API · 1",
-        "API key",
-        "#10a37f",
-        false,
-        [new QuotaWindow("API", null, null, TimeSpan.Zero)])
-    {
-        IsService = true,
-        ServiceCount = 1,
-        ServiceDisplayName = "sub2api",
-    };
-    var groupsWithService = TaskbarMiniGrouping.Create(
-        cards.Append(apiService).ToArray(),
-        CodexMiniDisplayModes.Pool);
-    Equal(2, groupsWithService.Count, "API service remains separate from the ordinary Codex pool");
-    var serviceGroup = groupsWithService.Single(group => group.Cards.Count == 1 && group.Cards[0].IsService);
-    Equal(false, serviceGroup.IsCodexPool, "API service is never marked as a Codex pool");
-    Equal(TaskbarMiniGrouping.CodexServiceAreaId, serviceGroup.AreaId, "API service keeps an independent pool-mode area id");
-}
-
-static void TestCodexPoolAccountProjection()
-{
-    var now = DateTimeOffset.Parse("2026-08-24T08:00:00Z");
-    var accounts = Enumerable.Range(1, 4)
-        .Select(index => new CodexAccountInfo(
-            $"pool-account-{index}",
-            $"pool-{index}@example.test",
-            "pro",
-            index <= 2))
-        .Append(new CodexAccountInfo("plus-account", "plus@example.test", "plus", false))
-        .Append(new CodexAccountInfo("api-service", null, "API_KEY", true, 2))
-        .ToArray();
-    var fullSnapshot = FourCodexPoolSnapshot(now);
-    var first = fullSnapshot.Cards[0] with
-    {
-        AccountHint = CodexAccountFormatting.MaskEmail(accounts[0].Email),
-    };
-    var second = fullSnapshot.Cards[1] with
-    {
-        AccountHint = CodexAccountFormatting.MaskEmail(accounts[1].Email),
-    };
-    var service = new QuotaCard(
-        "codex.api-service",
-        ProviderKind.Codex,
-        "API · 2",
-        "API key",
-        "#64748b",
-        true,
-        [new QuotaWindow("API", null, null, TimeSpan.Zero)])
-    {
-        IsService = true,
-        ServiceCount = 2,
-    };
-    var sourceCards = new QuotaCard[]
-    {
-        new(
-            "claude",
-            ProviderKind.Claude,
-            "Claude",
-            "Max",
-            "#d97757",
-            true,
-            [new QuotaWindow("7d", 20, now.AddDays(3), TimeSpan.FromDays(7))]),
-        first,
-        second,
-        service,
-    };
-
-    var projected = CodexPoolCardProjection.Create(
-        sourceCards,
-        accounts,
-        fullSnapshot.CodexAccounts);
-    var projectedAccounts = projected
-        .Where(card => card.Provider == ProviderKind.Codex && !card.IsService)
-        .ToArray();
-    Equal(4, projectedAccounts.Length, "the configured four-account Pro cohort defines the pool segment count");
-    Equal(true, projectedAccounts.All(card => card.Badge == "pro"), "Plus and API-key entries do not enter the Pro pool");
-    Equal(first.Key, projectedAccounts[0].Key, "the first live card identity is preserved through its account quota key");
-    Equal(second.Key, projectedAccounts[1].Key, "the second live card identity is preserved through its account quota key");
-    Equal(fullSnapshot.CodexAccounts[2].CardKey, projectedAccounts[2].Key, "an inactive account preserves its quota history identity without a visible source card");
-    Equal(true, projected.Single(card => card.IsService).Key == service.Key, "the API service remains a separate card");
-    Equal(4, fullSnapshot.Cards.Count, "pool projection does not mutate the source snapshot");
-    Equal("240/400", CodexPoolPresentation.CapacitySummary(CodexPoolPresentation.Create(projectedAccounts, now)[0]), "all four account quotas produce an exact percentage-point pool total");
-
-    var plusFirst = new QuotaCard(
-        "codex.plus",
-        ProviderKind.Codex,
-        "Codex Plus",
-        "plus",
-        "#10a37f",
-        true,
-        [new QuotaWindow("7d", 25, now.AddDays(2), TimeSpan.FromDays(7))]);
-    var plusFirstProjection = CodexPoolCardProjection.Create(
-        [sourceCards[0], plusFirst, first, second, service],
-        accounts,
-        fullSnapshot.CodexAccounts);
-    var plusFirstAccounts = plusFirstProjection
-        .Where(card => card.Provider == ProviderKind.Codex && !card.IsService)
-        .ToArray();
-    Equal(4, plusFirstAccounts.Length, "a leading live Plus card cannot replace the larger four-account Pro cohort");
-    Equal(true, plusFirstAccounts.All(card => card.Badge == "pro"), "the largest comparable plan cohort owns the pool");
-    Equal(false, plusFirstAccounts.Any(card => card.Key == plusFirst.Key), "a Plus card does not leak into the Pro aggregate");
-
-    var collidingHint = CodexAccountFormatting.MaskEmail("anna@example.test");
-    var collidingPro = first with { AccountHint = collidingHint };
-    var collidingPlus = plusFirst with { AccountHint = collidingHint };
-    var collidingAccounts = accounts
-        .Select((account, index) => index == 0
-            ? account with { Email = "anna@example.test" }
-            : account)
-        .ToArray();
-    var collidingQuotas = fullSnapshot.CodexAccounts
-        .Select((quota, index) => quota with
-        {
-            CardKey = null,
-            Windows = index == 0 ? [] : quota.Windows,
-        })
-        .ToArray();
-    var collisionProjection = CodexPoolCardProjection.Create(
-        [sourceCards[0], collidingPlus, collidingPro, second, service],
-        collidingAccounts,
-        collidingQuotas)
-        .Where(card => card.Provider == ProviderKind.Codex && !card.IsService)
-        .ToArray();
-    Equal(collidingPro.Key, collisionProjection[0].Key, "legacy masked-email collisions keep an explicit Pro card in the Pro slot");
-    Equal(false, collisionProjection.Any(card => card.Key == collidingPlus.Key), "a colliding masked Plus identity cannot enter the Pro pool");
-
-    var legacySourceCards = sourceCards
-        .Select(card => card.Provider == ProviderKind.Codex && !card.IsService
-            ? card with { AccountHint = null }
-            : card)
-        .ToArray();
-    var legacyQuotas = fullSnapshot.CodexAccounts
-        .Select(quota => quota with { CardKey = null })
-        .ToArray();
-    var legacyProjected = CodexPoolCardProjection.Create(
-        legacySourceCards,
-        accounts,
-        legacyQuotas)
-        .Where(card => card.Provider == ProviderKind.Codex && !card.IsService)
-        .ToArray();
-    Equal(4, legacyProjected.Length, "legacy cards without identity metadata fill existing directory slots instead of adding a fifth segment");
-    Equal(true, legacyProjected.Any(card => card.Key == first.Key), "legacy fallback preserves the first real card identity");
-    Equal(true, legacyProjected.Any(card => card.Key == second.Key), "legacy fallback preserves the second real card identity");
-
-    var sevenDaySourceCards = sourceCards
-        .Select(card => card.Provider == ProviderKind.Codex && !card.IsService
-            ? card with
-            {
-                Windows = card.Windows
-                    .Where(window => window.Duration != TimeSpan.FromHours(5))
-                    .ToArray(),
-            }
-            : card)
-        .ToArray();
-    var partialQuotas = fullSnapshot.CodexAccounts
-        .Take(2)
-        .Select(quota => quota with
-        {
-            Windows = quota.Windows
-                .Where(window => window.Duration != TimeSpan.FromHours(5))
-                .ToArray(),
-        })
-        .ToArray();
-    var partial = CodexPoolCardProjection.Create(
-        sevenDaySourceCards,
-        accounts,
-        partialQuotas);
-    var partialAccounts = partial
-        .Where(card => card.Provider == ProviderKind.Codex && !card.IsService)
-        .ToArray();
-    var partialRows = CodexPoolPresentation.Create(partialAccounts, now);
-    Equal(4, partialAccounts.Length, "missing quota snapshots retain gray account slots");
-    Equal(true, partialAccounts[2].Key.StartsWith("codex.pool.", StringComparison.Ordinal), "an account without source or quota identity receives a stable UI-only key");
-    Equal(1, partialRows.Count, "empty account slots do not invent a five-hour horizon");
-    Equal("160/200", CodexPoolPresentation.CapacitySummary(partialRows[0]), "partial account coverage totals the two known account capacities");
-    Equal<DateTimeOffset?>(now.AddDays(3), partialRows[0].NextResetAt, "partial coverage retains the earliest known reset countdown");
-
-    var withoutDirectory = CodexPoolCardProjection.Create(sourceCards, [], fullSnapshot.CodexAccounts);
-    Equal(true, withoutDirectory.SequenceEqual(sourceCards), "native-only Codex falls back to the original cards");
-    var withDuplicate = CodexPoolCardProjection.Create(
-        sourceCards,
-        accounts.Prepend(accounts[0]).ToArray(),
-        fullSnapshot.CodexAccounts);
-    Equal(
-        4,
-        withDuplicate.Count(card => card.Provider == ProviderKind.Codex && !card.IsService),
-        "duplicate account ids do not duplicate pool segments");
-
-    var snapshot = new QuotaSnapshot(
-        [first, second],
-        [new ProviderHealth(ProviderKind.Codex, true, "current", ProviderHealthCode.Current)],
-        now)
-    {
-        CodexAccounts = fullSnapshot.CodexAccounts,
-    };
-    using var form = new BarForm(
-        new AppSettings
-        {
-            EnableAnimations = false,
-            CodexMiniDisplayMode = CodexMiniDisplayModes.Pool,
-        },
-        snapshot,
-        renderOnly: true,
-        renderDpi: 96,
-        codexAccounts: accounts.Take(2).ToArray());
-    Equal(2, form.CodexPoolAccountCountForAcceptance, "the initial pool follows the supplied account directory");
-    var initialSize = form.ClientSize;
-    form.SetCodexAccounts(accounts);
-    Equal(4, form.CodexPoolAccountCountForAcceptance, "account-directory refresh immediately rebuilds all four pool slots");
-    Equal(initialSize, form.ClientSize, "account-directory refresh preserves the fixed pool footprint");
-}
-
-static void TestCodexPoolPresentation()
-{
-    var now = DateTimeOffset.Parse("2026-08-24T08:00:00Z");
-    var cards = FourCodexPoolSnapshot(now).Cards;
-    var rows = CodexPoolPresentation.Create(cards, now);
-
-    Equal(2, rows.Count, "Codex pool presents both available quota horizons");
-    Equal("7d", rows[0].Label, "weekly pool quota occupies the upper row");
-    Equal(TimeSpan.FromDays(7), rows[0].Duration, "weekly pool row retains its duration identity");
-    Equal("5h", rows[1].Label, "five-hour pool quota occupies the lower row");
-    Equal(TimeSpan.FromHours(5), rows[1].Duration, "five-hour pool row retains its duration identity");
-
-    var weekly = rows[0];
-    Equal(4, weekly.Segments.Count, "weekly pool has one segment per Pro account");
-    Equal(4, weekly.AvailableAccountCount, "all weekly Pro values contribute to coverage");
-    Equal(4, weekly.TotalAccountCount, "weekly coverage reports the full account count");
-    Equal<double?>(60d, weekly.AggregateRemainingPercent, "weekly pool mean is exact");
-    Equal<double?>(2.4d, weekly.RemainingAccountEquivalents, "weekly account equivalents are exact");
-    Equal("240/400", CodexPoolPresentation.CapacitySummary(weekly), "weekly pool exposes summed remaining percentage points");
-    Equal<DateTimeOffset?>(now.AddDays(1), weekly.NextResetAt, "weekly pool reports the earliest refill");
-    Equal(
-        true,
-        weekly.Segments.Select(segment => segment.RemainingPercent).SequenceEqual(
-            new double?[] { 90, 70, 50, 30 }),
-        "weekly segments preserve each account's remaining quota");
-
-    var fiveHour = rows[1];
-    Equal(4, fiveHour.AvailableAccountCount, "all five-hour Pro values contribute to coverage");
-    Equal<double?>(80d, fiveHour.AggregateRemainingPercent, "five-hour pool mean is exact");
-    Equal<double?>(3.2d, fiveHour.RemainingAccountEquivalents, "five-hour account equivalents are exact");
-    Equal("320/400", CodexPoolPresentation.CapacitySummary(fiveHour), "five-hour pool exposes summed remaining percentage points");
-    Equal<DateTimeOffset?>(now.AddHours(1), fiveHour.NextResetAt, "five-hour pool reports the earliest refill");
-
-    var threeKnownCards = cards.ToArray();
-    threeKnownCards[3] = threeKnownCards[3] with
-    {
-        Windows = threeKnownCards[3].Windows
-            .Select(window => window.Duration == TimeSpan.FromDays(7)
-                ? window with { UsedPercent = null }
-                : window)
-            .ToArray(),
-    };
-    var threeKnownWeekly = CodexPoolPresentation.Create(threeKnownCards, now)[0];
-    Equal(3, threeKnownWeekly.AvailableAccountCount, "one missing weekly value leaves three known account capacities");
-    Equal<double?>(70d, threeKnownWeekly.AggregateRemainingPercent, "three-account weekly mean uses only known capacities");
-    Equal("210/300", CodexPoolPresentation.CapacitySummary(threeKnownWeekly), "three-account weekly summary excludes the missing gray slot from capacity");
-
-    var incompleteCards = cards.ToArray();
-    incompleteCards[2] = incompleteCards[2] with
-    {
-        Windows = incompleteCards[2].Windows
-            .Select(window => window.Duration == TimeSpan.FromDays(7)
-                ? window with { UsedPercent = null }
-                : window)
-            .ToArray(),
-    };
-    incompleteCards[3] = incompleteCards[3] with
-    {
-        Windows = incompleteCards[3].Windows
-            .Select(window => window.Duration == TimeSpan.FromDays(7)
-                ? window with { ResetsAt = now.AddMinutes(-1) }
-                : window)
-            .ToArray(),
-    };
-    var incompleteWeekly = CodexPoolPresentation.Create(incompleteCards, now)[0];
-    Equal(2, incompleteWeekly.AvailableAccountCount, "missing and expired weekly values reduce coverage");
-    Equal(4, incompleteWeekly.TotalAccountCount, "partial coverage retains the eligible account count");
-    Equal<double?>(80d, incompleteWeekly.AggregateRemainingPercent, "partial weekly coverage averages the known account capacities");
-    Equal<double?>(1.6d, incompleteWeekly.RemainingAccountEquivalents, "partial weekly coverage totals the known account capacities");
-    Equal("160/200", CodexPoolPresentation.CapacitySummary(incompleteWeekly), "partial weekly summary exposes known remaining and known capacity");
-    Equal<DateTimeOffset?>(now.AddDays(2), incompleteWeekly.NextResetAt, "partial coverage retains the earliest known future refill");
-
-    var mixedPlanCards = cards.ToArray();
-    mixedPlanCards[3] = mixedPlanCards[3] with { Badge = "plus" };
-    var mixedPlanWeekly = CodexPoolPresentation.Create(mixedPlanCards, now)[0];
-    Equal(4, mixedPlanWeekly.AvailableAccountCount, "mixed plans may still report raw value coverage");
-    Equal<double?>(null, mixedPlanWeekly.AggregateRemainingPercent, "mixed plans do not expose an exact aggregate");
-    Equal<double?>(null, mixedPlanWeekly.RemainingAccountEquivalents, "mixed plans do not expose account equivalents");
-    Equal("— 4/4", CodexPoolPresentation.CapacitySummary(mixedPlanWeekly), "mixed-plan coverage is not mistaken for a full pool");
-
-    var sevenDayOnlyCards = cards
-        .Select(card => card with
-        {
-            Windows = card.Windows
-                .Where(window => window.Duration != TimeSpan.FromHours(5))
-                .ToArray(),
-        })
-        .ToArray();
-    var sevenDayOnlyRows = CodexPoolPresentation.Create(sevenDayOnlyCards, now);
-    Equal(1, sevenDayOnlyRows.Count, "a globally absent five-hour horizon is omitted");
-    Equal("7d", sevenDayOnlyRows[0].Label, "the weekly horizon becomes the single pool row");
-
-    var emptyFiveHourCards = cards
-        .Select(card => card with
-        {
-            Windows = card.Windows
-                .Select(window => window.Duration == TimeSpan.FromHours(5)
-                    ? window with { UsedPercent = null, ResetsAt = null }
-                    : window)
-                .ToArray(),
-        })
-        .ToArray();
-    var emptyFiveHourRows = CodexPoolPresentation.Create(emptyFiveHourCards, now);
-    Equal(1, emptyFiveHourRows.Count, "duration-only five-hour placeholders do not keep an empty pool row visible");
-    Equal("7d", emptyFiveHourRows[0].Label, "a valid weekly row remains when empty five-hour placeholders are hidden");
-
-    var partialFiveHourCards = sevenDayOnlyCards.ToArray();
-    partialFiveHourCards[0] = cards[0];
-    var partialFiveHourRows = CodexPoolPresentation.Create(partialFiveHourCards, now);
-    Equal(2, partialFiveHourRows.Count, "one real five-hour window keeps the horizon visible");
-    var partialFiveHour = partialFiveHourRows.Single(row => row.Duration == TimeSpan.FromHours(5));
-    Equal(1, partialFiveHour.AvailableAccountCount, "partial five-hour coverage reports the one available account");
-    Equal<double?>(95d, partialFiveHour.AggregateRemainingPercent, "partial five-hour coverage averages the known account capacity");
-    Equal("95/100", CodexPoolPresentation.CapacitySummary(partialFiveHour), "partial five-hour summary exposes the known account capacity");
-
-    var noWindowRows = CodexPoolPresentation.Create(
-        cards.Select(card => card with { Windows = [] }).ToArray(),
-        now);
-    Equal(1, noWindowRows.Count, "a fully unavailable pool retains one stable fallback row");
-    Equal("7d", noWindowRows[0].Label, "the unavailable fallback keeps the weekly identity");
-}
-
-static void TestTaskbarCodexPoolRendering()
-{
-    var now = DateTimeOffset.Parse("2026-08-24T08:00:00Z");
-    var snapshot = FourCodexPoolSnapshot(now);
-    var sevenDayOnlySnapshot = snapshot with
-    {
-        Cards = snapshot.Cards
-            .Select(card => card with
-            {
-                Windows = card.Windows
-                    .Where(window => window.Duration != TimeSpan.FromHours(5))
-                    .ToArray(),
-            })
-            .ToArray(),
-    };
-    foreach (var dpi in new[] { 96, 144, 192 })
-    {
-        using var accountsForm = new BarForm(
-            new AppSettings
-            {
-                EnableAnimations = false,
-                CodexMiniDisplayMode = CodexMiniDisplayModes.Accounts,
-            },
-            snapshot,
-            renderOnly: true,
-            renderDpi: dpi);
-        using var sevenDayOnlyForm = new BarForm(
-            new AppSettings
-            {
-                EnableAnimations = false,
-                CodexMiniDisplayMode = CodexMiniDisplayModes.Pool,
-            },
-            sevenDayOnlySnapshot,
-            renderOnly: true,
-            renderDpi: dpi);
-        using var poolForm = new BarForm(
-            new AppSettings
-            {
-                EnableAnimations = false,
-                CodexMiniDisplayMode = CodexMiniDisplayModes.Pool,
-            },
-            snapshot,
-            renderOnly: true,
-            renderDpi: dpi);
-
-        var expectedHeight = (int)Math.Round(TaskbarMiniLayoutMath.Height * dpi / 96d);
-        Equal(expectedHeight, accountsForm.ClientSize.Height, $"accounts mode keeps the 44px logical height at {dpi} DPI");
-        Equal(expectedHeight, poolForm.ClientSize.Height, $"pool mode keeps the 44px logical height at {dpi} DPI");
-        Equal(expectedHeight, sevenDayOnlyForm.ClientSize.Height, $"single-row pool keeps the 44px logical height at {dpi} DPI");
-        Equal(poolForm.ClientSize.Width, sevenDayOnlyForm.ClientSize.Width, $"single-row pool keeps the 184px area width at {dpi} DPI");
-        // The glass dock (the only bar renderer) sizes itself from its rings, so the legacy Mini
-        // display mode no longer changes the bar width; both modes render the same dock.
-        Equal(accountsForm.ClientSize.Width, poolForm.ClientSize.Width, $"glass dock width does not depend on the legacy Codex Mini mode at {dpi} DPI");
-        Equal(
-            TaskbarMiniLayoutMath.CodexPoolCardWidth,
-            poolForm.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Codex).Width,
-            $"pool mode uses the balanced 184px content width at {dpi} DPI");
-        Equal(
-            1,
-            accountsForm.GetMiniAreaStates().Count(area =>
-                area.AreaId.StartsWith(MiniAreaIds.Codex, StringComparison.Ordinal)),
-            $"accounts mode exposes one Codex area at {dpi} DPI");
-        Equal(
-            1,
-            poolForm.GetMiniAreaStates().Count(area =>
-                area.AreaId.StartsWith(MiniAreaIds.Codex, StringComparison.Ordinal)),
-            $"pool mode exposes one ordinary Codex area at {dpi} DPI");
-
-        Equal(
-            true,
-            poolForm.SetMiniAreaFromCommand(MiniAreaIds.Codex, true, null),
-            $"pool area accepts collapse at {dpi} DPI");
-        Equal(
-            true,
-            poolForm.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Codex).Collapsed,
-            $"pool area reports its collapsed state at {dpi} DPI");
-        Equal(expectedHeight, poolForm.ClientSize.Height, $"collapsed pool retains the logical height at {dpi} DPI");
-
-        poolForm.CreateControl();
-        using var bitmap = new Bitmap(
-            poolForm.ClientSize.Width,
-            poolForm.ClientSize.Height,
-            PixelFormat.Format32bppPArgb);
-        poolForm.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
-        Equal(poolForm.ClientSize, bitmap.Size, $"collapsed pool renders at its full client size at {dpi} DPI");
-        Equal(
-            true,
-            bitmap.GetPixel(bitmap.Width / 2, bitmap.Height / 2).A > 0,
-            $"collapsed pool capture contains rendered pixels at {dpi} DPI");
-    }
 }
 
 static void TestTaskbarMiniRenderFaultIsolation()
@@ -13193,57 +12323,6 @@ static void TestTaskbarMiniRenderFaultIsolation()
         "the isolated module automatically rejoins after a later successful paint");
 }
 
-static void TestTaskbarCompactProviderSummaries()
-{
-    var reset = DateTimeOffset.Parse("2026-08-01T12:00:00Z");
-    var claude = new QuotaCard(
-        "claude",
-        ProviderKind.Claude,
-        "Claude",
-        "pro",
-        "#d97757",
-        true,
-        [
-            new QuotaWindow("7d", 12, reset, TimeSpan.FromDays(7)),
-            new QuotaWindow("5h", 29, reset, TimeSpan.FromHours(5)),
-        ]);
-    var claudeWindow = BarForm.CollapsedQuotaWindow(claude);
-    Equal("5h", claudeWindow?.Label, "collapsed Claude prefers the shortest usable quota window");
-    var claudeSummary = BarForm.CollapsedQuotaSummary(claude);
-    Equal("71%", claudeSummary.Value, "collapsed Claude displays remaining quota");
-    Equal(QuotaColorScale.ForRemaining(71), claudeSummary.Color, "collapsed Claude status follows remaining quota");
-
-    var inactiveCodex = new QuotaCard(
-        "codex.inactive",
-        ProviderKind.Codex,
-        "Codex · 1",
-        "pro",
-        "#10a37f",
-        false,
-        [new QuotaWindow("5h", 90, reset, TimeSpan.FromHours(5))]);
-    var activeCodex = new QuotaCard(
-        "codex.active",
-        ProviderKind.Codex,
-        "Codex · 2",
-        "pro",
-        "#10a37f",
-        true,
-        [new QuotaWindow("5h", 4, reset, TimeSpan.FromHours(5))]);
-    var codexGroup = TaskbarMiniGrouping.Create([inactiveCodex, activeCodex]).Single();
-    Equal("codex.active", BarForm.PrimaryTaskbarCard(codexGroup).Key, "collapsed Codex keeps the active account primary");
-    Equal("96%", BarForm.CollapsedQuotaSummary(BarForm.PrimaryTaskbarCard(codexGroup)).Value, "collapsed Codex displays the active account remaining quota");
-
-    var unavailable = new QuotaCard(
-        "claude.unavailable",
-        ProviderKind.Claude,
-        "Claude",
-        null,
-        "#d97757",
-        true,
-        []);
-    Equal("—", BarForm.CollapsedQuotaSummary(unavailable).Value, "collapsed quota keeps an unavailable value explicit");
-}
-
 static void TestTaskbarCompactAiGatewayBalance()
 {
     var now = DateTimeOffset.UtcNow;
@@ -13276,8 +12355,6 @@ static void TestTaskbarCompactAiGatewayBalance()
             0m,
             now),
     };
-    var groups = TaskbarMiniGrouping.Create([card]);
-    Equal(1, groups.Count, "AI Gateway keeps one Mini card slot");
     Equal(TaskbarMiniLayoutMath.ServiceCardWidth, TaskbarMiniLayoutMath.CardWidthFor(card), "AI Gateway uses service width");
     Equal("¥0", AiGatewayBalanceFormatting.CompactAmount(0m), "compact balance keeps a zero balance explicit");
     Equal("¥9.9", AiGatewayBalanceFormatting.CompactAmount(9.94m), "compact balance retains a decimal below ten yuan");

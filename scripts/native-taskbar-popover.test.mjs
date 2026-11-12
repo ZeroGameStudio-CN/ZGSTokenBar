@@ -31,7 +31,6 @@ const boundedSlice = (source, startMarker, endMarker) => {
 test('taskbar Mini discovers real quota capsules and previews after a deliberate hover', () => {
   assert.match(barForm, /_taskbarWindowBounds/);
   assert.match(barForm, /_popoverHoverTimer = new\(\) \{ Interval = 350 \}/);
-  assert.match(barForm, /TaskbarMiniLayoutMath\.VisibleWindows\(card\.Windows\)/);
   assert.match(barForm, /ShowQuotaPopover\(target, pinned: false\)/);
   assert.match(barForm, /string\.Equals\(_popoverTargetId, nextId, StringComparison\.Ordinal\)/);
   assert.match(barForm, /_hoverQuotaTarget = null;\s+_popoverTargetId = null/);
@@ -51,34 +50,17 @@ test('taskbar Mini click pins the selected window without removing drag support'
   assert.match(barForm, /ClearHoverStateForTaskbarDrag\(\);\s+TaskbarPlacement\.InvalidateCache\(\);\s+_taskbarDragMoved = true/);
 });
 
-test('Codex pool segments remain first-class quota hover and pin targets', () => {
-  const drawPool = boundedSlice(
-    barForm,
-    'private void DrawTaskbarCodexPool(',
-    'private void DrawTaskbarCodexPoolRow(');
-  const buildTargets = boundedSlice(
-    barForm,
-    'private static CodexPoolTargetRow[] TaskbarCodexPoolTargetRows(',
-    'private void DrawTaskbarCodexGroup(');
+test('glass ring targets remain the quota hover and pin targets', () => {
   const resolveTarget = boundedSlice(
     barForm,
     'private MiniQuotaTarget? ResolveQuotaTarget(',
     'private Rectangle QuotaTargetScreenBounds(');
-
-  assert.match(drawPool, /_taskbarWindowBounds\.AddRange\(targetRow\.Targets\)/);
-  assert.match(buildTargets, /row\.Segments[\s\S]*?new MiniQuotaTarget\([\s\S]*?segment\.Card,[\s\S]*?window\)/);
-  assert.match(
-    resolveTarget,
-    /group\.IsCodexPool[\s\S]*?TaskbarCodexPoolTargetRows\([\s\S]*?SelectMany\(row => row\.Targets\)[\s\S]*?string\.Equals\(target\.Id, id, StringComparison\.Ordinal\)[\s\S]*?return target/);
+  assert.match(resolveTarget, /_taskbarWindowBounds\.FirstOrDefault\(target => string\.Equals\(target\.Id, id, StringComparison\.Ordinal\)\)/);
   assert.match(barForm, /private void MonitorQuotaPopover\(\)[\s\S]*?ResolveQuotaTarget\(_popoverTargetId\)/);
   assert.match(barForm, /private void RefreshQuotaPopover\(\)[\s\S]*?ResolveQuotaTarget\(_popoverTargetId\)/);
-  assert.match(
-    barForm,
-    /SetCodexAccounts\([\s\S]*?ApplySnapshotLayout\(\);[\s\S]*?CodexMiniDisplayModes\.Pool\)[\s\S]*?RefreshQuotaPopover\(\);/);
 });
 
 test('Codex account hover uses the shared dark popover chrome and ordinal anchor', () => {
-  assert.match(barForm, /TaskbarAccountOrdinalRowBounds\(bounds, index, group\.Cards\.Count\)/);
   assert.match(barForm, /private void ShowCodexAccountsPopover/);
   assert.match(accountsPopover, /TaskbarMiniPopoverMath\.Place/);
   assert.match(accountsPopover, /UiTokens\.CardSurface/);
@@ -88,9 +70,6 @@ test('Codex account hover uses the shared dark popover chrome and ordinal anchor
   assert.match(hintPopover, /TaskbarMiniPopoverMath\.Place/);
   assert.match(hintPopover, /UiTokens\.CardSurface/);
   assert.match(barForm, /UpdateHintHover\(next\)/);
-  assert.match(barForm, /MiniAreaLayoutChanged/);
-  assert.match(barForm, /MiniAreaOrderChanged/);
-  assert.match(barForm, /ToggleMiniAreaCollapsed/);
   assert.match(nativeText, /MiniCardCollapseHint/);
   assert.match(nativeText, /MiniCardReorderHint/);
   assert.match(applicationContext, /nextSettings\.CopyMiniAreaLayoutsFrom\(_settings\)/);
@@ -98,7 +77,6 @@ test('Codex account hover uses the shared dark popover chrome and ordinal anchor
 });
 
 test('Codex quota hover combines the 100 percent estimate with its recorded sample', () => {
-  assert.match(popover, /DrawQuotaTokenUsage/);
   assert.match(popover, /QuotaTokenUsage is not null/);
   assert.match(popover, /content\.Card\.Provider == ProviderKind\.Codex && !content\.Card\.IsService/);
   const tokenUsage = boundedSlice(nativeText,

@@ -67,13 +67,6 @@ internal sealed partial class BarForm
             })
             .ToArray();
 
-    private void ToggleMiniAreaCollapsed(string areaId)
-    {
-        var previous = AreaLayout(areaId);
-        if (!ApplyMiniAreaLayout(areaId, !previous.Collapsed, null, preserveAnchor: true)) return;
-        MiniAreaLayoutChanged?.Invoke(this, EventArgs.Empty);
-    }
-
     private void SetAllMiniAreasCollapsed(bool collapsed, bool preserveAnchor)
     {
         var areaIds = VisibleMiniAreaIds();
@@ -193,15 +186,7 @@ internal sealed partial class BarForm
         var allCards = _snapshot.Cards
             .Where(card => _activeProviders.Contains(card.Provider))
             .ToArray();
-        var layoutCards = _codexMiniDisplayMode == CodexMiniDisplayModes.Pool
-            && _activeProviders.Contains(ProviderKind.Codex)
-                ? CodexPoolCardProjection.Create(
-                    allCards,
-                    _codexAccounts,
-                    _snapshot.CodexAccounts).ToArray()
-                : allCards;
-        var defaultAreas = TaskbarMiniGrouping.Create(layoutCards, _codexMiniDisplayMode)
-            .Select(TaskbarMiniAreaContent.ForGroup)
+        var defaultAreas = QuotaCardAreas(allCards)
             .Concat(_pluginMiniCards.Select(TaskbarMiniAreaContent.ForPlugin))
             .ToList();
         if (_showSystemMetrics)
@@ -213,18 +198,7 @@ internal sealed partial class BarForm
         _taskbarContentAreas = OrderTaskbarContentAreas(defaultAreas, _miniAreaOrder)
             .ToArray();
         _visibleTaskbarAreas = SelectVisibleTaskbarAreas(_taskbarContentAreas);
-        _visibleCards = _visibleTaskbarAreas
-            .Where(area => area.Group is not null)
-            .SelectMany(area => area.Group!.Cards)
-            .ToArray();
-        _hiddenCardCount = Math.Max(0, layoutCards.Length - _visibleCards.Length)
-            + Math.Max(0, _pluginMiniCards.Length - _visibleTaskbarAreas.Count(area => area.Plugin is not null));
-        var miniLogicalWidth = _glassDock
-            ? CurrentGlassPlan().Width
-            : TaskbarMiniLayoutMath.ModuleContentWidth(
-                _visibleTaskbarAreas.Select(TaskbarAreaWidth)
-                    .ToArray(),
-                _hiddenCardCount > 0);
+        var miniLogicalWidth = CurrentGlassPlan().Width;
         using (PerfTrace.Measure("layout.client-size")) ClientSize = new Size(Scale(miniLogicalWidth), Scale(TaskbarMiniLayoutMath.Height));
         using (PerfTrace.Measure("layout.region")) UpdateWindowRegion();
         if (!_renderOnly && updatePlacement)
@@ -232,43 +206,60 @@ internal sealed partial class BarForm
             using var placement = PerfTrace.Measure("layout.placement");
             if (_taskbarDocked)
             {
-                if (_resizingMiniAreaId is null) SyncTaskbarPlacement();
+                SyncTaskbarPlacement();
             }
             else RestoreActiveFloatingPosition();
         }
     }
 
-    private int TaskbarGroupWidth(TaskbarMiniCardGroup group)
+    /// <summary>
+    /// Quota cards as named areas for the control API and dock directory: all Codex accounts share
+    /// one area (Pro, then Plus, then others, each by remaining quota); every other provider has its
+    /// own. The glass dock draws rings, not these areas.
+    /// </summary>
+    private static IEnumerable<TaskbarMiniAreaContent> QuotaCardAreas(IReadOnlyList<QuotaCard> cards)
     {
-        var areaId = TaskbarGroupAreaId(group);
-        var layout = AreaLayout(areaId);
-        var defaultWidth = group.IsCodexPool
-            ? TaskbarMiniLayoutMath.CodexPoolCardWidth
-            : group.IsStackedCodex
-                ? TaskbarMiniLayoutMath.CardWidth
-                : TaskbarMiniLayoutMath.CardWidthFor(group.Cards[0]);
-        return TaskbarMiniLayoutMath.AreaWidth(layout.Width ?? defaultWidth, layout.Collapsed)
-            + CodexStrategyExtraWidth(areaId, layout.Collapsed);
+        var codex = OrderCodexCards(cards.Where(card => card.Provider == ProviderKind.Codex).ToArray());
+        var codexAdded = false;
+        foreach (var card in cards)
+        {
+            if (card.Provider == ProviderKind.Codex)
+            {
+                if (codexAdded) continue;
+                codexAdded = true;
+                yield return TaskbarMiniAreaContent.ForCards(MiniAreaIds.Codex, codex);
+                continue;
+            }
+            var areaId = card.Provider switch
+            {
+                ProviderKind.Claude => MiniAreaIds.Claude,
+                ProviderKind.AiGateway => MiniAreaIds.AiGateway,
+                _ => card.Provider.ToString().ToLowerInvariant(),
+            };
+            yield return TaskbarMiniAreaContent.ForCards(areaId, [card]);
+        }
     }
 
-    private int PluginMiniCardWidth(PluginMiniCardView view)
+    private static QuotaCard[] OrderCodexCards(IReadOnlyList<QuotaCard> cards) => cards
+        .Select((card, index) => (Card: card, Index: index, Remaining: DisplayedRemainingPercent(card)))
+        .OrderBy(item => CodexPlanSortRank(item.Card))
+        .ThenByDescending(item => item.Remaining ?? double.NegativeInfinity)
+        .ThenBy(item => item.Index)
+        .Select(item => item.Card)
+        .ToArray();
+
+    private static int CodexPlanSortRank(QuotaCard card)
     {
-        var layout = AreaLayout(view.PluginId);
-        var defaultWidth = view.PluginId == MiniAreaIds.Router ? RouterCardRenderer.Width : view.Card.Kind is ContributionKind.Balance or ContributionKind.Metric
-            ? TaskbarMiniLayoutMath.ServiceCardWidth
-            : TaskbarMiniLayoutMath.CardWidth;
-        return TaskbarMiniLayoutMath.AreaWidth(layout.Width ?? defaultWidth, layout.Collapsed, view.PluginId);
+        var plan = CodexAccountFormatting.PlanLabel(card.Badge);
+        if (string.Equals(plan, "pro", StringComparison.OrdinalIgnoreCase)) return 0;
+        if (string.Equals(plan, "plus", StringComparison.OrdinalIgnoreCase)) return 1;
+        return card.IsService ? 3 : 2;
     }
 
-    private int TaskbarAreaWidth(TaskbarMiniAreaContent area)
+    private static double? DisplayedRemainingPercent(QuotaCard card)
     {
-        if (area.Group is { } group) return TaskbarGroupWidth(group);
-        if (area.Plugin is { } plugin) return PluginMiniCardWidth(plugin);
-        var layout = AreaLayout(area.AreaId);
-        return TaskbarMiniLayoutMath.AreaWidth(
-            layout.Width ?? area.DefaultWidth,
-            layout.Collapsed,
-            area.AreaId);
+        var window = TaskbarMiniLayoutMath.VisibleWindows(card.Windows).LastOrDefault();
+        return window?.UsedPercent is { } used ? Math.Clamp(100 - used, 0, 100) : null;
     }
 
     private MiniAreaLayout AreaLayout(string areaId)
@@ -279,12 +270,6 @@ internal sealed partial class BarForm
                 || ProviderCatalog.StartsCollapsed(areaId));
         return normalized;
     }
-
-    private int AreaDefaultWidth(string areaId) =>
-        VisibleMiniAreas()
-            .FirstOrDefault(area => string.Equals(area.AreaId, areaId, StringComparison.Ordinal))
-            ?.DefaultWidth
-        ?? TaskbarMiniLayoutMath.CardWidth;
 
     private IReadOnlyList<string> VisibleMiniAreaIds() =>
         VisibleMiniAreas().Select(area => area.AreaId).ToArray();
@@ -340,40 +325,6 @@ internal sealed partial class BarForm
         // stays fixed while these areas remain available to the existing directory.
         return areas.Where(area => visibleIds.Contains(area.AreaId)).ToArray();
     }
-
-    private static string TaskbarGroupAreaId(TaskbarMiniCardGroup group) => group.AreaId;
-
-    internal static QuotaCard PrimaryTaskbarCard(TaskbarMiniCardGroup group) =>
-        group.Cards.FirstOrDefault(card => card.Active) ?? group.Cards[0];
-
-    private static RectangleF TaskbarAreaContentBounds(RectangleF areaBounds) =>
-        RectangleF.FromLTRB(
-            areaBounds.Left,
-            areaBounds.Top,
-            areaBounds.Right - TaskbarMiniLayoutMath.ProviderCollapseHandleWidth,
-            areaBounds.Bottom);
-
-    private static RectangleF TaskbarCollapseHandleBounds(RectangleF areaBounds) => new(
-        areaBounds.Right - TaskbarMiniLayoutMath.ProviderCollapseHandleWidth,
-        areaBounds.Top,
-        TaskbarMiniLayoutMath.ProviderCollapseHandleWidth,
-        areaBounds.Height / 2);
-
-    private static RectangleF TaskbarReorderHandleBounds(RectangleF areaBounds) => new(
-        areaBounds.Right - TaskbarMiniLayoutMath.ProviderCollapseHandleWidth,
-        areaBounds.Top + areaBounds.Height / 2,
-        TaskbarMiniLayoutMath.ProviderCollapseHandleWidth,
-        areaBounds.Height / 2);
-
-    private static RectangleF ResizeBounds(RectangleF areaBounds, bool collapsed) => collapsed
-        ? RectangleF.Empty
-        : new RectangleF(
-            areaBounds.Right
-                - TaskbarMiniLayoutMath.ProviderCollapseHandleWidth
-                - TaskbarMiniLayoutMath.AreaResizeGripWidth,
-            areaBounds.Top + 4,
-            TaskbarMiniLayoutMath.AreaResizeGripWidth,
-            areaBounds.Height - 8);
 
     private static bool MiniAreaLayoutsEqual(
         IReadOnlyDictionary<string, MiniAreaLayout> left,

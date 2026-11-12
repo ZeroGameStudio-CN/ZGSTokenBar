@@ -57,7 +57,6 @@ internal sealed class SettingsForm : Form
     private readonly ToggleSwitch _refreshClaudeOAuth;
     private readonly SettingsComboBox _refreshMinutes;
     private readonly SettingsComboBox _locale;
-    private readonly SettingsComboBox _codexDisplayMode;
     private readonly SettingsComboBox _antigravityGroup;
     private readonly PaletteGrid _paletteGrid;
     private readonly Dictionary<string, PaletteChoiceButton> _backgroundPaletteButtons = new(StringComparer.Ordinal);
@@ -185,19 +184,6 @@ internal sealed class SettingsForm : Form
             }
             _antigravityGroup.SelectedItem = selected;
         }
-
-        _codexDisplayMode = CreateComboBox(_text.CodexDisplayMode, _text.CodexDisplayModeHint);
-        _codexDisplayMode.Tag = "settings.codex.display-mode";
-        _codexDisplayMode.Items.Add(new CodexMiniDisplayModeChoice(
-            CodexMiniDisplayModes.Accounts,
-            _text.CodexDisplayModeAccounts));
-        _codexDisplayMode.Items.Add(new CodexMiniDisplayModeChoice(
-            CodexMiniDisplayModes.Pool,
-            _text.CodexDisplayModePool));
-        var codexDisplayMode = CodexMiniDisplayModes.Normalize(settings.CodexMiniDisplayMode);
-        _codexDisplayMode.SelectedItem = _codexDisplayMode.Items
-            .Cast<CodexMiniDisplayModeChoice>()
-            .First(choice => string.Equals(choice.Mode, codexDisplayMode, StringComparison.Ordinal));
 
         _systemMetrics = CreateToggle(
             _text.SystemUsageTitle,
@@ -374,7 +360,6 @@ internal sealed class SettingsForm : Form
         }
         _locale.SelectedIndexChanged += (_, _) => RefreshDirtyState();
         _refreshMinutes.SelectedIndexChanged += (_, _) => RefreshDirtyState();
-        _codexDisplayMode.SelectedIndexChanged += (_, _) => RefreshDirtyState();
         _antigravityGroup.SelectedIndexChanged += (_, _) => RefreshDirtyState();
 
         UpdateCodexDependencies(initializing: true);
@@ -547,13 +532,6 @@ internal sealed class SettingsForm : Form
         notifications.Add(new ToggleSettingRow(_usageAlerts, _text.UsageAlertsTitle, _text.UsageAlerts, _theme, _scale));
 
         var display = AddPage("display", _text.Display);
-        display.Add(new ValueSettingRow(
-            _text.CodexDisplayMode,
-            _text.CodexDisplayModeHint,
-            _codexDisplayMode,
-            Scale(196),
-            _theme,
-            _scale));
         display.Add(new PaletteSettingRow(
             _text.BackgroundPalette,
             _text.BackgroundPaletteHint,
@@ -933,8 +911,6 @@ internal sealed class SettingsForm : Form
             MiniAreaOrder = AppSettings.CopyMiniAreaOrder(_original.MiniAreaOrder),
             HiddenDockItems = BuildHiddenDockItems(),
             GlassDockExpanded = _original.GlassDockExpanded,
-            CodexMiniDisplayMode = (_codexDisplayMode.SelectedItem as CodexMiniDisplayModeChoice)?.Mode
-                ?? _original.CodexMiniDisplayMode,
             BackgroundPalette = _backgroundPalette,
             AntigravityPrimaryGroup = (_antigravityGroup.SelectedItem as AntigravityGroupChoice)?.Value ?? _original.AntigravityPrimaryGroup,
             Locale = (_locale.SelectedItem as LocaleChoice)?.Locale ?? _original.Locale,
@@ -999,7 +975,6 @@ internal sealed class SettingsForm : Form
         && left.MiniAreaOrder.SequenceEqual(right.MiniAreaOrder, StringComparer.Ordinal)
         && left.HiddenDockItems.SequenceEqual(right.HiddenDockItems, StringComparer.Ordinal)
         && DictionaryEqual(left.PluginEnabled, right.PluginEnabled)
-        && string.Equals(left.CodexMiniDisplayMode, right.CodexMiniDisplayMode, StringComparison.Ordinal)
         && string.Equals(left.BackgroundPalette, right.BackgroundPalette, StringComparison.Ordinal)
         && string.Equals(left.AntigravityPrimaryGroup, right.AntigravityPrimaryGroup, StringComparison.Ordinal)
         && string.Equals(left.Locale, right.Locale, StringComparison.Ordinal);
@@ -1023,7 +998,6 @@ internal sealed class SettingsForm : Form
             MiniAreaOrder = AppSettings.CopyMiniAreaOrder(settings.MiniAreaOrder),
             HiddenDockItems = AppSettings.CopyHiddenDockItems(settings.HiddenDockItems),
             GlassDockExpanded = settings.GlassDockExpanded,
-            CodexMiniDisplayMode = CodexMiniDisplayModes.Normalize(settings.CodexMiniDisplayMode),
             BackgroundPalette = AppSettings.NormalizeBackgroundPalette(settings.BackgroundPalette),
             AntigravityPrimaryGroup = settings.AntigravityPrimaryGroup,
             Locale = settings.Locale,
@@ -1141,11 +1115,6 @@ internal sealed class SettingsForm : Form
     private string AntigravityGroupHint => _text.IsChinese
         ? "圆环跟随此组；其他组快用完时角标变色"
         : "Ring follows this group; chip warns if another runs low";
-
-    private sealed record CodexMiniDisplayModeChoice(string Mode, string Label)
-    {
-        public override string ToString() => Label;
-    }
 
     private sealed record SettingsTheme(
         Color Content,

@@ -365,7 +365,6 @@ public static class TaskbarMiniLayoutMath
 {
     public const int Height = 44;
     public const int CardWidth = 144;
-    public const int CodexPoolCardWidth = 184;
     public const int ServiceCardWidth = 104;
     public const int CollapsedCardWidth = 34;
     public const int ProviderCollapseHandleWidth = 9;

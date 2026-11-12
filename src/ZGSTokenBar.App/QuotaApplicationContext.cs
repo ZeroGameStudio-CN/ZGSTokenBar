@@ -125,8 +125,6 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _bar.OverviewRequested += (_, _) => _otherToolsModule.ShowOverview();
         _bar.PlacementCommitted += (_, commit) => SavePlacement(commit);
         _bar.SystemUsageDetailsRequested += (_, _) => _ = RefreshSystemUsageDetailsAsync();
-        _bar.MiniAreaLayoutChanged += (_, _) => SaveMiniAreaLayout();
-        _bar.MiniAreaOrderChanged += (_, _) => SaveMiniAreaOrder();
         _bar.GlassExpandedChanged += (_, expanded) => SaveGlassExpanded(expanded);
         _bar.FormClosing += BarFormClosing;
         _bar.FormClosed += (_, _) => Quit();

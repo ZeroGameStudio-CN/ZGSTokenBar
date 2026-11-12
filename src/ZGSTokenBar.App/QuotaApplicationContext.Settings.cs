@@ -208,43 +208,11 @@ internal sealed partial class QuotaApplicationContext
         ApplyGenericPluginCards();
     }
 
-    private void SaveMiniAreaLayout()
-    {
-        if (_quitting) return;
-        var previous = AppSettings.CopyMiniAreaLayouts(_settings.MiniAreaLayouts);
-        _settings.MiniAreaLayouts = AppSettings.CopyMiniAreaLayouts(_bar.MiniAreaLayouts);
-        if (!TrySaveSettings(_settings))
-        {
-            _settings.MiniAreaLayouts = previous;
-            _bar.SetMiniAreaLayouts(previous, preserveAnchor: true);
-        }
-        else if (!SettingsChangeDetector.MiniAreaLayoutsEqual(previous, _settings.MiniAreaLayouts))
-        {
-            _uiRevision++;
-        }
-    }
-
     private void SaveGlassExpanded(bool expanded)
     {
         if (_quitting || _settings.GlassDockExpanded == expanded) return;
         _settings.GlassDockExpanded = expanded;
         if (!TrySaveSettings(_settings)) _settings.GlassDockExpanded = !expanded;
-    }
-
-    private void SaveMiniAreaOrder()
-    {
-        if (_quitting) return;
-        var previous = AppSettings.CopyMiniAreaOrder(_settings.MiniAreaOrder);
-        _settings.MiniAreaOrder = AppSettings.CopyMiniAreaOrder(_bar.MiniAreaOrder);
-        if (!TrySaveSettings(_settings))
-        {
-            _settings.MiniAreaOrder = previous;
-            _bar.SetMiniAreaOrder(previous, preserveAnchor: true);
-        }
-        else if (!previous.SequenceEqual(_settings.MiniAreaOrder, StringComparer.Ordinal))
-        {
-            _uiRevision++;
-        }
     }
 
     private bool TrySaveSettings(AppSettings settings, bool showError = false)

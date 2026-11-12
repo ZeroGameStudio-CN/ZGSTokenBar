@@ -119,24 +119,6 @@ internal static class RouterCardRenderer
         }
     }
 
-    /// <summary>
-    /// Draws a glyph optically centred inside <paramref name="icon"/> using its real outline bounds,
-    /// so the mark sits in the middle of the circle at every DPI instead of relying on hand-tuned offsets.
-    /// </summary>
-    private static void DrawCenteredGlyph(Graphics graphics, string glyph, RectangleF icon, Brush brush)
-    {
-        using var path = new GraphicsPath();
-        using var family = new FontFamily("Segoe UI");
-        path.AddString(glyph, family, (int)FontStyle.Bold, icon.Height * .66f, PointF.Empty, StringFormat.GenericTypographic);
-        var glyphBounds = path.GetBounds();
-        if (glyphBounds.Width <= 0 || glyphBounds.Height <= 0) return;
-        using var move = new Matrix();
-        move.Translate(
-            icon.Left + icon.Width / 2 - (glyphBounds.Left + glyphBounds.Width / 2),
-            icon.Top + icon.Height / 2 - (glyphBounds.Top + glyphBounds.Height / 2));
-        path.Transform(move);
-        graphics.FillPath(brush, path);
-    }
 }
 
 /// <summary>Size, baseline and theme of the collapsed Router queue chip (see GlassDockPainter.DrawChip).</summary>

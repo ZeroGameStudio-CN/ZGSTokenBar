@@ -40,8 +40,6 @@ internal sealed partial class BarForm
     /// <summary>Window origin in screen coordinates whether embedded (child) or top-level.</summary>
     private Point ScreenLocation => EmbeddedInTaskbar ? PointToScreen(Point.Empty) : Location;
 
-    private Rectangle ScreenBounds => new(ScreenLocation, Size);
-
     private void ApplyTaskbarEmbedSetting(bool enabled)
     {
         var requested = enabled && !_renderOnly;

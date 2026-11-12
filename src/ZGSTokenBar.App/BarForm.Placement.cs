@@ -14,7 +14,6 @@ internal sealed partial class BarForm
         if (_hiddenToTray
             || !_taskbarDocked
             || _taskbarDragging
-            || _reorderingMiniAreaId is not null
             || IsDisposed
             || !IsHandleCreated)
         {
@@ -653,7 +652,7 @@ internal sealed partial class BarForm
         if (ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
         using var path = RoundedRectangle(
             new RectangleF(0, 0, ClientSize.Width, ClientSize.Height),
-            Scale(_glassDock ? GlassDockLayout.Corner : 8));
+            Scale(GlassDockLayout.Corner));
         Region?.Dispose();
         Region = new Region(path);
     }

@@ -4,18 +4,6 @@ using System.Text.Json.Serialization;
 
 namespace ZGSTokenBar.Core;
 
-public static class CodexMiniDisplayModes
-{
-    public const string Accounts = "accounts";
-    public const string Pool = "pool";
-
-    public static string Normalize(string? value) => value?.Trim().ToLowerInvariant() switch
-    {
-        Pool => Pool,
-        _ => Accounts,
-    };
-}
-
 public sealed class AppSettings
 {
     public const int CurrentSchemaVersion = 2;
@@ -48,9 +36,9 @@ public sealed class AppSettings
     /// <summary>Whether the overflow (+N) part of the dock is expanded; persisted across restarts.</summary>
     public bool GlassDockExpanded { get; set; }
     // Legacy read-only migration fields from the per-card collapse prototypes.
+    // (The retired "codexMiniDisplayMode" key is simply ignored on load and dropped on the next save.)
     public bool AiGatewayMiniCollapsed { get; set; }
     public string[] CollapsedMiniGroups { get; set; } = [];
-    public string CodexMiniDisplayMode { get; set; } = CodexMiniDisplayModes.Accounts;
     public string BackgroundPalette { get; set; } = DefaultBackgroundPalette;
     /// <summary>Antigravity group the bar ring follows (matched case-insensitively in the group name); "auto" = most usable.</summary>
     public string AntigravityPrimaryGroup { get; set; } = AntigravityGroups.DefaultPrimary;
@@ -272,7 +260,6 @@ public sealed class AppSettings
         MiniProviderAreaCollapsed = false;
         AiGatewayMiniCollapsed = false;
         CollapsedMiniGroups = [];
-        CodexMiniDisplayMode = CodexMiniDisplayModes.Normalize(CodexMiniDisplayMode);
         BackgroundPalette = NormalizeBackgroundPalette(BackgroundPalette);
         AntigravityPrimaryGroup = string.IsNullOrWhiteSpace(AntigravityPrimaryGroup)
             ? AntigravityGroups.DefaultPrimary

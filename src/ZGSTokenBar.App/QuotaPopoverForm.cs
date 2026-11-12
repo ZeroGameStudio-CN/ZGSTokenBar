@@ -674,36 +674,6 @@ internal sealed class QuotaPopoverForm : Form
         graphics.FillRectangle(brush, bounds.Left + 8, bounds.Top, 2, 10);
     }
 
-    private void DrawQuotaTokenUsage(
-        Graphics graphics,
-        RectangleF bounds,
-        (string Label, string Value, string Detail) usage,
-        Brush mutedBrush,
-        Brush valueBrush)
-    {
-        DrawString(
-            graphics,
-            usage.Label,
-            _detailFont,
-            mutedBrush,
-            new RectangleF(bounds.X, bounds.Y, bounds.Width - 70, 16),
-            StringAlignment.Near);
-        DrawString(
-            graphics,
-            usage.Value,
-            _titleFont,
-            valueBrush,
-            new RectangleF(bounds.Right - 70, bounds.Y, 70, 16),
-            StringAlignment.Far);
-        DrawString(
-            graphics,
-            usage.Detail,
-            _detailFont,
-            mutedBrush,
-            new RectangleF(bounds.X, bounds.Y + 16, bounds.Width, 16),
-            StringAlignment.Near);
-    }
-
     private void DrawServiceContent(
         Graphics graphics,
         RectangleF body,
@@ -1544,58 +1514,6 @@ internal sealed class QuotaPopoverForm : Form
         card.Provider == ProviderKind.Codex && !string.IsNullOrWhiteSpace(card.Badge)
             ? PlanBadgePresentation.Label(card.Badge)
             : null;
-
-    private void DrawAccountSubtitle(
-        Graphics graphics,
-        QuotaCard card,
-        NativeText text,
-        Brush mutedBrush,
-        RectangleF bounds)
-    {
-        var planLabel = PlanBadgeLabel(card);
-        if (planLabel is not { } tagLabel
-            || !PlanBadgePresentation.TryGetStyle(tagLabel, out var style))
-        {
-            DrawString(
-                graphics,
-                AccountSubtitle(card, text),
-                _subtitleFont,
-                mutedBrush,
-                bounds,
-                StringAlignment.Near);
-            return;
-        }
-
-        var tagWidth = PlanBadgePresentation.Width(tagLabel);
-        var tagBounds = new RectangleF(bounds.X, bounds.Y, tagWidth, 13);
-        using var tagFill = new SolidBrush(style.Fill);
-        using var tagBorder = new Pen(style.Border, 1);
-        using var tagPath = RoundedRectangle(tagBounds, 4);
-        graphics.FillPath(tagFill, tagPath);
-        graphics.DrawPath(tagBorder, tagPath);
-        using var tagTextBrush = new SolidBrush(style.Text);
-        DrawString(graphics, tagLabel, _statusFont, tagTextBrush, tagBounds, StringAlignment.Center);
-
-        var accountHint = card.AccountHint;
-        if (string.IsNullOrWhiteSpace(accountHint)
-            || string.Equals(accountHint, "Codex account", StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
-        using var accountBrush = new SolidBrush(UiPalette.Slate300);
-        DrawString(
-            graphics,
-            accountHint,
-            _subtitleFont,
-            accountBrush,
-            new RectangleF(
-                bounds.X + tagWidth + 6,
-                bounds.Y,
-                Math.Max(1, bounds.Width - tagWidth - 6),
-                bounds.Height),
-            StringAlignment.Near);
-    }
 
     private static bool HasAccountHint(QuotaCard card) =>
         !string.IsNullOrWhiteSpace(card.AccountHint)

@@ -54,12 +54,6 @@ internal sealed class NativeText
         "用量达到 25 / 50 / 75 / 90 / 100% 时提醒",
         "Usage alerts at 25 / 50 / 75 / 90 / 100%");
     public string Display => T("外观", "Appearance");
-    public string CodexDisplayMode => T("Codex 显示模式", "Codex display mode");
-    public string CodexDisplayModeHint => T(
-        "总池保持现有高度，并汇总多个 Codex 账号的用量。",
-        "Pool keeps the current height and aggregates usage across multiple Codex accounts.");
-    public string CodexDisplayModeAccounts => T("分账号", "Per account");
-    public string CodexDisplayModePool => T("总池", "Pool");
     public string BackgroundPalette => T("背景配色", "Background");
     public string BackgroundPaletteHint => T("仅改变配额界面的背景层级。", "Changes only the quota surfaces' background layers.");
     public string BackgroundPaletteName(string id) => id switch
@@ -983,13 +977,6 @@ internal sealed class NativeText
         return string.Join('\n', lines);
     }
 
-    private static string FormatResetCountdown(TimeSpan remaining)
-    {
-        var seconds = Math.Max(0, (long)Math.Floor(remaining.TotalSeconds));
-        return FormattableString.Invariant(
-            $"{seconds / 3600:00}:{seconds % 3600 / 60:00}:{seconds % 60:00}");
-    }
-
     public string QuotaMilestoneTitle(
         string card,
         string window,
@@ -1053,9 +1040,6 @@ internal sealed class NativeText
             $"{provider} API 受到速率限制，{FormatCompactReset(retryAt, now)}后重试。",
             $"{provider} API is rate limited. Retry in {FormatCompactReset(retryAt, now)}.");
     }
-
-    private string Value(string? value) =>
-        string.IsNullOrWhiteSpace(value) ? T("未知", "n/a") : value;
 
     private string T(string zh, string en) => _zh ? zh : en;
 }

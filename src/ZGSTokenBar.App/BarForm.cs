@@ -7,25 +7,12 @@ namespace ZGSTokenBar.App;
 
 internal sealed partial class BarForm : Form
 {
-    private const string SettingsIconGlyph = "\uE713";
-    private const string LockIconGlyph = "\uE72E";
-    private const float ControlIconSize = 13f;
     private const float TaskbarControlIconSize = 12f;
-    private const float TaskbarControlWidth = TaskbarMiniLayoutMath.ControlsWidth;
-    private const float TaskbarControlHeight = 18f;
-    private const float ControlIconStrokeWidth = 1.55f;
-    private const float SystemIconVerticalOffset = 1f;
     private const float MiniResetGlyphSize = 9f;
-    private const float MiniResetClockSize = 11f;
-    private const double SnapshotValueAnimationMs = 280;
     private const double SnapshotPulseAnimationMs = 560;
     private const float HoverAnimationStep = .32f;
     private static readonly HoverTarget[] AnimatedHoverTargets =
         [
-            HoverTarget.Refresh,
-            HoverTarget.MiniCollapse,
-            HoverTarget.MiniReorder,
-            HoverTarget.Settings,
             HoverTarget.QuotaWindow,
             HoverTarget.SystemUsage,
             HoverTarget.CodexAccounts,
@@ -73,10 +60,8 @@ internal sealed partial class BarForm : Form
     private readonly List<MiniQuotaTarget> _taskbarWindowBounds = [];
     private readonly List<(RectangleF Bounds, PluginMiniCardView Card)> _taskbarPluginBounds = [];
     private readonly List<(RectangleF Bounds, QuotaCard Card)> _taskbarCodexAccountBounds = [];
-    private readonly List<MiniAreaTarget> _taskbarAreaBounds = [];
     private readonly HashSet<string> _taskbarRenderFailureAreaIds = new(StringComparer.Ordinal);
     private readonly Dictionary<HoverTarget, float> _hoverProgress = [];
-    private Dictionary<string, double> _animationFrom = new(StringComparer.Ordinal);
     private HashSet<string> _animatedWindowKeys = new(StringComparer.Ordinal);
     private QuotaSnapshot _snapshot;
     private HashSet<ProviderKind> _activeProviders;
@@ -85,21 +70,15 @@ internal sealed partial class BarForm : Form
     private readonly Dictionary<string, byte[]> _pluginIconBytes = new(StringComparer.Ordinal);
     private Dictionary<string, MiniAreaLayout> _miniAreaLayouts;
     private string[] _miniAreaOrder;
-    private string _codexMiniDisplayMode;
     private bool _showSystemMetrics;
     private CodexAccountInfo[] _codexAccounts;
-    private QuotaCard[] _visibleCards = [];
     private TaskbarMiniAreaContent[] _taskbarContentAreas = [];
     private TaskbarMiniAreaContent[] _visibleTaskbarAreas = [];
-    private int _hiddenCardCount;
-    private RectangleF _refreshBounds;
-    private RectangleF _settingsBounds;
     private RectangleF _systemUsageBounds;
     private RectangleF _liveMetricsBounds;
     private bool _systemAnchorIsLive;
     private RectangleF SystemUsageAnchorBounds => _systemAnchorIsLive ? _liveMetricsBounds : _systemUsageBounds;
     private HoverTarget _hoverTarget;
-    private HoverTarget _pressedTarget;
     private bool _refreshing;
     private bool _snapshotAnimating;
     private bool _taskbarDocked;
@@ -147,19 +126,6 @@ internal sealed partial class BarForm : Form
     private MiniQuotaTarget? _hoverQuotaTarget;
     private (RectangleF Bounds, QuotaCard Card)? _hoverCodexAccountTarget;
     private (RectangleF Bounds, PluginMiniCardView Card)? _hoverPluginTarget;
-    private string? _hoverMiniAreaId;
-    private string? _hoverReorderAreaId;
-    private string? _hoverResizeAreaId;
-    private string? _pressedMiniAreaId;
-    private string? _resizingMiniAreaId;
-    private int _resizeStartScreenX;
-    private int _resizeStartWidth;
-    private MiniAreaLayout? _resizeStartLayout;
-    private bool _resizeMoved;
-    private string? _reorderingMiniAreaId;
-    private string? _reorderBeforeAreaId;
-    private Point _reorderStartScreen;
-    private bool _reorderMoved;
     private HoverTarget _hoverHintTarget;
     private bool _hoverSystemUsage;
     private string? _popoverTargetId;
@@ -193,8 +159,6 @@ internal sealed partial class BarForm : Form
     public event EventHandler<string>? PluginActivated;
     public event EventHandler<WindowPlacementCommit>? PlacementCommitted;
     public event EventHandler? SystemUsageDetailsRequested;
-    public event EventHandler? MiniAreaLayoutChanged;
-    public event EventHandler? MiniAreaOrderChanged;
     internal SystemUsageSnapshot LiveMetrics => _systemUsage;
     internal long? DisplayedTokenTotal => _codexTokenUsage?.LocalTokens;
 
@@ -224,7 +188,6 @@ internal sealed partial class BarForm : Form
         _taskbarDocked = settings.TaskbarDocked;
         _miniAreaLayouts = AppSettings.CopyMiniAreaLayouts(settings.MiniAreaLayouts);
         _miniAreaOrder = AppSettings.CopyMiniAreaOrder(settings.MiniAreaOrder);
-        _codexMiniDisplayMode = CodexMiniDisplayModes.Normalize(settings.CodexMiniDisplayMode);
         _showSystemMetrics = settings.IsPluginEnabled("zgstokenbar.metrics.system", true);
         _glassMaxRings = NormalizeGlassMax(settings.GlassDockMaxRings);
         _hiddenDockItems = new HashSet<string>(AppSettings.CopyHiddenDockItems(settings.HiddenDockItems), StringComparer.Ordinal);
@@ -239,7 +202,7 @@ internal sealed partial class BarForm : Form
             HandleShellSettleTick();
         };
         AutoScaleMode = AutoScaleMode.None;
-        BackColor = _glassDock ? Color.FromArgb(28, 22, 36) : _backgroundTheme.Outer;
+        BackColor = Color.FromArgb(28, 22, 36);
         FormBorderStyle = FormBorderStyle.None;
         MaximizeBox = false;
         MinimizeBox = false;
@@ -304,9 +267,6 @@ internal sealed partial class BarForm : Form
             dpi,
             now);
     }
-    internal int CodexPoolAccountCountForAcceptance => _taskbarContentAreas
-        .FirstOrDefault(area => area.Group?.IsCodexPool == true)
-        ?.Group?.Cards.Count ?? 0;
     internal IReadOnlySet<string> TaskbarRenderFailureAreaIdsForAcceptance =>
         _taskbarRenderFailureAreaIds;
     internal DisplayTopologySnapshot? ActiveTopologyForAcceptance =>
@@ -327,9 +287,7 @@ internal sealed partial class BarForm : Form
         _snapshot = snapshot;
         if (quotaPaceEstimates is not null) _quotaPaceEstimates = quotaPaceEstimates;
         StartSnapshotAnimation(previous, snapshot);
-        _codexStrategy = null;
         ApplySnapshotLayout();
-        RefreshCodexStrategy();
         RefreshQuotaPopover();
         RefreshCodexAccountsPopover();
         RefreshHintPopover();
@@ -349,13 +307,7 @@ internal sealed partial class BarForm : Form
     public void SetCodexAccounts(IReadOnlyList<CodexAccountInfo> accounts)
     {
         _codexAccounts = accounts.ToArray();
-        _codexStrategy = null;
         ApplySnapshotLayout();
-        RefreshCodexStrategy();
-        if (_codexMiniDisplayMode == CodexMiniDisplayModes.Pool)
-        {
-            RefreshQuotaPopover();
-        }
         RefreshCodexAccountsPopover();
         Invalidate();
     }
@@ -367,7 +319,6 @@ internal sealed partial class BarForm : Form
     public void SetQuotaPaceEstimates(IReadOnlyDictionary<string, QuotaPaceEstimate> estimates)
     {
         _quotaPaceEstimates = estimates;
-        RefreshCodexStrategy();
         RefreshQuotaPopover();
         Invalidate();
     }
@@ -375,10 +326,7 @@ internal sealed partial class BarForm : Form
     public void SetCodexQuotaTokenSummaries(
         IReadOnlyDictionary<string, CodexQuotaTokenSummary> summaries)
     {
-        var hadStrategy = CodexStrategy.Accounts.Count > 0 || CodexStrategy.Renewals.Count > 0;
         _codexQuotaTokenSummaries = summaries;
-        RefreshCodexStrategy();
-        if (hadStrategy != (CodexStrategy.Accounts.Count > 0 || CodexStrategy.Renewals.Count > 0)) ApplySnapshotLayout();
         RefreshQuotaPopover();
         Invalidate();
     }
@@ -552,18 +500,16 @@ internal sealed partial class BarForm : Form
     {
         _text = NativeText.For(settings.Locale);
         _backgroundTheme = QuotaBackgroundPalette.Resolve(settings.BackgroundPalette);
-        BackColor = _glassDock ? Color.FromArgb(28, 22, 36) : _backgroundTheme.Outer;
+        BackColor = Color.FromArgb(28, 22, 36);
         _quotaPopover?.ApplyTheme(_backgroundTheme);
         _systemUsagePopover?.ApplyTheme(_backgroundTheme);
         _hintPopover?.ApplyTheme(_backgroundTheme);
         var previousDocked = _taskbarDocked;
         var previousMiniAreaLayouts = _miniAreaLayouts;
         var previousMiniAreaOrder = _miniAreaOrder;
-        var previousCodexMiniDisplayMode = _codexMiniDisplayMode;
         var previousShowSystemMetrics = _showSystemMetrics;
         _miniAreaLayouts = AppSettings.CopyMiniAreaLayouts(settings.MiniAreaLayouts);
         _miniAreaOrder = AppSettings.CopyMiniAreaOrder(settings.MiniAreaOrder);
-        _codexMiniDisplayMode = CodexMiniDisplayModes.Normalize(settings.CodexMiniDisplayMode);
         _showSystemMetrics = settings.IsPluginEnabled("zgstokenbar.metrics.system", true);
         _glassMaxRings = NormalizeGlassMax(settings.GlassDockMaxRings);
         _hiddenDockItems = new HashSet<string>(AppSettings.CopyHiddenDockItems(settings.HiddenDockItems), StringComparer.Ordinal);
@@ -583,7 +529,6 @@ internal sealed partial class BarForm : Form
         if (dockStateChanged
             || !MiniAreaLayoutsEqual(previousMiniAreaLayouts, _miniAreaLayouts)
             || !previousMiniAreaOrder.SequenceEqual(_miniAreaOrder, StringComparer.Ordinal)
-            || !string.Equals(previousCodexMiniDisplayMode, _codexMiniDisplayMode, StringComparison.Ordinal)
             || previousShowSystemMetrics != _showSystemMetrics)
         {
             HidePopovers();
@@ -594,7 +539,6 @@ internal sealed partial class BarForm : Form
             _snapshotAnimating = false;
             _animatedWindowKeys.Clear();
             _hoverProgress.Clear();
-            _pressedTarget = HoverTarget.None;
             _animationTimer.Stop();
             _refreshRotation = 0;
         }
@@ -674,7 +618,6 @@ internal sealed partial class BarForm : Form
             _shellSettleTimer.Dispose();
             _quotaPopover?.Dispose();
             _codexAccountsPopover?.Dispose();
-            _codexStrategyPopover?.Dispose();
             _hintPopover?.Dispose();
             _systemUsagePopover?.Dispose();
             _glassMenu?.Dispose();
@@ -741,22 +684,6 @@ internal sealed partial class BarForm : Form
         public string PaceKey { get; } = QuotaPaceTracker.SeriesKey(Card, Window);
     }
 
-    private sealed record CodexPoolTargetRow(
-        CodexPoolRow Row,
-        RectangleF Bounds,
-        RectangleF ValueBounds,
-        IReadOnlyList<MiniQuotaTarget> Targets);
-
-    private sealed record MiniAreaTarget(
-        string AreaId,
-        string Title,
-        RectangleF Bounds,
-        RectangleF HandleBounds,
-        RectangleF ReorderBounds,
-        RectangleF ResizeBounds,
-        bool Collapsed,
-        bool Reorderable);
-
     private sealed record MiniAreaDefinition(string AreaId, string Title, int DefaultWidth);
 
     private readonly record struct TaskbarHitTargetCounts(
@@ -769,18 +696,15 @@ internal sealed partial class BarForm : Form
         string AreaId,
         string Title,
         int DefaultWidth,
-        TaskbarMiniCardGroup? Group,
+        IReadOnlyList<QuotaCard>? Cards,
         PluginMiniCardView? Plugin)
     {
-        public static TaskbarMiniAreaContent ForGroup(TaskbarMiniCardGroup group) => new(
-            TaskbarGroupAreaId(group),
-            group.IsCodexPool ? "Codex" : group.Cards[0].DisplayLabel,
-            group.IsCodexPool
-                ? TaskbarMiniLayoutMath.CodexPoolCardWidth
-                : group.IsStackedCodex
-                    ? TaskbarMiniLayoutMath.CardWidth
-                    : TaskbarMiniLayoutMath.CardWidthFor(group.Cards[0]),
-            group,
+        /// <summary>Area for one provider's cards: several Codex accounts share one stacked area.</summary>
+        public static TaskbarMiniAreaContent ForCards(string areaId, IReadOnlyList<QuotaCard> cards) => new(
+            areaId,
+            cards[0].DisplayLabel,
+            cards.Count >= 2 ? TaskbarMiniLayoutMath.CardWidth : TaskbarMiniLayoutMath.CardWidthFor(cards[0]),
+            cards,
             null);
 
         public static TaskbarMiniAreaContent ForPlugin(PluginMiniCardView plugin) => new(
@@ -807,14 +731,9 @@ internal sealed partial class BarForm : Form
     private enum HoverTarget
     {
         None,
-        Refresh,
-        MiniCollapse,
-        MiniReorder,
-        Settings,
         Plugin,
         QuotaWindow,
         CodexAccounts,
-        CodexStrategy,
         SystemUsage,
     }
 }

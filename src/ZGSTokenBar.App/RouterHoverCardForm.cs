@@ -10,7 +10,7 @@ namespace ZGSTokenBar.App;
 /// </summary>
 internal sealed class RouterHoverCardForm : UiCardPopoverForm
 {
-    private const float Width = 248;
+    private new const float Width = 248;
     private const float Pad = UiTokens.Space4;
     private const float HeaderHeight = 44;
     private const float RowHeight = 20;

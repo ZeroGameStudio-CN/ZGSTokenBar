@@ -41,14 +41,7 @@ test('taskbar Mini exposes system usage as one independently resizable and sorta
   assert.match(models, /public const int ModuleGap = 4;/);
   assert.match(models, /public const string SystemMetrics = "zgstokenbar\.metrics\.system";/);
   assert.match(bar, /TaskbarMiniAreaContent\.ForSystem\(_text\.SystemUsageTitle\)/);
-  assert.match(bar, /DrawSystemUsageCard\(graphics, bounds, layout\.Collapsed\)/);
-  assert.match(bar, /DrawTaskbarReorderGrip\(graphics, target\)/);
   assert.match(bar, /SelectVisibleTaskbarAreas\(_taskbarContentAreas\)/);
-  assert.match(bar, /DrawCollapsedSystemUsage/);
-  assert.match(bar, /DrawSystemUsageRow\(graphics, bounds, 0, "CPU"/);
-  assert.match(bar, /DrawSystemUsageRow\(graphics, bounds, 1, "RAM"/);
-  assert.match(bar, /DrawSystemUsageRow\(graphics, bounds, 2, "I\/O"/);
-  assert.match(bar, /DrawSystemUsageRow\(graphics, bounds, 3, "GPU"/);
   assert.match(bar, /MiniAreaIds\.SystemMetrics/);
 });
 
@@ -86,6 +79,5 @@ test('system usage refreshes once per Mini clock tick and degrades unavailable m
   assert.match(application, /if \(_bar\.IsTaskbarMode\)[\s\S]*?RefreshSystemUsageOverviewAsync\(\)/);
   assert.doesNotMatch(application, /_bar\.SetSystemUsage\(_systemUsageSampler\.Sample\(\)\)/);
   assert.match(application, /_clockTimer\.Interval = _bar\.IsTaskbarMode \? 1_000 : 30_000/);
-  assert.match(bar, /PercentFormat\.Used\(percent, "--"\)/);
   assert.match(text, /Performance counter unavailable/);
 });

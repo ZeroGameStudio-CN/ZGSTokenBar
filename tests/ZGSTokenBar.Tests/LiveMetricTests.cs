@@ -54,9 +54,6 @@ internal static class LiveMetricTests
         Check(network.Observe([new("b", 1, 1)], 5).Sent is null, "Network reset is unavailable.");
         Check(network.Observe(null, 6).Received is null, "Failed network reads clear the baseline.");
         Check(NetworkUsageSampler.Compact(1024) == "1K" && NetworkUsageSampler.Compact(null) == "—", "Compact units retain unavailable state.");
-        Check(BarForm.CompactOutputRate(null) == "—" && BarForm.CompactOutputRate(double.NaN) == "—"
-            && BarForm.CompactOutputRate(0) == "0" && BarForm.CompactOutputRate(1200) == "1.2K"
-            && BarForm.CompactOutputRate(1200000) == "1.2M", "Narrow output rates distinguish idle, unknown and compact magnitudes.");
         Check(TaskbarMiniLayoutMath.AreaWidth(104, true, MiniAreaIds.LiveMetrics)
                 < TaskbarMiniLayoutMath.AreaWidth(104, false, MiniAreaIds.LiveMetrics) * .6,
             "Collapsing rates saves meaningful width even when the expanded module is already compact.");

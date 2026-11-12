@@ -31,34 +31,10 @@ internal sealed partial class BarForm
             if (!_refreshing) _animationTimer.Stop();
             return;
         }
-
-        _animationFrom = from;
         _animatedWindowKeys = changedKeys;
         _snapshotAnimationStarted = DateTime.UtcNow;
         _snapshotAnimating = true;
         EnsureAnimationTimer();
-    }
-
-    private double? AnimatedUsed(string cardKey, QuotaWindow window)
-    {
-        if (window.UsedPercent is not { } target || !_snapshotAnimating) return window.UsedPercent;
-        if (!_animationFrom.TryGetValue(WindowKey(cardKey, window.Label), out var from)) return target;
-        var progress = Math.Clamp(
-            (DateTime.UtcNow - _snapshotAnimationStarted).TotalMilliseconds / SnapshotValueAnimationMs,
-            0,
-            1);
-        var eased = 1 - Math.Pow(1 - progress, 3);
-        return from + (target - from) * eased;
-    }
-
-    private float SnapshotPulse(string windowKey)
-    {
-        if (!_snapshotAnimating || !_animatedWindowKeys.Contains(windowKey)) return 0;
-        var progress = Math.Clamp(
-            (DateTime.UtcNow - _snapshotAnimationStarted).TotalMilliseconds / SnapshotPulseAnimationMs,
-            0,
-            1);
-        return (float)Math.Sin(progress * Math.PI);
     }
 
     private void AdvanceAnimation()
@@ -94,16 +70,6 @@ internal sealed partial class BarForm
             if (next != destination) animating = true;
         }
         return animating;
-    }
-
-    private float HoverProgress(HoverTarget target) => _animationsEnabled
-        ? _hoverProgress.GetValueOrDefault(target)
-        : _hoverTarget == target ? 1 : 0;
-
-    private RectangleF PressedIconBounds(RectangleF bounds, HoverTarget target)
-    {
-        if (_pressedTarget == target) bounds.Offset(0, .7f);
-        return bounds;
     }
 
     private static Dictionary<string, double> SnapshotValues(QuotaSnapshot snapshot)

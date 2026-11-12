@@ -708,9 +708,6 @@ internal static class GlassDockPainter
         return light ? UiPalette.Slate900 : UiPalette.Slate50;
     }
 
-    /// <summary>Colour of the thin moat drawn around badges so they separate cleanly from the ring.</summary>
-    private static Color Separator(bool light) => light ? Color.FromArgb(240, 244, 246, 250) : Color.FromArgb(240, 34, 37, 48);
-
     private static Color Ink(bool light) => light ? UiPalette.Slate900 : Color.FromArgb(255, 255, 255);
 
     private static Color Muted(bool light) => light ? UiPalette.Slate700.WithAlpha(190) : UiPalette.Slate300.WithAlpha(190);

@@ -163,5 +163,5 @@ internal abstract class UiCardPopoverForm : Form
         Region = next;
     }
 
-    protected int Scale(float value) => Math.Max(1, (int)Math.Round(value * UiScale));
+    protected new int Scale(float value) => Math.Max(1, (int)Math.Round(value * UiScale));
 }

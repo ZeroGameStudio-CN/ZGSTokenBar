@@ -8,7 +8,6 @@ namespace ZGSTokenBar.App;
 /// <summary>Glass dock: ring items, layered-window rendering, overflow chip and its flyout.</summary>
 internal sealed partial class BarForm
 {
-    private readonly bool _glassDock = true;
     private UsageBoard _usageBoard = UsageBoard.Empty;
     private int _glassMaxRings = GlassDockLayout.MaxVisibleRings;
     private ContextMenuStrip? _glassMenu;
@@ -24,7 +23,7 @@ internal sealed partial class BarForm
     /// <summary>Raised when the user expands or collapses the overflow, so the state is saved.</summary>
     public event EventHandler<bool>? GlassExpandedChanged;
     private readonly Dictionary<string, Image?> _glassIcons = new(StringComparer.Ordinal);
-    private bool GlassLayered => _glassDock && !_renderOnly;
+    private bool GlassLayered => !_renderOnly;
 
     /// <summary>Raised after every usage-board update so the pace tracker can sample its windows.</summary>
     internal event EventHandler<UsageBoard>? UsageBoardChanged;
@@ -191,6 +190,14 @@ internal sealed partial class BarForm
         }
     }
 
+    private static string? CodexAccountOrdinal(QuotaCard card)
+    {
+        if (card.Provider != ProviderKind.Codex) return null;
+        var separator = card.Label.IndexOf('·');
+        if (separator < 0) return null;
+        return card.Label.AsSpan(separator + 1).Trim().ToString();
+    }
+
     private static string GlassAccountName(QuotaCard card, int ordinal)
     {
         var hint = card.AccountHint;
@@ -252,10 +259,6 @@ internal sealed partial class BarForm
         _taskbarWindowBounds.Clear();
         _taskbarPluginBounds.Clear();
         _taskbarCodexAccountBounds.Clear();
-        _taskbarAreaBounds.Clear();
-        _codexStrategyBounds = RectangleF.Empty;
-        _refreshBounds = RectangleF.Empty;
-        _settingsBounds = RectangleF.Empty;
         _glassChipBounds = RectangleF.Empty;
         var width = plan.Width;
         var visuals = new List<GlassDockItemVisual>(items.Count);

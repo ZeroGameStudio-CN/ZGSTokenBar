@@ -22,9 +22,6 @@ const cockpitInstanceActivity = fs.readFileSync('src/ZGSTokenBar.Core/CockpitCod
 const cockpitQuotaReader = fs.readFileSync('src/ZGSTokenBar.Core/CockpitCodexQuotaReader.cs', 'utf8');
 const codexQuotaService = fs.readFileSync('src/ZGSTokenBar.Core/CodexQuotaService.cs', 'utf8');
 const quotaCoordinator = fs.readFileSync('src/ZGSTokenBar.Core/QuotaCoordinator.cs', 'utf8');
-const taskbarGrouping = fs.readFileSync('src/ZGSTokenBar.App/TaskbarMiniGrouping.cs', 'utf8');
-const codexPoolProjection = fs.readFileSync('src/ZGSTokenBar.App/CodexPoolCardProjection.cs', 'utf8');
-const codexPoolPresentation = fs.readFileSync('src/ZGSTokenBar.App/CodexPoolPresentation.cs', 'utf8');
 const modelsSource = fs.readFileSync('src/ZGSTokenBar.Core/Models.cs', 'utf8');
 const aiGatewayBalance = fs.readFileSync('src/ZGSTokenBar.Core/AiGatewayBalanceService.cs', 'utf8');
 const sub2ApiPool = fs.readFileSync('src/ZGSTokenBar.Core/Sub2ApiPoolService.cs', 'utf8');
@@ -40,70 +37,23 @@ test('taskbar Mini reserves room for readable quota capsules', () => {
   assert.match(models, /public const int CardGap = 3;/);
   assert.match(models, /public const int ControlGap = 4;/);
   assert.match(models, /"1w" or "week" => "7d"/);
-
-  const start = barForm.indexOf('    private void DrawTaskbarCapsule(');
-  const end = barForm.indexOf('    private void DrawProviderLogo(', start);
-  const body = barForm.slice(start, end);
-  assert.notEqual(start, -1);
-  assert.notEqual(end, -1);
-  assert.match(body, /FormatWindowShort\(window\)/);
-  assert.match(body, /QuotaDisplayFormatting\.WeeklyBlockReset\(card, window, now\)/);
-  assert.match(body, /QuotaDisplayFormatting\.FormatResetShort\(weeklyBlockReset \?\? window\.ResetsAt, now\)/);
   assert.match(models, /return \$"\{\(int\)remaining\.TotalDays\}d\{remaining\.Hours\}h";/);
-  assert.match(body, /DrawTaskbarLockIcon/);
-  assert.match(body, /DrawResetClockIcon/);
 });
 
 test('available quota details stay bright while blocked and missing states are muted', () => {
-  const start = barForm.indexOf('    private void DrawTaskbarCapsule(');
-  const end = barForm.indexOf('    private void DrawTaskbarProgressRail(', start);
-  const body = barForm.slice(start, end);
-  assert.match(body, /labelBrush = new SolidBrush\(blockedByWeekly[\s\S]*?UiPalette\.Slate500[\s\S]*?UiPalette\.Slate200/);
-  assert.match(body, /resetBrush = new SolidBrush\(blockedByWeekly \|\| window\.ResetsAt is null[\s\S]*?UiPalette\.Slate500[\s\S]*?UiPalette\.Slate200/);
   assert.match(popoverForm, /resetValueBrush = new SolidBrush\([\s\S]*?WeeklyBlockResetAt[\s\S]*?Window\.ResetsAt is null[\s\S]*?UiPalette\.Slate500[\s\S]*?UiPalette\.Slate200/);
-
-  const fullStart = barForm.indexOf('    private void DrawQuotaRow(');
-  const fullEnd = barForm.indexOf('    private void DrawHealth(', fullStart);
-  const fullBody = barForm.slice(fullStart, fullEnd);
-  assert.match(fullBody, /QuotaDisplayFormatting\.WeeklyBlockReset\(card, window, now\)/);
-  assert.match(fullBody, /blockedByWeekly[\s\S]*?DrawTaskbarLockIcon/);
-  assert.match(fullBody, /remainingColor = blockedByWeekly[\s\S]*?UiPalette\.Slate500[\s\S]*?QuotaColorScale\.ForRemaining/);
-  assert.match(fullBody, /FormatCompactReset\(resetAt, now\)/);
 });
 
 test('taskbar Mini prefers real quota windows and keeps labels for a fully unavailable provider', () => {
   assert.match(models, /public static IReadOnlyList<QuotaWindow> VisibleWindows\(/);
   assert.match(models, /window\.UsedPercent is not null \|\| window\.ResetsAt is not null/);
   assert.match(models, /return available\.Length > 0[\s\S]*windows\.Take\(MaximumWindows\)/);
-  assert.match(barForm, /TaskbarMiniLayoutMath\.VisibleWindows\(card\.Windows\)/);
   assert.doesNotMatch(barForm, /fallbackLabel/);
   assert.doesNotMatch(barForm, /DrawQuotaRing/);
 });
 
 test('taskbar Mini rails show remaining quota without the removed budget goal', () => {
-  const capsuleStart = barForm.indexOf('    private void DrawTaskbarCapsule(');
-  const capsuleEnd = barForm.indexOf('    private void DrawTaskbarProgressRail(', capsuleStart);
-  const capsuleBody = barForm.slice(capsuleStart, capsuleEnd);
-  assert.notEqual(capsuleStart, -1);
-  assert.notEqual(capsuleEnd, -1);
-  assert.match(capsuleBody, /DrawTaskbarProgressRail\(graphics, bounds, remaining, valueColor\)/);
   assert.doesNotMatch(barForm, /BudgetMarkerRemaining|DrawBudgetMarkerPointer|budgetMarkerRemaining/);
-
-  const railEnd = barForm.indexOf('    private void DrawResetClockIcon(', capsuleEnd);
-  const railBody = barForm.slice(capsuleEnd, railEnd);
-  assert.notEqual(railEnd, -1);
-  assert.match(railBody, /new Pen\(UiPalette\.Slate800, 3\)/);
-  assert.match(railBody, /new Pen\(valueColor, 2\)/);
-  assert.match(railBody, /new Pen\(UiPalette\.Slate600, 2\)/);
-  assert.match(railBody, /EndCap = clampedRemaining >= 100 \? LineCap\.Round : LineCap\.Flat/);
-  assert.match(railBody, /StartCap = clampedRemaining <= 0 \? LineCap\.Round : LineCap\.Flat/);
-
-  const dualStart = barForm.indexOf('    private void DrawTaskbarDualMetric(');
-  const dualEnd = barForm.indexOf('    private void DrawTaskbarCapsule(', dualStart);
-  const dualBody = barForm.slice(dualStart, dualEnd);
-  assert.notEqual(dualStart, -1);
-  assert.notEqual(dualEnd, -1);
-  assert.match(dualBody, /DrawTaskbarQuotaRail/);
 });
 
 test('native quota surfaces use one opaque four-level background palette', () => {
@@ -114,9 +64,6 @@ test('native quota surfaces use one opaque four-level background palette', () =>
   assert.match(backgroundPalette, /"graphite"[\s\S]*?8, 9, 11[\s\S]*?18, 19, 22[\s\S]*?27, 28, 31[\s\S]*?16, 17, 20/);
   assert.match(backgroundPalette, /"navy"/);
   assert.match(backgroundPalette, /"plum"/);
-  assert.match(barForm, /panelBrush = new SolidBrush\(_backgroundTheme\.Outer\)/);
-  assert.match(barForm, /fill = new SolidBrush\(_backgroundTheme\.ProviderGroup\)/);
-  assert.match(barForm, /_backgroundTheme\.QuotaGroup/);
   assert.match(popoverForm, /UiPaint\.TailedSurface\(graphics, body, TailPoints\(body\), UiTokens\.CardSurface, UiTokens\.Hairline/);
   assert.match(popoverForm, /statusFill = new SolidBrush\(_backgroundTheme\.QuotaGroup\)/);
   assert.match(settingsForm, /QuotaBackgroundPalette\.All/);
@@ -126,26 +73,6 @@ test('native quota surfaces use one opaque four-level background palette', () =>
   assert.match(nativeText, /背景配色/);
   assert.doesNotMatch(`${barForm}\n${popoverForm}`, /WindowBackdrop|Acrylic|_glassBackdropEnabled/);
   assert.doesNotMatch(nativeProject, /PackageReference/);
-});
-
-test('stacked Codex accounts use one adaptive module with a four-account grid', () => {
-  assert.match(barForm, /TaskbarCodexCapsuleBounds\(bounds, index, cards\.Count\)/);
-  assert.match(barForm, /DrawTaskbarAccountOrdinalColumn\(graphics, bounds, cards\)/);
-  assert.match(barForm, /new RectangleF\(cardBounds\.X \+ 31, cardBounds\.Y \+ 2, 10, 32\)/);
-  assert.match(barForm, /var slotHeight = 32f \/ accountCount/);
-  assert.match(barForm, /TaskbarCompactCodexTileBounds\(cardBounds, index, accountCount\)/);
-  assert.match(barForm, /var column = index % 2/);
-  assert.match(barForm, /var row = index \/ 2/);
-  assert.match(barForm, /DrawTaskbarCompactCodexCapsule\(graphics, target\)/);
-  assert.match(taskbarGrouping, /Cards\.Count >= 2/);
-  assert.match(taskbarGrouping, /OrderBy\(item => PlanSortRank\(item\.Card\)\)/);
-  assert.match(taskbarGrouping, /ThenByDescending\(item => item\.Remaining/);
-  assert.match(barForm, /PlanBadgePresentation\.TryGetStyle\(label, out var style\)/);
-  assert.doesNotMatch(taskbarGrouping, /group\.Count < 2/);
-  assert.match(taskbarGrouping, /card\.Windows\.Count > 0[\s\S]*?new QuotaWindow\("7d", null, null/);
-  const groupStart = barForm.indexOf('    private void DrawTaskbarCodexGroup(');
-  const groupEnd = barForm.indexOf('    private void DrawTaskbarAccountOrdinalColumn(', groupStart);
-  assert.doesNotMatch(barForm.slice(groupStart, groupEnd), /DrawAccountOrdinalBadge/);
 });
 
 test('Sub2API observer renders anonymous account availability with aggregate fallback on the existing service card', () => {
@@ -182,24 +109,10 @@ test('Sub2API observer renders anonymous account availability with aggregate fal
   assert.doesNotMatch(sub2ApiUsage, /HttpMethod\.Post|auth\/login|account_name|api_key|total_cost/i);
   assert.doesNotMatch(sub2ApiQuota, /HttpMethod\.Post|auth\/login|account_id|account_name|api_key|used_percent|total_cost/i);
   assert.doesNotMatch(sub2ApiAccountAvailability, /HttpMethod\.Post|auth\/login|account_id|account_name|api_key|total_cost/i);
-  assert.match(barForm, /Sub2ApiServicePresentation\.IsSub2ApiService\(target\.Card\)[\s\S]*?DrawTaskbarSub2ApiMetric\(graphics, target, hover\)/);
   const sub2ApiMiniStart = barForm.indexOf('    private void DrawTaskbarSub2ApiMetric(');
   const sub2ApiMiniEnd = barForm.indexOf('    private static Color Sub2ApiPresentationCompactStatusColor(', sub2ApiMiniStart);
   const sub2ApiMini = barForm.slice(sub2ApiMiniStart, sub2ApiMiniEnd);
-  assert.notEqual(sub2ApiMiniStart, -1);
-  assert.notEqual(sub2ApiMiniEnd, -1);
-  assert.match(sub2ApiMini, /Sub2ApiServicePresentation\.Resolve\(target\.Card, _snapshot\.CapturedAt\)/);
-  assert.match(sub2ApiMini, /CompleteAvailability[\s\S]*?DrawTaskbarProgressRail/);
-  assert.match(sub2ApiMini, /PartialAvailability[\s\S]*?KnownNoneAvailability[\s\S]*?Sub2ApiAccountAvailabilityCompact/);
-  assert.match(sub2ApiMini, /LegacyAggregateQuota[\s\S]*?Sub2ApiLegacyQuotaCompact/);
-  assert.match(sub2ApiMini, /_text\.Sub2ApiUnavailable/);
   assert.doesNotMatch(sub2ApiMini, /Sub2ApiQuota(?:Headline|WindowDetails|SummaryShort)|FormatReset|\b(?:5h|7d)\b/);
-  assert.match(barForm, /_text\.Sub2ApiAccountAvailabilityCompact\(accountAvailability!\)/);
-  assert.match(barForm, /_text\.Sub2ApiQuotaCompact\(quota!?\)/);
-  assert.match(barForm, /_text\.Sub2ApiUsageCompact\(usage\)/);
-  assert.match(barForm, /Sub2ApiPoolFormatting\.AccountPair\(pool\)/);
-  assert.match(barForm, /Sub2ApiQuotaCompactStatusColor/);
-  assert.match(barForm, /Sub2ApiUsageCompactStatusColor/);
   assert.match(popoverForm, /DrawSub2ApiQuotaServiceContent/);
   assert.match(popoverForm, /DrawSub2ApiAccountAvailabilityServiceContent/);
   assert.match(popoverForm, /DrawSub2ApiUsageServiceContent/);
@@ -222,107 +135,21 @@ test('Sub2API observer renders anonymous account availability with aggregate fal
   assert.match(testProgram, /foreach \(var dpi in new\[\] \{ 96, 144, 192 \}\)[\s\S]*?taskbar-mini-sub2api-\{scenario\.Name\}-\{locale\}-\{dpi\}dpi\.png/);
 });
 
-test('Codex Mini groups use deterministic unique plugin-compatible area ids', () => {
-  assert.match(taskbarGrouping, /record TaskbarMiniCardGroup\([\s\S]*?string AreaId\)/);
-  assert.match(taskbarGrouping, /var codexGroupIndex = 0/);
-  assert.match(taskbarGrouping, /ProviderKind\.Codex => CodexAreaId\(\+\+codexGroupIndex\)/);
-  assert.match(taskbarGrouping, /\$\"\{MiniAreaIds\.Codex\}\.\{groupIndex\}\"/);
-  assert.match(barForm, /private static string TaskbarGroupAreaId\(TaskbarMiniCardGroup group\) => group\.AreaId;/);
-  assert.match(barForm, /public static TaskbarMiniAreaContent ForGroup\(TaskbarMiniCardGroup group\) => new\([\s\S]*?TaskbarGroupAreaId\(group\)/);
+test('the retired Codex display mode leaves no setting, UI or strategy page behind', () => {
+  assert.doesNotMatch(appSettings, /CodexMiniDisplayMode/);
+  assert.doesNotMatch(settingsForm, /_codexDisplayMode|CodexMiniDisplayMode/);
+  assert.doesNotMatch(nativeText, /CodexDisplayMode/);
+  assert.doesNotMatch(barForm, /CodexStrategy|_codexMiniDisplayMode|TaskbarMiniGrouping/);
 });
 
-test('Codex Mini display mode defaults to accounts and safely normalizes persisted values', () => {
-  const modesStart = appSettings.indexOf('public static class CodexMiniDisplayModes');
-  const modesEnd = appSettings.indexOf('public sealed class AppSettings', modesStart);
-  assert.notEqual(modesStart, -1);
-  assert.notEqual(modesEnd, -1);
-  const modes = appSettings.slice(modesStart, modesEnd);
-
-  assert.match(modes, /public const string Accounts = "accounts";/);
-  assert.match(modes, /public const string Pool = "pool";/);
-  assert.match(modes, /public static string Normalize\(string\? value\)/);
-  assert.match(modes, /Pool => Pool/);
-  assert.match(modes, /_ => Accounts/);
-  assert.match(appSettings, /CodexMiniDisplayMode \{ get; set; \} = CodexMiniDisplayModes\.Accounts;/);
-  assert.match(appSettings, /CodexMiniDisplayMode = CodexMiniDisplayModes\.Normalize\(CodexMiniDisplayMode\);/);
-});
-
-test('settings persist Codex Mini display mode as an editable choice', () => {
-  assert.match(settingsForm, /_codexDisplayMode\.Tag = "settings\.codex\.display-mode";/);
-  assert.match(
-    settingsForm,
-    /_codexDisplayMode\.Items\.Add\([\s\S]*?CodexMiniDisplayModes\.Accounts[\s\S]*?_codexDisplayMode\.Items\.Add\([\s\S]*?CodexMiniDisplayModes\.Pool/);
-
-  const buildStart = settingsForm.indexOf('    private AppSettings BuildSettings()');
-  const editableStart = settingsForm.indexOf('    private static bool EditableEquals(', buildStart);
-  const copyStart = settingsForm.indexOf('    private static AppSettings Copy(', editableStart);
-  const copyEnd = settingsForm.indexOf('    private string PluginDescription(', copyStart);
-  assert.notEqual(buildStart, -1);
-  assert.notEqual(editableStart, -1);
-  assert.notEqual(copyStart, -1);
-  assert.notEqual(copyEnd, -1);
-
-  const buildSettings = settingsForm.slice(buildStart, editableStart);
-  const editableEquals = settingsForm.slice(editableStart, copyStart);
-  const copySettings = settingsForm.slice(copyStart, copyEnd);
-  assert.match(buildSettings, /CodexMiniDisplayMode = \(_codexDisplayMode\.SelectedItem as CodexMiniDisplayModeChoice\)\?\.Mode/);
-  assert.match(editableEquals, /string\.Equals\(left\.CodexMiniDisplayMode, right\.CodexMiniDisplayMode, StringComparison\.Ordinal\)/);
-  assert.match(copySettings, /CodexMiniDisplayMode = CodexMiniDisplayModes\.Normalize\(settings\.CodexMiniDisplayMode\)/);
-});
-
-test('Codex pool grouping replaces only the Codex area and keeps the Mini height contract', () => {
-  assert.match(modelsSource, /public const int CodexPoolCardWidth = 184;/);
-  assert.match(taskbarGrouping, /string codexMiniDisplayMode = CodexMiniDisplayModes\.Accounts/);
-  assert.match(taskbarGrouping, /CodexMiniDisplayModes\.Normalize\(codexMiniDisplayMode\) == CodexMiniDisplayModes\.Pool[\s\S]*?CreatePoolGroups\(cards\)/);
-  assert.match(taskbarGrouping, /public bool IsCodexPool \{ get; init; \}/);
-  assert.match(taskbarGrouping, /new TaskbarMiniCardGroup\(poolCards, MiniAreaIds\.Codex\)[\s\S]*?IsCodexPool = true/);
-  assert.match(taskbarGrouping, /CodexServiceAreaId = "zgstokenbar\.provider\.codex-service"/);
-  assert.match(taskbarGrouping, /ProviderKind\.Codex => CodexServiceAreaId/);
-
-  const drawStart = barForm.indexOf('    private void DrawTaskbarCards(');
-  const drawEnd = barForm.indexOf('    private void DrawTaskbarCard(', drawStart);
+test('Codex accounts share one Mini area and the dock keeps the Mini height contract', () => {
   const layoutStart = barForm.indexOf('    private void ApplySnapshotLayout(');
   const layoutEnd = barForm.indexOf('    private void UpdateWindowRegion()', layoutStart);
-  assert.notEqual(drawStart, -1);
-  assert.notEqual(drawEnd, -1);
   assert.notEqual(layoutStart, -1);
   assert.notEqual(layoutEnd, -1);
-
-  const drawCards = barForm.slice(drawStart, drawEnd);
   const applyLayout = barForm.slice(layoutStart, layoutEnd);
-  const poolRowStart = barForm.indexOf('    private void DrawTaskbarCodexPoolRow(');
-  const poolRowEnd = barForm.indexOf('    private static CodexPoolTargetRow[]', poolRowStart);
-  const poolRowDrawing = barForm.slice(poolRowStart, poolRowEnd);
-  assert.notEqual(poolRowStart, -1);
-  assert.notEqual(poolRowEnd, -1);
-  assert.match(drawCards, /group\.IsCodexPool[\s\S]*?DrawTaskbarCodexPool\(graphics, bounds, group\.Cards\)/);
-  assert.match(barForm, /group\.IsCodexPool[\s\S]*?TaskbarMiniLayoutMath\.CodexPoolCardWidth/);
-  assert.match(poolRowDrawing, /CodexPoolPresentation\.CapacitySummary\(targetRow\.Row\)/);
-  assert.doesNotMatch(poolRowDrawing, /FormatResetShort|NextResetAt|ResetBounds/);
-  assert.match(poolRowDrawing, /DrawTaskbarCodexPoolCapacitySummary\(graphics, targetRow, aggregateColor\)/);
-  assert.match(poolRowDrawing, /var capacityText = summary\[separatorIndex\.\.\]/);
-  assert.match(poolRowDrawing, /new SolidBrush\(UiPalette\.Slate400\)/);
-  assert.match(codexPoolPresentation, /equivalents \* 100:0/);
-  assert.match(codexPoolPresentation, /row\.AvailableAccountCount \* 100/);
-  assert.match(barForm, /var singleRow = rows\.Count == 1;/);
-  assert.match(barForm, /var rowHeight = singleRow \? 32f : 15f;/);
-  assert.match(barForm, /var railHeight = targetRow\.Bounds\.Height > 20 \? 8f : 5f;/);
-  assert.match(testProgram, /taskbar-mini-four-codex-pool\{scenario\.Suffix\}-zh-CN-\{dpi\}dpi\.png/);
-  assert.match(barForm, /group\.IsCodexPool \? "Codex" : group\.Cards\[0\]\.DisplayLabel/);
-  assert.match(applyLayout, /CodexPoolCardProjection\.Create\([\s\S]*?_codexAccounts,[\s\S]*?_snapshot\.CodexAccounts/);
-  assert.match(applyLayout, /TaskbarMiniGrouping\.Create\(layoutCards, _codexMiniDisplayMode\)/);
+  assert.match(barForm, /TaskbarMiniAreaContent\.ForCards\(MiniAreaIds\.Codex, codex\)/);
   assert.match(barForm, /SetCodexAccounts\([\s\S]*?_codexAccounts = accounts\.ToArray\(\);[\s\S]*?ApplySnapshotLayout\(\)/);
-  assert.match(codexPoolProjection, /GroupBy\(account => account\.AccountId, StringComparer\.Ordinal\)/);
-  assert.match(codexPoolProjection, /quotaByAccount\.TryGetValue\(account\.AccountId, out var quota\)/);
-  assert.match(codexPoolProjection, /TakeExactSourceCard\([\s\S]*?TakeFallbackSourceCard\(/);
-  assert.match(codexPoolProjection, /AccountHint, hint[\s\S]*?CardPlanMatches\(card, targetPlan\)/);
-  assert.doesNotMatch(codexPoolProjection, /projected\.AddRange\(unusedCards/);
-  assert.match(codexPoolProjection, /OrderByDescending\(group => group\.Count\(\)\)/);
-  assert.match(codexPoolProjection, /projectedKey = !string\.IsNullOrWhiteSpace\(quota\?\.CardKey\)/);
-  assert.match(codexPoolProjection, /if \(!HasQuotaData\(windows\)\) windows = \[\];/);
-  assert.match(codexPoolProjection, /label is "pro" or "plus" or "free"/);
-  assert.match(codexPoolPresentation, /futureResets[\s\S]*?reset > now[\s\S]*?futureResets\.Min\(\)/);
-  assert.match(codexPoolPresentation, /visibleRows[\s\S]*?HasWindowData\(segment\.Window\)/);
   assert.match(modelsSource, /record CodexAccountQuota\([\s\S]*?public string\? CardKey \{ get; init; \}/);
   assert.match(applyLayout, /ClientSize = new Size\([\s\S]*?TaskbarMiniLayoutMath\.Height\)/);
 });
@@ -348,7 +175,6 @@ test('taskbar Mini uses unmodified embedded provider logos', () => {
   assert.match(barForm, /private readonly Image _claudeLogo/);
   assert.match(barForm, /private readonly Image _openAiLogo/);
   assert.match(barForm, /private readonly Image _deepSeekLogo/);
-  assert.match(barForm, /DrawProviderLogo\(graphics, logoBounds, card\)/);
   assert.doesNotMatch(barForm, /private static void DrawClaudeMark/);
   assert.doesNotMatch(barForm, /private static void DrawCodexMark/);
 });
@@ -356,28 +182,15 @@ test('taskbar Mini uses unmodified embedded provider logos', () => {
 test('taskbar Mini reset affordance comes from the Fluent icon asset', () => {
   assert.match(nativeProject, /EmbeddedResource Include="Assets\\fluent-clock-20-regular\.png"/);
   assert.match(barForm, /private readonly Image _resetClockIcon/);
-  assert.match(barForm, /DrawResetClockIcon/);
 });
 
 test('collapsed quota and balance providers share a compact semantic summary without another fetch path', () => {
-  assert.match(barForm, /var primaryCard = PrimaryTaskbarCard\(group\)/);
-  assert.match(barForm, /DrawCollapsedAiGatewayCard\(graphics, bounds, primaryCard\)/);
-  assert.match(barForm, /DrawCollapsedQuotaCard\(graphics, bounds, primaryCard\)/);
-  assert.match(barForm, /DrawCollapsedProviderSummary\(/);
-  assert.match(barForm, /DrawTaskbarProviderLogoAt\(graphics, logoBounds, card, showOrdinal: false\)/);
-  assert.match(barForm, /internal static \(string Value, Color Color\) CollapsedQuotaSummary\(QuotaCard card\)/);
-  assert.match(barForm, /TaskbarMiniGrouping\.CodexRowWindows\(card\)/);
-  assert.match(barForm, /CompactRemaining\(remaining\)/);
-  assert.match(barForm, /AiGatewayBalanceFormatting\.CompactAmount\(balance\?\.TotalBalance\)/);
-  assert.match(barForm, /AiGatewayCompactStatusColor\(balance\.Status\)/);
   assert.match(aiGatewayBalance, /public static string CompactAmount\(decimal\? amount\)/);
   assert.doesNotMatch(barForm, /FetchAiGateway|HttpClient/);
 });
 
 test('collapsed generic balance plugins retain their primary amount', () => {
-  assert.match(barForm, /DrawPluginMiniCard\(graphics, bounds, pluginCard, layout\.Collapsed\)/);
   assert.match(barForm, /view\.Card\.Kind == ContributionKind\.Balance/);
-  assert.match(barForm, /CompactPluginValue\(compactSummary\.Value\)/);
   assert.match(barForm, /AiGatewayBalanceFormatting\.CompactAmount\(currency\)/);
 });
 
@@ -414,7 +227,6 @@ test('Codex row hover exposes a privacy-safe Cockpit account summary', () => {
   assert.match(modelsSource, /public string\? AccountHint \{ get; init; \}/);
   assert.match(codexQuotaService, /AccountHint = CodexAccountFormatting\.MaskEmail/);
   assert.doesNotMatch(barForm, /MiniAccountTarget|DrawCodexAccountsIcon|_taskbarAccountBounds/);
-  assert.match(barForm, /_taskbarCodexAccountBounds\.Add\(\([\s\S]*?TaskbarAccountOrdinalRowBounds\(bounds, index, group\.Cards\.Count\)/);
   assert.match(barForm, /TaskbarCodexAccountTargetAt/);
   assert.match(barForm, /ShowCodexAccountsPopover\(codexAccountTarget\)/);
   assert.doesNotMatch(barForm, /CodexAccountsTooltip/);
@@ -427,8 +239,6 @@ test('Codex row hover exposes a privacy-safe Cockpit account summary', () => {
   assert.match(nativeText, /public string CodexAccountsHeading/);
   assert.doesNotMatch(nativeText, /CodexAccountsTooltip|CodexAccountMapping/);
   assert.match(codexAccountsPopoverForm, /QuotaDisplayFormatting\.FormatWindowShort/);
-  assert.match(popoverForm, /DrawAccountSubtitle/);
-  assert.match(popoverForm, /AccountSubtitle\(card, text\)/);
   assert.match(popoverForm, /PlanBadgeLabel/);
   assert.match(popoverForm, /PlanBadgePresentation\.TryGetStyle/);
   assert.match(codexAccountsPopoverForm, /DrawPlanBadge/);
@@ -440,8 +250,6 @@ test('Codex row hover exposes a privacy-safe Cockpit account summary', () => {
   assert.match(popoverForm, /accountHint/);
   assert.match(hintPopoverForm, /class TaskbarHintPopoverForm/);
   assert.match(hintPopoverForm, /UiTokens\.CardSurface/);
-  assert.match(barForm, /ShowHintPopover\(hintTarget\)/);
-  assert.match(barForm, /OpenSettingsHint/);
 });
 
 test('Cockpit API services are displayed as informational cards without network access', () => {
@@ -463,23 +271,6 @@ test('Cockpit API services are displayed as informational cards without network 
   assert.match(codexQuotaService, /ToServiceCard\(apiServices\)/);
   assert.match(codexQuotaService, /new QuotaWindow\("API", null, null, TimeSpan\.Zero\)/);
   assert.match(codexQuotaService, /apiServices\.Length == 0/);
-  assert.match(taskbarGrouping, /if \(card\.IsService\)/);
-  assert.match(barForm, /if \(target\.Card\.IsService\)/);
-  const serviceMetricStart = barForm.indexOf('    private void DrawTaskbarServiceMetric(');
-  const serviceMetricEnd = barForm.indexOf('    private void DrawTaskbarLockIcon(', serviceMetricStart);
-  const serviceMetric = barForm.slice(serviceMetricStart, serviceMetricEnd);
-  assert.notEqual(serviceMetricStart, -1);
-  assert.notEqual(serviceMetricEnd, -1);
-  assert.match(serviceMetric, /var quotaColor = Sub2ApiQuotaCompactStatusColor\(quota!\.Status\);[\s\S]*?DrawTaskbarProgressRail\([\s\S]*?quotaWindow\.RemainingPercent,[\s\S]*?quotaColor\);/);
-  assert.match(serviceMetric, /DrawTaskbarServiceCompactMetric\([\s\S]*?target\.Card\.DisplayLabel,[\s\S]*?_text\.Sub2ApiQuotaCompact\(quota!\),[\s\S]*?quotaColor\);/);
-  assert.match(serviceMetric, /var accountAvailabilityRemaining = Sub2ApiAccountAvailabilityFormatting\.MeanRemainingPercent\(accountAvailability\);/);
-  assert.match(serviceMetric, /var availabilityColor = Sub2ApiQuotaCompactStatusColor\(accountAvailability!\.Status\);[\s\S]*?DrawTaskbarProgressRail\([\s\S]*?accountAvailabilityRemaining,[\s\S]*?availabilityColor\);/);
-  assert.match(serviceMetric, /DrawTaskbarServiceCompactMetric\([\s\S]*?target\.Card\.DisplayLabel,[\s\S]*?_text\.Sub2ApiAccountAvailabilityCompact\(accountAvailability!\),[\s\S]*?availabilityColor\);/);
-  assert.match(serviceMetric, /private void DrawTaskbarServiceCompactMetric\([\s\S]*?if \(bounds\.Width < 84f\)[\s\S]*?StringAlignment\.Near[\s\S]*?StringAlignment\.Far/);
-  assert.doesNotMatch(serviceMetric, /bounds\.Y \+ 16/);
-  assert.match(serviceMetric, /target\.Card\.DisplayLabel,[\s\S]*?new RectangleF\(bounds\.X \+ 7, bounds\.Y, bounds\.Width - 12, bounds\.Height\),[\s\S]*?StringAlignment\.Center/);
-  assert.doesNotMatch(serviceMetric, /bounds\.Width - 53/);
-  assert.match(barForm, /_text\.ApiServiceConfiguredShort/);
   assert.match(popoverForm, /if \(content\.Card\.IsService\)/);
   assert.match(popoverForm, /content\.Card\.DisplayLabel/);
   assert.match(nativeText, /ApiServiceNoQuota/);
@@ -510,55 +301,16 @@ test('taskbar Mini balances narrow cards with readable vertical controls', () =>
   assert.match(models, /public const int OuterPadding = 6;/);
   assert.match(models, /public const int ControlGap = 4;/);
   assert.match(barForm, /TaskbarControlIconSize = 12f/);
-  assert.match(barForm, /TaskbarControlWidth = TaskbarMiniLayoutMath\.ControlsWidth;/);
-  assert.match(barForm, /TaskbarControlHeight = 18f/);
-  const start = barForm.indexOf('    private void DrawTaskbarCards(');
-  const end = barForm.indexOf('    private void DrawTaskbarCard(', start);
-  const body = barForm.slice(start, end);
-  assert.notEqual(start, -1);
-  assert.notEqual(end, -1);
-  assert.match(body, /DrawTaskbarModuleShell\(graphics, target\)/);
-  assert.match(body, /new RectangleF\(x, 4, areaWidth, 36\)/);
-  assert.match(body, /DrawSystemUsageCard\(graphics, bounds, layout\.Collapsed\)/);
-  assert.match(body, /DrawTaskbarControlGroup\(graphics\)/);
-  assert.match(body, /_refreshBounds = new RectangleF\(controlsX, 4, TaskbarControlWidth, TaskbarControlHeight\)/);
-  assert.doesNotMatch(body, /_modeBounds|HoverTarget\.Mode/);
-  assert.match(body, /_taskbarAreaBounds\.Clear\(\)/);
-  assert.match(body, /_settingsBounds = new RectangleF\([\s\S]*?controlsX,[\s\S]*?_refreshBounds\.Bottom,[\s\S]*?TaskbarControlWidth,[\s\S]*?TaskbarControlHeight\)/);
-  assert.match(body, /var areaWidth = TaskbarAreaWidth\(area\)/);
-  assert.match(body, /DrawSettingsIcon\([\s\S]*?taskbarCompact: true/);
-  assert.match(barForm, /private void DrawTaskbarControlGroup\(Graphics graphics, bool drawShell = true\)/);
-  assert.match(barForm, /DrawTaskbarControlSegment\(graphics, _settingsBounds, HoverTarget\.Settings\)/);
+  assert.doesNotMatch(barForm, /_modeBounds|HoverTarget\.Mode/);
   assert.doesNotMatch(barForm, /DrawTaskbarControlSegment\(graphics, .*Collapse/);
   assert.doesNotMatch(barForm, /MiniCollapseTarget/);
-  assert.match(body, /DrawTaskbarCollapseHandle\(graphics, target\)/);
-  assert.match(body, /DrawTaskbarReorderGrip\(graphics, target\)/);
-  assert.match(body, /var handleBounds = TaskbarCollapseHandleBounds\(areaBounds\)/);
-  assert.match(body, /var bounds = TaskbarAreaContentBounds\(areaBounds\)/);
-  assert.match(body, /MiniAreaIds\.SystemMetrics/);
-  assert.match(barForm, /TaskbarCollapseTargetAt\(logical\)/);
-  assert.match(barForm, /TaskbarReorderTargetAt\(logical\)/);
-  assert.match(barForm, /BeginMiniAreaReorder\(reorderTarget, e\.Location\)/);
-  assert.match(barForm, /ContinueMiniAreaReorder\(e\)/);
-  assert.match(barForm, /MiniAreaOrderChanged/);
-  const mouseDown = barForm.slice(barForm.indexOf('    protected override void OnMouseDown('), barForm.indexOf('    protected override void OnMouseUp('));
-  assert.ok(mouseDown.indexOf('TaskbarReorderTargetAt(logical)') < mouseDown.indexOf('_taskbarDragging = true;'));
   assert.match(barForm, /ApplyMiniAreaLayout/);
   assert.match(barForm, /TaskbarMiniAreaContent\.ForSystem\(_text\.SystemUsageTitle\)/);
   assert.match(barForm, /SelectVisibleTaskbarAreas\(_taskbarContentAreas\)/);
-  assert.match(barForm, /TaskbarMiniLayoutMath\.ModuleContentWidth/);
-  assert.match(barForm, /TaskbarResizeTargetAt/);
   assert.match(barForm, /PreserveMiniProviderAreaAnchor/);
-  assert.match(barForm, /private static RectangleF TaskbarCollapseHandleBounds\(RectangleF areaBounds\) => new\([\s\S]*?areaBounds\.Right - TaskbarMiniLayoutMath\.ProviderCollapseHandleWidth/);
-  assert.match(barForm, /private static RectangleF TaskbarReorderHandleBounds\(RectangleF areaBounds\) => new\([\s\S]*?areaBounds\.Top \+ areaBounds\.Height \/ 2/);
-  assert.match(barForm, /private static RectangleF TaskbarAreaContentBounds\(RectangleF areaBounds\) =>[\s\S]*?areaBounds\.Right - TaskbarMiniLayoutMath\.ProviderCollapseHandleWidth/);
-  assert.match(barForm, /var separatorX = bounds\.Left \+ 1\.2f/);
-  assert.match(barForm, /var x = bounds\.X \+ bounds\.Width \/ 2;/);
   assert.doesNotMatch(barForm, /var x = bounds\.X \+ 3\.2f/);
   assert.match(nativeText, /拖动箭头左侧细线调宽/);
   assert.match(nativeText, /拖动排序；其他位置可拖动整条栏/);
-  assert.match(barForm, /graphics\.DrawLine\(separator, groupBounds\.Left \+ 5, _settingsBounds\.Top, groupBounds\.Right - 5, _settingsBounds\.Top\)/);
-  assert.match(barForm, /var value = target\.Card\.Balance is \{ \} balance/);
   assert.match(barForm, /StringAlignment\.Center/);
 });
 
@@ -572,7 +324,6 @@ test('explicit refresh can recover an expired Claude OAuth token', () => {
 test('native bar micro-motion stays subtle and follows the animation preference', () => {
   assert.match(barForm, /private const float HoverAnimationStep = \.32f/);
   assert.match(barForm, /SnapshotPulseAnimationMs = 560/);
-  assert.match(barForm, /private float HoverProgress\(HoverTarget target\) => _animationsEnabled/);
   assert.match(barForm, /_quotaPopover\.ShowFor\([\s\S]*?_animationsEnabled\);/);
   assert.match(popoverForm, /animateEntrance/);
   assert.match(popoverForm, /TotalMilliseconds \/ 130/);
@@ -582,27 +333,13 @@ test('native bar micro-motion stays subtle and follows the animation preference'
 });
 
 test('native animated refresh control uses a centered geometric path', () => {
-  const refreshStart = barForm.indexOf('    private void DrawRefreshIcon(');
-  const refreshEnd = barForm.indexOf('    private void DrawSettingsIcon(', refreshStart);
-  const refreshBody = barForm.slice(refreshStart, refreshEnd);
-  assert.notEqual(refreshStart, -1);
-  assert.notEqual(refreshEnd, -1);
-  assert.match(refreshBody, /float iconSize = ControlIconSize/);
-  assert.match(refreshBody, /CenteredSquare\(bounds, iconSize\)/);
-  assert.match(refreshBody, /graphics\.TranslateTransform\(center\.X, center\.Y\)/);
-  assert.match(refreshBody, /graphics\.RotateTransform\(rotation\)/);
-  assert.match(refreshBody, /graphics\.DrawArc\(/);
-
   assert.doesNotMatch(barForm, /DrawModeIcon|DrawExpandIcon|HoverTarget\.Mode/);
   assert.doesNotMatch(barForm, /RefreshIconGlyph/);
   assert.doesNotMatch(barForm, /ExpandIconGlyph/);
 });
 
 test('native static controls keep official Windows Fluent glyphs', () => {
-  assert.match(barForm, /SettingsIconGlyph = "\\uE713"/);
   assert.doesNotMatch(barForm, /DockBottomIconGlyph|DockBottom/);
-  assert.match(barForm, /SystemIconVerticalOffset = 1f/);
-  assert.match(barForm, /iconBounds\.Offset\(0, SystemIconVerticalOffset\)/);
   assert.match(barForm, /CreateSystemIconFont\(float size = 14f\)/);
   assert.match(barForm, /new Font\(familyName, size, FontStyle\.Regular, GraphicsUnit\.Pixel\)/);
 });
