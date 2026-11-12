@@ -233,7 +233,7 @@ internal static class GlassDockPainter
             if (!stacked)
             {
                 DrawCornerPercent(graphics, slot, ringBounds, text, labelSize, ring.AccountNumber > 0,
-                    !balanceOnly && (GlassDockLayout.Band(ring.RemainingPercent) == "red" || ring.Warn), light, out chipRight);
+                    !balanceOnly && GlassDockLayout.Band(ring.RemainingPercent) == "red", light, out chipRight);
             }
             else
             {
@@ -266,6 +266,16 @@ internal static class GlassDockPainter
             {
                 DrawPercent(graphics, ring.RemainingPercent, inner, valueBrush, light);
             }
+        }
+
+        if (ring.Warn && !balanceOnly)
+        {
+            // Another group of this provider is nearly exhausted: a small amber dot on the ring's
+            // top-right (45°); the chip and ring keep the colour of the group the ring shows.
+            var radius = ellipse.Width / 2;
+            var center = new PointF(ellipse.X + radius + radius * .7071f, ellipse.Y + radius - radius * .7071f);
+            UiPaint.StatusDot(graphics, center, Math.Max(4.5f, stroke + 1.5f), UiTokens.Warning,
+                light ? Color.FromArgb(235, 255, 255, 255) : Color.FromArgb(220, 12, 14, 20));
         }
 
         if (ring.AccountNumber > 0)

@@ -50,7 +50,11 @@ internal static class PanelCaptures
                 new UsageWindow("gemini-7d", "Gemini · 7d", 1, at.AddDays(4), TimeSpan.FromDays(7)),
                 new UsageWindow("claude-7d", "Claude/GPT · 7d", 96.4, at.AddDays(4), TimeSpan.FromDays(7)),
                 new UsageWindow("claude-5h", "Claude/GPT · 5h", 0, at.AddHours(4), TimeSpan.FromHours(5)),
-            ], null, null, [], UsageFreshness.Current, at, null),
+            ], null, null, [], UsageFreshness.Current, at, null)
+            {
+                // Claude/GPT · 7d is nearly exhausted while the bar shows Argon: the amber-dot case.
+                Warning = true,
+            },
         ]);
         var grok = UsageProviderEngine.Snapshot(UsageProviderRegistry.All.First(p => p.Definition.Id == UsageProviderIds.Grok).Definition,
         [
@@ -61,16 +65,48 @@ internal static class PanelCaptures
                 Period = new UsageSubscriptionPeriod(at.AddDays(-2), at.AddDays(5), "billing", "fixture"),
             },
         ]);
+        var codex = new QuotaSnapshot(
+            [
+                new QuotaCard("codex", ProviderKind.Codex, "Codex", "pro", "#10a37f", true,
+                [
+                    new QuotaWindow("5h", 22, at.AddHours(2), TimeSpan.FromHours(5)),
+                    new QuotaWindow("7d", 38.4, at.AddDays(3), TimeSpan.FromDays(7)),
+                ]),
+            ],
+            [new ProviderHealth(ProviderKind.Codex, true, "current", ProviderHealthCode.Current)],
+            at);
+        BarForm Bar(QuotaSnapshot quota, params UsageProviderSnapshot[] providers)
+        {
+            var form = new BarForm(new AppSettings { Locale = "zh-CN", UseTaskbarRings = true, EnableAnimations = false },
+                quota, renderOnly: true, renderDpi: 144);
+            form.SetUsageBoard(new UsageBoard(providers));
+            form.SetPluginMiniCards(providers.Select(provider => new PluginMiniCardView(provider.ProviderId, provider.DisplayName,
+                UsageProjection.MiniCard(provider, true), new Dictionary<string, string>(StringComparer.Ordinal))).ToArray());
+            return form;
+        }
+        void Hover(BarForm form, string providerId, string name)
+        {
+            using var bitmap = form.RenderGlassRingPopoverForAcceptance(providerId, 144, at);
+            if (bitmap is null) { Console.WriteLine($"no hover for {providerId}"); return; }
+            var path = Path.Combine(directory, $"panel-hover-{name}.png");
+            bitmap.Save(path, ImageFormat.Png);
+            Console.WriteLine(path);
+        }
         foreach (var provider in new[] { antigravity, grok })
         {
-            using var form = new BarForm(new AppSettings { Locale = "zh-CN", UseTaskbarRings = true, EnableAnimations = false },
-                QuotaSnapshot.Empty(at), renderOnly: true, renderDpi: 144);
-            form.SetUsageBoard(new UsageBoard([provider]));
-            form.SetPluginMiniCards([new PluginMiniCardView(provider.ProviderId, provider.DisplayName, UsageProjection.MiniCard(provider, true),
-                new Dictionary<string, string>(StringComparer.Ordinal))]);
-            using var bitmap = form.RenderGlassRingPopoverForAcceptance(provider.ProviderId, 144, at);
-            if (bitmap is null) { Console.WriteLine($"no hover for {provider.ProviderId}"); continue; }
-            var path = Path.Combine(directory, $"panel-hover-{provider.DisplayName.ToLowerInvariant()}.png");
+            using var form = Bar(QuotaSnapshot.Empty(at), provider);
+            Hover(form, provider.ProviderId, provider.DisplayName.ToLowerInvariant());
+        }
+        using (var form = Bar(codex))
+            Hover(form, UsageProviderIds.Codex, "codex");
+
+        // Collapsed bar (offscreen): Codex, Antigravity with the amber "other group low" dot, Grok.
+        using (var bar = Bar(codex, antigravity, grok))
+        {
+            bar.CreateControl();
+            using var bitmap = new Bitmap(bar.ClientSize.Width, bar.ClientSize.Height, PixelFormat.Format32bppPArgb);
+            bar.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+            var path = Path.Combine(directory, "panel-bar-collapsed-warning.png");
             bitmap.Save(path, ImageFormat.Png);
             Console.WriteLine(path);
         }
