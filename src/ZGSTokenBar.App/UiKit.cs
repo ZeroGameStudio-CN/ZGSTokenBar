@@ -328,3 +328,134 @@ internal static class UiPaint
         TextRenderer.DrawText(g, value, font, bounds, valueColor, flags | TextFormatFlags.Right);
     }
 }
+
+/// <summary>
+/// Small line glyphs drawn with GDI+ (never an emoji font), shared by every hover and panel. Each
+/// draws inside <c>bounds</c> (logical pixels, usually 10×10) in one colour; strokes are 1.2 px.
+/// </summary>
+internal static class UiIcons
+{
+    private static Pen Stroke(Color color, float width = 1.2f) => new(color, width)
+    {
+        StartCap = LineCap.Round,
+        EndCap = LineCap.Round,
+        LineJoin = LineJoin.Round,
+    };
+
+    /// <summary>Downward arrow: received traffic.</summary>
+    internal static void ArrowDown(Graphics g, RectangleF bounds, Color color)
+    {
+        using var pen = Stroke(color, 1.3f);
+        var x = bounds.X + bounds.Width / 2;
+        g.DrawLine(pen, x, bounds.Top + 1, x, bounds.Bottom - 1);
+        g.DrawLines(pen, [new PointF(bounds.Left + 1.5f, bounds.Bottom - 4.5f), new PointF(x, bounds.Bottom - 1), new PointF(bounds.Right - 1.5f, bounds.Bottom - 4.5f)]);
+    }
+
+    /// <summary>Upward arrow: sent traffic.</summary>
+    internal static void ArrowUp(Graphics g, RectangleF bounds, Color color)
+    {
+        using var pen = Stroke(color, 1.3f);
+        var x = bounds.X + bounds.Width / 2;
+        g.DrawLine(pen, x, bounds.Bottom - 1, x, bounds.Top + 1);
+        g.DrawLines(pen, [new PointF(bounds.Left + 1.5f, bounds.Top + 4.5f), new PointF(x, bounds.Top + 1), new PointF(bounds.Right - 1.5f, bounds.Top + 4.5f)]);
+    }
+
+    /// <summary>Paired up/down arrows: network traffic in both directions.</summary>
+    internal static void Traffic(Graphics g, RectangleF bounds, Color color)
+    {
+        var half = bounds.Width / 2;
+        ArrowUp(g, new RectangleF(bounds.X - .5f, bounds.Y, half + 1, bounds.Height), color);
+        ArrowDown(g, new RectangleF(bounds.X + half - .5f, bounds.Y, half + 1, bounds.Height), color);
+    }
+
+    /// <summary>Three rising bars: token volume.</summary>
+    internal static void Tokens(Graphics g, RectangleF bounds, Color color)
+    {
+        using var brush = new SolidBrush(color);
+        g.FillRectangle(brush, bounds.Left + 1, bounds.Top + 6, 2, 4);
+        g.FillRectangle(brush, bounds.Left + 4.5f, bounds.Top + 3, 2, 7);
+        g.FillRectangle(brush, bounds.Left + 8, bounds.Top, 2, 10);
+    }
+
+    /// <summary>A small database cylinder: prompt-cache reads.</summary>
+    internal static void Cache(Graphics g, RectangleF bounds, Color color)
+    {
+        using var pen = Stroke(color);
+        var left = bounds.Left + 1;
+        var right = bounds.Right - 1;
+        var width = right - left;
+        g.DrawEllipse(pen, left, bounds.Top + .5f, width, 3);
+        g.DrawLine(pen, left, bounds.Top + 2, left, bounds.Bottom - 2);
+        g.DrawLine(pen, right, bounds.Top + 2, right, bounds.Bottom - 2);
+        g.DrawArc(pen, left, bounds.Top + 3.5f, width, 3, 0, 180);
+        g.DrawArc(pen, left, bounds.Bottom - 3.5f, width, 3, 0, 180);
+    }
+
+    /// <summary>Calendar sheet; <paramref name="today"/> marks the current day with a dot.</summary>
+    internal static void Calendar(Graphics g, RectangleF bounds, Color color, bool today = false)
+    {
+        using var pen = new Pen(color, 1.2f);
+        g.DrawRectangle(pen, bounds.X + .5f, bounds.Y + 1.5f, bounds.Width - 1, bounds.Height - 2);
+        g.DrawLine(pen, bounds.X + .5f, bounds.Y + 4.5f, bounds.Right - .5f, bounds.Y + 4.5f);
+        g.DrawLine(pen, bounds.X + 3, bounds.Y, bounds.X + 3, bounds.Y + 2.5f);
+        g.DrawLine(pen, bounds.Right - 3, bounds.Y, bounds.Right - 3, bounds.Y + 2.5f);
+        if (!today) return;
+        using var dot = new SolidBrush(color);
+        g.FillRectangle(dot, bounds.X + bounds.Width / 2 - 1.25f, bounds.Y + 5.75f, 2.5f, 2.5f);
+    }
+
+    /// <summary>Clock face: a start time or history.</summary>
+    internal static void Clock(Graphics g, RectangleF bounds, Color color)
+    {
+        using var pen = Stroke(color);
+        g.DrawEllipse(pen, bounds.X + .6f, bounds.Y + .6f, bounds.Width - 1.2f, bounds.Height - 1.2f);
+        var center = new PointF(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2);
+        g.DrawLines(pen, [new PointF(center.X, bounds.Y + 2.6f), center, new PointF(bounds.Right - 3, center.Y + 1)]);
+    }
+
+    /// <summary>Rising trend line with an end dot: quota pace.</summary>
+    internal static void Trend(Graphics g, RectangleF bounds, Color color)
+    {
+        using var pen = Stroke(color, 1.25f);
+        g.DrawLines(pen,
+        [
+            new PointF(bounds.Left + 1, bounds.Bottom - 2),
+            new PointF(bounds.Left + 4, bounds.Top + 5),
+            new PointF(bounds.Left + 6, bounds.Top + 7),
+            new PointF(bounds.Right - 1, bounds.Top + 2),
+        ]);
+        using var dot = new SolidBrush(color);
+        g.FillEllipse(dot, bounds.Right - 2.5f, bounds.Top + .5f, 2.5f, 2.5f);
+    }
+
+    /// <summary>Coin: credits.</summary>
+    internal static void Credits(Graphics g, RectangleF bounds, Color color)
+    {
+        using var pen = new Pen(color, 1.2f);
+        g.DrawEllipse(pen, bounds.X + .5f, bounds.Y + .5f, bounds.Width - 1, bounds.Height - 1);
+        g.DrawLine(pen, bounds.X + bounds.Width / 2, bounds.Y + 2.5f, bounds.X + bounds.Width / 2, bounds.Bottom - 2.5f);
+    }
+
+    /// <summary>A card with a circular arrow: reset cards.</summary>
+    internal static void ResetCard(Graphics g, RectangleF bounds, Color color)
+    {
+        using var pen = new Pen(color, 1.2f);
+        var card = new RectangleF(bounds.X + .5f, bounds.Y + 1.5f, bounds.Width - 1, bounds.Height - 3);
+        using (var path = UiPaint.RoundedPath(card, 1.6f)) g.DrawPath(pen, path);
+        g.DrawArc(pen, new RectangleF(card.X + card.Width / 2 - 2.2f, card.Y + card.Height / 2 - 2.2f, 4.4f, 4.4f), -60, 280);
+    }
+
+    /// <summary>Push pin: a pinned popover.</summary>
+    internal static void Pin(Graphics g, RectangleF bounds, Color color)
+    {
+        using var pen = Stroke(color);
+        g.DrawLines(pen,
+        [
+            new PointF(bounds.Left + 4, bounds.Top + 1), new PointF(bounds.Right - 1, bounds.Top + 6),
+            new PointF(bounds.Right - 3, bounds.Top + 6), new PointF(bounds.Left + 5, bounds.Bottom - 2),
+            new PointF(bounds.Left + 2, bounds.Top + 7), new PointF(bounds.Left + 5, bounds.Top + 3),
+            new PointF(bounds.Left + 4, bounds.Top + 1),
+        ]);
+        g.DrawLine(pen, bounds.Left + 4, bounds.Top + 8, bounds.Left + 1, bounds.Bottom - 1);
+    }
+}

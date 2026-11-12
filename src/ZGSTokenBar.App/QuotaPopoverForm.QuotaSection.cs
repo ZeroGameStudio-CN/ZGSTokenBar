@@ -47,7 +47,7 @@ internal sealed partial class QuotaPopoverForm
         var titleRight = chip.X - 6;
         if (content.Pinned)
         {
-            DrawPinIcon(graphics, new RectangleF(chip.X - 17, y + 16, 12, 12));
+            UiIcons.Pin(graphics, new RectangleF(chip.X - 17, y + 16, 12, 12), UiPalette.Slate400);
             titleRight -= 16;
         }
         DrawString(graphics, content.Card.Label, _cardTitleFont, titleBrush,
@@ -80,7 +80,7 @@ internal sealed partial class QuotaPopoverForm
         // Row 1: pace.
         var pace = _text.QuotaPace(content.Pace?.ForDisplay(now), now, content.Window.ResetsAt);
         var hasPace = pace.Right.Length > 0;
-        DrawTrendPaceIcon(graphics, new RectangleF(left, y + 115, 10, 10), hasPace ? CardTeal : CardMuted);
+        UiIcons.Trend(graphics, new RectangleF(left, y + 115, 10, 10), hasPace ? CardTeal : CardMuted);
         DrawString(graphics, pace.Left, _cardRowFont, hasPace ? tealBrush : mutedBrush,
             new RectangleF(left + 16, y + 112, hasPace ? 110 : right - left - 16, 16), StringAlignment.Near);
         DrawString(graphics, hasPace ? pace.Right : "—", _cardRowStrongFont, hasPace ? tealBrush : dimBrush,
@@ -88,13 +88,14 @@ internal sealed partial class QuotaPopoverForm
 
         // Row 2: tokens (label, value) + detail line.
         var tokens = QuotaTokenUsage;
-        DrawTokenIcon(graphics, new RectangleF(left, y + 135, 10, 10), tokens is null ? CardMuted : CardValue);
+        UiIcons.Tokens(graphics, new RectangleF(left, y + 135, 10, 10), tokens is null ? CardMuted : CardValue);
         DrawString(graphics, tokens?.Label ?? (_text.IsChinese ? "Token 用量" : "Tokens"), _cardRowFont, mutedBrush,
             new RectangleF(left + 16, y + 132, 120, 16), StringAlignment.Near);
         DrawString(graphics, tokens?.Value ?? "—", _cardRowStrongFont, tokens is null ? dimBrush : valueBrush,
             new RectangleF(right - 96, y + 132, 96, 16), StringAlignment.Far);
-        DrawString(graphics, tokens?.Detail ?? (_text.IsChinese ? "该服务未提供 Token 统计" : "No token stats for this service"),
-            _cardSmallFont, dimBrush, new RectangleF(left + 16, y + 149, right - left - 16, 12), StringAlignment.Near);
+        // A provider without token stats keeps the row (one geometry for every ring) but only its dash.
+        if (tokens?.Detail is { Length: > 0 } tokenDetail)
+            DrawString(graphics, tokenDetail, _cardSmallFont, dimBrush, new RectangleF(left + 16, y + 149, right - left - 16, 12), StringAlignment.Near);
 
         // Detail rows (CodexBar-style): every window with its own reset, credits, subscription dates.
         var rowY = y + 166 + DetailSectionPadding / 2f;
@@ -121,7 +122,7 @@ internal sealed partial class QuotaPopoverForm
         }
         if (content.Card.Provider == ProviderKind.Codex && content.Card.Credits is { } credits)
         {
-            DrawCreditsIcon(graphics, new RectangleF(left, rowY + 4, 10, 10), credits.HasCredits || credits.Unlimited ? CardValue : CardMuted);
+            UiIcons.Credits(graphics, new RectangleF(left, rowY + 4, 10, 10), credits.HasCredits || credits.Unlimited ? CardValue : CardMuted);
             DrawString(graphics, _text.IsChinese ? "积分" : "Credits", _cardRowFont, mutedBrush,
                 new RectangleF(left + 16, rowY, 90, DetailRowHeight), StringAlignment.Near);
             DrawString(graphics, CreditsText(credits, _text.IsChinese), _cardRowStrongFont,
@@ -133,7 +134,7 @@ internal sealed partial class QuotaPopoverForm
         if (content.Card.Provider == ProviderKind.Codex && content.ResetCards is { } cards)
         {
             var hasCards = cards.Count > 0;
-            DrawResetCardIcon(graphics, new RectangleF(left, rowY + 4, 10, 10), hasCards ? CardTeal : CardMuted);
+            UiIcons.ResetCard(graphics, new RectangleF(left, rowY + 4, 10, 10), hasCards ? CardTeal : CardMuted);
             DrawString(graphics, _text.IsChinese ? "重置卡" : "Reset cards", _cardRowFont, mutedBrush,
                 new RectangleF(left + 16, rowY, 90, DetailRowHeight), StringAlignment.Near);
             DrawString(graphics, ResetCardsText(cards, now, _text.IsChinese), _cardRowStrongFont,
@@ -144,10 +145,10 @@ internal sealed partial class QuotaPopoverForm
         }
         {
             var (label, value) = SubscriptionText(content.Card.Subscription, now, _text.IsChinese);
-            DrawCalendarIcon(graphics, new RectangleF(left, rowY + 4, 10, 10), value is null ? CardMuted : CardValue);
+            UiIcons.Calendar(graphics, new RectangleF(left, rowY + 4, 10, 10), value is null ? CardMuted : CardValue);
             DrawString(graphics, label, _cardRowFont, mutedBrush,
                 new RectangleF(left + 16, rowY, 90, DetailRowHeight), StringAlignment.Near);
-            DrawString(graphics, value ?? (_text.IsChinese ? "来源未提供" : "Not provided"), _cardRowStrongFont,
+            DrawString(graphics, value ?? "—", _cardRowStrongFont,
                 value is null ? dimBrush : valueBrush,
                 new RectangleF(right - 140, rowY, 140, DetailRowHeight), StringAlignment.Far);
             rows++;
@@ -195,16 +196,6 @@ internal sealed partial class QuotaPopoverForm
         return chinese ? $"{count} · {local} 到期" : $"{count} · exp {local}";
     }
 
-    /// <summary>A small card with a circular arrow: the reset-card mark.</summary>
-    private static void DrawResetCardIcon(Graphics graphics, RectangleF bounds, Color color)
-    {
-        using var pen = new Pen(color, 1.2f);
-        var card = new RectangleF(bounds.X + .5f, bounds.Y + 1.5f, bounds.Width - 1, bounds.Height - 3);
-        using (var path = UiPaint.RoundedPath(card, 1.6f)) graphics.DrawPath(pen, path);
-        var arc = RectangleF.Inflate(new RectangleF(card.X + card.Width / 2 - 2.2f, card.Y + card.Height / 2 - 2.2f, 4.4f, 4.4f), 0, 0);
-        graphics.DrawArc(pen, arc, -60, 280);
-    }
-
     internal static (string Label, string? Value) SubscriptionText(UsageSubscriptionPeriod? period, DateTimeOffset now, bool chinese)
     {
         var culture = System.Globalization.CultureInfo.InvariantCulture;
@@ -228,22 +219,6 @@ internal sealed partial class QuotaPopoverForm
             default:
                 return (chinese ? "订阅" : "Subscription", null);
         }
-    }
-
-    private static void DrawCreditsIcon(Graphics graphics, RectangleF bounds, Color color)
-    {
-        using var pen = new Pen(color, 1.2f);
-        graphics.DrawEllipse(pen, bounds.X + .5f, bounds.Y + .5f, bounds.Width - 1, bounds.Height - 1);
-        graphics.DrawLine(pen, bounds.X + bounds.Width / 2, bounds.Y + 2.5f, bounds.X + bounds.Width / 2, bounds.Bottom - 2.5f);
-    }
-
-    private static void DrawCalendarIcon(Graphics graphics, RectangleF bounds, Color color)
-    {
-        using var pen = new Pen(color, 1.2f);
-        graphics.DrawRectangle(pen, bounds.X + .5f, bounds.Y + 1.5f, bounds.Width - 1, bounds.Height - 2);
-        graphics.DrawLine(pen, bounds.X + .5f, bounds.Y + 4.5f, bounds.Right - .5f, bounds.Y + 4.5f);
-        graphics.DrawLine(pen, bounds.X + 3, bounds.Y, bounds.X + 3, bounds.Y + 2.5f);
-        graphics.DrawLine(pen, bounds.Right - 3, bounds.Y, bounds.Right - 3, bounds.Y + 2.5f);
     }
 
     /// <summary>Plan pill (any provider) followed by the account hint.</summary>
@@ -290,11 +265,4 @@ internal sealed partial class QuotaPopoverForm
         "OIDC", "OAUTH", "OAUTH2", "API_KEY", "APIKEY", "API KEY", "SSO", "DEVICE", "BROWSER", "TOKEN",
     };
 
-    private static void DrawTokenIcon(Graphics graphics, RectangleF bounds, Color color)
-    {
-        using var brush = new SolidBrush(color);
-        graphics.FillRectangle(brush, bounds.Left + 1, bounds.Top + 6, 2, 4);
-        graphics.FillRectangle(brush, bounds.Left + 4.5f, bounds.Top + 3, 2, 7);
-        graphics.FillRectangle(brush, bounds.Left + 8, bounds.Top, 2, 10);
-    }
 }

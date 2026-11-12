@@ -411,44 +411,6 @@ internal sealed partial class QuotaPopoverForm : Form
         graphics.Restore(state);
     }
 
-    private static void DrawPinIcon(Graphics graphics, RectangleF bounds)
-    {
-        using var pen = new Pen(UiPalette.Slate400, 1.2f)
-        {
-            StartCap = LineCap.Round,
-            EndCap = LineCap.Round,
-            LineJoin = LineJoin.Round,
-        };
-        graphics.DrawLines(pen,
-        [
-            new PointF(bounds.Left + 4, bounds.Top + 1), new PointF(bounds.Right - 1, bounds.Top + 6),
-            new PointF(bounds.Right - 3, bounds.Top + 6), new PointF(bounds.Left + 5, bounds.Bottom - 2),
-            new PointF(bounds.Left + 2, bounds.Top + 7), new PointF(bounds.Left + 5, bounds.Top + 3),
-            new PointF(bounds.Left + 4, bounds.Top + 1),
-        ]);
-        graphics.DrawLine(pen, bounds.Left + 4, bounds.Top + 8, bounds.Left + 1, bounds.Bottom - 1);
-    }
-
-    private static void DrawTrendPaceIcon(Graphics graphics, RectangleF bounds, Color color)
-    {
-        using var pen = new Pen(color, 1.25f)
-        {
-            StartCap = LineCap.Round,
-            EndCap = LineCap.Round,
-            LineJoin = LineJoin.Round,
-        };
-        var points = new[]
-        {
-            new PointF(bounds.Left + 1, bounds.Bottom - 2),
-            new PointF(bounds.Left + 4, bounds.Top + 5),
-            new PointF(bounds.Left + 6, bounds.Top + 7),
-            new PointF(bounds.Right - 1, bounds.Top + 2),
-        };
-        graphics.DrawLines(pen, points);
-        using var dot = new SolidBrush(color);
-        graphics.FillEllipse(dot, bounds.Right - 2.5f, bounds.Top + .5f, 2.5f, 2.5f);
-    }
-
     private RectangleF BodyBounds() => TaskbarPopoverMath.BodyBounds(
         _tailSide,
         LogicalBodyWidth,

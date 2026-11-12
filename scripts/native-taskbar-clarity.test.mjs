@@ -157,7 +157,7 @@ test('Codex accounts share one Mini area and the dock keeps the Mini height cont
 test('quota popover keeps the pace forecast without the redundant budget row', () => {
   assert.match(popoverForm, /LogicalBodyWidth = 240/);
   assert.match(popoverForm, /new\("Segoe UI Semibold", 10f, FontStyle\.Regular, GraphicsUnit\.Pixel\)/);
-  assert.match(popoverForm, /DrawTrendPaceIcon/);
+  assert.match(popoverForm, /UiIcons\.Trend\(/);
   assert.doesNotMatch(popoverForm, /DrawCyclePaceIcon|DrawBudgetMarker|QuotaCurrentGoal|QuotaCycle/);
   assert.match(popoverForm, /var currentPace = content\.Pace\?\.ForDisplay\(now\)/);
   assert.match(popoverForm, /UiPaint\.ProgressBar\([\s\S]*?UiPalette\.Slate800\)/);
