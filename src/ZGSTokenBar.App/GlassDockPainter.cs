@@ -242,6 +242,10 @@ internal static class GlassDockPainter
             else graphics.DrawArc(ink, ellipse, -90, sweep);
         }
 
+        // Pace tick sits on the ring under the % chip and text, exactly like the arc it marks.
+        if (!balanceOnly && ring.RemainingPercent is > 0 && ring.ExpectedRemaining is { } expected)
+            DrawPaceTick(graphics, ellipse, stroke, expected);
+
         var inner = RectangleF.Inflate(ringBounds, -stroke - 2.5f, -stroke - 2.5f);
         using var valueBrush = new SolidBrush(ValueColor(ring, light));
         var core = RectangleF.Inflate(ringBounds, -stroke - 1f, -stroke - 1f);
@@ -297,12 +301,6 @@ internal static class GlassDockPainter
             var left = Math.Max(ringBounds.Right - width + 2f, float.IsNaN(chipRight) ? 0f : chipRight - 1.5f);
             DrawChip(graphics, left, ringBounds.Bottom + 2.5f, index, labelSize, critical: false, light);
         }
-
-        // Painted last so the even-use mark stays visible when it crosses the lower-left % chip.
-        // The chip is placed not to cover low remaining arcs (they start at 12 o'clock), but the
-        // pace tick can land anywhere on the ring, including under that chip mid-window.
-        if (!balanceOnly && ring.RemainingPercent is > 0 && ring.ExpectedRemaining is { } expected)
-            DrawPaceTick(graphics, ellipse, stroke, expected);
     }
 
     /// <summary>Width of a corner chip holding <paramref name="text"/> at <paramref name="labelSize"/>.</summary>
