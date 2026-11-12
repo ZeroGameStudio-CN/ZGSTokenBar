@@ -12,9 +12,15 @@ public sealed record GlassDockRing(
     string? BalanceText,
     string Accent)
 {
-    /// <summary>Draw the % chip in the warning colour even though this ring's own band is fine
-    /// (Antigravity: another quota group than the pinned one is nearly exhausted).</summary>
+    /// <summary>The provider flagged another quota group than the shown one as nearly exhausted
+    /// (Antigravity). Kept in the model; the ring itself does not draw it.</summary>
     public bool Warn { get; init; }
+
+    /// <summary>
+    /// Where remaining would be under even use of the ring's window (100 − elapsed share), drawn
+    /// as a thin pace tick on the ring; null without a reset time and duration, or after the reset.
+    /// </summary>
+    public double? ExpectedRemaining { get; init; }
 }
 
 /// <summary>A dock slot: a ring or the +N/collapse chip.</summary>

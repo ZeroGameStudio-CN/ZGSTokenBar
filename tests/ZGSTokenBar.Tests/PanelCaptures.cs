@@ -52,7 +52,7 @@ internal static class PanelCaptures
                 new UsageWindow("claude-5h", "Claude/GPT · 5h", 0, at.AddHours(4), TimeSpan.FromHours(5)),
             ], null, null, [], UsageFreshness.Current, at, null)
             {
-                // Claude/GPT · 7d is nearly exhausted while the bar shows Argon: the amber-dot case.
+                // Claude/GPT · 7d is nearly exhausted while the bar shows Argon: kept as the provider warning state.
                 Warning = true,
             },
         ]);
@@ -75,10 +75,11 @@ internal static class PanelCaptures
             ],
             [new ProviderHealth(ProviderKind.Codex, true, "current", ProviderHealthCode.Current)],
             at);
-        BarForm Bar(QuotaSnapshot quota, params UsageProviderSnapshot[] providers)
+        BarForm Bar(QuotaSnapshot quota, params UsageProviderSnapshot[] providers) => BarAt(144, quota, providers);
+        BarForm BarAt(int dpi, QuotaSnapshot quota, params UsageProviderSnapshot[] providers)
         {
             var form = new BarForm(new AppSettings { Locale = "zh-CN", UseTaskbarRings = true, EnableAnimations = false },
-                quota, renderOnly: true, renderDpi: 144);
+                quota, renderOnly: true, renderDpi: dpi);
             form.SetUsageBoard(new UsageBoard(providers));
             form.SetPluginMiniCards(providers.Select(provider => new PluginMiniCardView(provider.ProviderId, provider.DisplayName,
                 UsageProjection.MiniCard(provider, true), new Dictionary<string, string>(StringComparer.Ordinal))).ToArray());
@@ -100,13 +101,15 @@ internal static class PanelCaptures
         using (var form = Bar(codex))
             Hover(form, UsageProviderIds.Codex, "codex");
 
-        // Collapsed bar (offscreen): Codex, Antigravity with the amber "other group low" dot, Grok.
-        using (var bar = Bar(codex, antigravity, grok))
+        // Collapsed bar (offscreen) with amber (Codex 61%), green (Antigravity 80%) and red (Grok 19%)
+        // rings, each carrying its pace tick, at 1x / 1.5x / 2x / 3x.
+        foreach (var dpi in new[] { 96, 144, 192, 288 })
         {
+            using var bar = BarAt(dpi, codex, antigravity, grok);
             bar.CreateControl();
             using var bitmap = new Bitmap(bar.ClientSize.Width, bar.ClientSize.Height, PixelFormat.Format32bppPArgb);
             bar.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
-            var path = Path.Combine(directory, "panel-bar-collapsed-warning.png");
+            var path = Path.Combine(directory, $"panel-bar-collapsed-{dpi}dpi.png");
             bitmap.Save(path, ImageFormat.Png);
             Console.WriteLine(path);
         }

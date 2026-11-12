@@ -85,7 +85,10 @@ internal sealed partial class BarForm
                 remaining,
                 window?.ResetsAt,
                 remaining is null ? balance : null,
-                string.IsNullOrWhiteSpace(card.Accent) ? "#10a37f" : card.Accent);
+                string.IsNullOrWhiteSpace(card.Accent) ? "#10a37f" : card.Accent)
+            {
+                ExpectedRemaining = RingPace(remaining, window),
+            };
             var name = multi ? GlassAccountName(card, ordinal) : card.DisplayLabel;
             items.Add(new GlassItem("card:" + card.Key, ring, name, ProviderLogo(card.Provider), card, window, null));
         }
@@ -114,6 +117,7 @@ internal sealed partial class BarForm
                 // The provider layer flags accounts needing attention outside the headline (e.g. another
                 // Antigravity group running low); the ring's chip shows it.
                 Warn = remaining is not null && ProviderWarning(view.PluginId),
+                ExpectedRemaining = RingPace(remaining, quota?.Window),
             };
             items.Add(quota is { } scoped
                 ? new GlassItem(view.PluginId, ring, view.Title, icon, scoped.Card, scoped.Window, null, icon)
@@ -122,6 +126,10 @@ internal sealed partial class BarForm
 
         return items;
     }
+
+    /// <summary>Pace tick position for a ring: only with a live remaining figure above zero (not exhausted/locked).</summary>
+    private static double? RingPace(double? remaining, QuotaWindow? window) =>
+        remaining is > 0 && window is not null ? QuotaDisplayFormatting.ExpectedRemaining(window, DateTimeOffset.UtcNow) : null;
 
     /// <summary>True when the provider layer flagged any of this provider's accounts (<see cref="UsageAccountSnapshot.Warning"/>).</summary>
     private bool ProviderWarning(string providerId) =>

@@ -9396,6 +9396,20 @@ static void TestQuotaPacePopoverPresentation()
     Equal<double?>(null, QuotaDisplayFormatting.ExpectedRemaining(paceWindow with { Duration = TimeSpan.Zero }, now),
         "a window without a duration has no pace marker");
     Equal(79d, PercentFormat.RemainingValue(79.97), "the rail fills to the floored figure the hover shows");
+    using (var tickBitmap = new Bitmap(40, 40))
+    using (var tickGraphics = Graphics.FromImage(tickBitmap))
+    {
+        tickGraphics.Clear(Color.FromArgb(251, 191, 36));
+        tickGraphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        // 75% expected remaining sits at 9 o'clock (clockwise from 12, like the arc).
+        GlassDockPainter.DrawPaceTick(tickGraphics, new RectangleF(5, 5, 30, 30), 3.2f, 75);
+        var tick = tickBitmap.GetPixel(5, 20);
+        Check(tick.R > 230 && tick.G > 230 && tick.B > 230, $"pace tick reads near-white on an amber ring ({tick})");
+        var dark = tickBitmap.GetPixel(5, 21);
+        Check(dark.GetBrightness() < Color.FromArgb(251, 191, 36).GetBrightness(), $"pace tick carries a dark outline ({dark})");
+        var away = tickBitmap.GetPixel(35, 20);
+        Equal(Color.FromArgb(251, 191, 36).ToArgb(), away.ToArgb(), "the tick is drawn only at the expected position");
+    }
     Equal("Click to pin", en.PinHint, "English pin hint stays concise");
     Equal("Esc / 点击外部", zh.ClosePinnedHint, "Chinese pinned hint stays concise");
     Equal(

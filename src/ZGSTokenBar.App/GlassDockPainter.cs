@@ -184,6 +184,26 @@ internal static class GlassDockPainter
     /// as a watermark, the bold remaining percentage is drawn on top, and the account ordinal is a
     /// small badge on the lower-right.
     /// </summary>
+    /// <summary>
+    /// Thin radial pace tick across the ring stroke at the expected-remaining angle (clockwise from
+    /// 12 o'clock, like the arc): near-white with a dark outline so it reads on green, amber and red.
+    /// </summary>
+    internal static void DrawPaceTick(Graphics graphics, RectangleF ellipse, float stroke, double expectedRemaining)
+    {
+        var angle = (-90d + 360d * Math.Clamp(expectedRemaining, 0, 100) / 100d) * Math.PI / 180d;
+        var (cx, cy) = (ellipse.X + ellipse.Width / 2, ellipse.Y + ellipse.Height / 2);
+        var radius = ellipse.Width / 2;
+        var (dx, dy) = ((float)Math.Cos(angle), (float)Math.Sin(angle));
+        var inner = radius - stroke / 2 - .6f;
+        var outer = radius + stroke / 2 + .6f;
+        var a = new PointF(cx + dx * inner, cy + dy * inner);
+        var b = new PointF(cx + dx * outer, cy + dy * outer);
+        using (var outline = new Pen(Color.FromArgb(200, 10, 12, 18), 2.4f) { StartCap = LineCap.Flat, EndCap = LineCap.Flat })
+            graphics.DrawLine(outline, a, b);
+        using var tick = new Pen(Color.FromArgb(250, 248, 250, 252), 1.1f) { StartCap = LineCap.Flat, EndCap = LineCap.Flat };
+        graphics.DrawLine(tick, new PointF(cx + dx * (inner + .4f), cy + dy * (inner + .4f)), new PointF(cx + dx * (outer - .4f), cy + dy * (outer - .4f)));
+    }
+
     private static void DrawItem(Graphics graphics, Rectangle slot, GlassDockItemVisual item, bool light, GlassRingStyle style,
         float iconRingSize, float labelSize, GlassPercentPosition position = GlassPercentPosition.BottomLeft)
     {
@@ -267,6 +287,9 @@ internal static class GlassDockPainter
                 DrawPercent(graphics, ring.RemainingPercent, inner, valueBrush, light);
             }
         }
+
+        if (!balanceOnly && ring.RemainingPercent is > 0 && ring.ExpectedRemaining is { } expected)
+            DrawPaceTick(graphics, ellipse, stroke, expected);
 
         if (ring.AccountNumber > 0)
         {
