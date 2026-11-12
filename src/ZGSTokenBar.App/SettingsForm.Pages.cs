@@ -15,7 +15,7 @@ internal sealed partial class SettingsForm
         var general = AddPage("general", _text.General);
         general.Add(new ValueSettingRow(_text.Language, _text.LanguageHint, _locale, Scale(196), _theme, _scale));
         general.Add(new ValueSettingRow(_text.AutomaticRefresh, _text.AutomaticRefreshHint, _refreshMinutes, Scale(196), _theme, _scale));
-        general.Add(new SectionNote(_text.IsChinese ? "拖动 Bar 靠近任务栏即可吸附，拖离则浮动；位置会自动保存。" : "Drag the Bar near the taskbar to dock it, or away to float; its position is saved.", _theme, _scale));
+        general.Add(new SectionNote(_text.IsChinese ? "拖动 Bar 靠近任务栏即可吸附，拖离则浮动；位置会自动保存。" : "Drag the Bar near the taskbar to dock it, or away to float; its position is saved.", _theme, _scale, lines: 1));
         general.Add(new ToggleSettingRow(_openAtLogin, _text.StartWithWindows, _text.StartWithWindowsHint, _theme, _scale));
         general.Add(new ToggleSettingRow(_animations, _text.AnimationsTitle, _text.Animations, _theme, _scale));
         general.Add(new ToggleSettingRow(_embedTaskbar, _text.EmbedTaskbarTitle, _text.EmbedTaskbarHint, _theme, _scale));

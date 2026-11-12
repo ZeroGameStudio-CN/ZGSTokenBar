@@ -137,8 +137,9 @@ internal sealed partial class SettingsForm
     {
         private readonly Label _label;
 
-        public SectionNote(string text, SettingsTheme theme, float scale)
-            : base(theme, scale, 56)
+        /// <summary>A note row sized to its text: 18 px per line between the 12 px top and 10 px bottom padding.</summary>
+        public SectionNote(string text, SettingsTheme theme, float scale, int lines = 2)
+            : base(theme, scale, 20 + 18 * Math.Clamp(lines, 1, 3))
         {
             _label = CreateDescription(text, theme, scale);
             Controls.Add(_label);
