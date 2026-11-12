@@ -454,6 +454,7 @@ public static class UsageProviderFixtureTests
             && expanded.Slots[^1].Bounds.Left > expanded.Slots[^2].Bounds.Right,
             "expanding keeps the collapsed rings in place and moves the collapse chip to the far right");
         Check(GlassDockLayout.RingSweep(4) >= 22f && GlassDockLayout.RingSweep(0) == 0f && GlassDockLayout.RingSweep(null) == 0f && GlassDockLayout.PercentText(4.4) == "4%", "small remaining stays legible");
+        Check(GlassDockLayout.RingStart(100) == -90f && Math.Abs(GlassDockLayout.RingStart(50) - 90f) < .01f && Math.Abs(GlassDockLayout.RingStart(75)) < .01f, "remaining starts after clockwise use from 12 o'clock");
         Check(GlassDockLayout.Band(19) == "red" && GlassDockLayout.Band(20) == "amber" && GlassDockLayout.Band(50) == "amber" && GlassDockLayout.Band(51) == "green", "quota bands");
         var quota = GlassDockComposer.FromQuota(
             [

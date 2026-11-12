@@ -9401,13 +9401,13 @@ static void TestQuotaPacePopoverPresentation()
     {
         tickGraphics.Clear(Color.FromArgb(251, 191, 36));
         tickGraphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-        // 75% expected remaining sits at 9 o'clock (clockwise from 12, like the arc).
+        // 75% expected remaining is 25% expected used, at 3 o'clock (consumption clockwise from 12).
         GlassDockPainter.DrawPaceTick(tickGraphics, new RectangleF(5, 5, 30, 30), 3.2f, 75);
-        var tick = tickBitmap.GetPixel(5, 20);
+        var tick = tickBitmap.GetPixel(35, 20);
         Check(tick.R > 230 && tick.G > 230 && tick.B > 230, $"pace tick reads near-white on an amber ring ({tick})");
-        var dark = tickBitmap.GetPixel(5, 21);
+        var dark = tickBitmap.GetPixel(35, 21);
         Check(dark.GetBrightness() < Color.FromArgb(251, 191, 36).GetBrightness(), $"pace tick carries a dark outline ({dark})");
-        var away = tickBitmap.GetPixel(35, 20);
+        var away = tickBitmap.GetPixel(5, 20);
         Equal(Color.FromArgb(251, 191, 36).ToArgb(), away.ToArgb(), "the tick is drawn only at the expected position");
     }
     Equal("Click to pin", en.PinHint, "English pin hint stays concise");
@@ -12695,6 +12695,17 @@ static void TestSharedUiKitGeometry()
     UiPaint.Ring(g, new RectangleF(4, 4, 30, 30), null, Color.White, Color.Gray, 3f);
     UiPaint.Ring(g, new RectangleF(4, 4, 30, 30), 1.5, Color.White, Color.Gray, 3f);
     Check(bitmap.GetPixel(19, 4).A > 0, "the ring paints its track");
+    using (var half = new Bitmap(40, 40))
+    using (var hg = Graphics.FromImage(half))
+    {
+        hg.Clear(Color.Black);
+        hg.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+        // 50% remaining: used occupies 12→6, remaining occupies 6→12 (the left side).
+        UiPaint.Ring(hg, new RectangleF(4, 4, 30, 30), .5, Color.White, Color.FromArgb(40, 40, 40), 3f);
+        var left = half.GetPixel(4, 19);
+        var right = half.GetPixel(33, 19);
+        Check(left.R > 200 && right.R < 120, $"50% remaining sits on the left after clockwise use ({left} vs {right})");
+    }
 }
 
 static void TestPopoverOwnerNeverCyclic()

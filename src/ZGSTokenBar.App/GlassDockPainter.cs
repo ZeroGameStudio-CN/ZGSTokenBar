@@ -185,12 +185,13 @@ internal static class GlassDockPainter
     /// small badge on the lower-right.
     /// </summary>
     /// <summary>
-    /// Thin radial pace tick across the ring stroke at the expected-remaining angle (clockwise from
-    /// 12 o'clock, like the arc): near-white with a dark outline so it reads on green, amber and red.
+    /// Thin radial pace tick across the ring stroke at the expected-used angle (clockwise from
+    /// 12 o'clock, like consumption): near-white with a dark outline so it reads on green, amber and red.
     /// </summary>
     internal static void DrawPaceTick(Graphics graphics, RectangleF ellipse, float stroke, double expectedRemaining)
     {
-        var angle = (-90d + 360d * Math.Clamp(expectedRemaining, 0, 100) / 100d) * Math.PI / 180d;
+        var used = 100d - Math.Clamp(expectedRemaining, 0, 100);
+        var angle = (-90d + 360d * used / 100d) * Math.PI / 180d;
         var (cx, cy) = (ellipse.X + ellipse.Width / 2, ellipse.Y + ellipse.Height / 2);
         var radius = ellipse.Width / 2;
         var (dx, dy) = ((float)Math.Cos(angle), (float)Math.Sin(angle));
@@ -239,7 +240,7 @@ internal static class GlassDockPainter
         {
             using var ink = new Pen(color, stroke) { StartCap = LineCap.Round, EndCap = LineCap.Round };
             if (sweep >= 360f) graphics.DrawEllipse(ink, ellipse);
-            else graphics.DrawArc(ink, ellipse, -90, sweep);
+            else graphics.DrawArc(ink, ellipse, GlassDockLayout.RingStart(ring.RemainingPercent), sweep);
         }
 
         // Pace tick sits on the ring under the % chip and text, exactly like the arc it marks.
@@ -335,7 +336,7 @@ internal static class GlassDockPainter
 
     /// <summary>
     /// The % as a chip on the ring's lower-left, mirroring the index badge on the lower-right.
-    /// Low arcs start at 12 o'clock, so they never sit under it. The chip is a translucent dark
+    /// Low remaining arcs end at 12 o'clock (used grows clockwise from 12), so they never sit under it. The chip is a translucent dark
     /// pill so the provider logo still shows through; the text carries a soft shadow instead of
     /// an opaque fill. The font size is fixed for every value and the chip grows with the text;
     /// the index badge moves right to clear it (the ring gap leaves room for 100%).

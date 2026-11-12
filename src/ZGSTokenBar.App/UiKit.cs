@@ -1,4 +1,5 @@
 using System.Drawing.Drawing2D;
+using ZGSTokenBar.Core;
 
 namespace ZGSTokenBar.App;
 
@@ -290,8 +291,9 @@ internal static class UiPaint
     }
 
     /// <summary>
-    /// Progress ring starting at 12 o'clock, clockwise. <paramref name="bounds"/> is the stroke's
-    /// centre line; the caller owns the smoothing mode.
+    /// Remaining progress ring. Consumption grows clockwise from 12 o'clock; the remaining
+    /// stroke starts after the used share and sweeps back to 12. <paramref name="bounds"/> is
+    /// the stroke's centre line; the caller owns the smoothing mode.
     /// </summary>
     internal static void Ring(Graphics g, RectangleF bounds, double? fraction, Color fill, Color track, float thickness)
     {
@@ -303,7 +305,7 @@ internal static class UiPaint
         if (fraction is not { } value || value <= 0) return;
         using var arc = new Pen(fill, thickness) { StartCap = LineCap.Round, EndCap = LineCap.Round };
         if (value >= 1) g.DrawEllipse(arc, bounds);
-        else g.DrawArc(arc, bounds, -90, (float)(360 * value));
+        else g.DrawArc(arc, bounds, GlassDockLayout.RingStart(value * 100), (float)(360 * value));
     }
 
     /// <summary>Hairline section divider.</summary>
