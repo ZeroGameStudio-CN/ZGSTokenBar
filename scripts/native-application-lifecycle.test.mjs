@@ -6,7 +6,7 @@ import { readPartialType } from './source-files.mjs';
 const program = fs.readFileSync('src/ZGSTokenBar.App/Program.cs', 'utf8');
 const application = readPartialType('src/ZGSTokenBar.App/QuotaApplicationContext.cs', ['SettingsWindowPlacement.cs', 'SettingsChangeDetector.cs']);
 const barForm = readPartialType('src/ZGSTokenBar.App/BarForm.cs');
-const settings = fs.readFileSync('src/ZGSTokenBar.App/SettingsForm.cs', 'utf8');
+const settings = readPartialType('src/ZGSTokenBar.App/SettingsForm.cs');
 const startup = fs.readFileSync('src/ZGSTokenBar.App/StartupManager.cs', 'utf8');
 const hostJobIsolation = fs.readFileSync('src/ZGSTokenBar.App/HostJobLifetimeIsolation.cs', 'utf8');
 const update = fs.readFileSync('src/ZGSTokenBar.App/ReleaseUpdateChecker.cs', 'utf8');

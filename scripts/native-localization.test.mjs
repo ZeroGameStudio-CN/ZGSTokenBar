@@ -7,9 +7,9 @@ const read = (path) => fs.readFileSync(path, 'utf8');
 const settings = read('src/ZGSTokenBar.Core/AppSettings.cs');
 const models = read('src/ZGSTokenBar.Core/Models.cs');
 const text = read('src/ZGSTokenBar.App/NativeText.cs');
-const settingsForm = read('src/ZGSTokenBar.App/SettingsForm.cs');
+const settingsForm = readPartialType('src/ZGSTokenBar.App/SettingsForm.cs');
 const bar = readPartialType('src/ZGSTokenBar.App/BarForm.cs');
-const quota = read('src/ZGSTokenBar.App/QuotaPopoverForm.cs');
+const quota = readPartialType('src/ZGSTokenBar.App/QuotaPopoverForm.cs');
 const systemUsage = read('src/ZGSTokenBar.App/SystemUsagePopoverForm.cs');
 const application = readPartialType('src/ZGSTokenBar.App/QuotaApplicationContext.cs');
 

@@ -4,7 +4,7 @@ import test from 'node:test';
 import { readPartialType } from './source-files.mjs';
 
 const settings = fs.readFileSync('src/ZGSTokenBar.Core/AppSettings.cs', 'utf8');
-const settingsForm = fs.readFileSync('src/ZGSTokenBar.App/SettingsForm.cs', 'utf8');
+const settingsForm = readPartialType('src/ZGSTokenBar.App/SettingsForm.cs');
 const barForm = readPartialType('src/ZGSTokenBar.App/BarForm.cs');
 const appContext = readPartialType('src/ZGSTokenBar.App/QuotaApplicationContext.cs');
 const nativeText = fs.readFileSync('src/ZGSTokenBar.App/NativeText.cs', 'utf8');
