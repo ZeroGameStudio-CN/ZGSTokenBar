@@ -9,7 +9,8 @@ internal sealed class OtherToolsModule : IDisposable
     public const string AntigravityId = UsageProviderIds.Antigravity;
     private readonly BarForm _bar;
     private readonly Action _changed;
-    private readonly System.Windows.Forms.Timer _timer = new() { Interval = 1_000 };
+    private readonly RefreshScheduler _scheduler;
+    internal const string RefreshSource = "usage-providers";
     private readonly HttpClient _http = new(new HttpClientHandler { AllowAutoRedirect = false })
     {
         Timeout = TimeSpan.FromSeconds(20),
@@ -26,17 +27,19 @@ internal sealed class OtherToolsModule : IDisposable
     private bool _refreshing;
     private bool _disposed;
 
-    public OtherToolsModule(BarForm bar, Action changed)
+    public OtherToolsModule(BarForm bar, Action changed, RefreshScheduler scheduler)
     {
         _bar = bar;
         _changed = changed;
+        _scheduler = scheduler;
         _bar.PluginPopoverRequested += OnPopoverRequested;
-        _timer.Tick += (_, _) =>
-        {
-            _timer.Interval = (int)UsageProviderRegistry.RefreshInterval.TotalMilliseconds;
-            _ = RefreshAsync();
-        };
-        _timer.Start();
+        // First read one second after start, then every provider refresh interval (2 min by default).
+        // Per-provider failures and caches (e.g. Antigravity's 10-minute cache) stay in the providers.
+        _scheduler.Add(
+            RefreshSource,
+            () => UsageProviderRegistry.RefreshInterval,
+            async () => { await RefreshAsync().ConfigureAwait(true); return true; },
+            firstDelay: TimeSpan.FromSeconds(1));
     }
 
     public IReadOnlyList<PluginMiniCardView> Cards(bool chinese, Func<string, bool> enabled)
@@ -211,7 +214,7 @@ internal sealed class OtherToolsModule : IDisposable
     public void Dispose()
     {
         _disposed = true;
-        _timer.Dispose();
+        _scheduler.Remove(RefreshSource);
         _http.Dispose();
         _bar.PluginPopoverRequested -= OnPopoverRequested;
         _popup?.Dispose();

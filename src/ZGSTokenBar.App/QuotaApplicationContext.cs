@@ -46,7 +46,10 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
     private readonly System.Windows.Forms.Timer _clockTimer;
     private readonly bool _allowGlobalStartupRegistration;
     private readonly System.Windows.Forms.Timer _confirmationTimer;
-    private readonly System.Windows.Forms.Timer _refreshTimer;
+    /// <summary>Drives the quota, usage-provider and Router refreshes from one timer.</summary>
+    private readonly RefreshScheduler _refreshScheduler = new();
+    internal const string QuotaRefreshSource = "quota-limits";
+    private int _appliedRefreshMinutes;
     private readonly System.Windows.Forms.Timer _providerActivityTimer;
     private readonly System.Windows.Forms.Timer _updateTimer;
     private readonly RegisteredWaitHandle _activationWait;
@@ -112,7 +115,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
             codexAccounts: _codexAccounts,
             activeProviders: _activeProviders);
         _bar.UsageBoardChanged += (_, board) => ObserveUsagePace(board);
-        _otherToolsModule = new OtherToolsModule(_bar, ApplyGenericPluginCards);
+        _otherToolsModule = new OtherToolsModule(_bar, ApplyGenericPluginCards, _refreshScheduler);
         _otherToolsModule.SetAntigravityPrimaryGroup(_settings.AntigravityPrimaryGroup);
         _bar.SetQuotaPaceEstimates(QuotaPaceEstimates(_snapshot, now));
         _bar.SetCodexQuotaTokenSummaries(CodexQuotaTokenSummaries(now));
@@ -236,8 +239,6 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
             _confirmationTimer.Stop();
             _ = RefreshAsync(forceProviderRefresh: true);
         };
-        _refreshTimer = new System.Windows.Forms.Timer();
-        _refreshTimer.Tick += (_, _) => _ = RefreshAsync();
         _providerActivityTimer = new System.Windows.Forms.Timer { Interval = 5_000 };
         _providerActivityTimer.Tick += (_, _) =>
         {
@@ -265,7 +266,8 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         }
         _bar.SyncTaskbarPlacement();
         _routerModule = new(_bar, _pluginHost,
-            () => _settings.IsPluginEnabled(ZGSTokenBar.Plugin.Router.RouterPlugin.Id, false), _shutdown.Token);
+            () => _settings.IsPluginEnabled(ZGSTokenBar.Plugin.Router.RouterPlugin.Id, false), _shutdown.Token,
+            _refreshScheduler);
         _apiServer.Start();
         _pluginEventTask = WatchPluginEventsAsync();
 
@@ -329,7 +331,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _quitting = true;
         _shutdown.Cancel();
         UnsubscribePowerEvents();
-        _refreshTimer.Stop();
+        _refreshScheduler.Dispose();
         _updateTimer.Stop();
         _clockTimer.Stop();
         _confirmationTimer.Stop();
@@ -377,7 +379,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
             _otherToolsModule.Dispose();
             _shutdown.Cancel();
             UnsubscribePowerEvents();
-            _refreshTimer.Dispose();
+            _refreshScheduler.Dispose();
             _providerActivityTimer.Dispose();
             _updateTimer.Dispose();
             _clockTimer.Dispose();

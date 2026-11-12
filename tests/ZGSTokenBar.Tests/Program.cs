@@ -500,6 +500,7 @@ var tests = new (string Name, Action Run)[]
     ("Taskbar popover motion geometry", TestTaskbarPopoverMotionGeometry),
     ("Settings normalization", TestSettingsNormalization),
     ("Legacy Codex display mode key is ignored", TestLegacyCodexDisplayModeKeyIgnored),
+    ("Refresh scheduler intervals and backoff", TestRefreshScheduler),
     ("Settings data directory override", TestSettingsDataDirectoryOverride),
     ("Windows startup registration policy", TestWindowsStartupRegistrationPolicy),
     ("Host job lifetime isolation policy", TestHostJobLifetimeIsolationPolicy),
@@ -10811,6 +10812,49 @@ static void TestLegacyCodexDisplayModeKeyIgnored()
     {
         Directory.Delete(directory, recursive: true);
     }
+}
+
+static void TestRefreshScheduler()
+{
+    var now = new DateTime(2026, 11, 12, 6, 0, 0, DateTimeKind.Utc);
+    using var scheduler = new RefreshScheduler(() => now);
+    var quotaRuns = 0;
+    var routerRuns = 0;
+    var routerOk = false;
+    scheduler.Add("quota", () => TimeSpan.FromMinutes(5), () => { quotaRuns++; return Task.FromResult(true); });
+    scheduler.Add("router", () => TimeSpan.FromSeconds(2), () => { routerRuns++; return Task.FromResult(routerOk); },
+        maxBackoff: TimeSpan.FromSeconds(16));
+    scheduler.RunDue();
+    Equal(0, quotaRuns + routerRuns, "nothing runs before its first interval");
+    now = now.AddSeconds(2);
+    scheduler.RunDue();
+    Equal(1, routerRuns, "the router runs on its own 2 s interval");
+    Equal(0, quotaRuns, "the quota source keeps its own 5 min interval");
+    Equal(now.AddSeconds(4), scheduler.DueTimes["router"], "a failed read backs off to 4 s");
+    now = now.AddSeconds(4);
+    scheduler.RunDue();
+    Equal(now.AddSeconds(8), scheduler.DueTimes["router"], "backoff doubles");
+    now = now.AddSeconds(8); scheduler.RunDue();
+    now = now.AddSeconds(16); scheduler.RunDue();
+    Equal(now.AddSeconds(16), scheduler.DueTimes["router"], "backoff is capped at 16 s");
+    routerOk = true;
+    now = now.AddSeconds(16); scheduler.RunDue();
+    Equal(0, scheduler.Failures("router"), "success resets the backoff");
+    Equal(now.AddSeconds(2), scheduler.DueTimes["router"], "after success the router is back to 2 s");
+    now = now.AddMinutes(5);
+    scheduler.RunDue();
+    Equal(1, quotaRuns, "the quota source runs once per interval");
+    scheduler.Reschedule("quota");
+    Equal(now.AddMinutes(5), scheduler.DueTimes["quota"], "rescheduling restarts the countdown");
+    scheduler.Remove("router");
+    Equal(false, scheduler.DueTimes.ContainsKey("router"), "a removed source no longer runs");
+    var slow = new TaskCompletionSource<bool>();
+    var slowRuns = 0;
+    scheduler.Add("slow", () => TimeSpan.FromSeconds(1), () => { slowRuns++; return slow.Task; });
+    now = now.AddSeconds(1); scheduler.RunDue();
+    now = now.AddSeconds(1); scheduler.RunDue();
+    Equal(1, slowRuns, "a run still in flight is not started twice");
+    slow.SetResult(true);
 }
 
 static void TestWindowsStartupRegistrationPolicy()

@@ -9,29 +9,23 @@ internal sealed class RouterModule : IDisposable
     private readonly ZgsTokenBarHost _host;
     private readonly Func<bool> _enabled;
     private readonly CancellationToken _shutdown;
-    private readonly System.Windows.Forms.Timer _timer = new() { Interval = 2000 };
+    internal const string RefreshSource = "router-monitor";
+    internal static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(2);
+    /// <summary>A failing monitor read backs off 2 → 4 → 8 → 16 s and returns to 2 s on success.</summary>
+    internal static readonly TimeSpan MaxRefreshBackoff = TimeSpan.FromSeconds(16);
+    private readonly RefreshScheduler _scheduler;
     private readonly System.Windows.Forms.Timer _warmup = new() { Interval = 4_000 };
     private RouterMonitorForm? _window;
     private RouterHoverCardForm? _hover;
-    private bool _refreshing;
+    private bool _disposed;
     public bool Visible => _window is { Visible: true, IsDisposed: false };
     public RouterSnapshot? Snapshot => _window is { IsDisposed: false } ? _window.Snapshot : null;
 
-    public RouterModule(BarForm bar, ZgsTokenBarHost host, Func<bool> enabled, CancellationToken shutdown)
+    public RouterModule(BarForm bar, ZgsTokenBarHost host, Func<bool> enabled, CancellationToken shutdown, RefreshScheduler scheduler)
     {
-        (_bar, _host, _enabled, _shutdown) = (bar, host, enabled, shutdown);
+        (_bar, _host, _enabled, _shutdown, _scheduler) = (bar, host, enabled, shutdown, scheduler);
         _bar.PluginPopoverRequested += Requested;
-        _timer.Tick += async (_, _) =>
-        {
-            if (_shutdown.IsCancellationRequested) return;
-            if (!_enabled()) { _bar.HidePluginPopover(); _window?.Close(); return; }
-            if (_refreshing) return;
-            _refreshing = true;
-            try { await _host.RefreshPluginAsync(RouterPlugin.Id, "monitor", _shutdown); }
-            catch (Exception e) when (e is OperationCanceledException or HostCommandException or InvalidOperationException) { }
-            finally { _refreshing = false; }
-        };
-        _timer.Start();
+        _scheduler.Add(RefreshSource, () => RefreshInterval, RefreshMonitorAsync, maxBackoff: MaxRefreshBackoff);
         // Build the (control-heavy) panel once while idle so the first click only has to show it.
         _warmup.Tick += (_, _) =>
         {
@@ -40,6 +34,20 @@ internal sealed class RouterModule : IDisposable
         };
         _warmup.Start();
     }
+    /// <summary>One monitor read; false (back off) when the Router host rejects or fails it.</summary>
+    private async Task<bool> RefreshMonitorAsync()
+    {
+        if (_disposed || _shutdown.IsCancellationRequested) return true;
+        if (!_enabled()) { _bar.HidePluginPopover(); _window?.Close(); return true; }
+        try
+        {
+            await _host.RefreshPluginAsync(RouterPlugin.Id, "monitor", _shutdown);
+            return true;
+        }
+        catch (OperationCanceledException) { return true; }
+        catch (Exception e) when (e is HostCommandException or InvalidOperationException) { return false; }
+    }
+
     private void Requested(object? sender, PluginPopoverRequest request)
     {
         if (request.PluginId != RouterPlugin.Id || !_enabled()) return;
@@ -80,7 +88,9 @@ internal sealed class RouterModule : IDisposable
     public void Dispose()
     {
         _bar.PluginPopoverRequested -= Requested;
-        _timer.Stop(); _timer.Dispose(); _warmup.Stop(); _warmup.Dispose(); _window?.Dispose(); _hover?.Dispose();
+        _disposed = true;
+        _scheduler.Remove(RefreshSource);
+        _warmup.Stop(); _warmup.Dispose(); _window?.Dispose(); _hover?.Dispose();
         // The monitor and all Editor jobs have their own lifetime and ownership.
     }
 }

@@ -130,10 +130,25 @@ internal sealed partial class QuotaApplicationContext
         }
     }
 
+    /// <summary>
+    /// Registers the periodic quota refresh on first call; afterwards restarts its countdown only when
+    /// the interval setting changed (as the old timer's Interval setter did).
+    /// </summary>
     private void ApplyRefreshInterval()
     {
-        _refreshTimer.Interval = Math.Clamp(_settings.RefreshMinutes, 1, 60) * 60_000;
-        _refreshTimer.Enabled = true;
+        var minutes = Math.Clamp(_settings.RefreshMinutes, 1, 60);
+        if (_appliedRefreshMinutes == 0)
+        {
+            _refreshScheduler.Add(
+                QuotaRefreshSource,
+                () => TimeSpan.FromMinutes(Math.Clamp(_settings.RefreshMinutes, 1, 60)),
+                async () => { await RefreshAsync().ConfigureAwait(true); return true; });
+        }
+        else if (minutes != _appliedRefreshMinutes)
+        {
+            _refreshScheduler.Reschedule(QuotaRefreshSource);
+        }
+        _appliedRefreshMinutes = minutes;
     }
 
     private static (long, long, long, long) CodexAccountFilesStamp()
