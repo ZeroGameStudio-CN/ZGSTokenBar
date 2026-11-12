@@ -242,6 +242,10 @@ internal static class GlassDockPainter
             else graphics.DrawArc(ink, ellipse, -90, sweep);
         }
 
+        // Pace tick sits on the ring under the % chip and text, exactly like the arc it marks.
+        if (!balanceOnly && ring.RemainingPercent is > 0 && ring.ExpectedRemaining is { } expected)
+            DrawPaceTick(graphics, ellipse, stroke, expected);
+
         var inner = RectangleF.Inflate(ringBounds, -stroke - 2.5f, -stroke - 2.5f);
         using var valueBrush = new SolidBrush(ValueColor(ring, light));
         var core = RectangleF.Inflate(ringBounds, -stroke - 1f, -stroke - 1f);
@@ -287,9 +291,6 @@ internal static class GlassDockPainter
                 DrawPercent(graphics, ring.RemainingPercent, inner, valueBrush, light);
             }
         }
-
-        if (!balanceOnly && ring.RemainingPercent is > 0 && ring.ExpectedRemaining is { } expected)
-            DrawPaceTick(graphics, ellipse, stroke, expected);
 
         if (ring.AccountNumber > 0)
         {

@@ -45,7 +45,7 @@ internal static class PanelCaptures
         [
             new UsageAccountSnapshot("agy-cli", "someone@example.com", null, "agy-cli",
             [
-                new UsageWindow("argon-7d", "Argon · 7d", 20, at.AddDays(4), TimeSpan.FromDays(7)) { Highlighted = true },
+                new UsageWindow("argon-7d", "Argon · 7d", 20, at.AddDays(6), TimeSpan.FromDays(7)) { Highlighted = true },
                 new UsageWindow("gemini-5h", "Gemini · 5h", 1, at.AddHours(3), TimeSpan.FromHours(5)),
                 new UsageWindow("gemini-7d", "Gemini · 7d", 1, at.AddDays(4), TimeSpan.FromDays(7)),
                 new UsageWindow("claude-7d", "Claude/GPT · 7d", 96.4, at.AddDays(4), TimeSpan.FromDays(7)),
@@ -59,7 +59,7 @@ internal static class PanelCaptures
         var grok = UsageProviderEngine.Snapshot(UsageProviderRegistry.All.First(p => p.Definition.Id == UsageProviderIds.Grok).Definition,
         [
             new UsageAccountSnapshot("grok-account", "user@example.test", "SuperGrok Heavy", "billing",
-                [new UsageWindow("credits", "Weekly", 81, at.AddDays(5), TimeSpan.FromDays(7))],
+                [new UsageWindow("credits", "Weekly", 81, at.AddDays(6.5), TimeSpan.FromDays(7))],
                 null, null, [], UsageFreshness.Current, at, null)
             {
                 Period = new UsageSubscriptionPeriod(at.AddDays(-2), at.AddDays(5), "billing", "fixture"),
@@ -70,7 +70,7 @@ internal static class PanelCaptures
                 new QuotaCard("codex", ProviderKind.Codex, "Codex", "pro", "#10a37f", true,
                 [
                     new QuotaWindow("5h", 22, at.AddHours(2), TimeSpan.FromHours(5)),
-                    new QuotaWindow("7d", 38.4, at.AddDays(3), TimeSpan.FromDays(7)),
+                    new QuotaWindow("7d", 62.4, at.AddDays(1.5), TimeSpan.FromDays(7)),
                 ]),
             ],
             [new ProviderHealth(ProviderKind.Codex, true, "current", ProviderHealthCode.Current)],
@@ -101,7 +101,7 @@ internal static class PanelCaptures
         using (var form = Bar(codex))
             Hover(form, UsageProviderIds.Codex, "codex");
 
-        // Collapsed bar (offscreen) with amber (Codex 61%), green (Antigravity 80%) and red (Grok 19%)
+        // Collapsed bar (offscreen) with amber (Codex 37%), green (Antigravity 80%) and red (Grok 19%)
         // rings, each carrying its pace tick, at 1x / 1.5x / 2x / 3x.
         foreach (var dpi in new[] { 96, 144, 192, 288 })
         {
