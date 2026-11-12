@@ -85,6 +85,13 @@ internal sealed class OtherToolsModule : IDisposable
 
     private UsageDetectContext DetectContext() => new(_paths, ProcessUsageEnvironment.Instance, _enabled(UsageProviderIds.Claude));
 
+    /// <summary>Fetch now (e.g. after resume); a fetch already in flight is not duplicated.</summary>
+    public void RequestRefresh()
+    {
+        if (_disposed) return;
+        _ = RefreshAsync();
+    }
+
     private async Task RefreshAsync()
     {
         if (_refreshing || _disposed) return;
@@ -119,12 +126,6 @@ internal sealed class OtherToolsModule : IDisposable
     }
 
     private readonly UsageCliFallback _cli = new();
-
-    private void RequestRefresh()
-    {
-        if (_disposed) return;
-        _ = RefreshAsync();
-    }
 
     private string _antigravityPrimaryGroup = AntigravityGroups.DefaultPrimary;
 

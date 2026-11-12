@@ -86,6 +86,6 @@ test('system usage refreshes once per Mini clock tick and degrades unavailable m
   assert.match(application, /if \(_bar\.IsTaskbarMode\)[\s\S]*?RefreshSystemUsageOverviewAsync\(\)/);
   assert.doesNotMatch(application, /_bar\.SetSystemUsage\(_systemUsageSampler\.Sample\(\)\)/);
   assert.match(application, /_clockTimer\.Interval = _bar\.IsTaskbarMode \? 1_000 : 30_000/);
-  assert.match(bar, /if \(percent is null\) return "--"/);
+  assert.match(bar, /PercentFormat\.Used\(percent, "--"\)/);
   assert.match(text, /Performance counter unavailable/);
 });

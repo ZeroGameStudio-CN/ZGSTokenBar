@@ -367,27 +367,11 @@ internal sealed partial class BarForm
             (int)Math.Round(from.B + (to.B - from.B) * amount));
     }
 
-    private static string FormatPercent(double percent)
-    {
-        if (percent <= 0) return "0%";
-        if (percent < 1) return "<1%";
-        if (percent < 10) return $"{Math.Round(percent, 1):0.#}%";
-        return $"{Math.Round(percent):0}%";
-    }
+    private static string FormatPercent(double remaining) => PercentFormat.Remaining(remaining);
 
-    private static string CompactUsage(double? percent)
-    {
-        if (percent is null) return "--";
-        if (percent < 1 && percent > 0) return "<1%";
-        return $"{Math.Round(Math.Clamp(percent.Value, 0, 100)):0}%";
-    }
+    private static string CompactUsage(double? percent) => PercentFormat.Used(percent, "--");
 
-    private static string CompactRemaining(double? percent)
-    {
-        if (percent is null) return "—";
-        if (percent < 1 && percent > 0) return "<1%";
-        return $"{Math.Round(Math.Clamp(percent.Value, 0, 100)):0}%";
-    }
+    private static string CompactRemaining(double? percent) => PercentFormat.Remaining(percent);
 
     private static Color UsageColor(double usage) => usage switch
     {

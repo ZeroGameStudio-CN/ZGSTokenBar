@@ -605,8 +605,9 @@ internal static class RouterModuleTests
         Check(bar.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Router).Collapsed, "New Router modules default to the compact icon");
         var compactWidth = bar.Width;
         Check(bar.SetMiniAreaFromCommand(MiniAreaIds.Router, false, null), "Existing module control expands the Router summary");
-        Check(!bar.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Router).Collapsed && bar.Width > compactWidth,
-            "Expanded and compact modes have different useful content widths");
+        // The glass dock keeps Router as a fixed icon slot; the expand preference is still stored.
+        Check(!bar.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Router).Collapsed && bar.Width == compactWidth,
+            "Router expand state is kept while the glass dock keeps its fixed Router slot");
         bar.SetMiniAreaLayouts(new Dictionary<string, MiniAreaLayout> { [MiniAreaIds.Router] = new(false, 48) });
         Check(bar.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Router) is { Collapsed: false, Width: 112 },
             "Saved expanded preference is preserved while old widths are normalized for the new content");

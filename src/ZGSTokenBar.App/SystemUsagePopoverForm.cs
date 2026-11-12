@@ -24,7 +24,7 @@ internal sealed class SystemUsagePopoverForm : Form
 {
     internal const int LogicalBodyWidth = 300;
     internal const int LogicalBodyHeight = 352;
-    private const int LiveRateBodyHeight = 410;
+    private const int LiveRateBodyHeight = 428;
     private const int LogicalTailSize = 8;
     private const int LogicalGap = 3;
     private const int ToolWindowStyle = 0x00000080;
@@ -416,17 +416,7 @@ internal sealed class SystemUsagePopoverForm : Form
         Panel(38, 112);
         TextAt(_metrics[0].Label, _metricLabelFont, muted, 24, 49, 136, 13);
         TextAt(zh ? "3 秒窗口" : "3s window", _subtitleFont, muted, 176, 49, 100, 13, StringAlignment.Far);
-        TextAt(_metrics[0].Value, _liveValueFont, primary, 24, 67, 160, 29);
-        // Today's tokens and today's prompt-cache hit rate sit beside the big number, so the two
-        // numbers people look for first are in the headline card.
-        var cache = _content?.Cache;
-        TextAt(zh ? "今日 Token" : "Today", _subtitleFont, muted, 186, 66, 90, 12, StringAlignment.Far);
-        TextAt(_content?.TodayTokens is { } today ? NativeText.FormatTokenCount(today) : "—", _metricValueFont, primary, 176, 78, 100, 15, StringAlignment.Far);
-        using (var hitBrush = new SolidBrush(RecordedAccent))
-        {
-            TextAt((zh ? "缓存 " : "cache ") + NativeText.FormatCacheHitPercent(cache?.TodayHitPercent),
-                _subtitleFont, cache?.TodayHitPercent is null ? muted : hitBrush, 176, 94, 100, 12, StringAlignment.Far);
-        }
+        TextAt(_metrics[0].Value, _liveValueFont, primary, 24, 67, 252, 29);
         var rail = At(24, 105, 252, 3);
         using var railBrush = new SolidBrush(UiPalette.Slate500.WithAlpha(48));
         graphics.FillRoundedRectangle(railBrush, rail, 1.5f);
@@ -452,8 +442,8 @@ internal sealed class SystemUsagePopoverForm : Form
         TextAt(live?.Generating.ToString() ?? "—", _metricValueFont, primary, 114, 170, 28, 14, StringAlignment.Far);
         TextAt(live?.Tools.ToString() ?? "—", _metricValueFont, primary, 248, 170, 28, 14, StringAlignment.Far);
 
-        // The last 24 hours, hour by hour (UiKit area curve; never on the bar itself). Today's total
-        // and cache rate live in the headline card, so this card is only the curve.
+        // The last 24 hours, hour by hour (UiKit area curve; never on the bar itself). Totals, today
+        // and the cache rate are grouped in the Totals card below, so this card is only the curve.
         Panel(206, TokenSectionHeight - 8);
         var hourly = _content?.HourlyTokens;
         var peak = hourly is { Count: > 0 } ? hourly.Max() : 0;
@@ -480,7 +470,7 @@ internal sealed class SystemUsagePopoverForm : Form
         TextAt("↓ " + _metrics[3].Value, _metricValueFont, receive, 24, 238, 118, 15);
         TextAt("↑ " + _metrics[4].Value, _metricValueFont, send, 166, 238, 110, 15);
 
-        Panel(272, 90);
+        Panel(272, 108);
         var history = snapshot.NetworkHistory;
         TextAt(zh ? "累计" : "Totals", _metricLabelFont, muted, 24, 281, 50, 13);
         var since = history is null ? (zh ? "等待计数" : "Waiting for counters")
@@ -494,16 +484,25 @@ internal sealed class SystemUsagePopoverForm : Form
         TextAt(zh ? "总 Token" : "Token total", _detailFont, primary, 24, 342, 118, 14);
         TextAt(snapshot.CumulativeTokens is { } tokens ? NativeText.FormatTokenCount(tokens) : "—",
             _metricValueFont, primary, 166, 342, 110, 14, StringAlignment.Far);
+        // Token figures live together: total, then today and today's prompt-cache hit rate.
+        var cache = _content?.Cache;
+        TextAt((zh ? "今日 " : "Today ") + (_content?.TodayTokens is { } today ? NativeText.FormatTokenCount(today) : "—"),
+            _subtitleFont, primary, 24, 361, 130, 12);
+        using (var hitBrush = new SolidBrush(RecordedAccent))
+        {
+            TextAt((zh ? "缓存命中 " : "Cache hit ") + NativeText.FormatCacheHitPercent(cache?.TodayHitPercent),
+                _subtitleFont, cache?.TodayHitPercent is null ? muted : hitBrush, 156, 361, 120, 12, StringAlignment.Far);
+        }
 
         var coverage = live is null ? (zh ? "等待会话读数" : "Waiting for chat data")
             : (zh ? $"{live.Sessions} 个 Codex 会话" : $"{live.Sessions} Codex chats");
         var pending = snapshot.LiveRate?.Pending ?? 0;
-        TextAt(coverage, _subtitleFont, muted, 16, 372, 174, 12);
+        TextAt(coverage, _subtitleFont, muted, 16, 390, 174, 12);
         TextAt(pending > 0 ? (zh ? $"{pending} 条待追平" : $"{pending} catching up")
                 : live is null ? (zh ? "待读取" : "Waiting") : (zh ? "已追平" : "Caught up"),
-            _subtitleFont, muted, 190, 372, 94, 12, StringAlignment.Far);
-        TextAt(zh ? "流量仅统计 Bar 运行时 · 与 Token 独立" : "Traffic while Bar runs · independent of tokens", _subtitleFont, muted, 16, 389, 210, 12);
-        TextAt(snapshot.CapturedAt.ToLocalTime().ToString("HH:mm:ss"), _subtitleFont, muted, 230, 389, 54, 12, StringAlignment.Far);
+            _subtitleFont, muted, 190, 390, 94, 12, StringAlignment.Far);
+        TextAt(zh ? "流量仅统计 Bar 运行时 · 与 Token 独立" : "Traffic while Bar runs · independent of tokens", _subtitleFont, muted, 16, 407, 210, 12);
+        TextAt(snapshot.CapturedAt.ToLocalTime().ToString("HH:mm:ss"), _subtitleFont, muted, 230, 407, 54, 12, StringAlignment.Far);
     }
 
     /// <summary>Area curve of hourly tokens: shared accent, faint baseline, the current hour marked.</summary>

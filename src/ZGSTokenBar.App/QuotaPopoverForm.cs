@@ -1681,13 +1681,7 @@ internal sealed class QuotaPopoverForm : Form
 
     private int Scale(int value) => Math.Max(1, (int)Math.Round(value * _scale));
 
-    private static string FormatPercent(double percent)
-    {
-        if (percent <= 0) return "0%";
-        if (percent < 1) return "<1%";
-        if (percent < 10) return $"{Math.Round(percent, 1):0.#}%";
-        return $"{Math.Round(percent):0}%";
-    }
+    private static string FormatPercent(double remaining) => PercentFormat.Remaining(remaining);
 
     private static GraphicsPath RoundedRectangle(RectangleF bounds, float radius) => UiPaint.RoundedPath(bounds, radius);
 

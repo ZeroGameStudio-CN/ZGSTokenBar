@@ -1,4 +1,5 @@
 using System.Text;
+using ZGSTokenBar.Core;
 
 namespace ZGSTokenBar.App;
 
@@ -44,7 +45,7 @@ internal static class AppDiagnostics
             var line = new StringBuilder()
                 .Append(DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz"))
                 .Append(" [").Append(source).Append("] ")
-                .Append(error?.ToString() ?? "(no exception object)")
+                .Append(SecretRedactor.Redact(error?.ToString() ?? "(no exception object)"))
                 .AppendLine()
                 .ToString();
             lock (Gate)
@@ -59,7 +60,7 @@ internal static class AppDiagnostics
                 File.AppendAllText(LogPath, line, Encoding.UTF8);
             }
 
-            System.Diagnostics.Trace.WriteLine("ZGSTokenBar " + source + ": " + error);
+            System.Diagnostics.Trace.WriteLine("ZGSTokenBar " + source + ": " + SecretRedactor.Redact(error?.ToString()));
         }
         catch
         {

@@ -740,12 +740,7 @@ internal sealed class NativeText
         return T($"{prefix} · {value}%/时", $"{prefix} · {value}%/h");
     }
 
-    private static string CompactPercent(double percent)
-    {
-        var clamped = Math.Clamp(percent, 0, 100);
-        if (clamped > 0 && clamped < 1) return "<1%";
-        return $"{clamped.ToString(clamped < 10 ? "0.#" : "0", CultureInfo.InvariantCulture)}%";
-    }
+    private static string CompactPercent(double remaining) => PercentFormat.Remaining(remaining);
 
     private string TrendPrefix(TimeSpan? span, QuotaTrendConfidence confidence)
     {

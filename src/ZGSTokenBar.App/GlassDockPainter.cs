@@ -50,7 +50,14 @@ internal sealed record GlassDockScene(
     GlassRingStyle RingStyle = GlassRingStyle.IconPercentBelow,
     float IconRingSize = GlassDockPainter.DefaultIconRingSize,
     float LabelSize = GlassDockPainter.DefaultLabelSize,
-    GlassPercentPosition PercentPosition = GlassPercentPosition.BottomLeft);
+    GlassPercentPosition PercentPosition = GlassPercentPosition.BottomLeft)
+{
+    /// <summary>
+    /// Per-ring fault isolation: called with the ring's provider id after it paints (null) or when
+    /// it throws; returning true marks the fault handled so one bad ring never blanks the dock.
+    /// </summary>
+    public Func<string, Exception?, bool>? ItemPainted { get; init; }
+}
 
 internal static class GlassDockPainter
 {
@@ -82,7 +89,23 @@ internal static class GlassDockPainter
                 continue;
             }
 
-            if (itemIndex < scene.Items.Count) DrawItem(graphics, slot.Bounds, scene.Items[itemIndex], scene.Light, scene.RingStyle, scene.IconRingSize, scene.LabelSize, scene.PercentPosition);
+            if (itemIndex < scene.Items.Count)
+            {
+                var item = scene.Items[itemIndex];
+                var state = graphics.Save();
+                try
+                {
+                    DrawItem(graphics, slot.Bounds, item, scene.Light, scene.RingStyle, scene.IconRingSize, scene.LabelSize, scene.PercentPosition);
+                    scene.ItemPainted?.Invoke(item.Ring.ProviderId, null);
+                }
+                catch (Exception error) when (scene.ItemPainted?.Invoke(item.Ring.ProviderId, error) == true)
+                {
+                }
+                finally
+                {
+                    graphics.Restore(state);
+                }
+            }
             itemIndex++;
         }
 

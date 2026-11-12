@@ -165,6 +165,16 @@ public static class UsageProviderFixtureTests
         var claudeWeekly = envelope?.Windows.FirstOrDefault(window => window.Id == "Claude and GPT models · 7d" && window.Label == "Claude/GPT · 7d");
         Check(envelope?.Windows.Count == 5 && claudeWeekly is { UsedPercent: > 96.3 and < 96.5 }
             && claudeWeekly.ResetsAt == DateTimeOffset.Parse("2026-11-16T15:42:01Z"), "agy JSON envelope keeps exact fractions and resets per window");
+        Check(PercentFormat.Remaining(91.43) == "91%" && PercentFormat.Remaining(91.99) == "91%"
+            && PercentFormat.Remaining(3.6091) == "3.6%" && PercentFormat.Remaining(0.4) == "<1%"
+            && PercentFormat.Remaining(100) == "100%" && PercentFormat.Remaining(0) == "0%"
+            && PercentFormat.RemainingFromUsed(100 - 71) == "71%" && PercentFormat.Used(8.57) == "8.6%" && PercentFormat.Used(96.39) == "97%"
+            && GlassDockLayout.PercentText(91.43) == UsageFormatting.Percent(91.43) && GlassDockLayout.PercentText(91.99) == "91%"
+            && GlassDockLayout.PercentText(3.61) == "3%",
+            "one percent rule: remaining floors, used ceils, ring and hover agree");
+        var redacted = SecretRedactor.Redact("Authorization: Bearer abcdefghijklmnop {\"access_token\":\"xyz123\"} sk-or-v1-abcdefgh1234 eyJhbGciOi.eyJzdWIiOiIx.c2lnbmF0dXJl ?token=zzz");
+        Check(!redacted.Contains("abcdefghijklmnop") && !redacted.Contains("xyz123") && !redacted.Contains("abcdefgh1234")
+            && !redacted.Contains("eyJzdWIiOiIx") && !redacted.Contains("zzz"), "diagnostics redact tokens");
         var agyWindows = envelope?.Windows ?? [];
         var pinned = AntigravityGroups.Pin(agyWindows, "ARGON");
         Check(pinned.Count == agyWindows.Count && AntigravityGroups.GroupOf(pinned[0]) == "Gemini 4 Argon"

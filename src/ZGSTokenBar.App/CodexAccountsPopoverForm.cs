@@ -474,9 +474,7 @@ internal sealed class CodexAccountsPopoverForm : Form
 
     private static string FormatRemaining(double usedPercent)
     {
-        var remaining = Math.Clamp(100 - usedPercent, 0, 100);
-        if (remaining > 0 && remaining < 1) return "<1%";
-        return $"{Math.Round(remaining).ToString("0", CultureInfo.InvariantCulture)}%";
+        return PercentFormat.RemainingFromUsed(usedPercent);
     }
 
     private RectangleF BodyBounds() => TaskbarPopoverMath.BodyBounds(

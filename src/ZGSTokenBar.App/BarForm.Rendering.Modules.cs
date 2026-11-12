@@ -62,7 +62,7 @@ internal sealed partial class BarForm
                 graphics.FillEllipse(statusBrush, bounds.Right - 7, bounds.Top + 4, 4, 4);
                 using var valueBrush = new SolidBrush(color);
                 var compactText = compactSummary?.Status == "usage-remaining" && compactSummary.Value.Number is { } compactRemaining
-                    ? compactRemaining.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + "%"
+                    ? PercentFormat.Remaining(compactRemaining)
                     : compactSummary is null ? "—" : CompactPluginValue(compactSummary.Value);
                 DrawString(
                     graphics,

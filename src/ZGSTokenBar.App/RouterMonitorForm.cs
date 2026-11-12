@@ -280,7 +280,8 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         }
         _popoverScale = nextScale;
         // Fonts and palette walk every child control; skip it when nothing changed since the last show.
-        if (Math.Abs(_appliedScale - _popoverScale) > .001 || !Equals(_appliedTheme, theme))
+        // ...unless native DPI handling rewrote the fonts while the panel was hidden (same scale).
+        if (Math.Abs(_appliedScale - _popoverScale) > .001 || !Equals(_appliedTheme, theme) || FontsDrifted())
         {
             ApplyLogicalFonts();
             ApplyPalette(theme);
@@ -310,6 +311,11 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         { font = new Font(key.Family, key.Item2, key.Style, GraphicsUnit.Pixel); _scaledFonts[key] = font; }
         return font;
     }
+    /// <summary>Cheap check (no font allocation): does the form's font still match its logical size?</summary>
+    private bool FontsDrifted() =>
+        _logicalFonts.TryGetValue(this, out var logical)
+        && Math.Abs(Font.Size - logical.Pixels * _popoverScale) > .1;
+
     private void ApplyLogicalFonts()
     {
         SuspendLayout();

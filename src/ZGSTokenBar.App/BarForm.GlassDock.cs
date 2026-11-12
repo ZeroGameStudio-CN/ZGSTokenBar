@@ -311,8 +311,31 @@ internal sealed partial class BarForm
             _hoverSystemUsage && !_systemAnchorIsLive,
             _systemUsage.CurrentOutputRate,
             _systemUsage.CurrentOutputRate is not null && _systemUsage.LiveRate?.HasEstimate == true,
-            _hoverSystemUsage && _systemAnchorIsLive);
+            _hoverSystemUsage && _systemAnchorIsLive)
+        {
+            ItemPainted = GlassItemPainted,
+        };
+        _glassFailedThisPaint.Clear();
         GlassDockPainter.Draw(graphics, scene, _badgeFont);
+        // A ring that painted cleanly this time rejoins (its earlier fault is forgotten).
+        _taskbarRenderFailureAreaIds.RemoveWhere(id => id != "bar" && !_glassFailedThisPaint.Contains(id));
+    }
+
+    /// <summary>One ring's paint result: faults are isolated (traced, ring left blank) and clear on the next good paint.</summary>
+    private readonly HashSet<string> _glassFailedThisPaint = new(StringComparer.Ordinal);
+
+    private bool GlassItemPainted(string providerId, Exception? error)
+    {
+        if (error is null)
+        {
+            if (_renderFaultForAcceptance?.Invoke(providerId) is { } fault) throw fault;
+            return true;
+        }
+
+        if (!IsRecoverableRenderException(error)) return false;
+        _glassFailedThisPaint.Add(providerId);
+        TraceTaskbarRenderFailure(providerId, error);
+        return true;
     }
 
     /// <summary>Expands or collapses the overflow. Only a click changes it; the state persists.</summary>

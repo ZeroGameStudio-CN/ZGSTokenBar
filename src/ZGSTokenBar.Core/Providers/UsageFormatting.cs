@@ -45,10 +45,7 @@ public static class UsageFormatting
             : $"Tightest {Percent(tightest)} · {name} · {providers} tools";
     }
 
-    public static string Percent(double? remaining) =>
-        remaining is { } value
-            ? value.ToString("0.#", CultureInfo.InvariantCulture) + "%"
-            : "—";
+    public static string Percent(double? remaining) => PercentFormat.Remaining(remaining);
 
     public static string Compact(UsageProviderSnapshot provider, bool chinese)
     {

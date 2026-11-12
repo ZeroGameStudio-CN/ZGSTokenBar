@@ -141,30 +141,10 @@ internal static class CodexUsageStrategyTests
         bar.CreateControl();
         using var barBitmap = new Bitmap(bar.ClientSize.Width, bar.ClientSize.Height);
         bar.DrawToBitmap(barBitmap, bar.ClientRectangle);
-        Check(!bar.CodexStrategyBoundsForAcceptance.IsEmpty
-            && bar.CodexStrategyBoundsForAcceptance.Right <= barBitmap.Width,
-            "The strategy button is reachable inside the Codex bar module.");
-        var strategyBounds = bar.CodexStrategyBoundsForAcceptance;
-        typeof(BarForm).GetMethod("OnMouseMove", flags)!.Invoke(bar,
-            [new MouseEventArgs(MouseButtons.None, 0, (int)(strategyBounds.Left + 8), (int)(strategyBounds.Top + 8), 0)]);
-        var hoverTimer = (System.Windows.Forms.Timer)typeof(BarForm).GetField("_popoverHoverTimer", flags)!.GetValue(bar)!;
-        Check((bool)typeof(BarForm).GetField("_hoverCodexStrategy", flags)!.GetValue(bar)!
-            && hoverTimer.Enabled
-            && typeof(BarForm).GetField("_hoverHintTarget", flags)!.GetValue(bar)!.ToString() == "None",
-            "Hovering the button schedules the full strategy page without the single-line hint.");
-        if (capture is not null)
-        {
-            bar.DrawToBitmap(barBitmap, bar.ClientRectangle);
-            barBitmap.Save(Path.ChangeExtension(capture, ".bar.png"), System.Drawing.Imaging.ImageFormat.Png);
-        }
-        typeof(BarForm).GetMethod("OnMouseLeave", flags)!.Invoke(bar, [EventArgs.Empty]);
-        Check(!hoverTimer.Enabled, "Leaving before the hover delay cancels the pending page.");
-        var withStrategy = bar.Width;
-        bar.SetCodexAccounts([]);
-        Check(bar.Width == withStrategy - (int)strategyBounds.Width,
-            "The strategy button owns additional width instead of shrinking the quota content.");
-        bar.SetCodexAccounts(accounts);
-        Check(bar.Width == withStrategy, "Refreshing the directory restores the independent button space.");
+        // The glass dock (the only bar renderer) has no separate strategy button: the Codex rings own
+        // the bar width, and the strategy logic below still drives the strategy page and its clock.
+        Check(bar.CodexStrategyBoundsForAcceptance.IsEmpty,
+            "The glass dock keeps the Codex rings without a separate strategy button.");
         var strategyProperty = typeof(BarForm).GetProperty("CodexStrategy", flags)!;
         clock = now.AddSeconds(1);
         bar.RefreshCodexStrategyClock();

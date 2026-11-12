@@ -213,6 +213,17 @@ if (settingsDockCaptureIndex >= 0)
     return 0;
 }
 
+var antigravitySettingsIndex = Array.FindIndex(
+    args,
+    value => string.Equals(value, "--settings-antigravity-capture", StringComparison.OrdinalIgnoreCase));
+if (antigravitySettingsIndex >= 0)
+{
+    RenderSettingsAntigravityCapture(antigravitySettingsIndex + 1 < args.Length
+        ? args[antigravitySettingsIndex + 1]
+        : Path.Combine("artifacts", "native-settings-panel"));
+    return 0;
+}
+
 var settingsCaptureIndex = Array.FindIndex(
     args,
     value => string.Equals(value, "--settings-captures", StringComparison.OrdinalIgnoreCase));
@@ -9340,6 +9351,44 @@ static void RenderSettingsDockCapture(string outputDirectory)
     }
 }
 
+static void RenderSettingsAntigravityCapture(string outputDirectory)
+{
+    Directory.CreateDirectory(outputDirectory);
+    string[] groups = ["Gemini Models", "Claude and GPT models", "Gemini 4 Argon"];
+    foreach (var (locale, primary, groupsOrNone) in new (string, string, string[])[]
+             {
+                 ("zh-CN", "argon", groups), ("en", "argon", groups), ("zh-CN", "auto", groups), ("zh-CN", "argon", []),
+             })
+    {
+        var settings = new AppSettings { Locale = locale, BackgroundPalette = "midnight", AntigravityPrimaryGroup = primary };
+        using var form = new SettingsForm(settings, 144, renderOnly: true, antigravityGroups: groupsOrNone);
+        form.Show();
+        System.Windows.Forms.Application.DoEvents();
+        LayoutControlTree(form);
+        form.SelectPageForRendering("providers");
+        form.SetScrollOffsetForAcceptance(0);
+        System.Windows.Forms.Application.DoEvents();
+        var combo = DescendantControls(form).First(control => "settings.antigravity.primary-group".Equals(control.Tag));
+        var selected = combo.GetType().GetProperty("SelectedItem")!.GetValue(combo)?.ToString() ?? "";
+        var choices = string.Join(" | ", ((System.Collections.IEnumerable)combo.GetType().GetProperty("Items")!.GetValue(combo)!).Cast<object>());
+        Check(primary == "auto" ? selected.Contains("自动") : selected.Contains("Argon"), "the Antigravity primary group dropdown selects " + primary);
+        var row = combo.Parent!;
+        var stack = row.Parent!;
+        var index = stack.Controls.GetChildIndex(row);
+        // Same scroll workaround as the dock capture: show the page from the Antigravity toggle on.
+        for (var i = 0; i < Math.Max(0, index - 1); i++) stack.Controls[i].Visible = false;
+        LayoutControlTree(form);
+        form.SetScrollOffsetForAcceptance(0);
+        System.Windows.Forms.Application.DoEvents();
+        using var bitmap = CaptureSettingsForm(form);
+        form.Hide();
+        var suffix = groupsOrNone.Length == 0 ? "-undetected" : "";
+        var path = Path.GetFullPath(Path.Combine(outputDirectory, $"settings-antigravity-{primary}-{locale}{suffix}-144dpi.png"));
+        bitmap.Save(path, ImageFormat.Png);
+        Console.WriteLine($"{path} {bitmap.Width}x{bitmap.Height} selected={selected} choices={choices}");
+    }
+}
+
 static Bitmap CaptureSettingsForm(SettingsForm form)
 {
     var bitmap = new Bitmap(form.Width, form.Height, PixelFormat.Format32bppPArgb);
@@ -11134,7 +11183,13 @@ static void TestHostJobLifetimeIsolationPolicy()
             true,
             SpinWait.SpinUntil(() => File.Exists(probePath), TimeSpan.FromSeconds(10)),
             "the detached probe completes through the current host job chain");
-        var fields = File.ReadAllText(probePath).Split('|');
+        // The file appears before the probe has finished writing/closing it: read once it is complete.
+        var fields = Array.Empty<string>();
+        SpinWait.SpinUntil(() =>
+        {
+            try { fields = File.ReadAllText(probePath).Split('|'); return fields.Length == 3; }
+            catch (IOException) { return false; }
+        }, TimeSpan.FromSeconds(10));
         Equal(3, fields.Length, "the detached probe reports a complete job state");
         Equal(true, bool.Parse(fields[0]), "the detached probe can query its final job state");
         var finalIsInJob = bool.Parse(fields[1]);
@@ -13057,7 +13112,9 @@ static void TestTaskbarCodexPoolRendering()
         Equal(expectedHeight, poolForm.ClientSize.Height, $"pool mode keeps the 44px logical height at {dpi} DPI");
         Equal(expectedHeight, sevenDayOnlyForm.ClientSize.Height, $"single-row pool keeps the 44px logical height at {dpi} DPI");
         Equal(poolForm.ClientSize.Width, sevenDayOnlyForm.ClientSize.Width, $"single-row pool keeps the 184px area width at {dpi} DPI");
-        Equal(true, accountsForm.ClientSize.Width < poolForm.ClientSize.Width, $"compact account rows stay narrower than the aggregate pool at {dpi} DPI");
+        // The glass dock (the only bar renderer) sizes itself from its rings, so the legacy Mini
+        // display mode no longer changes the bar width; both modes render the same dock.
+        Equal(accountsForm.ClientSize.Width, poolForm.ClientSize.Width, $"glass dock width does not depend on the legacy Codex Mini mode at {dpi} DPI");
         Equal(
             TaskbarMiniLayoutMath.CodexPoolCardWidth,
             poolForm.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Codex).Width,

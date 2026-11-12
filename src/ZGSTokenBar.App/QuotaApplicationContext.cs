@@ -253,6 +253,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _updateTimer.Start();
         ApplyRefreshInterval();
         _providerActivityTimer.Start();
+        SubscribePowerEvents();
         ApplyClockInterval();
 
         _bar.Show();
@@ -329,6 +330,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         if (_quitting) return;
         _quitting = true;
         _shutdown.Cancel();
+        UnsubscribePowerEvents();
         _refreshTimer.Stop();
         _updateTimer.Stop();
         _clockTimer.Stop();
@@ -376,6 +378,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
             _routerModule.Dispose();
             _otherToolsModule.Dispose();
             _shutdown.Cancel();
+            UnsubscribePowerEvents();
             _refreshTimer.Dispose();
             _providerActivityTimer.Dispose();
             _updateTimer.Dispose();

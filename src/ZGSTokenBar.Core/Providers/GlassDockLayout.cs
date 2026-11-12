@@ -110,9 +110,8 @@ public static class GlassDockLayout
         { } value => Math.Max(22f, (float)(360d * Math.Clamp(value, 0, 100) / 100d)),
     };
 
-    public static string PercentText(double? remaining) => remaining is { } value
-        ? Math.Round(Math.Clamp(value, 0, 100)).ToString("0", System.Globalization.CultureInfo.InvariantCulture) + "%"
-        : "—";
+    /// <summary>The ring chip: whole-number floor of the shared percent rule.</summary>
+    public static string PercentText(double? remaining) => PercentFormat.RemainingWhole(remaining);
 
     public static string Band(double? remaining) => remaining switch
     {

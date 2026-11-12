@@ -845,12 +845,7 @@ internal sealed class CodexStrategyPopoverForm : Form
         _ => label,
     };
 
-    private static string Remaining(double? used) => used switch
-    {
-        null => "—",
-        > 99 and < 100 => "<1%",
-        _ => $"{Math.Floor(100 - used.Value):0}%",
-    };
+    private static string Remaining(double? used) => PercentFormat.RemainingFromUsed(used);
 
     private static string Time(DateTimeOffset? timestamp) =>
         timestamp?.ToLocalTime().ToString("MM-dd HH:mm", CultureInfo.InvariantCulture) ?? "—";
