@@ -268,16 +268,6 @@ internal static class GlassDockPainter
             }
         }
 
-        if (ring.Warn && !balanceOnly)
-        {
-            // Another group of this provider is nearly exhausted: a small amber dot on the ring's
-            // top-right (45°); the chip and ring keep the colour of the group the ring shows.
-            var radius = ellipse.Width / 2;
-            var center = new PointF(ellipse.X + radius + radius * .7071f, ellipse.Y + radius - radius * .7071f);
-            UiPaint.StatusDot(graphics, center, Math.Max(4.5f, stroke + 1.5f), UiTokens.Warning,
-                light ? Color.FromArgb(235, 255, 255, 255) : Color.FromArgb(220, 12, 14, 20));
-        }
-
         if (ring.AccountNumber > 0)
         {
             // The account index is the same chip as the % (font size, translucent fill, outline,

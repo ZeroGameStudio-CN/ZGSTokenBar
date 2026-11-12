@@ -230,15 +230,6 @@ internal static class UiPaint
         g.FillPolygon(coreBrush, [new PointF(x, y - core), new PointF(x + core, y), new PointF(x, y + core), new PointF(x - core, y)]);
     }
 
-    /// <summary>Small status dot with a contrasting halo (e.g. the amber "another group is low" mark on a ring).</summary>
-    internal static void StatusDot(Graphics g, PointF center, float diameter, Color fill, Color halo)
-    {
-        using (var haloBrush = new SolidBrush(halo))
-            g.FillEllipse(haloBrush, center.X - diameter / 2 - 1, center.Y - diameter / 2 - 1, diameter + 2, diameter + 2);
-        using var brush = new SolidBrush(fill);
-        g.FillEllipse(brush, center.X - diameter / 2, center.Y - diameter / 2, diameter, diameter);
-    }
-
     /// <summary>Fills a rounded rectangle (a plain rectangle when the radius collapses).</summary>
     internal static void FillRounded(Graphics g, Brush brush, RectangleF bounds, float radius)
     {
