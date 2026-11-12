@@ -56,9 +56,15 @@ public static class AntigravityGroups
         return ordered;
     }
 
+    /// <summary>
+    /// The provider-layer presentation step for Antigravity: pins the preferred group to the front,
+    /// marks the headline group's windows <see cref="UsageWindow.Highlighted"/> (the hover stars them)
+    /// and sets <see cref="UsageAccountSnapshot.Warning"/> when another group runs low (the ring's chip
+    /// warns). The bar only renders these flags.
+    /// </summary>
     public static UsageBoard Pin(UsageBoard board, string? preferred)
     {
-        if (IsAuto(preferred) || board.Providers.All(provider => provider.ProviderId != UsageProviderIds.Antigravity)) return board;
+        if (board.Providers.All(provider => provider.ProviderId != UsageProviderIds.Antigravity)) return board;
         return board with
         {
             Providers = board.Providers
@@ -67,10 +73,31 @@ public static class AntigravityGroups
                     : provider with
                     {
                         Accounts = provider.Accounts
-                            .Select(account => account with { Windows = Pin(account.Windows, preferred) })
+                            .Select(account => Annotate(account with { Windows = Pin(account.Windows, preferred) }))
                             .ToArray(),
                     })
                 .ToArray(),
+        };
+    }
+
+    private static UsageAccountSnapshot Annotate(UsageAccountSnapshot account)
+    {
+        // Same headline the hover uses: the primary window, else the most-used limited window.
+        var headline = UsageFormatting.Primary(account) is { UsedPercent: not null, Unlimited: false } primary
+            ? primary
+            : account.Windows.Where(window => window.UsedPercent is not null && !window.Unlimited)
+                .OrderByDescending(window => window.UsedPercent)
+                .FirstOrDefault();
+        var group = headline is null ? null : GroupOf(headline);
+        return account with
+        {
+            Windows = account.Windows
+                .Select(window => window with
+                {
+                    Highlighted = group is not null && string.Equals(GroupOf(window), group, StringComparison.OrdinalIgnoreCase),
+                })
+                .ToArray(),
+            Warning = OtherGroupLow(account.Windows),
         };
     }
 

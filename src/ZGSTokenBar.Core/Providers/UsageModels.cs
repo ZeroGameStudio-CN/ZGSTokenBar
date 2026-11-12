@@ -25,7 +25,14 @@ public sealed record UsageWindow(
     double? UsedPercent,
     DateTimeOffset? ResetsAt,
     TimeSpan? Duration,
-    bool Unlimited = false);
+    bool Unlimited = false)
+{
+    /// <summary>
+    /// Set by the provider layer: this window belongs to the part of the account the bar ring
+    /// follows (e.g. Antigravity's pinned group), so the hover marks it.
+    /// </summary>
+    public bool Highlighted { get; init; }
+}
 
 public sealed record UsageCredits(
     string Currency,
@@ -64,6 +71,12 @@ public sealed record UsageAccountSnapshot(
     string? ErrorKey)
 {
     public UsageSubscriptionPeriod? Period { get; init; }
+
+    /// <summary>
+    /// Set by the provider layer: something outside the ring's headline window needs attention
+    /// (e.g. another Antigravity group is nearly exhausted), so the ring's chip warns.
+    /// </summary>
+    public bool Warning { get; init; }
 }
 
 public sealed record UsageProviderSnapshot(

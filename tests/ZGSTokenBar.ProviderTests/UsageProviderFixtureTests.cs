@@ -194,6 +194,18 @@ public static class UsageProviderFixtureTests
         Check(groups.Count == 3 && groups.Contains("Gemini 4 Argon")
             && AntigravityGroups.GroupOf(AntigravityGroups.Pin(board, "argon").Providers[0].Accounts[0].Windows[0]) == "Gemini 4 Argon",
             "antigravity board lists detected groups and pins argon");
+        var annotated = AntigravityGroups.Pin(board, "argon").Providers[0].Accounts[0];
+        Check(annotated.Warning
+            && annotated.Windows.Where(window => window.Highlighted).All(window => AntigravityGroups.GroupOf(window) == "Gemini 4 Argon")
+            && annotated.Windows.Any(window => window.Highlighted)
+            && annotated.Windows.Where(window => !window.Highlighted).All(window => AntigravityGroups.GroupOf(window) != "Gemini 4 Argon"),
+            "the provider layer stars the ring's group and flags the account when another group runs low");
+        var claudeAccount = AntigravityGroups.Pin(board, "claude").Providers[0].Accounts[0];
+        Check(!claudeAccount.Warning && claudeAccount.Windows[0].Highlighted,
+            "pinning the low group itself clears the warning");
+        var autoAccount = AntigravityGroups.Pin(board, AntigravityGroups.Auto).Providers[0].Accounts[0];
+        Check(autoAccount.Windows.Any(window => window.Highlighted) && autoAccount.Warning == AntigravityGroups.OtherGroupLow(agyWindows),
+            "auto mode still annotates the headline group and the warning");
         Check(UsageParsers.ParseAntigravity("""{"response":"Gemini Models\tWeekly Limit Remaining\t40%\t2026-11-16T15:46:23Z\n"}""")?.Windows[0].UsedPercent == 60,
             "agy JSON envelope falls back to its text table");
     }

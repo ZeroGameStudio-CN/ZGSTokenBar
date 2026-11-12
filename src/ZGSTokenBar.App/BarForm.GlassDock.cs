@@ -111,8 +111,9 @@ internal sealed partial class BarForm
             var quota = remaining is not null ? GlassPluginQuota(view) : null;
             var ring = new GlassDockRing(view.PluginId, view.Title, view.Title, 0, remaining, quota?.Window.ResetsAt, balance, accent)
             {
-                // Antigravity's ring follows one pinned group; warn on its chip when another group runs low.
-                Warn = remaining is not null && view.PluginId == UsageProviderIds.Antigravity && AntigravityOtherGroupLow(),
+                // The provider layer flags accounts needing attention outside the headline (e.g. another
+                // Antigravity group running low); the ring's chip shows it.
+                Warn = remaining is not null && ProviderWarning(view.PluginId),
             };
             items.Add(quota is { } scoped
                 ? new GlassItem(view.PluginId, ring, view.Title, icon, scoped.Card, scoped.Window, null, icon)
@@ -122,17 +123,18 @@ internal sealed partial class BarForm
         return items;
     }
 
+    /// <summary>True when the provider layer flagged any of this provider's accounts (<see cref="UsageAccountSnapshot.Warning"/>).</summary>
+    private bool ProviderWarning(string providerId) =>
+        _usageBoard.Providers
+            .Where(item => string.Equals(item.ProviderId, providerId, StringComparison.Ordinal))
+            .SelectMany(item => item.Accounts)
+            .Any(account => account.Warning);
+
     /// <summary>
     /// Projects a usage-board provider (Grok, Cursor, …) onto the same quota card/window shape the
     /// Codex and Claude rings use, so hovering its ring opens the shared per-ring quota popover
     /// scoped to that provider's own account instead of the combined usage board.
     /// </summary>
-    private bool AntigravityOtherGroupLow() =>
-        _usageBoard.Providers
-            .Where(item => item.ProviderId == UsageProviderIds.Antigravity)
-            .SelectMany(item => item.Accounts)
-            .Any(account => AntigravityGroups.OtherGroupLow(account.Windows));
-
     private (QuotaCard Card, QuotaWindow Window)? GlassPluginQuota(PluginMiniCardView view)
     {
         var provider = _usageBoard.Providers.FirstOrDefault(item => string.Equals(item.ProviderId, view.PluginId, StringComparison.Ordinal));
@@ -160,12 +162,9 @@ internal sealed partial class BarForm
                     .OrderByDescending(item => item.UsedPercent)
                     .FirstOrDefault();
             if (window is null) return null;
-            // Antigravity: every group is listed; the pinned primary group (the ring's) is starred.
-            var primaryGroup = provider.ProviderId == UsageProviderIds.Antigravity ? AntigravityGroups.GroupOf(window) : null;
+            // Every window is listed; ones the provider highlighted (the ring's group) are starred.
             QuotaWindow Project(UsageWindow item) => new(
-                primaryGroup is not null && string.Equals(AntigravityGroups.GroupOf(item), primaryGroup, StringComparison.OrdinalIgnoreCase)
-                    ? "★ " + item.Label
-                    : item.Label,
+                item.Highlighted ? "★ " + item.Label : item.Label,
                 item.UsedPercent, item.ResetsAt, item.Duration ?? TimeSpan.Zero);
             var quotaWindow = Project(window);
             var windows = new List<QuotaWindow> { quotaWindow };
