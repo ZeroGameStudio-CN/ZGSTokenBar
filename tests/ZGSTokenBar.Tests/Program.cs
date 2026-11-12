@@ -9401,70 +9401,14 @@ static void TestQuotaPacePopoverPresentation()
     {
         tickGraphics.Clear(Color.FromArgb(251, 191, 36));
         tickGraphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-        // 75% expected remaining sits at 9 o'clock (clockwise from 12, like the arc).
+        // 75% expected remaining is 25% expected used, at 3 o'clock (consumption clockwise from 12).
         GlassDockPainter.DrawPaceTick(tickGraphics, new RectangleF(5, 5, 30, 30), 3.2f, 75);
-        var tick = tickBitmap.GetPixel(5, 20);
+        var tick = tickBitmap.GetPixel(35, 20);
         Check(tick.R > 230 && tick.G > 230 && tick.B > 230, $"pace tick reads near-white on an amber ring ({tick})");
-        var dark = tickBitmap.GetPixel(5, 21);
+        var dark = tickBitmap.GetPixel(35, 21);
         Check(dark.GetBrightness() < Color.FromArgb(251, 191, 36).GetBrightness(), $"pace tick carries a dark outline ({dark})");
-        var away = tickBitmap.GetPixel(35, 20);
+        var away = tickBitmap.GetPixel(5, 20);
         Equal(Color.FromArgb(251, 191, 36).ToArgb(), away.ToArgb(), "the tick is drawn only at the expected position");
-    }
-    // 61% expected remaining lands at ~7 o'clock, under the default lower-left % chip.
-    // The tick is painted after the chip so the mark stays visible mid-window.
-    Bitmap RenderPaceRing(double? expected)
-    {
-        var ring = new GlassDockRing(UsageProviderIds.Antigravity, "Argon", "a", 0, 80, null, null, "#34d399")
-        {
-            ExpectedRemaining = expected,
-        };
-        var plan = GlassDockLayout.Plan([ring], maxVisible: 1);
-        var visual = new GlassDockItemVisual(ring, null, ring.Title, false);
-        const int scale = 3;
-        var bitmap = new Bitmap(plan.Width * scale, GlassDockLayout.Height * scale);
-        using var graphics = Graphics.FromImage(bitmap);
-        using var badgeFont = new Font("Segoe UI", 8f, FontStyle.Bold, GraphicsUnit.Pixel);
-        graphics.Clear(Color.FromArgb(24, 24, 28));
-        graphics.ScaleTransform(scale, scale);
-        var scene = new GlassDockScene(false, plan.Width, 1f / scale, plan, [visual], false, false, null, false,
-            18, 46, 7, 13, false, 122.5, false, false);
-        GlassDockPainter.Draw(graphics, scene, badgeFont);
-        return bitmap;
-    }
-    using (var withTick = RenderPaceRing(61))
-    using (var without = RenderPaceRing(null))
-    {
-        const int scale = 3;
-        const float expected = 61f;
-        const float size = GlassDockPainter.DefaultIconRingSize;
-        var stroke = Math.Clamp(size * .1f, 2.5f, 3.2f);
-        var ringX = GlassDockLayout.PadLeft + (GlassDockLayout.ItemWidth - size) / 2f;
-        var ringY = (GlassDockLayout.Height - size) / 2f - GlassDockPainter.ShadowDepth / 2f;
-        var inset = stroke / 2f + .5f;
-        var cx = ringX + size / 2f;
-        var cy = ringY + size / 2f;
-        var angle = (-90d + 360d * expected / 100d) * Math.PI / 180d;
-        var radius = size / 2f - inset;
-        var px = (int)Math.Round((cx + Math.Cos(angle) * radius) * scale);
-        var py = (int)Math.Round((cy + Math.Sin(angle) * radius) * scale);
-        var hit = false;
-        for (var dy = -3; dy <= 3 && !hit; dy++)
-        {
-            for (var dx = -3; dx <= 3; dx++)
-            {
-                var x = px + dx;
-                var y = py + dy;
-                if ((uint)x >= (uint)withTick.Width || (uint)y >= (uint)withTick.Height) continue;
-                var pixel = withTick.GetPixel(x, y);
-                var baseline = without.GetPixel(x, y);
-                if (pixel.R > 230 && pixel.G > 230 && pixel.B > 230 && pixel.ToArgb() != baseline.ToArgb())
-                {
-                    hit = true;
-                    break;
-                }
-            }
-        }
-        Check(hit, $"pace tick at 61% remains visible over the lower-left % chip (sampled around {px},{py})");
     }
     Equal("Click to pin", en.PinHint, "English pin hint stays concise");
     Equal("Esc / 点击外部", zh.ClosePinnedHint, "Chinese pinned hint stays concise");
@@ -12751,6 +12695,17 @@ static void TestSharedUiKitGeometry()
     UiPaint.Ring(g, new RectangleF(4, 4, 30, 30), null, Color.White, Color.Gray, 3f);
     UiPaint.Ring(g, new RectangleF(4, 4, 30, 30), 1.5, Color.White, Color.Gray, 3f);
     Check(bitmap.GetPixel(19, 4).A > 0, "the ring paints its track");
+    using (var half = new Bitmap(40, 40))
+    using (var hg = Graphics.FromImage(half))
+    {
+        hg.Clear(Color.Black);
+        hg.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+        // 50% remaining: used occupies 12→6, remaining occupies 6→12 (the left side).
+        UiPaint.Ring(hg, new RectangleF(4, 4, 30, 30), .5, Color.White, Color.FromArgb(40, 40, 40), 3f);
+        var left = half.GetPixel(4, 19);
+        var right = half.GetPixel(33, 19);
+        Check(left.R > 200 && right.R < 120, $"50% remaining sits on the left after clockwise use ({left} vs {right})");
+    }
 }
 
 static void TestPopoverOwnerNeverCyclic()

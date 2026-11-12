@@ -116,6 +116,16 @@ public static class GlassDockLayout
         { } value => Math.Max(22f, (float)(360d * Math.Clamp(value, 0, 100) / 100d)),
     };
 
+    /// <summary>
+    /// GDI start angle for the remaining stroke. Consumption grows clockwise from 12 o'clock
+    /// (−90°), so the remaining arc begins after the used share and sweeps back to 12.
+    /// </summary>
+    public static float RingStart(double? remaining) => remaining switch
+    {
+        null or <= 0 or >= 100 => -90f,
+        { } value => -90f + (float)(360d * (1d - Math.Clamp(value, 0, 100) / 100d)),
+    };
+
     /// <summary>The ring chip: whole-number floor of the shared percent rule.</summary>
     public static string PercentText(double? remaining) => PercentFormat.RemainingWhole(remaining);
 
