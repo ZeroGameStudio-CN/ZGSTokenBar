@@ -105,6 +105,13 @@ if (args.Length == 2 && args[0] == "--router-history-benchmark")
     return 0;
 }
 
+if (args.Length == 2 && args[0] == "--panel-captures")
+{
+    System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
+    PanelCaptures.Run(args[1]);
+    return 0;
+}
+
 if (args.Length == 2 && args[0] == "--router-capture")
 {
     System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
