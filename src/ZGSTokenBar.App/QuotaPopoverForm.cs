@@ -121,8 +121,18 @@ internal sealed partial class QuotaPopoverForm : Form
     internal static int UnifiedBodyHeight(QuotaPopoverContent content)
     {
         var rows = DetailRowCount(content);
-        return LogicalUnifiedQuotaBodyHeight + (rows == 0 ? 0 : rows * DetailRowHeight + DetailSectionPadding);
+        return LogicalUnifiedQuotaBodyHeight - TokenNoteLift(content) + (rows == 0 ? 0 : rows * DetailRowHeight + DetailSectionPadding);
     }
+
+    /// <summary>Height of the note under the token row; every provider without one closes the gap the same way.</summary>
+    internal const int TokenNoteHeight = 17;
+
+    /// <summary>The token row carries a note only with a recorded Codex token observation.</summary>
+    internal static bool HasTokenNote(QuotaPopoverContent content) =>
+        content.Card is { Provider: ProviderKind.Codex, IsService: false }
+        && content.CodexQuotaTokens is { HasCurrentObservation: true, CurrentObservedTokens: >= 0 };
+
+    private static int TokenNoteLift(QuotaPopoverContent content) => HasTokenNote(content) ? 0 : TokenNoteHeight;
 
     /// <summary>Windows listed under the hero: every window when there is more than one (each with its reset).</summary>
     internal static IReadOnlyList<QuotaWindow> DetailWindows(QuotaCard card) =>

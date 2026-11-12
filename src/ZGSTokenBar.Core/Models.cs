@@ -600,6 +600,17 @@ public static class TaskbarMiniPopoverMath
 
 public static class QuotaDisplayFormatting
 {
+    /// <summary>
+    /// Remaining percent the window would show now if it were used evenly from its start to its
+    /// reset (100 − elapsed share), or null without a reset time and duration.
+    /// </summary>
+    public static double? ExpectedRemaining(QuotaWindow window, DateTimeOffset now)
+    {
+        if (window.ResetsAt is not { } reset || window.Duration <= TimeSpan.Zero || reset <= now) return null;
+        var elapsed = (now - (reset - window.Duration)).TotalMilliseconds / window.Duration.TotalMilliseconds;
+        return 100 - Math.Clamp(elapsed, 0, 1) * 100;
+    }
+
     public static DateTimeOffset? WeeklyBlockReset(
         QuotaCard card,
         QuotaWindow window,

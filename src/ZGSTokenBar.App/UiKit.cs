@@ -93,6 +93,7 @@ internal static class UiPalette
     internal static readonly Color Violet400 = Color.FromArgb(167, 139, 250);
     internal static readonly Color Emerald400 = Color.FromArgb(52, 211, 153);
     internal static readonly Color Emerald600 = Color.FromArgb(5, 150, 105);
+    internal static readonly Color Amber200 = Color.FromArgb(253, 230, 138);
     internal static readonly Color Amber400 = Color.FromArgb(251, 191, 36);
     internal static readonly Color Rose400 = Color.FromArgb(251, 113, 133);
     internal static readonly Color Red600 = Color.FromArgb(220, 38, 38);
@@ -211,6 +212,31 @@ internal static class UiPaint
         var width = Math.Max(minFill, (float)(bounds.Width * Math.Clamp(value, 0, 1)));
         using var active = new SolidBrush(fill);
         FillRounded(g, active, new RectangleF(bounds.X, bounds.Y, width, bounds.Height), radius);
+    }
+
+    /// <summary>
+    /// Expected-usage marker on a progress rail: a small pale-amber diamond with a dark core at
+    /// <paramref name="fraction"/> of the width (where the fill would end if used evenly).
+    /// </summary>
+    internal static void PaceMarker(Graphics g, RectangleF rail, double fraction)
+    {
+        var x = rail.X + rail.Width * (float)Math.Clamp(fraction, 0, 1);
+        var y = rail.Y + rail.Height / 2;
+        var half = rail.Height / 2 + .75f;
+        var core = half * .4f;
+        using var brush = new SolidBrush(UiPalette.Amber200);
+        using var coreBrush = new SolidBrush(UiPalette.Slate800);
+        g.FillPolygon(brush, [new PointF(x, y - half), new PointF(x + half, y), new PointF(x, y + half), new PointF(x - half, y)]);
+        g.FillPolygon(coreBrush, [new PointF(x, y - core), new PointF(x + core, y), new PointF(x, y + core), new PointF(x - core, y)]);
+    }
+
+    /// <summary>Small status dot with a contrasting halo (e.g. the amber "another group is low" mark on a ring).</summary>
+    internal static void StatusDot(Graphics g, PointF center, float diameter, Color fill, Color halo)
+    {
+        using (var haloBrush = new SolidBrush(halo))
+            g.FillEllipse(haloBrush, center.X - diameter / 2 - 1, center.Y - diameter / 2 - 1, diameter + 2, diameter + 2);
+        using var brush = new SolidBrush(fill);
+        g.FillEllipse(brush, center.X - diameter / 2, center.Y - diameter / 2, diameter, diameter);
     }
 
     /// <summary>Fills a rounded rectangle (a plain rectangle when the radius collapses).</summary>

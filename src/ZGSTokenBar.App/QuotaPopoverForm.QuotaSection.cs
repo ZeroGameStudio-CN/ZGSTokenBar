@@ -73,8 +73,13 @@ internal sealed partial class QuotaPopoverForm
             new RectangleF(right - 140, y + 70, 140, 12), StringAlignment.Far);
 
         // Progress rail.
-        UiPaint.ProgressBar(graphics, new RectangleF(left, y + 88, right - left, 6),
-            remaining / 100, valueColor, Color.White.WithAlpha(18), minFill: 6);
+        // The rail fills to the figure shown (floored like the hero %), and a small diamond marks
+        // where remaining would be now if the window were used evenly (100 − elapsed share).
+        var rail = new RectangleF(left, y + 88, right - left, 6);
+        UiPaint.ProgressBar(graphics, rail, remaining is { } shown ? PercentFormat.RemainingValue(shown) / 100 : null,
+            valueColor, Color.White.WithAlpha(18), minFill: 6);
+        if (!blocked && remaining is not null && QuotaDisplayFormatting.ExpectedRemaining(content.Window, now) is { } expected)
+            UiPaint.PaceMarker(graphics, rail, expected / 100);
         graphics.DrawLine(hairline, left, y + 104.5f, right, y + 104.5f);
 
         // Row 1: pace.
@@ -94,13 +99,14 @@ internal sealed partial class QuotaPopoverForm
         DrawString(graphics, tokens?.Value ?? "—", _cardRowStrongFont, tokens is null ? dimBrush : valueBrush,
             new RectangleF(right - 96, y + 132, 96, 16), StringAlignment.Far);
         // A provider without token stats keeps the row (one geometry for every ring) but only its dash.
-        if (tokens?.Detail is { Length: > 0 } tokenDetail)
+        if (HasTokenNote(content) && tokens?.Detail is { Length: > 0 } tokenDetail)
             DrawString(graphics, tokenDetail, _cardSmallFont, dimBrush, new RectangleF(left + 16, y + 149, right - left - 16, 12), StringAlignment.Near);
 
         // Detail rows (CodexBar-style): every window with its own reset, credits, subscription dates.
-        var rowY = y + 166 + DetailSectionPadding / 2f;
+        var lift = TokenNoteLift(content);
+        var rowY = y + 166 - lift + DetailSectionPadding / 2f;
         var rows = 0;
-        if (DetailRowCount(content) > 0) graphics.DrawLine(hairline, left, y + 166.5f, right, y + 166.5f);
+        if (DetailRowCount(content) > 0) graphics.DrawLine(hairline, left, y + 166.5f - lift, right, y + 166.5f - lift);
         foreach (var detail in DetailWindows(content.Card))
         {
             var detailUsed = detail.UsedPercent is { } value ? Math.Clamp(value, 0, 100) : (double?)null;
@@ -153,7 +159,7 @@ internal sealed partial class QuotaPopoverForm
                 new RectangleF(right - 140, rowY, 140, DetailRowHeight), StringAlignment.Far);
             rows++;
         }
-        var footerY = y + (UnifiedBodyHeight(content) - LogicalUnifiedQuotaBodyHeight);
+        var footerY = y + (UnifiedBodyHeight(content) - LogicalUnifiedQuotaBodyHeight);  // includes the token-note lift
 
         // Footer.
         graphics.DrawLine(hairline, left, footerY + 166.5f, right, footerY + 166.5f);

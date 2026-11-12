@@ -9372,12 +9372,30 @@ static void TestQuotaPacePopoverPresentation()
             using var missing = popover.RenderForTest(content, zh, logo, clock, dpi, now);
             using var observed = popover.RenderForTest(content with { CodexQuotaTokens = capacity }, en, logo, clock, dpi, now);
             var unified = new Size(240 * dpi / 96, (QuotaPopoverForm.UnifiedBodyHeight(content) + 8) * dpi / 96);
+            var withNote = new Size(240 * dpi / 96, (QuotaPopoverForm.UnifiedBodyHeight(content with { CodexQuotaTokens = capacity }) + 8) * dpi / 96);
             Equal(unified, missing.Size,
                 $"{dpi} DPI quota without observations keeps the shared card geometry");
-            Equal(unified, observed.Size,
-                $"{dpi} DPI observed usage uses the same card geometry as every provider");
+            Equal(withNote, observed.Size,
+                $"{dpi} DPI observed usage adds only the token note to the shared geometry");
         }
+        Check(!QuotaPopoverForm.HasTokenNote(content), "no token observation means no note under the token row");
+        Check(QuotaPopoverForm.HasTokenNote(content with { CodexQuotaTokens = capacity }), "a Codex token observation carries its note");
+        Equal(QuotaPopoverForm.TokenNoteHeight,
+            QuotaPopoverForm.UnifiedBodyHeight(content with { CodexQuotaTokens = capacity }) - QuotaPopoverForm.UnifiedBodyHeight(content),
+            "providers without a token note collapse exactly the note height, leaving no blank band");
     }
+    var paceWindow = new QuotaWindow("7d", 40, now.AddDays(3.5), TimeSpan.FromDays(7));
+    Equal(50d, Math.Round(QuotaDisplayFormatting.ExpectedRemaining(paceWindow, now)!.Value, 6),
+        "half-way through a 7d window, even usage leaves 50% remaining");
+    Equal(100d, QuotaDisplayFormatting.ExpectedRemaining(paceWindow with { ResetsAt = now.AddDays(8) }, now)!.Value,
+        "before the window starts the expected remaining stays at 100%");
+    Equal<double?>(null, QuotaDisplayFormatting.ExpectedRemaining(paceWindow with { ResetsAt = null }, now),
+        "no reset time means no expected-usage marker");
+    Equal<double?>(null, QuotaDisplayFormatting.ExpectedRemaining(paceWindow with { ResetsAt = now.AddMinutes(-1) }, now),
+        "a passed reset hides the marker until the next window is read");
+    Equal<double?>(null, QuotaDisplayFormatting.ExpectedRemaining(paceWindow with { Duration = TimeSpan.Zero }, now),
+        "a window without a duration has no pace marker");
+    Equal(79d, PercentFormat.RemainingValue(79.97), "the rail fills to the floored figure the hover shows");
     Equal("Click to pin", en.PinHint, "English pin hint stays concise");
     Equal("Esc / 点击外部", zh.ClosePinnedHint, "Chinese pinned hint stays concise");
     Equal(
