@@ -1139,8 +1139,8 @@ internal sealed class SettingsForm : Form
     private string AntigravityGroupTitle => _text.IsChinese ? "Antigravity 主分组" : "Antigravity primary group";
 
     private string AntigravityGroupHint => _text.IsChinese
-        ? "Bar 圆环跟随的配额组；其他组接近用完时百分比角标变为警告色"
-        : "Quota group the Bar ring follows; the % chip turns to the warning colour when another group runs low";
+        ? "圆环跟随此组；其他组快用完时角标变色"
+        : "Ring follows this group; chip warns if another runs low";
 
     private sealed record CodexMiniDisplayModeChoice(string Mode, string Label)
     {
