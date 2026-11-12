@@ -210,7 +210,7 @@ internal static class GlassDockPainter
             if (!stacked)
             {
                 DrawCornerPercent(graphics, slot, ringBounds, text, labelSize, ring.AccountNumber > 0,
-                    !balanceOnly && GlassDockLayout.Band(ring.RemainingPercent) == "red", light, out chipRight);
+                    !balanceOnly && (GlassDockLayout.Band(ring.RemainingPercent) == "red" || ring.Warn), light, out chipRight);
             }
             else
             {

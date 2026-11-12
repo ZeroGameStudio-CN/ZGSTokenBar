@@ -110,7 +110,11 @@ internal sealed partial class BarForm
             var accent = view.Card.AccentToken is { Length: 7 } token && token[0] == '#' ? token : "#8b5cf6";
             var icon = GlassPluginIcon(view);
             var quota = remaining is not null ? GlassPluginQuota(view) : null;
-            var ring = new GlassDockRing(view.PluginId, view.Title, view.Title, 0, remaining, quota?.Window.ResetsAt, balance, accent);
+            var ring = new GlassDockRing(view.PluginId, view.Title, view.Title, 0, remaining, quota?.Window.ResetsAt, balance, accent)
+            {
+                // Antigravity's ring follows one pinned group; warn on its chip when another group runs low.
+                Warn = remaining is not null && view.PluginId == UsageProviderIds.Antigravity && AntigravityOtherGroupLow(),
+            };
             items.Add(quota is { } scoped
                 ? new GlassItem(view.PluginId, ring, view.Title, icon, scoped.Card, scoped.Window, null, icon)
                 : new GlassItem(view.PluginId, ring, view.Title, icon, null, null, view));
@@ -124,6 +128,12 @@ internal sealed partial class BarForm
     /// Codex and Claude rings use, so hovering its ring opens the shared per-ring quota popover
     /// scoped to that provider's own account instead of the combined usage board.
     /// </summary>
+    private bool AntigravityOtherGroupLow() =>
+        _usageBoard.Providers
+            .Where(item => item.ProviderId == UsageProviderIds.Antigravity)
+            .SelectMany(item => item.Accounts)
+            .Any(account => AntigravityGroups.OtherGroupLow(account.Windows));
+
     private (QuotaCard Card, QuotaWindow Window)? GlassPluginQuota(PluginMiniCardView view)
     {
         var provider = _usageBoard.Providers.FirstOrDefault(item => string.Equals(item.ProviderId, view.PluginId, StringComparison.Ordinal));
@@ -151,7 +161,13 @@ internal sealed partial class BarForm
                     .OrderByDescending(item => item.UsedPercent)
                     .FirstOrDefault();
             if (window is null) return null;
-            static QuotaWindow Project(UsageWindow item) => new(item.Label, item.UsedPercent, item.ResetsAt, item.Duration ?? TimeSpan.Zero);
+            // Antigravity: every group is listed; the pinned primary group (the ring's) is starred.
+            var primaryGroup = provider.ProviderId == UsageProviderIds.Antigravity ? AntigravityGroups.GroupOf(window) : null;
+            QuotaWindow Project(UsageWindow item) => new(
+                primaryGroup is not null && string.Equals(AntigravityGroups.GroupOf(item), primaryGroup, StringComparison.OrdinalIgnoreCase)
+                    ? "★ " + item.Label
+                    : item.Label,
+                item.UsedPercent, item.ResetsAt, item.Duration ?? TimeSpan.Zero);
             var quotaWindow = Project(window);
             var windows = new List<QuotaWindow> { quotaWindow };
             windows.AddRange(account.Windows.Where(item => !ReferenceEquals(item, window) && !item.Unlimited && item.UsedPercent is not null).Select(Project));

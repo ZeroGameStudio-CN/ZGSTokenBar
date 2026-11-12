@@ -58,6 +58,7 @@ internal sealed class SettingsForm : Form
     private readonly SettingsComboBox _refreshMinutes;
     private readonly SettingsComboBox _locale;
     private readonly SettingsComboBox _codexDisplayMode;
+    private readonly SettingsComboBox _antigravityGroup;
     private readonly PaletteGrid _paletteGrid;
     private readonly Dictionary<string, PaletteChoiceButton> _backgroundPaletteButtons = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ToggleSwitch> _externalPluginToggles = new(StringComparer.Ordinal);
@@ -82,7 +83,8 @@ internal sealed class SettingsForm : Form
         bool renderOnly = false,
         Rectangle? renderWorkingArea = null,
         IReadOnlyList<PluginStatus>? plugins = null,
-        IReadOnlyList<DockVisibilityEntry>? dockItems = null)
+        IReadOnlyList<DockVisibilityEntry>? dockItems = null,
+        IReadOnlyList<string>? antigravityGroups = null)
     {
         if (!renderOnly && renderWorkingArea is not null)
         {
@@ -154,6 +156,35 @@ internal sealed class SettingsForm : Form
             .Cast<RefreshChoice>()
             .FirstOrDefault(choice => choice.Minutes == settings.RefreshMinutes)
             ?? _refreshMinutes.Items[0];
+
+        _antigravityGroup = CreateComboBox(AntigravityGroupTitle, AntigravityGroupHint);
+        _antigravityGroup.Tag = "settings.antigravity.primary-group";
+        {
+            var current = string.IsNullOrWhiteSpace(settings.AntigravityPrimaryGroup)
+                ? AntigravityGroups.DefaultPrimary
+                : settings.AntigravityPrimaryGroup.Trim();
+            var auto = new AntigravityGroupChoice(AntigravityGroups.Auto, _text.IsChinese ? "自动（剩余最多的组）" : "Auto (most remaining)");
+            _antigravityGroup.Items.Add(auto);
+            AntigravityGroupChoice? selected = AntigravityGroups.IsAuto(current) ? auto : null;
+            foreach (var group in antigravityGroups ?? [])
+            {
+                // The group that matches the saved value keeps that value ("argon"), so opening
+                // Settings and saving never rewrites it.
+                var matches = selected is null && group.Contains(current, StringComparison.OrdinalIgnoreCase);
+                var choice = new AntigravityGroupChoice(matches ? current : group, group);
+                _antigravityGroup.Items.Add(choice);
+                if (matches) selected = choice;
+            }
+            if (selected is null)
+            {
+                // Not detected yet (Antigravity off or not read): keep the saved value selectable.
+                selected = new AntigravityGroupChoice(current, string.Equals(current, AntigravityGroups.DefaultPrimary, StringComparison.OrdinalIgnoreCase)
+                    ? (_text.IsChinese ? "Argon（默认，未检测到）" : "Argon (default, not detected)")
+                    : current);
+                _antigravityGroup.Items.Add(selected);
+            }
+            _antigravityGroup.SelectedItem = selected;
+        }
 
         _codexDisplayMode = CreateComboBox(_text.CodexDisplayMode, _text.CodexDisplayModeHint);
         _codexDisplayMode.Tag = "settings.codex.display-mode";
@@ -344,6 +375,7 @@ internal sealed class SettingsForm : Form
         _locale.SelectedIndexChanged += (_, _) => RefreshDirtyState();
         _refreshMinutes.SelectedIndexChanged += (_, _) => RefreshDirtyState();
         _codexDisplayMode.SelectedIndexChanged += (_, _) => RefreshDirtyState();
+        _antigravityGroup.SelectedIndexChanged += (_, _) => RefreshDirtyState();
 
         UpdateCodexDependencies(initializing: true);
         RefreshDirtyState();
@@ -470,6 +502,7 @@ internal sealed class SettingsForm : Form
             _text.IsChinese ? "读取本机 Grok 登录的套餐额度和预付余额" : "Reads the local Grok sign-in for plan quota and prepaid balance", _theme, _scale));
         providers.Add(new ToggleSettingRow(_antigravity, "Antigravity",
             _text.IsChinese ? "复用本机登录，读取模型剩余额度" : "Uses the local sign-in to read model quota", _theme, _scale));
+        providers.Add(new ValueSettingRow(AntigravityGroupTitle, AntigravityGroupHint, _antigravityGroup, Scale(196), _theme, _scale));
         foreach (var (id, toggle) in _usageProviderToggles)
         {
             var name = UsageProviderRegistry.Find(id)?.Definition.DisplayName ?? id;
@@ -903,6 +936,7 @@ internal sealed class SettingsForm : Form
             CodexMiniDisplayMode = (_codexDisplayMode.SelectedItem as CodexMiniDisplayModeChoice)?.Mode
                 ?? _original.CodexMiniDisplayMode,
             BackgroundPalette = _backgroundPalette,
+            AntigravityPrimaryGroup = (_antigravityGroup.SelectedItem as AntigravityGroupChoice)?.Value ?? _original.AntigravityPrimaryGroup,
             Locale = (_locale.SelectedItem as LocaleChoice)?.Locale ?? _original.Locale,
             PluginEnabled = new Dictionary<string, bool>(_original.PluginEnabled, StringComparer.Ordinal),
             PluginEnablementDecisions = [.. _original.PluginEnablementDecisions],
@@ -967,6 +1001,7 @@ internal sealed class SettingsForm : Form
         && DictionaryEqual(left.PluginEnabled, right.PluginEnabled)
         && string.Equals(left.CodexMiniDisplayMode, right.CodexMiniDisplayMode, StringComparison.Ordinal)
         && string.Equals(left.BackgroundPalette, right.BackgroundPalette, StringComparison.Ordinal)
+        && string.Equals(left.AntigravityPrimaryGroup, right.AntigravityPrimaryGroup, StringComparison.Ordinal)
         && string.Equals(left.Locale, right.Locale, StringComparison.Ordinal);
 
     private static AppSettings Copy(AppSettings settings)
@@ -990,6 +1025,7 @@ internal sealed class SettingsForm : Form
             GlassDockExpanded = settings.GlassDockExpanded,
             CodexMiniDisplayMode = CodexMiniDisplayModes.Normalize(settings.CodexMiniDisplayMode),
             BackgroundPalette = AppSettings.NormalizeBackgroundPalette(settings.BackgroundPalette),
+            AntigravityPrimaryGroup = settings.AntigravityPrimaryGroup,
             Locale = settings.Locale,
             PluginEnabled = new Dictionary<string, bool>(settings.PluginEnabled, StringComparer.Ordinal),
             PluginEnablementDecisions = [.. settings.PluginEnablementDecisions],
@@ -1094,6 +1130,17 @@ internal sealed class SettingsForm : Form
     {
         public override string ToString() => Label;
     }
+
+    private sealed record AntigravityGroupChoice(string Value, string Label)
+    {
+        public override string ToString() => Label;
+    }
+
+    private string AntigravityGroupTitle => _text.IsChinese ? "Antigravity 主分组" : "Antigravity primary group";
+
+    private string AntigravityGroupHint => _text.IsChinese
+        ? "Bar 圆环跟随的配额组；其他组接近用完时百分比角标变为警告色"
+        : "Quota group the Bar ring follows; the % chip turns to the warning colour when another group runs low";
 
     private sealed record CodexMiniDisplayModeChoice(string Mode, string Label)
     {

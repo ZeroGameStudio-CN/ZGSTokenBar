@@ -10,7 +10,12 @@ public sealed record GlassDockRing(
     double? RemainingPercent,
     DateTimeOffset? ResetsAt,
     string? BalanceText,
-    string Accent);
+    string Accent)
+{
+    /// <summary>Draw the % chip in the warning colour even though this ring's own band is fine
+    /// (Antigravity: another quota group than the pinned one is nearly exhausted).</summary>
+    public bool Warn { get; init; }
+}
 
 /// <summary>A dock slot: a ring or the +N/collapse chip.</summary>
 public readonly record struct GlassDockSlot(Rectangle Bounds, bool Chip);

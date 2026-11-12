@@ -28,7 +28,8 @@ internal sealed partial class QuotaApplicationContext
             _settings,
             _bar.DeviceDpi,
             plugins: pluginStatuses,
-            dockItems: _bar.DockVisibilityEntries());
+            dockItems: _bar.DockVisibilityEntries(),
+            antigravityGroups: _otherToolsModule.AntigravityGroupNames());
         _settingsDialog = dialog;
         dialog.FormClosed += SettingsDialogClosed;
         var area = Screen.FromControl(_bar).WorkingArea;
@@ -199,6 +200,7 @@ internal sealed partial class QuotaApplicationContext
         }
         ApplyRefreshInterval();
         _bar.ApplySettings(_settings);
+        _otherToolsModule.SetAntigravityPrimaryGroup(_settings.AntigravityPrimaryGroup);
         _ = UpdateProviderActivityAsync(requestRefresh: false);
         _bar.SetQuotaPaceEstimates(QuotaPaceEstimates(_snapshot, DateTimeOffset.UtcNow));
         ApplyClockInterval();

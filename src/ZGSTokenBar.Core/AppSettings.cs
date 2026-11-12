@@ -52,6 +52,8 @@ public sealed class AppSettings
     public string[] CollapsedMiniGroups { get; set; } = [];
     public string CodexMiniDisplayMode { get; set; } = CodexMiniDisplayModes.Accounts;
     public string BackgroundPalette { get; set; } = DefaultBackgroundPalette;
+    /// <summary>Antigravity group the bar ring follows (matched case-insensitively in the group name); "auto" = most usable.</summary>
+    public string AntigravityPrimaryGroup { get; set; } = AntigravityGroups.DefaultPrimary;
     public string Locale { get; set; } = "zh-CN";
     public int? WindowX { get; set; }
     public int? WindowY { get; set; }
@@ -272,6 +274,9 @@ public sealed class AppSettings
         CollapsedMiniGroups = [];
         CodexMiniDisplayMode = CodexMiniDisplayModes.Normalize(CodexMiniDisplayMode);
         BackgroundPalette = NormalizeBackgroundPalette(BackgroundPalette);
+        AntigravityPrimaryGroup = string.IsNullOrWhiteSpace(AntigravityPrimaryGroup)
+            ? AntigravityGroups.DefaultPrimary
+            : AntigravityPrimaryGroup.Trim();
         Locale = string.Equals(Locale?.Trim(), "en", StringComparison.OrdinalIgnoreCase)
             ? "en"
             : "zh-CN";

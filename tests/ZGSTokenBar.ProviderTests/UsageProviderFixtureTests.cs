@@ -165,6 +165,24 @@ public static class UsageProviderFixtureTests
         var claudeWeekly = envelope?.Windows.FirstOrDefault(window => window.Id == "Claude and GPT models · 7d" && window.Label == "Claude/GPT · 7d");
         Check(envelope?.Windows.Count == 5 && claudeWeekly is { UsedPercent: > 96.3 and < 96.5 }
             && claudeWeekly.ResetsAt == DateTimeOffset.Parse("2026-11-16T15:42:01Z"), "agy JSON envelope keeps exact fractions and resets per window");
+        var agyWindows = envelope?.Windows ?? [];
+        var pinned = AntigravityGroups.Pin(agyWindows, "ARGON");
+        Check(pinned.Count == agyWindows.Count && AntigravityGroups.GroupOf(pinned[0]) == "Gemini 4 Argon"
+            && pinned[0].ResetsAt == DateTimeOffset.Parse("2026-11-16T15:41:46Z"), "antigravity pins the argon group first, case-insensitively");
+        Check(AntigravityGroups.OtherGroupLow(pinned), "antigravity warns when another group (Claude/GPT 3.6%) is nearly exhausted");
+        var withoutArgon = agyWindows.Where(window => AntigravityGroups.GroupOf(window) != "Gemini 4 Argon").ToArray();
+        Check(ReferenceEquals(AntigravityGroups.Pin(withoutArgon, "argon"), withoutArgon)
+            && ReferenceEquals(AntigravityGroups.Pin(agyWindows, AntigravityGroups.Auto), agyWindows),
+            "antigravity falls back to the most-remaining order when argon is missing or auto");
+        var claudePinned = AntigravityGroups.Pin(agyWindows, "claude");
+        Check(claudePinned[0].Id == "Claude and GPT models · 7d" && !AntigravityGroups.OtherGroupLow(claudePinned),
+            "antigravity pins any group, tightest window first");
+        var board = new UsageBoard([new UsageProviderSnapshot(UsageProviderIds.Antigravity, "Antigravity", "#4285f4", 0,
+            [new UsageAccountSnapshot("local", "Antigravity", null, "cli", agyWindows, null, null, [], UsageFreshness.Current, null, null)])]);
+        var groups = AntigravityGroups.Groups(board);
+        Check(groups.Count == 3 && groups.Contains("Gemini 4 Argon")
+            && AntigravityGroups.GroupOf(AntigravityGroups.Pin(board, "argon").Providers[0].Accounts[0].Windows[0]) == "Gemini 4 Argon",
+            "antigravity board lists detected groups and pins argon");
         Check(UsageParsers.ParseAntigravity("""{"response":"Gemini Models\tWeekly Limit Remaining\t40%\t2026-11-16T15:46:23Z\n"}""")?.Windows[0].UsedPercent == 60,
             "agy JSON envelope falls back to its text table");
     }

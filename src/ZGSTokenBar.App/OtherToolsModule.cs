@@ -126,9 +126,26 @@ internal sealed class OtherToolsModule : IDisposable
         _ = RefreshAsync();
     }
 
+    private string _antigravityPrimaryGroup = AntigravityGroups.DefaultPrimary;
+
+    /// <summary>Which Antigravity group the ring follows; re-publishes so the bar updates at once.</summary>
+    public void SetAntigravityPrimaryGroup(string? group)
+    {
+        var next = string.IsNullOrWhiteSpace(group) ? AntigravityGroups.DefaultPrimary : group.Trim();
+        if (string.Equals(next, _antigravityPrimaryGroup, StringComparison.Ordinal)) return;
+        _antigravityPrimaryGroup = next;
+        Publish();
+    }
+
+    /// <summary>Antigravity group names from the latest reading, for the Settings dropdown.</summary>
+    public IReadOnlyList<string> AntigravityGroupNames()
+    {
+        lock (_gate) return AntigravityGroups.Groups(_board);
+    }
+
     private void Publish()
     {
-        var merged = UsageProviderEngine.Merge(_fetched, _external);
+        var merged = AntigravityGroups.Pin(UsageProviderEngine.Merge(_fetched, _external), _antigravityPrimaryGroup);
         lock (_gate) _board = merged;
         if (_bar.IsDisposed) return;
         if (_bar.InvokeRequired)
