@@ -13,7 +13,11 @@ public sealed record UsageCliSource(
     Func<UsageDetectContext, string?> Executable,
     IReadOnlyList<string[]> Attempts,
     Func<string?, UsageParseResult?> Parse,
-    TimeSpan CacheFor);
+    TimeSpan CacheFor)
+{
+    /// <summary>The signed-in account the CLI reads for (identity only), shown in the hover header.</summary>
+    public Func<UsageDetectContext, string?>? Account { get; init; }
+}
 
 /// <summary>
 /// Everything about one usage provider in one place: metadata, how its local sign-in is detected,

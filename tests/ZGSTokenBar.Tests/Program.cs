@@ -12707,6 +12707,27 @@ static void TestLocalProviderSourcesAutoDetected()
         File.WriteAllText(agy, """{"access_token":"ya29.flat"}""");
         Check(UsageAccountDirectory.ReadAntigravityToken(agy)?.Secret == "ya29.flat", "the older flat agy layout still works");
 
+        var appData = Path.Combine(root, "AppData");
+        Directory.CreateDirectory(Path.Combine(appData, "Antigravity"));
+        var agyPaths = new UsagePaths(root, appData, root);
+        var appStorage = Path.Combine(appData, "Antigravity", "app_storage.json");
+        Check(UsageAccountDirectory.AntigravitySignedInAccount(agyPaths) is null, "no Antigravity app storage means no account name");
+        File.WriteAllText(appStorage, """{"agy.onboarding.lastLoginUsername":"\"someone@example.com\"","other":"x"}""");
+        Check(UsageAccountDirectory.AntigravitySignedInAccount(agyPaths) == "someone@example.com", "agy's remembered sign-in is read (JSON-encoded value)");
+        File.WriteAllText(appStorage, """{"agy.onboarding.lastLoginUsername":"plain@example.com"}""");
+        Check(UsageAccountDirectory.AntigravitySignedInAccount(agyPaths) == "plain@example.com", "agy's remembered sign-in is read (plain value)");
+        File.WriteAllText(agy, """{"access_token":"ya29.flat"}""");
+        Check(UsageAccountDirectory.ReadAntigravityToken(agy, "plain@example.com")?.Label == "plain@example.com", "the token credential carries the agy account");
+        var definition = UsageProviderRegistry.All.First(provider => provider.Definition.Id == UsageProviderIds.Antigravity).Definition;
+        var cliBoard = UsageCliFallback.Replace(new UsageBoard([]), definition,
+            new UsageParseResult([new UsageWindow("w", "Argon · 7d", 20, null, TimeSpan.FromDays(7))], null, [], null, null),
+            "agy-cli", DateTimeOffset.UtcNow, UsageAccountDirectory.AntigravitySignedInAccount(agyPaths));
+        Check(cliBoard.Providers.Single().Accounts.Single() is { AccountId: "agy-cli", Label: "plain@example.com" }, "the agy CLI reading is labelled with the signed-in account");
+        var (agyCard, _) = BarForm.UsageQuotaCard(cliBoard.Providers.Single(), cliBoard.Providers.Single().Accounts.Single(), "Antigravity")!.Value;
+        Check(agyCard.AccountHint == CodexAccountFormatting.MaskEmail("plain@example.com"), "the Antigravity hover shows the masked account like Codex and Grok");
+        File.WriteAllText(appStorage, """{"agy.onboarding.lastLoginUsername":""}""");
+        Check(UsageAccountDirectory.AntigravitySignedInAccount(agyPaths) is null, "an empty remembered sign-in is ignored");
+
         var opencode = Path.Combine(root, "auth.json");
         File.WriteAllText(opencode, """{"openai":{"type":"oauth","access":"x"},"github-copilot":{"type":"oauth","refresh":"gho_abc","access":"gho_abc","expires":0}}""");
         Check(UsageAccountDirectory.ReadOpenCodeCopilot(opencode) is { Secret: "gho_abc", SourceKind: "opencode-copilot" }, "OpenCode's Copilot sign-in is reused for Copilot usage");

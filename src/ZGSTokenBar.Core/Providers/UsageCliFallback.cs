@@ -44,18 +44,20 @@ public sealed class UsageCliFallback(UsageCliRunner? runner = null)
                 }
             }
 
-            board = Replace(board, provider.Definition, parsed, cli.SourceKind, now);
+            board = Replace(board, provider.Definition, parsed, cli.SourceKind, now, cli.Account?.Invoke(context));
         }
 
         return board;
     }
 
-    internal static UsageBoard Replace(UsageBoard board, ProviderDefinition definition, UsageParseResult? parsed, string source, DateTimeOffset now)
+    internal static UsageBoard Replace(UsageBoard board, ProviderDefinition definition, UsageParseResult? parsed, string source, DateTimeOffset now,
+        string? accountLabel = null)
     {
         if (parsed is null && board.Providers.Any(provider => provider.ProviderId == definition.Id)) return board;
+        // The account id stays the CLI source, so pace history keys do not change with the sign-in.
         var account = new UsageAccountSnapshot(
             source,
-            definition.DisplayName,
+            string.IsNullOrWhiteSpace(accountLabel) ? definition.DisplayName : accountLabel,
             parsed?.Plan,
             source,
             parsed?.Windows ?? [],

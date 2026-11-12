@@ -15,10 +15,35 @@ public static partial class UsageAccountDirectory
             Path.Combine(paths.Home, ".gemini", "jetski-standalone-oauth-token"),
         })
         {
-            if (ReadAntigravityToken(candidate) is { } credential) return [credential];
+            if (ReadAntigravityToken(candidate, AntigravitySignedInAccount(paths)) is { } credential) return [credential];
         }
 
         return [];
+    }
+
+    /// <summary>
+    /// The Google account agy and the Antigravity app are signed in with. They remember it, as an
+    /// identity only (no token), under <c>agy.onboarding.lastLoginUsername</c> in
+    /// <c>%APPDATA%\Antigravity\app_storage.json</c>; agy's own /usage output carries no identity.
+    /// </summary>
+    public static string? AntigravitySignedInAccount(UsagePaths paths)
+    {
+        var document = Read(Path.Combine(paths.ApplicationData, "Antigravity", "app_storage.json"));
+        if (document is null) return null;
+        using (document)
+        {
+            if (document.RootElement.ValueKind != JsonValueKind.Object
+                || !document.RootElement.TryGetProperty("agy.onboarding.lastLoginUsername", out var value)
+                || value.ValueKind != JsonValueKind.String) return null;
+            var email = value.GetString()?.Trim();
+            // The app stores some values JSON-encoded a second time ("\"name@example.com\"").
+            if (email is { Length: > 1 } && email[0] == '"' && email[^1] == '"') email = email[1..^1].Trim();
+            return email is { Length: > 3 and <= 254 }
+                && email.IndexOf('@') is > 0 and var at && at < email.Length - 1
+                && !email.Any(char.IsWhiteSpace)
+                    ? email
+                    : null;
+        }
     }
 
     /// <summary>
@@ -27,7 +52,7 @@ public static partial class UsageAccountDirectory
     /// refreshes it in memory only, so an expired file token is reported as such and the
     /// <c>agy /usage</c> fallback supplies the reading instead.
     /// </summary>
-    internal static UsageCredential? ReadAntigravityToken(string path)
+    internal static UsageCredential? ReadAntigravityToken(string path, string? account = null)
     {
         var document = Read(path);
         if (document is null) return null;
@@ -45,7 +70,7 @@ public static partial class UsageAccountDirectory
                 || IsExpired(node);
             return new UsageCredential(
                 "antigravity",
-                "Antigravity",
+                account ?? "Antigravity",
                 "google-oauth",
                 expired ? null : token,
                 null,

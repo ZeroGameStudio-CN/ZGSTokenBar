@@ -16,7 +16,10 @@ public sealed class AntigravityUsageProvider : UsageProvider
         // JSON first: it carries the exact remaining fractions; the text table is rounded.
         [["-p", "/usage", "--output-format", "json", "--print-timeout", "20s"], ["-p", "/usage", "--print-timeout", "20s"]],
         UsageParsers.ParseAntigravity,
-        TimeSpan.FromMinutes(10));
+        TimeSpan.FromMinutes(10))
+    {
+        Account = context => UsageAccountDirectory.AntigravitySignedInAccount(context.Paths),
+    };
 
     public override IReadOnlyList<UsageCredential> Detect(UsageDetectContext context) => UsageAccountDirectory.DetectAntigravity(context.Paths);
 
