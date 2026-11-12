@@ -78,6 +78,7 @@ test('process-heavy details are sampled only for hover or pin and rendered as a 
 test('system usage refreshes once per Mini clock tick and degrades unavailable metrics to dashes', () => {
   assert.match(application, /if \(_bar\.IsTaskbarMode\)[\s\S]*?RefreshSystemUsageOverviewAsync\(\)/);
   assert.doesNotMatch(application, /_bar\.SetSystemUsage\(_systemUsageSampler\.Sample\(\)\)/);
-  assert.match(application, /_clockTimer\.Interval = _bar\.IsTaskbarMode \? 1_000 : 30_000/);
+  assert.match(application, /_clockTimer\.Interval = ClockIntervalMs\(_bar\.IsTaskbarMode, _bar\.HasOpenHoverOrPopover\)/);
+  assert.match(application, /!taskbarMode \? 30_000 : hoverOpen \? 1_000 : 2_000/);
   assert.match(text, /Performance counter unavailable/);
 });

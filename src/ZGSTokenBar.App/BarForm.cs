@@ -251,6 +251,12 @@ internal sealed partial class BarForm : Form
         AppSettings.CopyMiniAreaOrder(_miniAreaOrder);
     public bool WantsSystemUsageDetails =>
         _showSystemMetrics && !_systemAnchorIsLive && (_hoverSystemUsage || _systemUsagePopover?.Visible == true);
+    /// <summary>True while the pointer is on a bar item or any bar hover/popover is showing.</summary>
+    public bool HasOpenHoverOrPopover =>
+        _hoverTarget != HoverTarget.None || _hoverSystemUsage
+        || _quotaPopover?.Visible == true || _codexAccountsPopover?.Visible == true
+        || _hintPopover?.Visible == true || _systemUsagePopover?.Visible == true
+        || _pluginPopover?.Visible == true;
     internal void SetGlassExpandedForAcceptance(bool expanded) => SetGlassExpanded(expanded);
 
     /// <summary>Renders the hover popover a glass ring opens, or null when the ring has no scoped quota card.</summary>

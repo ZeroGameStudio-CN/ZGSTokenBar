@@ -127,7 +127,11 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _bar.ProbeSettingsSaveRequested += (_, layoutChange) => ProbeSettingsSave(layoutChange);
         _bar.OverviewRequested += (_, _) => _otherToolsModule.ShowOverview();
         _bar.PlacementCommitted += (_, commit) => SavePlacement(commit);
-        _bar.SystemUsageDetailsRequested += (_, _) => _ = RefreshSystemUsageDetailsAsync();
+        _bar.SystemUsageDetailsRequested += (_, _) =>
+        {
+            ApplyClockInterval();
+            _ = RefreshSystemUsageDetailsAsync();
+        };
         _bar.GlassExpandedChanged += (_, expanded) => SaveGlassExpanded(expanded);
         _bar.FormClosing += BarFormClosing;
         _bar.FormClosed += (_, _) => Quit();
@@ -232,6 +236,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
                     _ = RefreshCodexConversationsAsync();
             }
             _bar.Invalidate();
+            ApplyClockInterval();
         };
         _confirmationTimer = new System.Windows.Forms.Timer { Interval = 3_000 };
         _confirmationTimer.Tick += (_, _) =>

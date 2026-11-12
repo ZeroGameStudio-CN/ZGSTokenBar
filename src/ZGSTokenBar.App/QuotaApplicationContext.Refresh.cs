@@ -370,6 +370,14 @@ internal sealed partial class QuotaApplicationContext
 
     private void ApplyClockInterval()
     {
-        _clockTimer.Interval = _bar.IsTaskbarMode ? 1_000 : 30_000;
+        // WinForms only re-arms the timer when the value actually changes.
+        _clockTimer.Interval = ClockIntervalMs(_bar.IsTaskbarMode, _bar.HasOpenHoverOrPopover);
     }
+
+    /// <summary>
+    /// Live system counters and tok/s sample every 2 s while the bar is idle, every 1 s while a
+    /// hover or popover is showing them, and every 30 s outside the taskbar.
+    /// </summary>
+    internal static int ClockIntervalMs(bool taskbarMode, bool hoverOpen) =>
+        !taskbarMode ? 30_000 : hoverOpen ? 1_000 : 2_000;
 }

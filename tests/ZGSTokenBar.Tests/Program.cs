@@ -477,6 +477,7 @@ var tests = new (string Name, Action Run)[]
     ("Provider exhausted refresh cadence", TestProviderExhaustedRefreshCadence),
     ("Quota pace adaptive trend estimate", TestQuotaPaceEstimate),
     ("Pace series survive presentation label markers", TestQuotaPaceSeriesIdentity),
+    ("Live clock samples 2 s idle, 1 s with a hover open", TestClockIntervalCadence),
     ("Quota pace weighted daily trend", TestQuotaPaceWeightedDailyTrend),
     ("Quota pace immediate cycle budget", TestQuotaCyclePace),
     ("Quota pace reset and freshness guards", TestQuotaPaceGuards),
@@ -4865,6 +4866,13 @@ static void TestQuotaImportedCompaction()
         ],
     }).Export(now);
     Equal(1, resetClockDrift.Samples.Count, "same-cycle reset clock drift shares one imported bucket");
+}
+
+static void TestClockIntervalCadence()
+{
+    Equal(2_000, QuotaApplicationContext.ClockIntervalMs(taskbarMode: true, hoverOpen: false), "idle taskbar samples every 2 s");
+    Equal(1_000, QuotaApplicationContext.ClockIntervalMs(taskbarMode: true, hoverOpen: true), "an open hover samples every second");
+    Equal(30_000, QuotaApplicationContext.ClockIntervalMs(taskbarMode: false, hoverOpen: true), "outside the taskbar the clock stays slow");
 }
 
 static void TestQuotaPaceSeriesIdentity()
