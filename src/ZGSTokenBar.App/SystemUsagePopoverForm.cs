@@ -488,7 +488,7 @@ internal sealed class SystemUsagePopoverForm : Form
             var since = TotalsSince(history.Since, snapshot.CapturedAt);
             var sinceWidth = graphics.MeasureString(since, _subtitleFont, PointF.Empty, StringFormat.GenericTypographic).Width;
             TextAt(since, _subtitleFont, muted, 86, 281, 190, 13, StringAlignment.Far);
-            UiIcons.Clock(graphics, At(276 - sinceWidth - 13, 282.5f, 9, 9), UiTokens.Muted);
+            UiIcons.Clock(graphics, At(276 - sinceWidth - 16, 282.5f, 9, 9), UiTokens.Muted);
         }
         using (var column = new Pen(UiPalette.Slate500.WithAlpha(42), 1))
             graphics.DrawLine(column, body.X + 150.5f, body.Y + dy + 300, body.X + 150.5f, body.Y + dy + 370);
