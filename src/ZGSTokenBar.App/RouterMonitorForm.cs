@@ -137,6 +137,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         var currentSection = Section("当前"); currentSection.Controls.Add(summary); _root.Controls.Add(currentSection, 0, 1);
 
         _queue.Columns.AddRange(Column("task", "任务", 270), Column("source", "来源对话", 210), Column("wait", "等待", 80));
+        Align(_queue.Columns["wait"]!, DataGridViewContentAlignment.MiddleRight);
         _queue.SelectionChanged += (_, _) => { if (!_applyingQueue) UpdateControls(); };
         _top = IconButton(RouterButtonIcon.Top, "置顶", () => QueueControlAsync("move", 1));
         _up = IconButton(RouterButtonIcon.Up, "上移", () => QueueControlAsync("move", -1));
@@ -176,6 +177,10 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _history.EmptyTitle = "没有匹配的记录"; _history.EmptyDetail = "调整筛选条件后重试";
         _history.Columns.AddRange(Column("createdLocal", "提交时间", 115), Column("task", "任务", 255), Column("source", "来源对话", 150),
             Column("state", "结果", 90), Column("executionSeconds", "占用", 70), Column("cleanupVerified", "释放", 55));
+        // Headers sit over their values: centred status pill and check, right-aligned durations.
+        Align(_history.Columns["state"]!, DataGridViewContentAlignment.MiddleCenter);
+        Align(_history.Columns["executionSeconds"]!, DataGridViewContentAlignment.MiddleRight);
+        Align(_history.Columns["cleanupVerified"]!, DataGridViewContentAlignment.MiddleCenter);
         _history.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0) ShowRecord(_history.Rows[e.RowIndex]); };
         _history.Margin = Padding.Empty; _historyBody.Controls.Add(_history, 0, 2);
         var historySection = Section("历史"); historySection.Controls.Add(_historyBody); _root.Controls.Add(historySection, 0, 3);
@@ -840,6 +845,11 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     { var button = new RouterButton { Text = text, AccessibleName = text, Kind = kind }; button.Click += async (_, _) => await action(); return button; }
     private RouterButton IconButton(RouterButtonIcon icon, string label, Func<Task> action)
     { var button = Button(label, action); button.Icon = icon; button.AutoSize = true; _tips.SetToolTip(button, label); return button; }
+    private static void Align(DataGridViewColumn column, DataGridViewContentAlignment alignment)
+    {
+        column.DefaultCellStyle.Alignment = alignment;
+        column.HeaderCell.Style.Alignment = alignment;
+    }
     private static DataGridViewTextBoxColumn Column(string name, string title, int width) => new() { Name = name, HeaderText = title, FillWeight = width, MinimumWidth = 50, SortMode = DataGridViewColumnSortMode.NotSortable };
     private static RouterGrid Grid() => new()
     {
