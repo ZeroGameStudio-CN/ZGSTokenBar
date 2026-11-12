@@ -39,7 +39,8 @@ internal sealed partial class BarForm
         if (!pinned && _popoverPinned) return true;
         if (_pluginPopover?.Visible != true || _pluginPopoverId != pluginId) HidePopovers();
         var request = new PluginPopoverRequest(pluginId, anchor, pinned, _scale, _backgroundTheme);
-        PluginPopoverRequested?.Invoke(this, request);
+        using (PerfTrace.Measure($"plugin-popover.open {pluginId} pinned={pinned}"))
+            PluginPopoverRequested?.Invoke(this, request);
         if (request.Popup is not { Visible: true } popup) return false;
         _pluginPopover = popup; _pluginPopoverId = pluginId; _pluginPopoverAnchor = anchor;
         _popoverPinned = pinned; _popoverLeaveStarted = null;

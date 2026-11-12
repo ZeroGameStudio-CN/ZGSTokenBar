@@ -62,7 +62,7 @@ internal sealed class CodexAccountsPopoverForm : Form
         _entranceTimer.Tick += (_, _) => AdvanceEntrance();
         _exitTimer.Tick += (_, _) => AdvanceExit();
         AutoScaleMode = AutoScaleMode.None;
-        BackColor = _backgroundTheme.Popover;
+        BackColor = UiTokens.CardSurface;
         FormBorderStyle = FormBorderStyle.None;
         MaximizeBox = false;
         MinimizeBox = false;
@@ -93,7 +93,7 @@ internal sealed class CodexAccountsPopoverForm : Form
     internal void ApplyTheme(QuotaBackgroundTheme theme)
     {
         _backgroundTheme = theme;
-        BackColor = theme.Popover;
+        BackColor = UiTokens.CardSurface;
         Invalidate();
     }
 
@@ -145,14 +145,14 @@ internal sealed class CodexAccountsPopoverForm : Form
             _entranceStarted = DateTime.UtcNow;
             Opacity = .01;
             Location = _entranceLocation;
-            Show(owner);
+            this.ShowPopover(BarForm.PopoverOwnerFor(owner));
             if (!TaskbarPlacement.ShowAt(Handle, _entranceLocation, placement.WindowSize)) Location = _entranceLocation;
             _entranceTimer.Start();
             return;
         }
 
         Opacity = 1;
-        if (!wasVisible) Show(owner);
+        if (!wasVisible) this.ShowPopover(BarForm.PopoverOwnerFor(owner));
         if (!TaskbarPlacement.ShowAt(Handle, _restingLocation, placement.WindowSize)) Location = _restingLocation;
     }
 
@@ -168,7 +168,7 @@ internal sealed class CodexAccountsPopoverForm : Form
         _quotas = (quotas ?? []).ToArray();
         _text = text;
         _backgroundTheme = theme;
-        BackColor = theme.Popover;
+        BackColor = UiTokens.CardSurface;
         _scale = Math.Max(1, dpi / 96f);
         _logicalBodyWidth = CalculateLogicalBodyWidth();
         _logicalBodyHeight = BodyHeight(_accounts.Length);
@@ -211,23 +211,12 @@ internal sealed class CodexAccountsPopoverForm : Form
     {
         base.OnPaint(e);
         var graphics = e.Graphics;
-        graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-        graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-        graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+        UiPaint.PrepareQuality(graphics);
         graphics.ScaleTransform(_scale, _scale);
 
         var body = BodyBounds();
-        using var bodyPath = RoundedRectangle(RectangleF.Inflate(body, -.5f, -.5f), 10);
-        var tail = TailPoints(body);
-        using var surfacePath = new GraphicsPath { FillMode = FillMode.Winding };
-        surfacePath.AddPath(bodyPath, false);
-        surfacePath.AddPolygon(tail);
-        using var fill = new SolidBrush(_backgroundTheme.Popover);
-        using var border = new Pen(Color.FromArgb(86, 100, 116, 139), 1);
-        graphics.FillPath(fill, surfacePath);
-        graphics.DrawPath(border, bodyPath);
-        graphics.DrawLines(border, tail);
+        // The shared hover-card surface: graphite card, white hairline, pointer tail.
+        UiPaint.TailedSurface(graphics, body, TailPoints(body), UiTokens.CardSurface, UiTokens.Hairline, UiTokens.RadiusPanel);
 
         DrawContent(graphics, body);
     }
@@ -252,11 +241,11 @@ internal sealed class CodexAccountsPopoverForm : Form
     {
         var x = body.X + LogicalContentPadding;
         var y = body.Y + LogicalTopPadding;
-        using var headingBrush = new SolidBrush(Color.FromArgb(241, 245, 249));
-        using var rowBrush = new SolidBrush(Color.FromArgb(203, 213, 225));
-        using var mutedBrush = new SolidBrush(Color.FromArgb(148, 163, 184));
-        using var currentBrush = new SolidBrush(Color.FromArgb(94, 234, 212));
-        using var separatorPen = new Pen(Color.FromArgb(48, 71, 85, 105), 1);
+        using var headingBrush = new SolidBrush(UiPalette.Slate100);
+        using var rowBrush = new SolidBrush(UiPalette.Slate300);
+        using var mutedBrush = new SolidBrush(UiPalette.Slate400);
+        using var currentBrush = new SolidBrush(UiPalette.Teal300);
+        using var separatorPen = new Pen(UiPalette.Slate600.WithAlpha(48), 1);
 
         DrawString(
             graphics,
@@ -485,9 +474,7 @@ internal sealed class CodexAccountsPopoverForm : Form
 
     private static string FormatRemaining(double usedPercent)
     {
-        var remaining = Math.Clamp(100 - usedPercent, 0, 100);
-        if (remaining > 0 && remaining < 1) return "<1%";
-        return $"{Math.Round(remaining).ToString("0", CultureInfo.InvariantCulture)}%";
+        return PercentFormat.RemainingFromUsed(usedPercent);
     }
 
     private RectangleF BodyBounds() => TaskbarPopoverMath.BodyBounds(
@@ -521,27 +508,7 @@ internal sealed class CodexAccountsPopoverForm : Form
 
     private int Scale(int value) => Math.Max(1, (int)Math.Round(value * _scale));
 
-    private static GraphicsPath RoundedRectangle(RectangleF bounds, float radius)
-    {
-        var path = new GraphicsPath();
-        var diameter = Math.Min(radius * 2, Math.Min(bounds.Width, bounds.Height));
-        if (diameter <= 0)
-        {
-            path.AddRectangle(bounds);
-            return path;
-        }
-
-        var arc = new RectangleF(bounds.X, bounds.Y, diameter, diameter);
-        path.AddArc(arc, 180, 90);
-        arc.X = bounds.Right - diameter;
-        path.AddArc(arc, 270, 90);
-        arc.Y = bounds.Bottom - diameter;
-        path.AddArc(arc, 0, 90);
-        arc.X = bounds.Left;
-        path.AddArc(arc, 90, 90);
-        path.CloseFigure();
-        return path;
-    }
+    private static GraphicsPath RoundedRectangle(RectangleF bounds, float radius) => UiPaint.RoundedPath(bounds, radius);
 
     private static void DrawString(
         Graphics graphics,
@@ -549,16 +516,8 @@ internal sealed class CodexAccountsPopoverForm : Form
         Font font,
         Brush brush,
         RectangleF bounds,
-        StringAlignment alignment)
-    {
-        using var format = new StringFormat
-        {
-            Alignment = alignment,
-            LineAlignment = StringAlignment.Center,
-            FormatFlags = StringFormatFlags.NoWrap,
-        };
-        graphics.DrawString(value, font, brush, bounds, format);
-    }
+        StringAlignment alignment) =>
+        UiPaint.Text(graphics, value, font, brush, bounds, alignment, ellipsis: false);
 
     protected override void Dispose(bool disposing)
     {

@@ -367,7 +367,7 @@ public sealed class QuotaPaceTracker
 
     internal static string NormalizeWindowLabel(QuotaWindow window)
     {
-        var label = window.Label.Trim().ToLowerInvariant();
+        var label = (window.SeriesId ?? window.Label).Trim().ToLowerInvariant();
         if (label == "fable") return "fable";
         if (window.Duration == TimeSpan.FromHours(5) && label is "primary" or "5h") return "5h";
         return label is "1w" or "week" or "7d" ? "7d" : label;

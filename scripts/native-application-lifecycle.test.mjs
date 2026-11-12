@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import { readPartialType } from './source-files.mjs';
 
 const program = fs.readFileSync('src/ZGSTokenBar.App/Program.cs', 'utf8');
-const application = fs.readFileSync('src/ZGSTokenBar.App/QuotaApplicationContext.cs', 'utf8');
-const barForm = fs.readFileSync('src/ZGSTokenBar.App/BarForm.cs', 'utf8');
-const settings = fs.readFileSync('src/ZGSTokenBar.App/SettingsForm.cs', 'utf8');
+const application = readPartialType('src/ZGSTokenBar.App/QuotaApplicationContext.cs', ['SettingsWindowPlacement.cs', 'SettingsChangeDetector.cs']);
+const barForm = readPartialType('src/ZGSTokenBar.App/BarForm.cs');
+const settings = readPartialType('src/ZGSTokenBar.App/SettingsForm.cs');
 const startup = fs.readFileSync('src/ZGSTokenBar.App/StartupManager.cs', 'utf8');
 const hostJobIsolation = fs.readFileSync('src/ZGSTokenBar.App/HostJobLifetimeIsolation.cs', 'utf8');
 const update = fs.readFileSync('src/ZGSTokenBar.App/ReleaseUpdateChecker.cs', 'utf8');
@@ -112,7 +113,8 @@ test('legacy AI Gateway CLI is retired without accepting or mutating credentials
 });
 
 test('bundled Provider trust failures remain visible without weakening package validation', () => {
-  assert.match(program, /EnsureInstalled\(store\.DataDirectory\)[\s\S]*?Any\(status => !status\.Valid\)/);
+  assert.match(program, /BundledPluginWarning\.ShouldWarn\([\s\S]*?EnsureInstalled\(store\.DataDirectory\)/);
+  assert.match(fs.readFileSync('src/ZGSTokenBar.App/BundledPluginWarning.cs', 'utf8'), /Where\(status => !status\.Valid\)/);
   assert.match(application, /if \(bundledPluginInstallFailed\)[\s\S]*?_tray\.ShowBalloonTip\([\s\S]*?PluginBundleTrustFailedTitle[\s\S]*?ToolTipIcon\.Warning/);
 });
 
@@ -182,6 +184,4 @@ test('legacy optional providers are ignored when their built-ins are not install
   assert.doesNotMatch(
     application.match(/LegacyRenderedPluginIds =[\s\S]*?\];/)?.[0] ?? '',
     /zgstokenbar\.provider\.ai-gateway/);
-  assert.match(application, /if \(HasPlugin\("zgstokenbar\.intelligence\.radar"\) && _radarViewState\.Snapshot/);
-  assert.match(application, /if \(HasPlugin\("zgstokenbar\.intelligence\.radar"\)\)[\s\S]*?CorePluginProjection\.Radar/);
 });

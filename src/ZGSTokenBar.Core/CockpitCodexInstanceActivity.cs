@@ -277,6 +277,35 @@ internal static class CockpitCodexInstanceActivity
         }
     }
 
+    /// <summary>
+    /// Adds the names (without extension) of running processes that appear in
+    /// <paramref name="wanted"/> to <paramref name="found"/>. A Toolhelp snapshot reads only
+    /// names, unlike <see cref="System.Diagnostics.Process.GetProcesses()"/>, which also
+    /// materialises every thread of every process. Returns false if the snapshot fails.
+    /// </summary>
+    internal static bool TryReadRunningProcessNames(IReadOnlySet<string> wanted, ISet<string> found)
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        var snapshot = CreateToolhelp32Snapshot(SnapshotProcesses, 0);
+        if (snapshot == 0 || snapshot == InvalidHandleValue) return false;
+        try
+        {
+            var entry = new ProcessEntry32 { Size = (uint)Marshal.SizeOf<ProcessEntry32>() };
+            if (!Process32First(snapshot, ref entry)) return false;
+            do
+            {
+                var processName = Path.GetFileNameWithoutExtension(entry.ExecutableFile);
+                if (wanted.Contains(processName)) found.Add(processName);
+            }
+            while (Process32Next(snapshot, ref entry));
+            return true;
+        }
+        finally
+        {
+            CloseHandle(snapshot);
+        }
+    }
+
     internal readonly record struct ProcessEntry(
         int ProcessId,
         int ParentProcessId,

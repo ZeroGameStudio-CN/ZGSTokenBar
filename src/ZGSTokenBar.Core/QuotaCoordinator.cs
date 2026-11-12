@@ -33,12 +33,16 @@ public sealed class QuotaCoordinator : IDisposable
             ProviderResult? deferred;
             lock (_providerAttemptSync)
             {
+                // The slow exhausted cadence only applies after this process has fetched the
+                // provider once: a restart always reads live quota instead of trusting the cache's
+                // sample time (which kept a restarted bar on 30-minute-old Codex data).
                 deferred = !forceProviderRefresh
+                    && _lastProviderAttemptAt.TryGetValue(provider, out var lastAttempt)
                     && ShouldDeferProviderRefresh(
                         previous,
                         provider,
                         now,
-                        _lastProviderAttemptAt.GetValueOrDefault(provider))
+                        lastAttempt)
                     ? DeferredProviderResult(previous, provider)
                     : null;
                 if (deferred is null) _lastProviderAttemptAt[provider] = now;
@@ -287,6 +291,13 @@ public sealed class QuotaCoordinator : IDisposable
         var cards = snapshot?.Cards
             .Where(card => card.Provider == provider && HasUsage(card))
             .ToArray() ?? [];
+        // An exhausted Codex account with reset cards can be restored at any moment (a redeemed
+        // card refills it), so it stays on the normal cadence; so do its credits and card counts.
+        if (provider == ProviderKind.Codex
+            && snapshot?.CodexAccounts.Any(account => account.ResetCreditsAvailable is > 0) == true)
+        {
+            return false;
+        }
         if (cards.Length == 0
             || cards.Any(card => !card.Windows.Any(window => IsActivelyExhausted(window, now))))
         {

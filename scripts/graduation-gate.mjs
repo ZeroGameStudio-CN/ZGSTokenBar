@@ -35,6 +35,12 @@ const commands = [
   ['node', ['scripts/graduation-static-checks.mjs']],
   ['node', ['scripts/generate-builtin-plugin-registry.mjs', '--check']],
   ['node', ['--test', ...testFiles]],
+  ['dotnet', [
+    'run',
+    '--project', 'tests/ZGSTokenBar.ProviderTests/ZGSTokenBar.ProviderTests.csproj',
+    '-c', 'Release',
+    '--disable-build-servers',
+  ]],
   ['pwsh', [
     '-NoProfile',
     '-File', 'scripts/build-ai-gateway-observer-plugin.ps1',

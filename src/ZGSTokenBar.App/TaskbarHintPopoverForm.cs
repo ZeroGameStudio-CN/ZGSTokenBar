@@ -48,7 +48,7 @@ internal sealed class TaskbarHintPopoverForm : Form
         _entranceTimer.Tick += (_, _) => AdvanceEntrance();
         _exitTimer.Tick += (_, _) => AdvanceExit();
         AutoScaleMode = AutoScaleMode.None;
-        BackColor = _backgroundTheme.Popover;
+        BackColor = UiTokens.CardSurface;
         FormBorderStyle = FormBorderStyle.None;
         MaximizeBox = false;
         MinimizeBox = false;
@@ -79,7 +79,7 @@ internal sealed class TaskbarHintPopoverForm : Form
     internal void ApplyTheme(QuotaBackgroundTheme theme)
     {
         _backgroundTheme = theme;
-        BackColor = theme.Popover;
+        BackColor = UiTokens.CardSurface;
         Invalidate();
     }
 
@@ -126,14 +126,14 @@ internal sealed class TaskbarHintPopoverForm : Form
             _entranceStarted = DateTime.UtcNow;
             Opacity = .01;
             Location = _entranceLocation;
-            Show(owner);
+            this.ShowPopover(BarForm.PopoverOwnerFor(owner));
             if (!TaskbarPlacement.ShowAt(Handle, _entranceLocation, placement.WindowSize)) Location = _entranceLocation;
             _entranceTimer.Start();
             return;
         }
 
         Opacity = 1;
-        if (!wasVisible) Show(owner);
+        if (!wasVisible) this.ShowPopover(BarForm.PopoverOwnerFor(owner));
         if (!TaskbarPlacement.ShowAt(Handle, _restingLocation, placement.WindowSize)) Location = _restingLocation;
     }
 
@@ -146,7 +146,7 @@ internal sealed class TaskbarHintPopoverForm : Form
         _title = title;
         _detailLines = Lines(detail);
         _backgroundTheme = theme;
-        BackColor = theme.Popover;
+        BackColor = UiTokens.CardSurface;
         _scale = Math.Max(1, dpi / 96f);
         _logicalBodyWidth = CalculateLogicalBodyWidth();
         _logicalBodyHeight = BodyHeight(detail);
@@ -191,23 +191,12 @@ internal sealed class TaskbarHintPopoverForm : Form
     {
         base.OnPaint(e);
         var graphics = e.Graphics;
-        graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
-        graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-        graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+        UiPaint.PrepareQuality(graphics);
         graphics.ScaleTransform(_scale, _scale);
 
         var body = BodyBounds();
-        using var bodyPath = RoundedRectangle(RectangleF.Inflate(body, -.5f, -.5f), 10);
-        var tail = TailPoints(body);
-        using var surfacePath = new GraphicsPath { FillMode = FillMode.Winding };
-        surfacePath.AddPath(bodyPath, false);
-        surfacePath.AddPolygon(tail);
-        using var fill = new SolidBrush(_backgroundTheme.Popover);
-        using var border = new Pen(Color.FromArgb(86, 100, 116, 139), 1);
-        graphics.FillPath(fill, surfacePath);
-        graphics.DrawPath(border, bodyPath);
-        graphics.DrawLines(border, tail);
+        // The shared hover-card surface: graphite card, white hairline, pointer tail.
+        UiPaint.TailedSurface(graphics, body, TailPoints(body), UiTokens.CardSurface, UiTokens.Hairline, UiTokens.RadiusPanel);
 
         DrawContent(graphics, body);
     }
@@ -232,8 +221,8 @@ internal sealed class TaskbarHintPopoverForm : Form
     {
         var x = body.X + 14;
         var y = body.Y + LogicalTopPadding;
-        using var titleBrush = new SolidBrush(Color.FromArgb(241, 245, 249));
-        using var detailBrush = new SolidBrush(Color.FromArgb(203, 213, 225));
+        using var titleBrush = new SolidBrush(UiPalette.Slate100);
+        using var detailBrush = new SolidBrush(UiPalette.Slate300);
         DrawString(
             graphics,
             _title,
@@ -343,27 +332,7 @@ internal sealed class TaskbarHintPopoverForm : Form
 
     private int Scale(int value) => Math.Max(1, (int)Math.Round(value * _scale));
 
-    private static GraphicsPath RoundedRectangle(RectangleF bounds, float radius)
-    {
-        var path = new GraphicsPath();
-        var diameter = Math.Min(radius * 2, Math.Min(bounds.Width, bounds.Height));
-        if (diameter <= 0)
-        {
-            path.AddRectangle(bounds);
-            return path;
-        }
-
-        var arc = new RectangleF(bounds.X, bounds.Y, diameter, diameter);
-        path.AddArc(arc, 180, 90);
-        arc.X = bounds.Right - diameter;
-        path.AddArc(arc, 270, 90);
-        arc.Y = bounds.Bottom - diameter;
-        path.AddArc(arc, 0, 90);
-        arc.X = bounds.Left;
-        path.AddArc(arc, 90, 90);
-        path.CloseFigure();
-        return path;
-    }
+    private static GraphicsPath RoundedRectangle(RectangleF bounds, float radius) => UiPaint.RoundedPath(bounds, radius);
 
     private static void DrawString(
         Graphics graphics,
@@ -371,16 +340,8 @@ internal sealed class TaskbarHintPopoverForm : Form
         Font font,
         Brush brush,
         RectangleF bounds,
-        StringAlignment alignment)
-    {
-        using var format = new StringFormat
-        {
-            Alignment = alignment,
-            LineAlignment = StringAlignment.Center,
-            FormatFlags = StringFormatFlags.NoWrap,
-        };
-        graphics.DrawString(value, font, brush, bounds, format);
-    }
+        StringAlignment alignment) =>
+        UiPaint.Text(graphics, value, font, brush, bounds, alignment, ellipsis: false);
 
     protected override void Dispose(bool disposing)
     {

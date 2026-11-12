@@ -10,10 +10,52 @@ public sealed class CodexTokenUsageLedger
     private readonly CodexConversationUsageReader _conversations = new();
     private readonly CodexConversationTitleReader _titles = new();
     private IReadOnlyList<string> _recentSessionPaths = [];
+    private readonly Dictionary<string, SessionDirectory> _sessionDirectories = new(StringComparer.OrdinalIgnoreCase);
+    private long _fullDiscoveryAt;
+    private string[] _orderedConversationPaths = [];
+    private HashSet<string> _orderedConversationSource = new(StringComparer.OrdinalIgnoreCase);
+    private const long FullDiscoveryIntervalMs = 30_000;
+    private static readonly TimeSpan HotDirectoryAge = TimeSpan.FromDays(2);
 
     public CodexTokenUsageLedger(AppSettingsStore store)
-        : this(store, () => [CodexQuotaService.CodexHome(), .. CockpitCodexInstanceActivity.ReadTokenUsageHomes()])
+        : this(store, CachedHomes())
     {
+    }
+
+    /// <summary>
+    /// Codex homes only change when Cockpit rewrites its instance registry, so the registry is
+    /// parsed again only when that file's size or write time changes.
+    /// </summary>
+    private static Func<IReadOnlyList<string>> CachedHomes()
+    {
+        var sync = new object();
+        (long Length, long Ticks, string Home)? stamp = null;
+        IReadOnlyList<string> homes = [];
+        return () =>
+        {
+            var registry = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".antigravity_cockpit", "codex_instances.json");
+            (long, long, string) current;
+            try
+            {
+                var file = new FileInfo(registry);
+                current = file.Exists ? (file.Length, file.LastWriteTimeUtc.Ticks, CodexQuotaService.CodexHome())
+                    : (-1, 0, CodexQuotaService.CodexHome());
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                return [CodexQuotaService.CodexHome(), .. CockpitCodexInstanceActivity.ReadTokenUsageHomes()];
+            }
+            lock (sync)
+            {
+                if (stamp != current)
+                {
+                    homes = [CodexQuotaService.CodexHome(), .. CockpitCodexInstanceActivity.ReadTokenUsageHomes()];
+                    stamp = current;
+                }
+                return homes;
+            }
+        };
     }
 
     internal CodexTokenUsageLedger(AppSettingsStore store, Func<IReadOnlyList<string>> homes)
@@ -64,7 +106,7 @@ public sealed class CodexTokenUsageLedger
             }
             if (_summary is not null && observed is not null)
             {
-                _recentSessionPaths = ConversationPaths(observed.RecentSessionPaths, cancellationToken);
+                _recentSessionPaths = ConversationPaths(observed.RecentSessionPaths, cancellationToken, fullDiscovery: true);
                 _summary = _summary with
                 {
                     RecentTurns = _conversations.Refresh(_recentSessionPaths, now, cancellationToken),
@@ -94,32 +136,71 @@ public sealed class CodexTokenUsageLedger
         }
     }
 
-    private string[] ConversationPaths(IReadOnlyList<string> known, CancellationToken cancellationToken)
+    private string[] ConversationPaths(IReadOnlyList<string> known, CancellationToken cancellationToken, bool fullDiscovery = false)
     {
         var paths = new HashSet<string>(known, StringComparer.OrdinalIgnoreCase);
         // Resumed turns keep their original date folder. Live discovery has no session-count cap
         // and is independent of the token ledger's bounded historical accounting discovery.
+        // Session trees hold thousands of entries, so directories are listed again only when their
+        // own write time changes; long-idle date folders are re-checked on a slower full pass.
+        var now = Environment.TickCount64;
+        var full = fullDiscovery || now - _fullDiscoveryAt >= FullDiscoveryIntervalMs;
+        if (full) _fullDiscoveryAt = now;
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var hotSince = DateTime.UtcNow - HotDirectoryAge;
         foreach (var codexHome in _homes().Distinct(StringComparer.OrdinalIgnoreCase))
-        {
-            var directory = Path.Combine(codexHome, "sessions");
-            try
-            {
-                if (Directory.Exists(directory))
-                    foreach (var path in Directory.EnumerateFiles(directory, "*.jsonl", SearchOption.AllDirectories))
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        paths.Add(path);
-                    }
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
-        }
-        return paths.Select(path => new FileInfo(path))
+            VisitSessionDirectory(Path.Combine(codexHome, "sessions"), full, hotSince.Ticks, paths, visited, cancellationToken);
+        foreach (var stale in _sessionDirectories.Keys.Where(key => !visited.Contains(key)).ToArray())
+            _sessionDirectories.Remove(stale);
+        // Ordering and copy de-duplication need a stat of every file; redo it only when the
+        // discovered set changes or on the periodic full pass.
+        if (!full && paths.SetEquals(_orderedConversationSource)) return _orderedConversationPaths;
+        _orderedConversationSource = paths;
+        return _orderedConversationPaths = paths.Select(path => new FileInfo(path))
             .Where(file => file.Exists)
             .GroupBy(file => file.Name, StringComparer.Ordinal)
             .Select(group => group.OrderByDescending(file => file.Length).ThenByDescending(file => file.LastWriteTimeUtc).First())
             .OrderByDescending(file => file.LastWriteTimeUtc)
             .Select(file => file.FullName).ToArray();
     }
+
+    private void VisitSessionDirectory(string directory, bool full, long hotSinceTicks,
+        HashSet<string> paths, HashSet<string> visited, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!visited.Add(directory)) return;
+        try
+        {
+            var info = new DirectoryInfo(directory);
+            if (!info.Exists) return;
+            var ticks = info.LastWriteTimeUtc.Ticks;
+            if (!_sessionDirectories.TryGetValue(directory, out var entry) || entry.WriteTicks != ticks)
+            {
+                entry = new SessionDirectory(
+                    ticks,
+                    Directory.EnumerateFiles(directory, "*.jsonl", SearchOption.TopDirectoryOnly).ToArray(),
+                    Directory.EnumerateDirectories(directory, "*", SearchOption.TopDirectoryOnly).ToArray());
+                _sessionDirectories[directory] = entry;
+            }
+            paths.UnionWith(entry.Files);
+            foreach (var child in entry.Children)
+            {
+                if (!full && _sessionDirectories.TryGetValue(child, out var leaf)
+                    && leaf.Children.Length == 0 && leaf.WriteTicks < hotSinceTicks)
+                {
+                    // Old leaf folders only change when a session is created there, which the
+                    // periodic full pass still picks up; known files in them are tracked directly.
+                    visited.Add(child);
+                    paths.UnionWith(leaf.Files);
+                    continue;
+                }
+                VisitSessionDirectory(child, full, hotSinceTicks, paths, visited, cancellationToken);
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+    }
+
+    private sealed record SessionDirectory(long WriteTicks, string[] Files, string[] Children);
 
     private static CodexTokenUsageIndex MergePending(
         CodexTokenUsageIndex current,
@@ -155,6 +236,8 @@ public sealed class CodexTokenUsageLedger
 
         // Unchanged local history needs no full-ledger transaction. New turns,
         // pending saves and due retention still merge the latest index under lock.
+        // This runs every second; the cheap check avoids rebuilding the 500-turn history.
+        if (HistoryAlreadyHolds(summary.ConversationHistory, completed, now)) return summary;
         if (HistoryEquals(summary.ConversationHistory,
                 MergeConversationHistory(summary.ConversationHistory, completed, now)))
             return summary;
@@ -198,6 +281,47 @@ public sealed class CodexTokenUsageLedger
             .OrderByDescending(turn => turn.ObservedAt)
             .Take(CodexTokenUsageIndex.ConversationHistoryLimit)
             .ToList();
+    }
+
+    private IReadOnlyList<CodexConversationTurn>? _heldHistory;
+    private Dictionary<string, CodexConversationTurn>? _heldHistoryByKey;
+    private DateTimeOffset _heldHistoryOldest;
+
+    /// <summary>
+    /// True when merging <paramref name="completed"/> into <paramref name="history"/> would
+    /// return the same list: the history is already canonical (terminal, unique, newest first,
+    /// within the limit), nothing has aged out, and every completed turn is present unchanged.
+    /// </summary>
+    private bool HistoryAlreadyHolds(
+        IReadOnlyList<CodexConversationTurn>? history,
+        IReadOnlyList<CodexConversationTurn> completed,
+        DateTimeOffset now)
+    {
+        if (history is null || history.Count == 0) return false;
+        if (!ReferenceEquals(history, _heldHistory))
+        {
+            _heldHistory = history;
+            _heldHistoryByKey = null;
+            if (history.Count > CodexTokenUsageIndex.ConversationHistoryLimit) return false;
+            var byKey = new Dictionary<string, CodexConversationTurn>(history.Count, StringComparer.Ordinal);
+            for (var index = 0; index < history.Count; index++)
+            {
+                var turn = history[index];
+                if (!turn.IsTerminal || turn.Stale) return false;
+                if (index > 0 && history[index - 1].ObservedAt < turn.ObservedAt) return false;
+                if (!byKey.TryAdd(TurnKey(turn), turn)) return false;
+            }
+            _heldHistoryByKey = byKey;
+            _heldHistoryOldest = history[^1].ObservedAt;
+        }
+        if (_heldHistoryByKey is null) return false;
+        if (_heldHistoryOldest < now.AddDays(-CodexTokenUsageIndex.ConversationHistoryRetentionDays)) return false;
+        foreach (var turn in completed)
+        {
+            if (!_heldHistoryByKey.TryGetValue(TurnKey(turn), out var held)) return false;
+            if (held != (turn.Stale ? turn with { Stale = false } : turn)) return false;
+        }
+        return true;
     }
 
     private static bool HistoryEquals(

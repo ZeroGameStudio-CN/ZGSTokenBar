@@ -18,6 +18,9 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     private readonly ContextMenuStrip _projectMenu = new() { ShowImageMargin = false };
     private string _projectMenuRevision = "";
     private readonly Label _freshness = Label("连接中", 350);
+    private readonly RouterBrandMark _brand = new() { Width = 110, Height = 30, Margin = Padding.Empty };
+    private float _appliedScale = -1;
+    private QuotaBackgroundTheme? _appliedTheme;
     private readonly RouterStatusBadge _headline = new() { Text = "读取中", Margin = Padding.Empty };
     private readonly Label _metrics = Label("", 420);
     private readonly Label _task = Label("", 760);
@@ -74,7 +77,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         Text = "Router";
         AutoScaleMode = AutoScaleMode.None;
         SetLogicalFont(this, "Microsoft YaHei UI", RouterVisualGeometry.LogicalFontPixels);
-        BackColor = Color.FromArgb(17, 21, 29);
+        BackColor = UiTokens.CardSurface;
         ForeColor = Color.FromArgb(229, 234, 243);
         FormBorderStyle = FormBorderStyle.None;
         ClientSize = PreferredBodySize;
@@ -93,7 +96,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _kind.Width = _outcome.Width = 92; _day.Width = 112; _query.Width = 160;
         _kind.AccessibleName = "任务类型"; _outcome.AccessibleName = "结果"; _day.AccessibleName = "日期"; _query.AccessibleName = "搜索任务或对话";
         _pin = IconButton(RouterButtonIcon.Pin, "固定弹层", () => { PinChanged?.Invoke(this, !_pinned); return Task.CompletedTask; });
-        var brand = Label("ROUTER", 70); SetLogicalFont(brand, "Segoe UI Semibold", 11);
+        var brand = _brand;
         var header = Header(Flow(brand), Flow(_freshness, IconButton(RouterButtonIcon.Refresh, "刷新", async () => { await RefreshViewAsync(); await HistoryAsync(forceRefresh: true); }), _pin,
             IconButton(RouterButtonIcon.Close, "收起弹层", () => { CloseRequested?.Invoke(this, EventArgs.Empty); return Task.CompletedTask; })), 240);
         var navigation = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 1, RowCount = 2 };
@@ -112,7 +115,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         foreach (var label in new[] { _metrics, _detail, _source, _freshness, _notice, _historySummary })
             SetLogicalFont(label, Font.FontFamily.Name, 10.5f);
         foreach (var label in new[] { _currentHeading, _queueHeading, _historyHeading })
-            SetLogicalFont(label, Font.FontFamily.Name, 11.5f, FontStyle.Bold);
+            SetLogicalFont(label, "Segoe UI", UiTokens.FontBody, FontStyle.Bold);
         _currentHeading.Height = 24; _queueHeading.Height = _historyHeading.Height = _historySummary.Height = 30;
         _currentHeading.Margin = _queueHeading.Margin = _historyHeading.Margin = _historySummary.Margin = Padding.Empty;
         _metrics.TextAlign = ContentAlignment.MiddleRight;
@@ -134,6 +137,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         var currentSection = Section("当前"); currentSection.Controls.Add(summary); _root.Controls.Add(currentSection, 0, 1);
 
         _queue.Columns.AddRange(Column("task", "任务", 270), Column("source", "来源对话", 210), Column("wait", "等待", 80));
+        Align(_queue.Columns["wait"]!, DataGridViewContentAlignment.MiddleRight);
         _queue.SelectionChanged += (_, _) => { if (!_applyingQueue) UpdateControls(); };
         _top = IconButton(RouterButtonIcon.Top, "置顶", () => QueueControlAsync("move", 1));
         _up = IconButton(RouterButtonIcon.Up, "上移", () => QueueControlAsync("move", -1));
@@ -173,6 +177,10 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _history.EmptyTitle = "没有匹配的记录"; _history.EmptyDetail = "调整筛选条件后重试";
         _history.Columns.AddRange(Column("createdLocal", "提交时间", 115), Column("task", "任务", 255), Column("source", "来源对话", 150),
             Column("state", "结果", 90), Column("executionSeconds", "占用", 70), Column("cleanupVerified", "释放", 55));
+        // Headers sit over their values: centred status pill and check, right-aligned durations.
+        Align(_history.Columns["state"]!, DataGridViewContentAlignment.MiddleCenter);
+        Align(_history.Columns["executionSeconds"]!, DataGridViewContentAlignment.MiddleRight);
+        Align(_history.Columns["cleanupVerified"]!, DataGridViewContentAlignment.MiddleCenter);
         _history.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0) ShowRecord(_history.Rows[e.RowIndex]); };
         _history.Margin = Padding.Empty; _historyBody.Controls.Add(_history, 0, 2);
         var historySection = Section("历史"); historySection.Controls.Add(_historyBody); _root.Controls.Add(historySection, 0, 3);
@@ -180,7 +188,13 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _timer.Tick += async (_, _) => { if (Visible) await RefreshViewAsync(); };
         _notice.TextChanged += (_, _) => _tips.SetToolTip(_notice, _notice.Text);
         _history.CellPainting += PaintHistoryStatus;
-        if (observe) VisibleChanged += async (_, _) => { if (Visible) { _timer.Start(); await RefreshViewAsync(); } else _timer.Stop(); };
+        // Show the (cached) shell first; the data refresh starts after the window has painted.
+        if (observe) VisibleChanged += (_, _) =>
+        {
+            if (!Visible) { _timer.Stop(); return; }
+            _timer.Start();
+            BeginInvoke(new Action(async () => { if (Visible && !IsDisposed) await RefreshViewAsync(); }));
+        };
         UpdateControls();
         ApplyPalette(QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
         ResumeLayout(true);
@@ -199,17 +213,64 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _tips.SetToolTip(_pin, pinned ? "取消固定" : "固定后可操作队列与历史");
         if (string.IsNullOrEmpty(_notice.Text) || _notice.Text is "悬停预览 · 点击模块固定后可操作" or "已固定 · Esc 或点击外部收起")
             _notice.Text = pinned ? "已固定 · Esc 或点击外部收起" : "悬停预览 · 点击模块固定后可操作";
-        if (changed && IsHandleCreated) RecreateHandle();
+        // Toggle WS_EX_NOACTIVATE in place: recreating the handle rebuilt every child control.
+        if (changed && IsHandleCreated)
+        {
+            var style = GetWindowLongPtr(Handle, GwlExStyle).ToInt64();
+            style = pinned ? style & ~NoActivateExStyle : style | NoActivateExStyle;
+            SetWindowLongPtr(Handle, GwlExStyle, new IntPtr(style));
+        }
         UpdateControls();
         if (pinned && Visible) Activate();
     }
+    private const int GwlExStyle = -20;
+    private const long NoActivateExStyle = 0x08000000;
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    private static extern IntPtr GetWindowLongPtr(IntPtr window, int index);
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    private static extern IntPtr SetWindowLongPtr(IntPtr window, int index, IntPtr value);
+
+    /// <summary>Click time of the pending open, for the click-to-paint / click-to-data trace.</summary>
+    private long _openStamp;
+    private bool _openDataPending;
+
+    private long _openDataStamp;
+    internal void MarkOpenRequested(long stamp) { _openStamp = stamp; _openDataStamp = stamp; _openDataPending = true; }
+
+    /// <summary>
+    /// Idle-time warm-up: scale, fonts, palette, every native child handle and one layout pass,
+    /// so a click only positions and shows the already-built window.
+    /// </summary>
+    internal void Prewarm(float scale, QuotaBackgroundTheme theme)
+    {
+        if (IsDisposed || Visible) return;
+        using var trace = PerfTrace.Measure("router.panel.prewarm");
+        SetPinned(true);
+        var nextScale = Math.Max(1, scale);
+        SuspendLayout();
+        if (Math.Abs(nextScale - _popoverScale) > .001) Scale(new SizeF(nextScale / _popoverScale, nextScale / _popoverScale));
+        _popoverScale = nextScale;
+        ClientSize = new Size((int)(PreferredBodySize.Width * nextScale), (int)(PreferredBodySize.Height * nextScale));
+        ResumeLayout(false);
+        _ = Handle;
+        foreach (var control in Children(this)) _ = control.Handle;
+        ApplyLogicalFonts();
+        ApplyPalette(theme);
+        _appliedScale = _popoverScale; _appliedTheme = theme;
+        PerformLayout();
+    }
+
     internal void ShowFor(BarForm owner, Rectangle anchor, bool pinned, float scale, QuotaBackgroundTheme theme)
     {
         ConfigureFor(anchor, pinned, scale, theme, Screen.FromRectangle(anchor).WorkingArea);
-        if (!Visible) Show(owner);
-        // Creating/showing a native window can rescale fonts after ConfigureFor ran.
-        ApplyLogicalFonts();
-        ApplyPalette(theme);
+        var firstShow = !IsHandleCreated;
+        if (!Visible) this.ShowPopover(BarForm.PopoverOwnerFor(owner));
+        // Creating the native window can rescale fonts after ConfigureFor ran; only then re-apply.
+        if (firstShow)
+        {
+            ApplyLogicalFonts();
+            ApplyPalette(theme);
+        }
         if (pinned) Activate();
     }
     internal void ConfigureFor(Rectangle anchor, bool pinned, float scale, QuotaBackgroundTheme theme, Rectangle area)
@@ -223,8 +284,15 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
             ResumeLayout(true);
         }
         _popoverScale = nextScale;
-        ApplyLogicalFonts();
-        ApplyPalette(theme);
+        // Fonts and palette walk every child control; skip it when nothing changed since the last show.
+        // ...unless native DPI handling rewrote the fonts while the panel was hidden (same scale).
+        if (Math.Abs(_appliedScale - _popoverScale) > .001 || !Equals(_appliedTheme, theme) || FontsDrifted())
+        {
+            ApplyLogicalFonts();
+            ApplyPalette(theme);
+            _appliedScale = _popoverScale;
+            _appliedTheme = theme;
+        }
         _bodySize = new(Math.Min((int)(PreferredBodySize.Width * _popoverScale), area.Width - (int)(16 * _popoverScale)),
             Math.Min((int)(PreferredBodySize.Height * _popoverScale), area.Height - (int)(28 * _popoverScale)));
         var tail = (int)(8 * _popoverScale);
@@ -248,6 +316,11 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         { font = new Font(key.Family, key.Item2, key.Style, GraphicsUnit.Pixel); _scaledFonts[key] = font; }
         return font;
     }
+    /// <summary>Cheap check (no font allocation): does the form's font still match its logical size?</summary>
+    private bool FontsDrifted() =>
+        _logicalFonts.TryGetValue(this, out var logical)
+        && Math.Abs(Font.Size - logical.Pixels * _popoverScale) > .1;
+
     private void ApplyLogicalFonts()
     {
         SuspendLayout();
@@ -261,7 +334,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         var tail = 8 * _popoverScale;
         var body = TaskbarPopoverMath.BodyBounds(_tailSide, _bodySize.Width, _bodySize.Height, tail);
         var path = new GraphicsPath { FillMode = FillMode.Winding };
-        var d = 14 * _popoverScale;
+        var d = UiTokens.RadiusPanel * 2 * _popoverScale;
         path.AddArc(body.Left, body.Top, d, d, 180, 90); path.AddArc(body.Right - d, body.Top, d, d, 270, 90);
         path.AddArc(body.Right - d, body.Bottom - d, d, d, 0, 90); path.AddArc(body.Left, body.Bottom - d, d, d, 90, 90); path.CloseFigure();
         path.AddPolygon(TaskbarPopoverMath.TailPoints(_tailSide, body, _tailOffset, tail));
@@ -270,8 +343,20 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        using var path = SurfacePath(); using var border = new Pen(Color.FromArgb(86, 100, 116, 139));
+        using var path = SurfacePath(); using var border = new Pen(UiTokens.Hairline);
         e.Graphics.DrawPath(border, path);
+        if (_openStamp != 0)
+        {
+            var stamp = _openStamp; _openStamp = 0;
+            PerfTrace.Note($"router.panel.click-to-paint {System.Diagnostics.Stopwatch.GetElapsedTime(stamp).TotalMilliseconds:0.00}ms");
+            // Children paint after the frame; the first idle after that is "fully drawn".
+            void Idle(object? s, EventArgs a)
+            {
+                Application.Idle -= Idle;
+                PerfTrace.Note($"router.panel.click-to-idle {System.Diagnostics.Stopwatch.GetElapsedTime(stamp).TotalMilliseconds:0.00}ms");
+            }
+            if (PerfTrace.Enabled) Application.Idle += Idle;
+        }
     }
     protected override void OnMouseWheel(MouseEventArgs e)
     {
@@ -285,7 +370,8 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
 
     private void ApplyPalette(QuotaBackgroundTheme theme)
     {
-        _palette = new(theme.Popover); BackColor = _palette.Background;
+        // One graphite surface for every hover/panel (UiTokens.CardSurface), whatever the bar theme.
+        _palette = new(UiTokens.CardSurface); BackColor = _palette.Background;
         Color SurfaceFor(Control control)
         {
             for (var parent = control.Parent; parent is not null; parent = parent.Parent)
@@ -309,6 +395,9 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
                     grid.Palette = _palette; grid.BackgroundColor = SurfaceFor(grid); grid.GridColor = _palette.Border;
                     grid.ColumnHeadersDefaultCellStyle.BackColor = _palette.Surface;
                     grid.ColumnHeadersDefaultCellStyle.ForeColor = _palette.Muted;
+                    // Headers never take the selection colour (the current cell's column lit up blue).
+                    grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = _palette.Surface;
+                    grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = _palette.Muted;
                     grid.ColumnHeadersDefaultCellStyle.Padding = new Padding((int)(4 * scale), (int)(6 * scale), (int)(4 * scale), (int)(6 * scale));
                     grid.DefaultCellStyle.BackColor = _palette.Background; grid.DefaultCellStyle.ForeColor = _palette.Text;
                     grid.DefaultCellStyle.SelectionBackColor = RouterVisualPalette.Mix(_palette.Background, _palette.Accent, .11f);
@@ -321,7 +410,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
                 case System.Windows.Forms.Label label:
                     label.BackColor = SurfaceFor(label);
                     label.ForeColor = label == _task ? _palette.Text : label == _queueHeading || label == _historyHeading
-                        ? Color.FromArgb(165, 180, 252) : _palette.Muted; break;
+                        ? _palette.Text : _palette.Muted; break;
                 case Panel panel: panel.BackColor = SurfaceFor(panel); break;
             }
         }
@@ -344,14 +433,11 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
             : RouterJson.Boolean(row, "cleanupVerified") ? "completed" : "warning");
         if (column == "state")
         {
-            var w = Math.Min(e.CellBounds.Width - 8 * s, TextRenderer.MeasureText(text, _history.Font).Width + 16 * s);
-            var h = Math.Min(e.CellBounds.Height - 6 * s, 23 * s);
+            var size = UiPaint.PillSize(text, _history.Font, s);
+            var w = Math.Min(e.CellBounds.Width - 8 * s, size.Width);
+            var h = Math.Min(e.CellBounds.Height - 6 * s, size.Height);
             var bounds = new RectangleF(e.CellBounds.X + (e.CellBounds.Width - w) / 2, e.CellBounds.Y + (e.CellBounds.Height - h) / 2, w, h);
-            graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            using var path = RouterVisualGeometry.Rounded(bounds, 5 * s);
-            using var fill = new SolidBrush(RouterVisualPalette.Mix(_palette.Background, color, .10f)); graphics.FillPath(fill, path);
-            TextRenderer.DrawText(graphics, text, _history.Font, Rectangle.Round(bounds), color,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+            UiPaint.Pill(graphics, bounds, text, _history.Font, color, _palette.Background, s);
         }
         else TextRenderer.DrawText(graphics, text, _history.Font, e.CellBounds, color,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
@@ -366,6 +452,11 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         ApplyProjectTabs(snapshot);
         _headline.Text = RouterJson.Text(snapshot.View, "headline", "状态未确认");
         _headline.Accent = RouterVisualPalette.State(RouterJson.Text(snapshot.View, "tone")); _headline.Invalidate();
+        _brand.State = RouterJson.Text(snapshot.View, "tone") switch
+        {
+            "running" => "running", "warning" => "cleanup", "failed" => "attention", "waiting" => "waiting", _ => "idle",
+        };
+        _brand.Invalidate();
         var task = RouterJson.Text(snapshot.View, "task");
         var heading = RouterTaskPresentation.Heading(task);
         _task.Text = heading.Title;
@@ -381,7 +472,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _tips.SetToolTip(_headline, observation); _tips.SetToolTip(_metrics, observation);
         _queueHeading.Text = "排队  ·  " + RouterJson.Integer(snapshot.View, "queuedCount");
         _freshness.Text = snapshot.IsFresh(DateTimeOffset.UtcNow) ? "更新于 " + snapshot.ReceivedAt.ToLocalTime().ToString("HH:mm:ss") : "数据过期 · 状态未确认";
-        _freshness.ForeColor = snapshot.IsFresh(DateTimeOffset.UtcNow) ? Color.FromArgb(148, 163, 184) : Color.Salmon;
+        _freshness.ForeColor = snapshot.IsFresh(DateTimeOffset.UtcNow) ? UiPalette.Slate400 : Color.Salmon;
         UpdateControls();
     }
 
@@ -487,6 +578,11 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
             if (generation != _generation || IsDisposed) return;
             ApplySnapshot(snapshot);
             await RefreshQueueAsync();
+            if (_openDataPending)
+            {
+                _openDataPending = false;
+                PerfTrace.Note($"router.panel.open-to-data {System.Diagnostics.Stopwatch.GetElapsedTime(_openDataStamp).TotalMilliseconds:0.00}ms");
+            }
             if (!InteractionOpen && _historyOffset == 0 && (DateTimeOffset.UtcNow - _historyReadAt).TotalSeconds >= 10)
                 await HistoryAsync(forceRefresh: true);
         }
@@ -591,6 +687,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
             if (generation != _generation || historyGeneration != _historyGeneration || IsDisposed) return;
             if (!_historyBuffer.TryRead(key, offset, _historyPageSize, out var slice) || slice is null)
                 throw new InvalidDataException("History window does not cover the requested page.");
+            var selectedHistory = Selected(_history);
             _history.SuspendLayout();
             try
             {
@@ -603,7 +700,10 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
                     _history.Rows[n].Tag = row;
                     _history.Rows[n].Cells[0].ToolTipText = RouterJson.Text(row, "createdLocal");
                     _history.Rows[n].Cells[4].ToolTipText = TimingDetails(row);
+                    _history.Rows[n].Selected = selectedHistory.Length > 0 && RouterJson.Text(row, "id") == selectedHistory;
                 }
+                // A refresh keeps the user's pick; otherwise no row is pre-highlighted.
+                if (selectedHistory.Length == 0) { _history.ClearSelection(); _history.CurrentCell = null; }
             }
             finally { _history.ResumeLayout(); }
             var metadata = slice.Metadata; var total = slice.Total; _historyOffset = slice.Offset; _history.Tag = total;
@@ -745,6 +845,11 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     { var button = new RouterButton { Text = text, AccessibleName = text, Kind = kind }; button.Click += async (_, _) => await action(); return button; }
     private RouterButton IconButton(RouterButtonIcon icon, string label, Func<Task> action)
     { var button = Button(label, action); button.Icon = icon; button.AutoSize = true; _tips.SetToolTip(button, label); return button; }
+    private static void Align(DataGridViewColumn column, DataGridViewContentAlignment alignment)
+    {
+        column.DefaultCellStyle.Alignment = alignment;
+        column.HeaderCell.Style.Alignment = alignment;
+    }
     private static DataGridViewTextBoxColumn Column(string name, string title, int width) => new() { Name = name, HeaderText = title, FillWeight = width, MinimumWidth = 50, SortMode = DataGridViewColumnSortMode.NotSortable };
     private static RouterGrid Grid() => new()
     {
@@ -753,7 +858,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, BorderStyle = BorderStyle.None,
         CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal, ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None,
         ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize,
-        EnableHeadersVisualStyles = false, ColumnHeadersDefaultCellStyle = new() { BackColor = Color.FromArgb(30, 41, 59), ForeColor = Color.FromArgb(203, 213, 225), Padding = new Padding(4) },
+        EnableHeadersVisualStyles = false, ColumnHeadersDefaultCellStyle = new() { BackColor = UiPalette.Slate800, ForeColor = UiPalette.Slate300, Padding = new Padding(4) },
         DefaultCellStyle = new() { BackColor = Color.FromArgb(22, 30, 42), ForeColor = Color.FromArgb(229, 234, 243), SelectionBackColor = Color.FromArgb(42, 62, 89), SelectionForeColor = Color.White, Padding = new Padding(4) },
         AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None, ScrollBars = ScrollBars.None,
     };

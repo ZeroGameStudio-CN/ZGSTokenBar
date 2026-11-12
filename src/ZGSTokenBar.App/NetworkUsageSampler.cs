@@ -66,6 +66,8 @@ internal sealed class NetworkUsageSampler
         string[] units = ["B", "KB", "MB", "GB", "TB", "PB", "EB"];
         var index = 0;
         while (value >= 1024 && index < units.Length - 1) { value /= 1024; index++; }
-        return $"{value:0.##} {units[index]}";
+        // Three significant digits with fixed decimals (1.40 TB, 12.5 GB, 512 MB) so totals line up.
+        var format = index == 0 || value >= 100 ? "0" : value >= 10 ? "0.0" : "0.00";
+        return value.ToString(format, System.Globalization.CultureInfo.InvariantCulture) + " " + units[index];
     }
 }

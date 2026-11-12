@@ -4,18 +4,6 @@ using System.Text.Json.Serialization;
 
 namespace ZGSTokenBar.Core;
 
-public static class CodexMiniDisplayModes
-{
-    public const string Accounts = "accounts";
-    public const string Pool = "pool";
-
-    public static string Normalize(string? value) => value?.Trim().ToLowerInvariant() switch
-    {
-        Pool => Pool,
-        _ => Accounts,
-    };
-}
-
 public sealed class AppSettings
 {
     public const int CurrentSchemaVersion = 2;
@@ -33,21 +21,27 @@ public sealed class AppSettings
     public bool OpenAtLogin { get; set; }
     public bool EnableAlerts { get; set; } = true;
     public bool UseTaskbarRings { get; set; }
+    public int GlassDockMaxRings { get; set; } = GlassDockLayout.MaxVisibleRings;
     public bool TaskbarDocked { get; set; } = true;
     public bool EnableAnimations { get; set; } = true;
-    public bool EnableRadar { get; set; }
-    public bool EnableRadarAlerts { get; set; }
-    public Dictionary<string, bool> RadarModelGroups { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Experimental: host the docked bar inside the Windows taskbar (falls back to the overlay).</summary>
+    public bool EmbedInTaskbar { get; set; }
     public bool EnableAiGatewayBalance { get; set; }
     public bool EnableSub2ApiPool { get; set; }
     public bool MiniProviderAreaCollapsed { get; set; }
     public Dictionary<string, MiniAreaLayout> MiniAreaLayouts { get; set; } = new(StringComparer.Ordinal);
     public string[] MiniAreaOrder { get; set; } = [];
+    /// <summary>Bar rings the user hid from the dock (provider id or Codex/Claude card key).</summary>
+    public string[] HiddenDockItems { get; set; } = [];
+    /// <summary>Whether the overflow (+N) part of the dock is expanded; persisted across restarts.</summary>
+    public bool GlassDockExpanded { get; set; }
     // Legacy read-only migration fields from the per-card collapse prototypes.
+    // (The retired "codexMiniDisplayMode" key is simply ignored on load and dropped on the next save.)
     public bool AiGatewayMiniCollapsed { get; set; }
     public string[] CollapsedMiniGroups { get; set; } = [];
-    public string CodexMiniDisplayMode { get; set; } = CodexMiniDisplayModes.Accounts;
     public string BackgroundPalette { get; set; } = DefaultBackgroundPalette;
+    /// <summary>Antigravity group the bar ring follows (matched case-insensitively in the group name); "auto" = most usable.</summary>
+    public string AntigravityPrimaryGroup { get; set; } = AntigravityGroups.DefaultPrimary;
     public string Locale { get; set; } = "zh-CN";
     public int? WindowX { get; set; }
     public int? WindowY { get; set; }
@@ -99,10 +93,6 @@ public sealed class AppSettings
                 break;
             case "zgstokenbar.usage.codex-local":
                 break;
-            case "zgstokenbar.intelligence.radar":
-                EnableRadar = enabled;
-                if (!enabled) EnableRadarAlerts = false;
-                break;
             case "zgstokenbar.provider.ai-gateway":
                 EnableAiGatewayBalance = enabled;
                 break;
@@ -131,7 +121,6 @@ public sealed class AppSettings
             "zgstokenbar.provider.claude",
             "zgstokenbar.provider.codex",
             "zgstokenbar.usage.codex-local",
-            "zgstokenbar.intelligence.radar",
         };
         const string harnessProviderId = "zgstokenbar.provider.ai-gateway";
         if (EnableAiGatewayBalance
@@ -179,10 +168,21 @@ public sealed class AppSettings
         return !previousSeparator;
     }
 
+    /// <summary>Plugin ids of retired features (the Radar station); old settings may still list them.</summary>
+    internal static readonly string[] RetiredPluginIds = ["zgstokenbar.intelligence.radar", "zgs.intelligence.radar"];
+
+    private void DropRetiredPlugins()
+    {
+        PluginEnabled ??= new(StringComparer.Ordinal);
+        foreach (var id in RetiredPluginIds) PluginEnabled.Remove(id);
+        PluginEnablementDecisions = (PluginEnablementDecisions ?? []).Where(id => !RetiredPluginIds.Contains(id)).ToArray();
+        AutoEnabledPlugins = (AutoEnabledPlugins ?? []).Where(id => !RetiredPluginIds.Contains(id)).ToArray();
+    }
+
     public void Normalize()
     {
-        RadarModelGroups = CopyRadarModelGroups(RadarModelGroups);
         SchemaVersion = CurrentSchemaVersion;
+        DropRetiredPlugins();
         EnabledProviders = (EnabledProviders ?? [])
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .Select(value => value.Trim().ToLowerInvariant())
@@ -215,7 +215,6 @@ public sealed class AppSettings
             && (PluginEnabled.TryGetValue("zgstokenbar.usage.codex-local", out var localUsage)
                 ? localUsage
                 : true);
-        PluginEnabled["zgstokenbar.intelligence.radar"] = EnableRadar;
         PluginEnabled["zgstokenbar.provider.ai-gateway"] = EnableAiGatewayBalance;
         if (!PluginEnabled["zgstokenbar.provider.codex"])
         {
@@ -261,12 +260,13 @@ public sealed class AppSettings
         MiniProviderAreaCollapsed = false;
         AiGatewayMiniCollapsed = false;
         CollapsedMiniGroups = [];
-        CodexMiniDisplayMode = CodexMiniDisplayModes.Normalize(CodexMiniDisplayMode);
         BackgroundPalette = NormalizeBackgroundPalette(BackgroundPalette);
+        AntigravityPrimaryGroup = string.IsNullOrWhiteSpace(AntigravityPrimaryGroup)
+            ? AntigravityGroups.DefaultPrimary
+            : AntigravityPrimaryGroup.Trim();
         Locale = string.Equals(Locale?.Trim(), "en", StringComparison.OrdinalIgnoreCase)
             ? "en"
             : "zh-CN";
-        if (!EnableRadar) EnableRadarAlerts = false;
         if (TaskbarPosition is { } taskbarPosition)
         {
             TaskbarPosition = double.IsFinite(taskbarPosition)
@@ -328,7 +328,6 @@ public sealed class AppSettings
 
     public void CopyMiniAreaLayoutsFrom(AppSettings source)
     {
-        RadarModelGroups = CopyRadarModelGroups(source.RadarModelGroups);
         MiniAreaLayouts = CopyMiniAreaLayouts(source.MiniAreaLayouts);
         MiniAreaOrder = CopyMiniAreaOrder(source.MiniAreaOrder);
     }
@@ -339,15 +338,13 @@ public sealed class AppSettings
             .Where(entry => entry.Value is not null)
             .ToDictionary(entry => entry.Key, entry => entry.Value with { }, StringComparer.Ordinal);
 
-    public static Dictionary<string, bool> CopyRadarModelGroups(IReadOnlyDictionary<string, bool>? source)
-    {
-        var result = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-        foreach (var entry in source ?? new Dictionary<string, bool>())
-        {
-            if (!string.IsNullOrWhiteSpace(entry.Key)) result[entry.Key.Trim()] = entry.Value;
-        }
-        return result;
-    }
+    public static string[] CopyHiddenDockItems(IEnumerable<string>? source) =>
+        (source ?? [])
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
 
     public static string[] CopyMiniAreaOrder(IEnumerable<string>? source) =>
         (source ?? [])
@@ -586,8 +583,6 @@ public sealed class AppSettingsStore
     public string QuotaRateHistoryPath => Path.Combine(DataDirectory, "quota-rate-history.json");
     public string CodexTokenUsageIndexPath => Path.Combine(DataDirectory, "codex-token-usage-index.json");
     public string CodexQuotaTokenHistoryPath => Path.Combine(DataDirectory, "codex-quota-token-history.json");
-    public string RadarStatePath => Path.Combine(DataDirectory, "radar-state.json");
-    public string RadarRoutingPath => Path.Combine(DataDirectory, "radar-routing.json");
 
     public bool SettingsReadPending
     {
@@ -923,32 +918,86 @@ public sealed class AppSettingsStore
         }
     }
 
+    // The ledger index is many MB and is read-modify-written on every quota refresh. The parsed
+    // index this process last read or wrote is kept with the file's size and write time and is
+    // reused while the file is untouched; any other writer changes the stamp and forces a re-read.
+    private (long Length, long WriteTicks, CodexTokenUsageIndex Index)? _codexTokenUsageIndexCache;
+
     internal CodexTokenUsageReadResult UpdateCodexTokenUsageIndex(
-        Func<CodexTokenUsageIndex, CodexTokenUsageReadResult> refresh) =>
-        CredentialSupport.AtomicUpdate(
-            CodexTokenUsageIndexPath,
-            contents =>
+        Func<CodexTokenUsageIndex, CodexTokenUsageReadResult> refresh)
+    {
+        var path = CodexTokenUsageIndexPath;
+        using var writeLock = CredentialSupport.AcquireWriteLockFor(path)
+            ?? throw new IOException("File is busy. Please retry.");
+        var file = new FileInfo(path);
+        var cached = _codexTokenUsageIndexCache;
+        _codexTokenUsageIndexCache = null;
+        CodexTokenUsageIndex current;
+        if (file.Exists && cached is { } hit && hit.Length == file.Length && hit.WriteTicks == file.LastWriteTimeUtc.Ticks)
+        {
+            current = hit.Index;
+        }
+        else
+        {
+            FileStream? stream;
+            try
             {
-                CodexTokenUsageIndex current;
-                try
+                stream = file.Exists
+                    ? new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 64 * 1024, FileOptions.SequentialScan)
+                    : null;
+            }
+            catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+            {
+                stream = null;
+            }
+            try
+            {
+                using (stream)
                 {
-                    current = contents is null ? new() : ParseCodexTokenUsageIndex(contents);
+                    // Streamed parse: no whole-file byte[] on the large-object heap.
+                    current = stream is null ? new() : ParseCodexTokenUsageIndex(stream);
                 }
-                catch (Exception exception) when (exception is JsonException or InvalidOperationException)
-                {
-                    throw new IOException("Token ledger must be recovered before it can be updated.", exception);
-                }
-                ClearWriteProtection(CodexTokenUsageIndexPath);
-                var result = refresh(current);
-                return (
-                    result.Changed ? JsonSerializer.Serialize(result.Index, SettingsJsonContext.CodexTokenUsageIndex) : null,
-                    result);
-            });
+            }
+            catch (Exception exception) when (exception is JsonException or InvalidOperationException)
+            {
+                throw new IOException("Token ledger must be recovered before it can be updated.", exception);
+            }
+        }
+        ClearWriteProtection(path);
+        var result = refresh(current);
+        if (result.Changed)
+        {
+            CredentialSupport.AtomicWriteLockedStream(
+                path,
+                stream => JsonSerializer.Serialize(stream, result.Index, SettingsJsonContext.CodexTokenUsageIndex));
+            file.Refresh();
+            if (file.Exists) _codexTokenUsageIndexCache = (file.Length, file.LastWriteTimeUtc.Ticks, result.Index);
+        }
+        else if (file.Exists)
+        {
+            file.Refresh();
+            if (file.Exists) _codexTokenUsageIndexCache = (file.Length, file.LastWriteTimeUtc.Ticks, current);
+        }
+        return result;
+    }
+
+    private static CodexTokenUsageIndex ParseCodexTokenUsageIndex(Stream utf8)
+    {
+        var index = JsonSerializer.Deserialize(utf8, SettingsJsonContext.CodexTokenUsageIndex)
+            ?? throw new JsonException("Invalid Codex token usage index.");
+        return ValidateCodexTokenUsageIndex(index);
+    }
+
 
     private static CodexTokenUsageIndex ParseCodexTokenUsageIndex(string json)
     {
         var index = JsonSerializer.Deserialize(json, SettingsJsonContext.CodexTokenUsageIndex)
             ?? throw new JsonException("Invalid Codex token usage index.");
+        return ValidateCodexTokenUsageIndex(index);
+    }
+
+    private static CodexTokenUsageIndex ValidateCodexTokenUsageIndex(CodexTokenUsageIndex index)
+    {
         // Validate the deserialized header without building a second full DOM.
         // A missing legacy header still normalizes to the current in-memory schema.
         if (index.SchemaVersion is < 1 or > CodexTokenUsageIndex.CurrentSchemaVersion)
@@ -1026,79 +1075,6 @@ public sealed class AppSettingsStore
         }
     }
 
-    public bool TryLoadRadarState(out RadarAlertState state)
-    {
-        state = LoadRadarState();
-        lock (_writeProtectionSync) return !_writeProtectedPaths.Contains(RadarStatePath);
-    }
-
-    public RadarAlertState LoadRadarState()
-    {
-        try
-        {
-            var state = JsonSerializer.Deserialize<RadarAlertState>(
-                ReadTextWithRetry(RadarStatePath),
-                JsonOptions) ?? new RadarAlertState();
-            state.NotifiedEventIds = (state.NotifiedEventIds ?? [])
-                .Where(id => !string.IsNullOrWhiteSpace(id))
-                .Distinct(StringComparer.Ordinal)
-                .TakeLast(50)
-                .ToList();
-            state.ViewedEventIdsBySurface = NormalizeRadarViewedEvents(state.ViewedEventIdsBySurface);
-            if (state.LastSnapshot is { } snapshot) state.LastSnapshot = RadarSnapshotLimits.Trim(snapshot);
-            ClearWriteProtection(RadarStatePath);
-            return state;
-        }
-        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
-        {
-            ClearWriteProtection(RadarStatePath);
-            return new RadarAlertState();
-        }
-        catch (IOException)
-        {
-            ProtectWritePath(RadarStatePath);
-            return new RadarAlertState();
-        }
-        catch (UnauthorizedAccessException)
-        {
-            ProtectWritePath(RadarStatePath);
-            return new RadarAlertState();
-        }
-        catch (Exception exception) when (exception is JsonException or InvalidOperationException)
-        {
-            PreserveCorruptFile(RadarStatePath);
-            return new RadarAlertState();
-        }
-    }
-
-    public void SaveRadarState(RadarAlertState state)
-    {
-        EnsureWritable(RadarStatePath, "Radar state file is busy. Please retry.");
-        Directory.CreateDirectory(DataDirectory);
-        state.NotifiedEventIds = (state.NotifiedEventIds ?? []).TakeLast(50).ToList();
-        state.ViewedEventIdsBySurface = NormalizeRadarViewedEvents(state.ViewedEventIdsBySurface);
-        if (state.LastSnapshot is { } snapshot)
-        {
-            state.LastSnapshot = RadarSnapshotLimits.Trim(snapshot);
-            if (!CredentialSupport.AtomicWrite(
-                    RadarRoutingPath,
-                    JsonSerializer.Serialize(RadarRoutingSnapshotBuilder.Build(state.LastSnapshot), JsonOptions)))
-            {
-                throw new IOException("Radar routing file is busy. Please retry.");
-            }
-        }
-        else if (!CredentialSupport.AtomicWrite(
-                     RadarRoutingPath,
-                     JsonSerializer.Serialize(new { error = "radar_missing" }, JsonOptions)))
-        {
-            throw new IOException("Radar routing file is busy. Please retry.");
-        }
-        if (!CredentialSupport.AtomicWrite(RadarStatePath, JsonSerializer.Serialize(state, JsonOptions)))
-        {
-            throw new IOException("Radar state file is busy. Please retry.");
-        }
-    }
-
     private static string ReadTextWithRetry(string path)
     {
         for (var attempt = 0; ; attempt++)
@@ -1134,13 +1110,6 @@ public sealed class AppSettingsStore
             if (_writeProtectedPaths.Contains(path)) throw new IOException(message);
         }
     }
-
-    private static Dictionary<string, string> NormalizeRadarViewedEvents(
-        IReadOnlyDictionary<string, string>? values) =>
-        (values ?? new Dictionary<string, string>())
-            .Where(entry => !string.IsNullOrWhiteSpace(entry.Key)
-                && !string.IsNullOrWhiteSpace(entry.Value))
-            .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal);
 
     private AppSettings? TryLoadSettingsFile(string path, out string? invalidContents)
     {

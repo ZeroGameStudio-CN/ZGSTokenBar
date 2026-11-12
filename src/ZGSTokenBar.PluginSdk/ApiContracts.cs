@@ -113,7 +113,6 @@ public sealed record WindowInspection(
     public DateTimeOffset? NetworkHistorySavedAt { get; init; }
     public bool NetworkHistorySaveFailed { get; init; }
     public long? DisplayedTokenTotal { get; init; }
-    public bool RadarVisible { get; init; }
     public bool SettingsVisible { get; init; }
     public bool? SettingsFontsMatchLayout { get; init; }
     public bool RouterVisible { get; init; }
@@ -122,9 +121,6 @@ public sealed record WindowInspection(
     public string? RouterProjectKey { get; init; }
     public string? RouterRequestId { get; init; }
     public DateTimeOffset? RouterObservedAt { get; init; }
-    public string[]? RadarModelGroups { get; init; }
-    public string[]? CachedRadarModelGroups { get; init; }
-    public DateTimeOffset? RadarTrialObservedAt { get; init; }
     public int RecentConversationCount { get; init; }
     public int PendingConversationCount { get; init; }
     public double? LatestTurnOutputTokensPerSecond { get; init; }

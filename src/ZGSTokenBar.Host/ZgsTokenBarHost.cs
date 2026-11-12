@@ -298,7 +298,6 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
             {
                 MiniCards = [],
                 Details = [],
-                Radar = [],
                 SafeMetadata = null,
                 Health = new(
                     PluginHealthCode.InvalidContribution,
@@ -1098,8 +1097,7 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
 
     private static IEnumerable<string> ContributionIds(PluginDataSnapshot snapshot) =>
         snapshot.MiniCards.Select(card => card.Id)
-            .Concat(snapshot.Details.Select(detail => detail.Id))
-            .Concat(snapshot.Radar.Select(radar => radar.Id));
+            .Concat(snapshot.Details.Select(detail => detail.Id));
 
     private void PublishEvent(HostEvent hostEvent)
     {
@@ -1169,10 +1167,6 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
         {
             items.Add(JsonSerializer.SerializeToElement(detail, PluginSdkJsonContext.Default.DetailContribution));
         }
-        foreach (var radar in snapshot.Radar)
-        {
-            items.Add(JsonSerializer.SerializeToElement(radar, PluginSdkJsonContext.Default.RadarContribution));
-        }
         return items;
     }
 
@@ -1189,7 +1183,6 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
                 now,
                 enabled ? "plugin.waiting" : "plugin.disabled"),
             [],
-            [],
             []);
     }
 
@@ -1202,7 +1195,6 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
             manifest.Id,
             now,
             new(code, false, false, now, "plugin.start_failed"),
-            [],
             [],
             []);
     }

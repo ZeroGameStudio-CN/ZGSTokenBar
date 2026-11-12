@@ -18,7 +18,18 @@
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <PublishReadyToRun>false</PublishReadyToRun>
     <PublishTrimmed>false</PublishTrimmed>
+    <!-- A taskbar app is idle almost always: no background GC thread, and compact the LOH eagerly. -->
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <!-- PGO instrumentation costs CPU and memory in a process that never runs hot paths long. -->
+    <TieredPGO>false</TieredPGO>
   </PropertyGroup>
+  <ItemGroup>
+    <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="7" />
+    <!-- Windows NLS globalization instead of mapping the ~30 MB ICU data library. -->
+    <RuntimeHostConfigurationOption Include="System.Globalization.UseNls" Value="true" />
+    <!-- Workstation GC sizes gen0 from the L3 cache (96 MB+ on X3D parts); an idle bar needs far less. -->
+    <RuntimeHostConfigurationOption Include="System.GC.Gen0MaxBudget" Value="8388608" />
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\ZGSTokenBar.Core\ZGSTokenBar.Core.csproj" />
     <ProjectReference Include="..\ZGSTokenBar.PluginAdapters\ZGSTokenBar.PluginAdapters.csproj" />
@@ -33,6 +44,12 @@
     <EmbeddedResource Include="Assets\openai-official-ios-icon.png" LogicalName="ZGSTokenBar.App.Assets.openai-official-ios-icon.png" />
     <EmbeddedResource Include="Assets\deepseek-whale-icon.png" LogicalName="ZGSTokenBar.App.Assets.deepseek-whale-icon.png" />
     <EmbeddedResource Include="Assets\fluent-clock-20-regular.png" LogicalName="ZGSTokenBar.App.Assets.fluent-clock-20-regular.png" />
+    <EmbeddedResource Include="Assets\antigravity-official-icon.png" LogicalName="ZGSTokenBar.App.Assets.antigravity-official-icon.png" />
+    <EmbeddedResource Include="Assets\cursor-official-icon.png" LogicalName="ZGSTokenBar.App.Assets.cursor-official-icon.png" />
+    <EmbeddedResource Include="Assets\opencode-official-icon.png" LogicalName="ZGSTokenBar.App.Assets.opencode-official-icon.png" />
+    <EmbeddedResource Include="Assets\openrouter-official-icon.png" LogicalName="ZGSTokenBar.App.Assets.openrouter-official-icon.png" />
+    <EmbeddedResource Include="Assets\xai-official-icon.png" LogicalName="ZGSTokenBar.App.Assets.xai-official-icon.png" />
+    <EmbeddedResource Include="Assets\grok-official-icon.png" LogicalName="ZGSTokenBar.App.Assets.grok-official-icon.png" />
   </ItemGroup>
   <ItemGroup Condition="'$(BundledPluginPackage)' != ''">
     <EmbeddedResource Include="$(BundledPluginPackage)"

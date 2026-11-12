@@ -141,7 +141,6 @@ public static partial class PluginValidation
         }
         if (snapshot.MiniCards.Count > 64) errors.Add("too_many_mini_cards");
         if (snapshot.Details.Count > 64) errors.Add("too_many_details");
-        if (snapshot.Radar.Count > 16) errors.Add("too_many_radar_contributions");
 
         var contributionIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var card in snapshot.MiniCards)
@@ -176,16 +175,6 @@ public static partial class PluginValidation
             }
         }
 
-        foreach (var radar in snapshot.Radar)
-        {
-            ValidateContributionId(radar.Id, contributionIds, errors);
-            if (!string.Equals(radar.PluginId, manifest.Id, StringComparison.Ordinal)) errors.Add("radar_plugin_mismatch");
-            if (radar.Rows.Count > 256) errors.Add($"too_many_radar_rows:{radar.Id}");
-            foreach (var row in radar.Rows)
-            {
-                if (CodePointCount(row.Model) > MaximumDisplayCodePoints) errors.Add($"radar_model_too_long:{radar.Id}");
-            }
-        }
         return errors.Distinct(StringComparer.Ordinal).ToArray();
     }
 

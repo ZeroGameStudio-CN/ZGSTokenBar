@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { readPartialType } from './source-files.mjs';
 
 const cli = fs.readdirSync('tools/ZGSTokenBar.Cli')
   .filter(file => file.endsWith('.cs'))
@@ -12,7 +13,7 @@ const cli = fs.readdirSync('tools/ZGSTokenBar.Cli')
   .join('\n');
 const cliProject = fs.readFileSync('tools/ZGSTokenBar.Cli/ZGSTokenBar.Cli.csproj', 'utf8');
 const app = fs.readFileSync('src/ZGSTokenBar.App/Program.cs', 'utf8');
-const context = fs.readFileSync('src/ZGSTokenBar.App/QuotaApplicationContext.cs', 'utf8');
+const context = readPartialType('src/ZGSTokenBar.App/QuotaApplicationContext.cs');
 const host = fs.readFileSync('src/ZGSTokenBar.Host/ZgsTokenBarHost.cs', 'utf8');
 const packaging = fs.readFileSync('scripts/build-native-portable.ps1', 'utf8');
 const graduationGate = fs.readFileSync('scripts/graduation-gate.mjs', 'utf8');
@@ -133,9 +134,10 @@ test('credential-changing CLI commands await running-app settings reload', () =>
   assert.doesNotMatch(cli, /_ = RequestRunningAppRefreshAsync/);
   assert.match(host, /EnsureFields\(parameters, \["reloadSettings"\]\)/);
   assert.match(context, /var reloaded = await Task\.Run\(\(\) =>[\s\S]*?!_store\.TryLoad\(out var settings\)/);
-  assert.match(context, /ApplySettingsSnapshot\([\s\S]*?UpdateProviderActivity\(requestRefresh: false\)/);
-  assert.doesNotMatch(
-    context,
-    /ApplySettingsSnapshot\([\s\S]*?_activeProviders = ActiveProviders\(_settings\)[\s\S]*?UpdateProviderActivity/,
-  );
+  const applySnapshotStart = context.indexOf('private void ApplySettingsSnapshot(');
+  assert.ok(applySnapshotStart >= 0);
+  const applySnapshotBody = context.slice(applySnapshotStart);
+  const applySnapshot = applySnapshotBody.slice(0, applySnapshotBody.search(/\r?\n    \}\r?\n/));
+  assert.match(applySnapshot, /UpdateProviderActivity(?:Async)?\(requestRefresh: false\)/);
+  assert.doesNotMatch(applySnapshot, /_activeProviders = ActiveProviders\(_settings\)/);
 });

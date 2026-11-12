@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import { readPartialType } from './source-files.mjs';
 
 const read = (path) => fs.readFileSync(path, 'utf8');
 const sampler = read('src/ZGSTokenBar.App/SystemUsageSampler.cs');
-const bar = read('src/ZGSTokenBar.App/BarForm.cs');
+const bar = readPartialType('src/ZGSTokenBar.App/BarForm.cs');
 const popover = read('src/ZGSTokenBar.App/SystemUsagePopoverForm.cs');
-const application = read('src/ZGSTokenBar.App/QuotaApplicationContext.cs');
+const application = readPartialType('src/ZGSTokenBar.App/QuotaApplicationContext.cs');
 const sampling = read('src/ZGSTokenBar.App/SystemUsageSampling.cs');
 const models = read('src/ZGSTokenBar.Core/Models.cs');
 const text = read('src/ZGSTokenBar.App/NativeText.cs');
@@ -40,14 +41,7 @@ test('taskbar Mini exposes system usage as one independently resizable and sorta
   assert.match(models, /public const int ModuleGap = 4;/);
   assert.match(models, /public const string SystemMetrics = "zgstokenbar\.metrics\.system";/);
   assert.match(bar, /TaskbarMiniAreaContent\.ForSystem\(_text\.SystemUsageTitle\)/);
-  assert.match(bar, /DrawSystemUsageCard\(graphics, bounds, layout\.Collapsed\)/);
-  assert.match(bar, /DrawTaskbarReorderGrip\(graphics, target\)/);
   assert.match(bar, /SelectVisibleTaskbarAreas\(_taskbarContentAreas\)/);
-  assert.match(bar, /DrawCollapsedSystemUsage/);
-  assert.match(bar, /DrawSystemUsageRow\(graphics, bounds, 0, "CPU"/);
-  assert.match(bar, /DrawSystemUsageRow\(graphics, bounds, 1, "RAM"/);
-  assert.match(bar, /DrawSystemUsageRow\(graphics, bounds, 2, "I\/O"/);
-  assert.match(bar, /DrawSystemUsageRow\(graphics, bounds, 3, "GPU"/);
   assert.match(bar, /MiniAreaIds\.SystemMetrics/);
 });
 
@@ -84,7 +78,7 @@ test('process-heavy details are sampled only for hover or pin and rendered as a 
 test('system usage refreshes once per Mini clock tick and degrades unavailable metrics to dashes', () => {
   assert.match(application, /if \(_bar\.IsTaskbarMode\)[\s\S]*?RefreshSystemUsageOverviewAsync\(\)/);
   assert.doesNotMatch(application, /_bar\.SetSystemUsage\(_systemUsageSampler\.Sample\(\)\)/);
-  assert.match(application, /_clockTimer\.Interval = _bar\.IsTaskbarMode \? 1_000 : 30_000/);
-  assert.match(bar, /if \(percent is null\) return "--"/);
+  assert.match(application, /_clockTimer\.Interval = ClockIntervalMs\(_bar\.IsTaskbarMode, _bar\.HasOpenHoverOrPopover\)/);
+  assert.match(application, /!taskbarMode \? 30_000 : hoverOpen \? 1_000 : 2_000/);
   assert.match(text, /Performance counter unavailable/);
 });

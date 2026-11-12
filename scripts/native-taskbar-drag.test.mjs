@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import { readPartialType } from './source-files.mjs';
 
 const settings = fs.readFileSync('src/ZGSTokenBar.Core/AppSettings.cs', 'utf8');
-const settingsForm = fs.readFileSync('src/ZGSTokenBar.App/SettingsForm.cs', 'utf8');
-const barForm = fs.readFileSync('src/ZGSTokenBar.App/BarForm.cs', 'utf8');
-const appContext = fs.readFileSync('src/ZGSTokenBar.App/QuotaApplicationContext.cs', 'utf8');
+const settingsForm = readPartialType('src/ZGSTokenBar.App/SettingsForm.cs');
+const barForm = readPartialType('src/ZGSTokenBar.App/BarForm.cs');
+const appContext = readPartialType('src/ZGSTokenBar.App/QuotaApplicationContext.cs');
 const nativeText = fs.readFileSync('src/ZGSTokenBar.App/NativeText.cs', 'utf8');
 const placement = fs.readFileSync('src/ZGSTokenBar.App/TaskbarPlacement.cs', 'utf8');
 const topology = fs.readFileSync('src/ZGSTokenBar.App/DisplayTopology.cs', 'utf8');
@@ -71,7 +72,9 @@ test('taskbar Mini separates desired placement from resolved fallback', () => {
     'topology activation is deferred before it can replace the active drag profile',
   );
   assert.match(barForm, /TaskbarPlacement\.TryGetDockTarget\(/);
-  assert.match(barForm, /if \(!_popoverPinned\) HidePopovers\(\);\s+ClearHoverStateForTaskbarDrag\(\);/);
+  // A press alone never reparents the embedded bar: detaching waits for the drag threshold.
+  assert.match(barForm, /if \(_embedParent != 0\) DetachFromTaskbar\("dragging"\);\s+HidePopovers\(\);\s+ClearHoverStateForTaskbarDrag\(\);\s+TaskbarPlacement\.InvalidateCache\(\);/);
+  assert.doesNotMatch(barForm, /_taskbarDragMoved = false;\s+\/\/ Drag as a top-level overlay[^\n]*\n\s+if \(_embedParent != 0\) DetachFromTaskbar/);
   assert.match(barForm, /ClearHoverStateForTaskbarDrag\(\);\s+TaskbarPlacement\.InvalidateCache\(\);\s+_taskbarDragMoved = true/);
   assert.match(barForm, /var currentScreen = Cursor\.Position/);
   assert.match(barForm, /private void ClearHoverStateForTaskbarDrag\(\)/);
@@ -130,11 +133,4 @@ test('taskbar drag enumerates secondary taskbars and selects a persisted monitor
   assert.match(barForm, /_topologyCaptureRequested/);
   assert.match(barForm, /generation != _topologyCaptureGeneration/);
   assert.doesNotMatch(barForm, /var captured = DisplayTopology\.Capture\(\)/);
-});
-
-test('product help documents Mini dragging and the Radar entry point', () => {
-  assert.match(productReadme, /Drag the Mini's card area/);
-  assert.match(productReadme, /hover a Codex logo in Mini/);
-  assert.match(appContext, /_text\.OpenRadarWebsite/);
-  assert.match(nativeText, /Open Codex Radar website/);
 });

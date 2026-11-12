@@ -14,4 +14,6 @@ Desktop startup isolation diagnostics are stored only under `%LOCALAPPDATA%\ZGST
 
 Process plugins are installed from either an explicit local `.zgsplugin` package with an explicit digest or a package embedded in the application build. The bundled DeepSeek package is installed only when its version is missing; an existing same-version directory is never overwritten. Archive paths, sizes, declared files, hashes, schemas, timeouts, and post-install drift are validated. Plugin processes are attached to a kill-on-close Job Object, but they still run with the current user's permissions; install only trusted packages.
 
+Usage providers go through one transport that only allows HTTPS requests to a fixed method/host/path allowlist (`UsageEndpoints`) and refuses redirects; response bodies are size-bounded. The error log (`%LOCALAPPDATA%\ZGSTokenBar\diagnostics\errors.log`) passes every entry through `SecretRedactor`, which masks bearer tokens, JWTs, API keys and token-named JSON/query fields.
+
 Disabled Providers make no Provider requests. The public build contains no organization-private endpoints, credentials, deployment topology, or machine-specific paths.

@@ -3,13 +3,28 @@ using ZGSTokenBar.Core;
 
 namespace ZGSTokenBar.App;
 
-internal sealed record SystemUsagePopoverContent(SystemUsageSnapshot Snapshot, bool Pinned, bool LiveRates = false);
+internal sealed record SystemUsagePopoverContent(SystemUsageSnapshot Snapshot, bool Pinned, bool LiveRates = false)
+{
+    /// <summary>
+    /// Per-conversation rows for the rate surface (the former Codex usage card's speed table):
+    /// null hides the section, an empty list shows that no conversation is active.
+    /// </summary>
+    public IReadOnlyList<CodexConversationTurn>? Conversations { get; init; }
+    /// <summary>Codex tokens counted today (local day), from the token ledger.</summary>
+    public long? TodayTokens { get; init; }
+    /// <summary>Tokens per hour for the last 24 hours (oldest first, current hour last).</summary>
+    public IReadOnlyList<long>? HourlyTokens { get; init; }
+    /// <summary>Prompt-cache figures: today's read/write tokens and hit rates (today, all retained).</summary>
+    public TokenCacheStats? Cache { get; init; }
+}
+
+internal sealed record TokenCacheStats(long? TodayRead, long? TodayWrite, double? TodayHitPercent, double? TotalHitPercent);
 
 internal sealed class SystemUsagePopoverForm : Form
 {
     internal const int LogicalBodyWidth = 300;
     internal const int LogicalBodyHeight = 352;
-    private const int LiveRateBodyHeight = 410;
+    private const int LiveRateBodyHeight = 428;
     private const int LogicalTailSize = 8;
     private const int LogicalGap = 3;
     private const int ToolWindowStyle = 0x00000080;
@@ -22,11 +37,12 @@ internal sealed class SystemUsagePopoverForm : Form
     private readonly Font _subtitleFont = new("Segoe UI", 8.5f, FontStyle.Regular, GraphicsUnit.Pixel);
     private readonly Font _metricLabelFont = new("Segoe UI Semibold", 9.5f, FontStyle.Regular, GraphicsUnit.Pixel);
     private readonly Font _detailFont = new("Segoe UI", 9.5f, FontStyle.Regular, GraphicsUnit.Pixel);
-    private readonly Font _metricValueFont = new("Cascadia Mono", 10.5f, FontStyle.Regular, GraphicsUnit.Pixel);
-    private readonly Font _liveValueFont = new("Cascadia Mono", 22f, FontStyle.Bold, GraphicsUnit.Pixel);
-    private readonly Font _tableValueFont = new("Cascadia Mono", 9f, FontStyle.Regular, GraphicsUnit.Pixel);
+    private readonly Font _metricValueFont = new("Segoe UI", 11.5f, FontStyle.Bold, GraphicsUnit.Pixel);
+    private readonly Font _liveValueFont = new("Segoe UI", 25f, FontStyle.Bold, GraphicsUnit.Pixel);
+    private readonly Font _tableValueFont = new("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Pixel);
+    private readonly Font _totalValueFont = new("Segoe UI", 15f, FontStyle.Bold, GraphicsUnit.Pixel);
     private static readonly Color RecordedAccent = Color.FromArgb(110, 231, 183);
-    private static readonly Color EstimateAccent = Color.FromArgb(251, 191, 36);
+    private static readonly Color EstimateAccent = UiPalette.Amber400;
     private static readonly Color ReceiveAccent = Color.FromArgb(125, 211, 252);
     private static readonly Color SendAccent = Color.FromArgb(196, 181, 253);
     private readonly AlignedStringFormats _textFormats = new();
@@ -37,6 +53,12 @@ internal sealed class SystemUsagePopoverForm : Form
     private ProcessRow[] _processes = [];
     private string _capturedAt = string.Empty;
     private int _logicalBodyHeight = LogicalBodyHeight;
+    private CodexConversationTurn[] _sessions = [];
+    private bool _sessionsVisible;
+    private bool _sessionsRecent;
+    private const int MaximumSessionRows = 5;
+    private const int SessionRowHeight = 34;
+    private const int SessionHeaderHeight = 30;
     private NativeText _text = NativeText.For("zh-CN");
     private PopoverTailSide _tailSide = PopoverTailSide.Bottom;
     private float _tailOffset = LogicalBodyWidth / 2f;
@@ -57,7 +79,7 @@ internal sealed class SystemUsagePopoverForm : Form
         _entranceTimer.Tick += (_, _) => AdvanceEntrance();
         _exitTimer.Tick += (_, _) => AdvanceExit();
         AutoScaleMode = AutoScaleMode.None;
-        BackColor = _backgroundTheme.Popover;
+        BackColor = UiTokens.CardSurface;
         FormBorderStyle = FormBorderStyle.None;
         MaximizeBox = false;
         MinimizeBox = false;
@@ -88,7 +110,7 @@ internal sealed class SystemUsagePopoverForm : Form
     internal void ApplyTheme(QuotaBackgroundTheme theme)
     {
         _backgroundTheme = theme;
-        BackColor = theme.Popover;
+        BackColor = UiTokens.CardSurface;
         Invalidate();
     }
 
@@ -105,7 +127,7 @@ internal sealed class SystemUsagePopoverForm : Form
             var zh = _text.IsChinese;
             _metrics =
             [
-                new(zh ? "合计输出" : "Output total", null, snapshot.CurrentOutputRate is { } rate ? $"{(live?.HasEstimate == true ? "≈" : "")}{rate:0.#} tok/s" : "—"),
+                new(zh ? "合计输出" : "Output total", null, snapshot.CurrentOutputRate is { } rate ? $"{rate:0.0} tok/s" : "—"),
                 new(zh ? "已记录" : "Recorded", null, live is null ? "—" : $"{live.Measured:0.#} tok/s"),
                 new(zh ? "生成中估算" : "In-flight estimate", null, live is null ? "—" : $"{live.Estimated:0.#} tok/s"),
                 new(zh ? "网络接收" : "Network receive", null, NetworkUsageSampler.Compact(snapshot.CurrentNetworkReceive) + "/s"),
@@ -133,14 +155,33 @@ internal sealed class SystemUsagePopoverForm : Form
                 FormatProcessMemory(process.PrivateWorkingSetBytes),
                 FormatUsage(process.GpuPercent))).ToArray();
         }
+        _sessionsVisible = content.LiveRates && content.Conversations is not null;
+        var conversations = content.Conversations ?? [];
+        var active = conversations
+            .Where(turn => turn.LiveRate is { Total: > 0 } || turn.State == "running")
+            .OrderByDescending(turn => turn.LiveRate?.Total ?? 0)
+            .ThenByDescending(turn => turn.ObservedAt)
+            .Take(MaximumSessionRows)
+            .ToArray();
+        _sessionsRecent = active.Length == 0;
+        _sessions = _sessionsVisible
+            ? active.Length > 0 ? active : conversations.OrderByDescending(turn => turn.ObservedAt).Take(3).ToArray()
+            : [];
         _logicalBodyHeight = content.LiveRates
-            ? LiveRateBodyHeight
+            ? LiveRateBodyHeight + TokenSectionHeight + SessionSectionHeight
             : Math.Clamp(282 + Math.Max(0, _processes.Length - 1) * 18, 282, LogicalBodyHeight);
         _capturedAt = _text.SystemUsageCapturedAt(snapshot.CapturedAt);
         Invalidate();
     }
 
     internal bool LiveRatesContentForAcceptance => _content?.LiveRates == true;
+
+    internal int SessionRowCountForAcceptance => _sessions.Length;
+
+    private const int TokenSectionHeight = 88;
+
+    private int SessionSectionHeight => !_sessionsVisible ? 0
+        : SessionHeaderHeight + Math.Max(1, _sessions.Length) * SessionRowHeight + 8;
 
     internal int CurrentLogicalBodyHeight => _logicalBodyHeight;
 
@@ -193,14 +234,14 @@ internal sealed class SystemUsagePopoverForm : Form
             _entranceStarted = DateTime.UtcNow;
             Opacity = .01;
             Location = _entranceLocation;
-            Show(owner);
+            this.ShowPopover(BarForm.PopoverOwnerFor(owner));
             if (!TaskbarPlacement.ShowAt(Handle, _entranceLocation, placement.WindowSize)) Location = _entranceLocation;
             _entranceTimer.Start();
             return;
         }
 
         Opacity = 1;
-        if (!wasVisible) Show(owner);
+        if (!wasVisible) this.ShowPopover(BarForm.PopoverOwnerFor(owner));
         if (!TaskbarPlacement.ShowAt(Handle, _restingLocation, placement.WindowSize)) Location = _restingLocation;
     }
 
@@ -212,7 +253,7 @@ internal sealed class SystemUsagePopoverForm : Form
     {
         UpdateContent(content, text);
         _backgroundTheme = theme;
-        BackColor = theme.Popover;
+        BackColor = UiTokens.CardSurface;
         _scale = Math.Max(1, dpi / 96f);
         _tailSide = PopoverTailSide.Bottom;
         _tailOffset = LogicalBodyWidth / 2f;
@@ -253,23 +294,12 @@ internal sealed class SystemUsagePopoverForm : Form
     {
         base.OnPaint(e);
         var graphics = e.Graphics;
-        graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
-        graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-        graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+        UiPaint.PrepareQuality(graphics);
         graphics.ScaleTransform(_scale, _scale);
 
         var body = BodyBounds();
-        using var bodyPath = RoundedRectangle(RectangleF.Inflate(body, -.5f, -.5f), 10);
-        var tail = TailPoints(body);
-        using var surfacePath = new GraphicsPath { FillMode = FillMode.Winding };
-        surfacePath.AddPath(bodyPath, false);
-        surfacePath.AddPolygon(tail);
-        using var fill = new SolidBrush(_backgroundTheme.Popover);
-        using var border = new Pen(Color.FromArgb(86, 100, 116, 139), 1);
-        graphics.FillPath(fill, surfacePath);
-        graphics.DrawPath(border, bodyPath);
-        graphics.DrawLines(border, tail);
+        // The shared hover-card surface: graphite card, white hairline, pointer tail.
+        UiPaint.TailedSurface(graphics, body, TailPoints(body), UiTokens.CardSurface, UiTokens.Hairline, UiTokens.RadiusPanel);
         DrawContent(graphics, body);
     }
 
@@ -292,9 +322,9 @@ internal sealed class SystemUsagePopoverForm : Form
     private void DrawContent(Graphics graphics, RectangleF body)
     {
         if (_content is not { } content) return;
-        using var primary = new SolidBrush(Color.FromArgb(241, 245, 249));
-        using var muted = new SolidBrush(Color.FromArgb(148, 163, 184));
-        using var divider = new Pen(Color.FromArgb(36, 100, 116, 139), 1);
+        using var primary = new SolidBrush(UiPalette.Slate100);
+        using var muted = new SolidBrush(UiPalette.Slate400);
+        using var divider = new Pen(UiPalette.Slate500.WithAlpha(36), 1);
 
         if (content.LiveRates)
         {
@@ -339,8 +369,8 @@ internal sealed class SystemUsagePopoverForm : Form
                 body.Width - 32,
                 Math.Max(28, body.Bottom - body.Y - 274));
             using var emptyPath = RoundedRectangle(emptyBounds, 7);
-            using var emptyFill = new SolidBrush(Color.FromArgb(18, 100, 116, 139));
-            using var emptyBorder = new Pen(Color.FromArgb(28, 100, 116, 139), 1);
+            using var emptyFill = new SolidBrush(UiPalette.Slate500.WithAlpha(18));
+            using var emptyBorder = new Pen(UiPalette.Slate500.WithAlpha(28), 1);
             graphics.FillPath(emptyFill, emptyPath);
             graphics.DrawPath(emptyBorder, emptyPath);
             DrawString(graphics, _text.SystemUsageTopProcessesUnavailable, _detailFont, muted,
@@ -371,8 +401,9 @@ internal sealed class SystemUsagePopoverForm : Form
         using var estimated = new SolidBrush(EstimateAccent);
         using var receive = new SolidBrush(ReceiveAccent);
         using var send = new SolidBrush(SendAccent);
-        using var divider = new Pen(Color.FromArgb(42, 100, 116, 139), 1);
-        RectangleF At(float x, float y, float width, float height) => new(body.X + x, body.Y + y, width, height);
+        using var divider = new Pen(UiPalette.Slate500.WithAlpha(42), 1);
+        var dy = 0f;
+        RectangleF At(float x, float y, float width, float height) => new(body.X + x, body.Y + y + dy, width, height);
         void TextAt(string value, Font font, Brush brush, float x, float y, float width, float height,
             StringAlignment align = StringAlignment.Near) => DrawString(graphics, value, font, brush, At(x, y, width, height), align);
         void Panel(float y, float height)
@@ -388,7 +419,7 @@ internal sealed class SystemUsagePopoverForm : Form
         TextAt(zh ? "3 秒窗口" : "3s window", _subtitleFont, muted, 176, 49, 100, 13, StringAlignment.Far);
         TextAt(_metrics[0].Value, _liveValueFont, primary, 24, 67, 252, 29);
         var rail = At(24, 105, 252, 3);
-        using var railBrush = new SolidBrush(Color.FromArgb(48, 100, 116, 139));
+        using var railBrush = new SolidBrush(UiPalette.Slate500.WithAlpha(48));
         graphics.FillRoundedRectangle(railBrush, rail, 1.5f);
         if (live?.Total is > 0)
         {
@@ -400,49 +431,186 @@ internal sealed class SystemUsagePopoverForm : Form
         TextAt(_metrics[1].Label, _subtitleFont, muted, 24, 115, 118, 12);
         TextAt(live is null ? (zh ? "估算" : "Estimated")
                 : zh ? $"估算 · {live.EstimatedShare:P0}" : $"Estimated · {live.EstimatedShare:P0}",
-            _subtitleFont, muted, 166, 115, 110, 12);
+            _subtitleFont, muted, 158, 115, 118, 12);
         TextAt(_metrics[1].Value, _metricValueFont, live is null ? muted : recorded, 24, 131, 118, 14);
-        TextAt(_metrics[2].Value, _metricValueFont, live is null ? muted : estimated, 166, 131, 110, 14);
+        TextAt(_metrics[2].Value, _metricValueFont, live is null ? muted : estimated, 158, 131, 118, 14);
 
         Panel(158, 40);
         graphics.FillEllipse(recorded, body.X + 24, body.Y + 174, 5, 5);
-        graphics.FillEllipse(send, body.X + 166, body.Y + 174, 5, 5);
+        graphics.FillEllipse(send, body.X + 158, body.Y + 174, 5, 5);
         TextAt(zh ? "生成中" : "Generating", _detailFont, primary, 35, 170, 80, 14);
-        TextAt(zh ? "工具中" : "Tools", _detailFont, primary, 177, 170, 68, 14);
+        TextAt(zh ? "工具中" : "Tools", _detailFont, primary, 169, 170, 76, 14);
         TextAt(live?.Generating.ToString() ?? "—", _metricValueFont, primary, 114, 170, 28, 14, StringAlignment.Far);
         TextAt(live?.Tools.ToString() ?? "—", _metricValueFont, primary, 248, 170, 28, 14, StringAlignment.Far);
 
+        // The last 24 hours, hour by hour (UiKit area curve; never on the bar itself). Totals, today
+        // and the cache rate are grouped in the Totals card below, so this card is only the curve.
+        Panel(206, TokenSectionHeight - 8);
+        var hourly = _content?.HourlyTokens;
+        var peak = hourly is { Count: > 0 } ? hourly.Max() : 0;
+        TextAt(zh ? "近 24 小时 · 每小时" : "Last 24 h · hourly", _metricLabelFont, muted, 24, 215, 150, 13);
+        TextAt(peak > 0 ? (zh ? $"峰值 {NativeText.FormatTokenCount(peak)}/时" : $"peak {NativeText.FormatTokenCount(peak)}/h") : "",
+            _subtitleFont, muted, 150, 216, 126, 12, StringAlignment.Far);
+        DrawHourlyCurve(graphics, At(24, 233, 252, 36), hourly);
+        TextAt("-24h", _subtitleFont, muted, 24, 271, 60, 11);
+        TextAt(zh ? "现在" : "now", _subtitleFont, muted, 216, 271, 60, 11, StringAlignment.Far);
+        dy = TokenSectionHeight;
+
+        if (_sessionsVisible)
+        {
+            var height = SessionSectionHeight - 8;
+            Panel(206, height);
+            DrawSessions(graphics, At(12, 206, body.Width - 24, height), primary, muted);
+            dy += SessionSectionHeight;
+        }
+
+        // Network now: the same two 118-px columns as every row above, arrows drawn by UiIcons.
         Panel(206, 58);
         TextAt(zh ? "本机网络" : "System network", _metricLabelFont, muted, 24, 215, 130, 13);
-        TextAt(zh ? $"默认接口 · {snapshot.NetworkInterfaces}" : $"Default NICs · {snapshot.NetworkInterfaces}",
-            _subtitleFont, muted, 160, 215, 116, 13, StringAlignment.Far);
-        TextAt("↓ " + _metrics[3].Value, _metricValueFont, receive, 24, 238, 118, 15);
-        TextAt("↑ " + _metrics[4].Value, _metricValueFont, send, 166, 238, 110, 15);
+        TextAt(zh ? $"{snapshot.NetworkInterfaces} 个接口" : $"{snapshot.NetworkInterfaces} NIC", _subtitleFont, muted, 176, 215, 100, 13, StringAlignment.Far);
+        UiIcons.ArrowDown(graphics, At(24, 240, 9, 11), ReceiveAccent);
+        TextAt(_metrics[3].Value, _metricValueFont, receive, 37, 238, 105, 15);
+        UiIcons.ArrowUp(graphics, At(158, 240, 9, 11), SendAccent);
+        TextAt(_metrics[4].Value, _metricValueFont, send, 171, 238, 105, 15);
 
-        Panel(272, 90);
+        // Totals: traffic | tokens in two balanced columns. Each column leads with a glyph + short
+        // caption and its big total; two aligned sub-stats follow (glyph, caption, right-aligned value).
+        Panel(272, 108);
         var history = snapshot.NetworkHistory;
         TextAt(zh ? "累计" : "Totals", _metricLabelFont, muted, 24, 281, 50, 13);
-        var since = history is null ? (zh ? "等待计数" : "Waiting for counters")
-            : (zh ? $"始于 {history.Since.ToLocalTime():yyyy-MM-dd HH:mm}" : $"Since {history.Since.ToLocalTime():yyyy-MM-dd HH:mm}");
-        if (snapshot.NetworkHistorySaveFailed) since = zh ? "记录待保存/恢复" : "Checkpoint unavailable";
-        TextAt(since, _subtitleFont, muted, 86, 281, 190, 13, StringAlignment.Far);
-        TextAt(zh ? "总流量" : "Network total", _detailFont, primary, 24, 300, 118, 15);
-        TextAt(NetworkUsageSampler.Total(history?.TotalBytes), _metricValueFont, primary, 166, 300, 110, 15, StringAlignment.Far);
-        TextAt("↓ " + NetworkUsageSampler.Total(history?.ReceivedBytes), _subtitleFont, receive, 24, 319, 118, 12);
-        TextAt("↑ " + NetworkUsageSampler.Total(history?.SentBytes), _subtitleFont, send, 166, 319, 110, 12);
-        TextAt(zh ? "总 Token" : "Token total", _detailFont, primary, 24, 342, 118, 14);
-        TextAt(snapshot.CumulativeTokens is { } tokens ? NativeText.FormatTokenCount(tokens) : "—",
-            _metricValueFont, primary, 166, 342, 110, 14, StringAlignment.Far);
+        if (snapshot.NetworkHistorySaveFailed || history is null)
+        {
+            TextAt(snapshot.NetworkHistorySaveFailed ? (zh ? "记录待保存/恢复" : "Checkpoint unavailable") : (zh ? "等待计数" : "Waiting for counters"),
+                _subtitleFont, muted, 86, 281, 190, 13, StringAlignment.Far);
+        }
+        else
+        {
+            var since = TotalsSince(history.Since, snapshot.CapturedAt);
+            var sinceWidth = graphics.MeasureString(since, _subtitleFont, PointF.Empty, StringFormat.GenericTypographic).Width;
+            TextAt(since, _subtitleFont, muted, 86, 281, 190, 13, StringAlignment.Far);
+            UiIcons.Clock(graphics, At(276 - sinceWidth - 16, 282.5f, 9, 9), UiTokens.Muted);
+        }
+        using (var column = new Pen(UiPalette.Slate500.WithAlpha(42), 1))
+            graphics.DrawLine(column, body.X + 150.5f, body.Y + dy + 300, body.X + 150.5f, body.Y + dy + 370);
+        var cache = _content?.Cache;
+        void Column(float x, Action<Graphics, RectangleF, Color> icon, string caption, string total)
+        {
+            icon(graphics, At(x, 302, 10, 10), UiTokens.Muted);
+            TextAt(caption, _subtitleFont, muted, x + 14, 300, 100, 13);
+            TextAt(total, _totalValueFont, primary, x - 1, 315, 118, 20);
+        }
+        void Stat(float x, float y, Action<Graphics, RectangleF, Color> icon, Color tone, string caption, string value, Brush valueBrush)
+        {
+            icon(graphics, At(x, y + 2, 9, 9), tone);
+            TextAt(caption, _subtitleFont, muted, x + 14, y, 50, 13);
+            TextAt(value, _tableValueFont, valueBrush, x + 40, y - .5f, 78, 14, StringAlignment.Far);
+        }
+        Column(24, UiIcons.Traffic, zh ? "流量" : "Traffic", NetworkUsageSampler.Total(history?.TotalBytes));
+        Stat(24, 340, UiIcons.ArrowDown, ReceiveAccent, zh ? "下行" : "Down", NetworkUsageSampler.Total(history?.ReceivedBytes), receive);
+        Stat(24, 357, UiIcons.ArrowUp, SendAccent, zh ? "上行" : "Up", NetworkUsageSampler.Total(history?.SentBytes), send);
+        Column(158, UiIcons.Tokens, "Token", snapshot.CumulativeTokens is { } tokens ? NativeText.FormatTokenCount(tokens) : "—");
+        Stat(158, 340, (g, r, c) => UiIcons.Calendar(g, r, c, today: true), UiTokens.Muted, zh ? "今日" : "Today",
+            _content?.TodayTokens is { } today ? NativeText.FormatTokenCount(today) : "—", _content?.TodayTokens is null ? muted : primary);
+        using (var hitBrush = new SolidBrush(RecordedAccent))
+            Stat(158, 357, UiIcons.Cache, cache?.TodayHitPercent is null ? UiTokens.Muted : RecordedAccent, zh ? "缓存" : "Cache",
+                NativeText.FormatCacheHitPercent(cache?.TodayHitPercent), cache?.TodayHitPercent is null ? muted : hitBrush);
 
         var coverage = live is null ? (zh ? "等待会话读数" : "Waiting for chat data")
             : (zh ? $"{live.Sessions} 个 Codex 会话" : $"{live.Sessions} Codex chats");
         var pending = snapshot.LiveRate?.Pending ?? 0;
-        TextAt(coverage, _subtitleFont, muted, 16, 372, 174, 12);
+        TextAt(coverage, _subtitleFont, muted, 16, 390, 174, 12);
         TextAt(pending > 0 ? (zh ? $"{pending} 条待追平" : $"{pending} catching up")
                 : live is null ? (zh ? "待读取" : "Waiting") : (zh ? "已追平" : "Caught up"),
-            _subtitleFont, muted, 190, 372, 94, 12, StringAlignment.Far);
-        TextAt(zh ? "流量仅统计 Bar 运行时 · 与 Token 独立" : "Traffic while Bar runs · independent of tokens", _subtitleFont, muted, 16, 389, 210, 12);
-        TextAt(snapshot.CapturedAt.ToLocalTime().ToString("HH:mm:ss"), _subtitleFont, muted, 230, 389, 54, 12, StringAlignment.Far);
+            _subtitleFont, muted, 190, 390, 94, 12, StringAlignment.Far);
+        TextAt(zh ? "流量仅在 Bar 运行时计入" : "Traffic counted while Bar runs", _subtitleFont, muted, 16, 407, 210, 12);
+        TextAt(snapshot.CapturedAt.ToLocalTime().ToString("HH:mm:ss"), _subtitleFont, muted, 230, 407, 54, 12, StringAlignment.Far);
+    }
+
+    /// <summary>"Since" stamp of the totals: month/day and time, with the year only when it differs.</summary>
+    internal static string TotalsSince(DateTimeOffset since, DateTimeOffset now)
+    {
+        var local = since.ToLocalTime();
+        return local.ToString(local.Year == now.ToLocalTime().Year ? "M/d HH:mm" : "yyyy/M/d HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>Area curve of hourly tokens: shared accent, faint baseline, the current hour marked.</summary>
+    internal static void DrawHourlyCurve(Graphics graphics, RectangleF bounds, IReadOnlyList<long>? hourly)
+    {
+        using (var baseline = new Pen(UiPalette.Slate500.WithAlpha(60), 1))
+            graphics.DrawLine(baseline, bounds.Left, bounds.Bottom - .5f, bounds.Right, bounds.Bottom - .5f);
+        if (hourly is not { Count: > 1 }) return;
+        var peak = Math.Max(1, hourly.Max());
+        var step = bounds.Width / (hourly.Count - 1);
+        var points = hourly.Select((value, index) => new PointF(
+            bounds.Left + index * step,
+            bounds.Bottom - 1 - (float)(value / (double)peak) * (bounds.Height - 3))).ToArray();
+        var smoothing = graphics.SmoothingMode;
+        graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        using (var area = new System.Drawing.Drawing2D.GraphicsPath())
+        {
+            area.AddLine(bounds.Left, bounds.Bottom, points[0].X, points[0].Y);
+            area.AddCurve(points, .35f);
+            area.AddLine(points[^1].X, points[^1].Y, bounds.Right, bounds.Bottom);
+            area.CloseFigure();
+            using var fill = new System.Drawing.Drawing2D.LinearGradientBrush(bounds, UiTokens.Accent.WithAlpha(90), UiTokens.Accent.WithAlpha(8),
+                System.Drawing.Drawing2D.LinearGradientMode.Vertical);
+            graphics.FillPath(fill, area);
+        }
+        using (var line = new Pen(UiTokens.Accent, 1.5f) { LineJoin = System.Drawing.Drawing2D.LineJoin.Round })
+            graphics.DrawCurve(line, points, .35f);
+        using (var dot = new SolidBrush(UiTokens.TextStrong))
+            graphics.FillEllipse(dot, points[^1].X - 2.5f, points[^1].Y - 2.5f, 5, 5);
+        graphics.SmoothingMode = smoothing;
+    }
+
+    /// <summary>
+    /// Active Codex conversations with their own live tok/s, model, state, output and average
+    /// speed: the per-conversation view that used to live on the Codex usage card.
+    /// </summary>
+    private void DrawSessions(Graphics graphics, RectangleF panel, Brush primary, Brush muted)
+    {
+        var zh = _text.IsChinese;
+        var title = _sessionsRecent
+            ? (zh ? "最近会话" : "Recent chats")
+            : (zh ? $"活跃会话 · {_sessions.Length}" : $"Active chats · {_sessions.Length}");
+        DrawString(graphics, title, _metricLabelFont, muted,
+            new RectangleF(panel.X + 12, panel.Y + 9, 150, 13), StringAlignment.Near);
+        DrawString(graphics, zh ? "实时 tok/s" : "live tok/s", _subtitleFont, muted,
+            new RectangleF(panel.Right - 112, panel.Y + 9, 100, 13), StringAlignment.Far);
+        if (_sessions.Length == 0)
+        {
+            DrawString(graphics, zh ? "暂无 Codex 会话读数" : "No Codex chat data yet", _detailFont, muted,
+                new RectangleF(panel.X + 12, panel.Y + SessionHeaderHeight + 6, panel.Width - 24, 15), StringAlignment.Near);
+            return;
+        }
+
+        using var recorded = new SolidBrush(RecordedAccent);
+        using var estimated = new SolidBrush(EstimateAccent);
+        using var idle = new SolidBrush(UiPalette.Slate500);
+        using var rowDivider = new Pen(UiPalette.Slate400.WithAlpha(28), 1);
+        using var trimmed = new StringFormat(StringFormatFlags.NoWrap)
+        {
+            Trimming = StringTrimming.EllipsisCharacter,
+            LineAlignment = StringAlignment.Center,
+        };
+        for (var index = 0; index < _sessions.Length; index++)
+        {
+            var turn = _sessions[index];
+            var top = panel.Y + SessionHeaderHeight + index * SessionRowHeight;
+            if (index > 0) graphics.DrawLine(rowDivider, panel.X + 12, top - 1, panel.Right - 12, top - 1);
+            var live = turn.LiveRate is { Total: > 0 } rate ? rate : null;
+            var accent = live is null ? (turn.State == "running" ? recorded : idle)
+                : live.Estimated > 0 ? estimated : recorded;
+            graphics.FillEllipse(accent, panel.X + 12, top + 8, 5, 5);
+            graphics.DrawString(_text.CodexTurnName(turn), _detailFont, primary,
+                new RectangleF(panel.X + 21, top + 2, panel.Width - 112, 15), trimmed);
+            DrawString(graphics, live is null ? "—" : _text.CodexTurnLiveSpeed(turn), _metricValueFont,
+                live is null ? muted : accent, new RectangleF(panel.Right - 88, top + 2, 76, 15), StringAlignment.Far);
+
+            // Second (last) line: only the prompt-cache hit rate, under the speed.
+            DrawString(graphics, (zh ? "缓存 " : "cache ") + NativeText.FormatCacheHitPercent(turn.CacheHitPercent), _subtitleFont, muted,
+                new RectangleF(panel.Right - 112, top + 17, 100, 13), StringAlignment.Far);
+        }
     }
 
     private void DrawMetricRow(
@@ -452,22 +620,15 @@ internal sealed class SystemUsagePopoverForm : Form
         Brush primary,
         Brush muted)
     {
-        var color = metric.Percent is { } percent ? UsageColor(percent) : Color.FromArgb(100, 116, 139);
+        var color = metric.Percent is { } percent ? UsageColor(percent) : UiPalette.Slate500;
         using var valueBrush = new SolidBrush(color);
         DrawString(graphics, metric.Label, _metricLabelFont, primary,
             new RectangleF(bounds.X, bounds.Y, 44, 14), StringAlignment.Near);
         DrawString(graphics, metric.Value, _metricValueFont, valueBrush,
             new RectangleF(bounds.Right - 44, bounds.Y - 1, 44, 16), StringAlignment.Far);
 
-        var rail = new RectangleF(bounds.X + 44, bounds.Y + 6, bounds.Width - 96, 3);
-        using var railBrush = new SolidBrush(Color.FromArgb(48, 100, 116, 139));
-        graphics.FillRoundedRectangle(railBrush, rail, 1.5f);
-        if (metric.Percent is { } usage && usage > 0)
-        {
-            graphics.FillRoundedRectangle(valueBrush,
-                new RectangleF(rail.X, rail.Y, rail.Width * (float)Math.Clamp(usage / 100, 0, 1), rail.Height),
-                1.5f);
-        }
+        UiPaint.ProgressBar(graphics, new RectangleF(bounds.X + 44, bounds.Y + 6, bounds.Width - 96, 3),
+            metric.Percent / 100, color, UiPalette.Slate500.WithAlpha(48));
         DrawString(graphics, metric.Detail, _subtitleFont, muted,
             new RectangleF(bounds.X + 44, bounds.Y + 18, bounds.Width - 44, 14), StringAlignment.Near);
     }
@@ -570,7 +731,7 @@ internal sealed class SystemUsagePopoverForm : Form
 
     private static string FormatUsage(double? value)
     {
-        if (value is null) return "--";
+        if (value is null) return "—";
         if (value <= 0) return "0%";
         if (value < 1) return "<1%";
         return $"{Math.Round(value.Value):0}%";
@@ -588,26 +749,12 @@ internal sealed class SystemUsagePopoverForm : Form
 
     private static Color UsageColor(double usage) => usage switch
     {
-        >= 90 => Color.FromArgb(251, 113, 133),
-        >= 70 => Color.FromArgb(251, 191, 36),
-        _ => Color.FromArgb(52, 211, 153),
+        >= 90 => UiPalette.Rose400,
+        >= 70 => UiPalette.Amber400,
+        _ => UiPalette.Emerald400,
     };
 
-    private static GraphicsPath RoundedRectangle(RectangleF bounds, float radius)
-    {
-        var diameter = Math.Min(radius * 2, Math.Min(bounds.Width, bounds.Height));
-        var path = new GraphicsPath();
-        var arc = new RectangleF(bounds.X, bounds.Y, diameter, diameter);
-        path.AddArc(arc, 180, 90);
-        arc.X = bounds.Right - diameter;
-        path.AddArc(arc, 270, 90);
-        arc.Y = bounds.Bottom - diameter;
-        path.AddArc(arc, 0, 90);
-        arc.X = bounds.Left;
-        path.AddArc(arc, 90, 90);
-        path.CloseFigure();
-        return path;
-    }
+    private static GraphicsPath RoundedRectangle(RectangleF bounds, float radius) => UiPaint.RoundedPath(bounds, radius);
 
     private void DrawString(
         Graphics graphics,
@@ -615,10 +762,8 @@ internal sealed class SystemUsagePopoverForm : Form
         Font font,
         Brush brush,
         RectangleF bounds,
-        StringAlignment alignment)
-    {
-        graphics.DrawString(text, font, brush, bounds, _textFormats.For(alignment));
-    }
+        StringAlignment alignment) =>
+        UiPaint.Text(graphics, text, font, brush, bounds, alignment);
 
     protected override void Dispose(bool disposing)
     {
@@ -635,6 +780,7 @@ internal sealed class SystemUsagePopoverForm : Form
             _metricValueFont.Dispose();
             _liveValueFont.Dispose();
             _tableValueFont.Dispose();
+            _totalValueFont.Dispose();
             _textFormats.Dispose();
         }
         base.Dispose(disposing);

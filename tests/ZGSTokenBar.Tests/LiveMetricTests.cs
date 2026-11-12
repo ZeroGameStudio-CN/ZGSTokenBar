@@ -54,9 +54,6 @@ internal static class LiveMetricTests
         Check(network.Observe([new("b", 1, 1)], 5).Sent is null, "Network reset is unavailable.");
         Check(network.Observe(null, 6).Received is null, "Failed network reads clear the baseline.");
         Check(NetworkUsageSampler.Compact(1024) == "1K" && NetworkUsageSampler.Compact(null) == "—", "Compact units retain unavailable state.");
-        Check(BarForm.CompactOutputRate(null) == "—" && BarForm.CompactOutputRate(double.NaN) == "—"
-            && BarForm.CompactOutputRate(0) == "0" && BarForm.CompactOutputRate(1200) == "1.2K"
-            && BarForm.CompactOutputRate(1200000) == "1.2M", "Narrow output rates distinguish idle, unknown and compact magnitudes.");
         Check(TaskbarMiniLayoutMath.AreaWidth(104, true, MiniAreaIds.LiveMetrics)
                 < TaskbarMiniLayoutMath.AreaWidth(104, false, MiniAreaIds.LiveMetrics) * .6,
             "Collapsing rates saves meaningful width even when the expanded module is already compact.");
@@ -95,8 +92,8 @@ internal static class LiveMetricTests
 
         popover.UpdateContent(new SystemUsagePopoverContent(snapshot, false, true), text);
         Check(popover.LiveRatesContentForAcceptance, "Rate hover switches to the live surface mode.");
-        Check(popover.CurrentLogicalBodyHeight <= 420,
-            "Rate and cumulative history fit in a single unscrolled page.");
+        Check(popover.CurrentLogicalBodyHeight <= 540,
+            "Rates, today's token curve and cumulative history fit in a single unscrolled page.");
         Check(popover.MetricLabelsForAcceptance.Contains("合计输出")
             && popover.MetricLabelsForAcceptance.Contains("网络接收")
             && !popover.MetricLabelsForAcceptance.Contains("CPU")
@@ -113,7 +110,7 @@ internal static class LiveMetricTests
         foreach (var dpi in new[] { 96, 144, 192 })
         {
             var at = DateTimeOffset.UtcNow;
-            using var form = new BarForm(new AppSettings { Locale = "zh-CN", EnableAnimations = false, EnableRadar = false },
+            using var form = new BarForm(new AppSettings { Locale = "zh-CN", EnableAnimations = false },
                 new QuotaSnapshot([], [], at), renderOnly: true, renderDpi: dpi);
             var original = form.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.SystemMetrics);
             form.SetCodexTokenUsage(new CodexTokenUsageSummary(1000, 642203161989, 12, at));
@@ -139,7 +136,8 @@ internal static class LiveMetricTests
                 form.SetMiniAreaFromCommand(MiniAreaIds.LiveMetrics, true, null);
                 using var bitmap = new System.Drawing.Bitmap(form.ClientSize.Width, form.ClientSize.Height);
                 form.DrawToBitmap(bitmap, new System.Drawing.Rectangle(System.Drawing.Point.Empty, bitmap.Size));
-                Check(form.ClientSize.Width < expandedWidth, "Output magnitude cannot expand the collapsed slot.");
+                // The glass dock keeps a fixed window width, so collapsing never widens it and magnitude never does either.
+                Check(form.ClientSize.Width <= expandedWidth, "Output magnitude cannot expand the collapsed slot.");
                 bitmap.Save(Path.Combine(directory, $"live-rates-narrow-{(value?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown")}-{dpi}dpi.png"), System.Drawing.Imaging.ImageFormat.Png);
             }
             form.SetLiveOutputRate(new(at, 53.2, 33.2, 20, 2, 1, 4, 0));
@@ -203,7 +201,15 @@ internal static class LiveMetricTests
             Check(broken.Observe(100, 200, at.AddSeconds(42)) is null && broken.SaveFailed && File.ReadAllText(path) == "{broken}",
                 "Malformed history is preserved, never replaced by zero totals.");
             Check(File.ReadAllText(sentinel) == "preserve original settings", "Network history never rewrites settings.");
-            Check(NetworkUsageSampler.Total(1024L * 1024 * 1024) == "1 GB", "Cumulative traffic keeps byte units separate from per-second rates.");
+            Check(NetworkUsageSampler.Total(1024L * 1024 * 1024) == "1.00 GB", "Cumulative traffic keeps byte units separate from per-second rates.");
+            Check(NetworkUsageSampler.Total((long)(1.4 * (1L << 40))) == "1.40 TB" && NetworkUsageSampler.Total((long)(12.54 * (1L << 30))) == "12.5 GB"
+                && NetworkUsageSampler.Total(512L << 20) == "512 MB" && NetworkUsageSampler.Total(512) == "512 B",
+                "Cumulative totals keep three significant digits with fixed decimals so columns line up.");
+            var since = new DateTimeOffset(2026, 10, 30, 16, 12, 0, TimeSpan.FromHours(8));
+            Check(SystemUsagePopoverForm.TotalsSince(since, since.AddDays(13)) == since.ToLocalTime().ToString("M/d HH:mm", System.Globalization.CultureInfo.InvariantCulture),
+                "The totals' start stamp drops the year inside the current year.");
+            Check(SystemUsagePopoverForm.TotalsSince(since, since.AddYears(1)).StartsWith(since.ToLocalTime().Year + "/", StringComparison.Ordinal),
+                "An older start stamp keeps its year.");
         }
         finally { Directory.Delete(directory, true); }
     }

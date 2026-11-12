@@ -116,7 +116,6 @@ internal sealed class AiGatewayObserverPlugin : IDisposable
             health,
             [card],
             [BuildDetails(snapshot)],
-            [],
             new Dictionary<string, JsonElement>(StringComparer.Ordinal)
             {
                 ["schemaVersion"] = JsonValue(1),
@@ -181,7 +180,6 @@ internal sealed class AiGatewayObserverPlugin : IDisposable
             PluginIdentity.Id,
             now,
             new PluginHealth(code, connected, retryable, now, messageKey, httpStatus),
-            [],
             [],
             []);
 

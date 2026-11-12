@@ -54,12 +54,6 @@ internal sealed class NativeText
         "用量达到 25 / 50 / 75 / 90 / 100% 时提醒",
         "Usage alerts at 25 / 50 / 75 / 90 / 100%");
     public string Display => T("外观", "Appearance");
-    public string CodexDisplayMode => T("Codex 显示模式", "Codex display mode");
-    public string CodexDisplayModeHint => T(
-        "总池保持现有高度，并汇总多个 Codex 账号的用量。",
-        "Pool keeps the current height and aggregates usage across multiple Codex accounts.");
-    public string CodexDisplayModeAccounts => T("分账号", "Per account");
-    public string CodexDisplayModePool => T("总池", "Pool");
     public string BackgroundPalette => T("背景配色", "Background");
     public string BackgroundPaletteHint => T("仅改变配额界面的背景层级。", "Changes only the quota surfaces' background layers.");
     public string BackgroundPaletteName(string id) => id switch
@@ -73,27 +67,10 @@ internal sealed class NativeText
         "启用细微过渡与刷新动画",
         "Enable subtle transitions and refresh animation");
     public string AnimationsTitle => T("动画效果", "Animation effects");
-    public string RadarSectionTitle => "Codex Radar";
-    public string RadarNavigation => T("雷达", "Radar");
-    public string RadarPreviewBadge => T("预览", "PREVIEW");
-    public string RadarNetworkHint => T(
-        "第三方、非官方；仅启用 Radar 时请求公开快照。",
-        "Third-party, unofficial; public snapshots are requested only while Radar is enabled.");
-    public string ShowRadarTitle => T("显示 Radar", "Show Radar");
-    public string ShowRadar => T(
-        "悬停 Codex 图标显示 Radar（第三方、非官方）",
-        "Show Codex Radar on logo hover (third-party, unofficial)");
-    public string RadarAlerts => T(
-        "App 运行时每分钟检查并发送 Windows 提醒",
-        "Check every minute and show Windows alerts while this app runs");
-    public string RadarAlertsTitle => T("Radar 告警", "Radar alerts");
-    public string TestRadarNotification => T("测试 Radar 通知", "Test Radar notification");
-    public string RadarTestNotificationHint => T(
-        "立即发送一次测试；无需先保存，不会启动轮询。",
-        "Sends one test now; no save required and polling is not started.");
-    public string RadarRunsWhileOpen => T(
-        "仅在 ZGSTokenBar 运行时工作。",
-        "Only runs while ZGSTokenBar is open.");
+    public string EmbedTaskbarTitle => T("嵌入任务栏（实验）", "Embed in taskbar (experimental)");
+    public string EmbedTaskbarHint => T(
+        "吸附在主任务栏时把 Bar 放进任务栏内部；失败、资源管理器无响应或重启时自动回到悬浮模式",
+        "While docked on the primary taskbar, host the Bar inside it; falls back to the overlay if Explorer refuses, hangs or restarts");
     public string AllowClaudeRefresh => T(
         "Claude OAuth 过期时允许刷新",
         "Allow Claude OAuth refresh when expired");
@@ -128,7 +105,6 @@ internal sealed class NativeText
         "点击通知或托盘菜单查看已签名发布包。",
         "Click this notification or the tray menu to view the signed release.");
     public string OpenSettingsHint => T("打开设置面板", "Open settings panel");
-    public string OpenRadarWebsite => T("打开 Codex Radar 网站", "Open Codex Radar website");
     public string Settings => T("设置", "Settings");
     public string Quit => T("退出", "Quit");
     public string TrayText => T("ZGSTokenBar — 实时配额", "ZGSTokenBar — live limits");
@@ -564,10 +540,6 @@ internal sealed class NativeText
             ? $"{date.Month}月{date.Day}日"
             : date.ToString("MMM d", CultureInfo.InvariantCulture);
     }
-    public string CodexTokenRadarMetricTitle => T("Token", "Tokens");
-    public string CodexCacheRadarMetricTitle => T("缓存", "Cache");
-    public string AiGatewayTokenRadarMetricTitle => T("Token", "Tokens");
-    public string AiGatewayCacheRadarMetricTitle => T("缓存", "Cache");
     public string CodexTokenScope(int sessionCount)
     {
         var count = sessionCount.ToString("N0", CultureInfo.InvariantCulture);
@@ -678,7 +650,7 @@ internal sealed class NativeText
 
     private static string FormatBytesPerSecond(double? bytesPerSecond)
     {
-        if (bytesPerSecond is not { } value || !double.IsFinite(value) || value < 0) return "--";
+        if (bytesPerSecond is not { } value || !double.IsFinite(value) || value < 0) return "—";
         var (divisor, suffix) = value switch
         {
             >= 1_073_741_824 => (1_073_741_824d, "GB/s"),
@@ -762,12 +734,7 @@ internal sealed class NativeText
         return T($"{prefix} · {value}%/时", $"{prefix} · {value}%/h");
     }
 
-    private static string CompactPercent(double percent)
-    {
-        var clamped = Math.Clamp(percent, 0, 100);
-        if (clamped > 0 && clamped < 1) return "<1%";
-        return $"{clamped.ToString(clamped < 10 ? "0.#" : "0", CultureInfo.InvariantCulture)}%";
-    }
+    private static string CompactPercent(double remaining) => PercentFormat.Remaining(remaining);
 
     private string TrendPrefix(TimeSpan? span, QuotaTrendConfidence confidence)
     {
@@ -875,32 +842,8 @@ internal sealed class NativeText
         return T($"{compact}后", $"in {compact}");
     }
 
-    public string RadarTitle => "Codex Radar";
-    public string RadarModelGroupAction(bool collapsed) => collapsed
-        ? T("展开模型", "Expand model")
-        : T("折叠模型", "Collapse model");
-    public string DeepSeekRadarTitle => "DeepSeek Radar";
-    public string RadarPopoverSubtitle(bool pinned) => pinned
-        ? T("已固定 · Esc / 点击外部", "PINNED · ESC / CLICK OUTSIDE")
-        : T("非官方 · 点击固定", "UNOFFICIAL · CLICK TO PIN");
-    public string RadarLoading => T("正在加载 Codex Radar…", "Loading Codex Radar…");
-    public string RadarHoverToFetch => T(
-        "悬停后获取最新快照。",
-        "Hover to fetch the latest snapshot.");
-    public string RadarNever => T("从未", "never");
-    public string RadarModelHeader => T("模型", "MODEL");
-    public string RadarIqHeader => "IQ";
-    public string RadarTrialScoreHeader => T("分/100", "/100");
-    public string RadarTrialState => T("试跑", "TRIAL");
-    public string RadarHistoricalState => T("历史数据", "HISTORICAL");
-    public string RadarTrialSubtitle(DateTimeOffset observedAt) => T(
-        $"Codex 试跑 · 百分制 · {observedAt.ToLocalTime():M-d HH:mm}",
-        $"Codex trial · /100 · {observedAt.ToLocalTime():MM-dd HH:mm}");
-    public string RadarBenchmarkHint => T("来源 codexradar.com。试跑按百分制，历史基准按150分制，不能混排；小样本试跑不参与自动推荐。",
-        "Source: codexradar.com. Trials use /100; historical benchmarks use /150. They are not comparable. Small trials do not drive recommendations.");
     public string CodexRecentTurnsTitle => T("最近对话", "Recent chats");
     public string CodexConversationsIndexing(int count) => T($"读取 {count}", $"Reading {count}");
-    public string CodexRadarExpansion(bool expanded) => expanded ? T("收起雷达 ‹", "Hide Radar ‹") : T("雷达 ›", "Radar ›");
     public string CodexHistoryCoverage(int selectedCount, int observedCount) => T(
         $"当前筛选 {selectedCount} 轮 · 已观测 {observedCount} 轮",
         $"Current filter: {selectedCount} turns · {observedCount} observed");
@@ -1033,224 +976,6 @@ internal sealed class NativeText
         if (turn.OutputTokensPerSecond is { } average) lines.Add(T($"整轮均速 {average:0.#} tok/s · ", $"Whole-turn average {average:0.#} tok/s · ") + CodexTurnSpeedNote);
         return string.Join('\n', lines);
     }
-    public string RadarBenchmarkSwitch(bool trial) => trial
-        ? T("试跑 /100 · 历史 ›", "Trial /100 · History ›")
-        : T("历史 /150 · 试跑 ›", "History /150 · Trial ›");
-    public string RadarIqAverageHeader => T("24H均", "24H AVG");
-    public string RadarSampleHeader => T("样本", "N");
-    public string RadarPassHeader => T("通过/有效", "PASS/VALID");
-    public string RadarAverageHeader => T("均时", "AVG/TASK");
-    public string RadarCostHeader => T("成本", "$/TASK");
-    public string RadarSource => T("来源", "source");
-    public string RadarStable => T("稳定", "stable");
-    public string RadarWatch => T("关注", "watch");
-    public string RadarDegraded => T("降级", "degraded");
-    public string RadarUnknown => T("未知", "unknown");
-    public string RadarUnknownStatusLegend => T("状态未知", "status unknown");
-    public string RadarConfidenceNote => T("N≥50 · 95%下界评分", "N≥50 · 95% lower-bound picks");
-    public string RadarStrongestTitle => T("最强", "STRONGEST");
-    public string RadarDailyScenarioTitle => T("日常", "DAILY");
-    public string RadarPlanningScenarioTitle => T("规划", "PLAN");
-    public string RadarExecutionScenarioTitle => T("执行", "EXEC");
-    public string RadarBackgroundScenarioTitle => T("后台", "BG");
-
-    public string RadarState(RadarViewState state, DateTimeOffset now)
-    {
-        var fresh = !state.IsStale(now) && state.Error is null;
-        return state.Loading
-            ? T("同步中", "SYNC")
-            : state.Error is not null
-                ? T("错误", "ERROR")
-                : fresh
-                    ? T("最新", "FRESH")
-                    : T("已过期", "STALE");
-    }
-
-    public string RadarChecked(DateTimeOffset? checkedAt, DateTimeOffset now)
-    {
-        if (checkedAt is null) return RadarNever;
-        var local = checkedAt.Value.ToLocalTime();
-        return local.Date == now.ToLocalTime().Date
-            ? local.ToString("HH:mm", CultureInfo.InvariantCulture)
-            : T(
-                local.ToString("M月d日 HH:mm"),
-                local.ToString("MM-dd HH:mm", CultureInfo.InvariantCulture));
-    }
-
-    public string RadarResetWindow(RadarResetWindow? window, DateTimeOffset now)
-    {
-        if (window is null) return string.Empty;
-        if (window.Open)
-        {
-            var title = RadarResetWindowTitle(window);
-            var detail = RadarResetWindowDetail(window, now);
-            return detail.Length == 0 ? title : $"{title} · {detail}";
-        }
-
-        var resetAt = window.ClosedAt ?? window.OpenedAt;
-        if (resetAt is null) return string.Empty;
-        var local = resetAt.Value.ToLocalTime();
-        return T(
-            $"硬重置 · {local:M/d HH:mm}",
-            $"RESET · {local:MM-dd HH:mm}");
-    }
-
-    public string RadarResetWindowTitle(RadarResetWindow? window) =>
-        window?.Open == true
-            ? T("重置窗口已开启", "RESET WINDOW OPEN")
-            : string.Empty;
-
-    public string RadarResetMiniAreaTitle => T("重置", "Reset");
-
-    public string RadarResetMiniTitle(RadarResetWindow? window, DateTimeOffset now)
-    {
-        var timing = RadarResetTiming.Resolve(window);
-        return timing.Kind == RadarResetTimingKind.EstimatedDate
-            && timing.EstimatedDate is { } estimatedDate
-                ? T(
-                    $"推测 {estimatedDate.ToString("M/d", CultureInfo.InvariantCulture)}",
-                    $"EST {estimatedDate.ToString("MM-dd", CultureInfo.InvariantCulture)}")
-                : T("重置", "RESET");
-    }
-
-    public string RadarResetMiniValue(RadarResetWindow? window, DateTimeOffset now)
-    {
-        var timing = RadarResetTiming.Resolve(window);
-        return timing.Kind switch
-        {
-            RadarResetTimingKind.Exact when timing.ExactTargetAt is { } exactTarget =>
-                exactTarget <= now
-                    ? T("待确认", "AWAITING")
-                    : FormatResetCountdown(exactTarget - now),
-            RadarResetTimingKind.EstimatedDate => RadarEstimatedDateValue(timing, now),
-            _ => T("时间未定", "TIME TBA"),
-        };
-    }
-
-    public string RadarResetMiniCompact(RadarResetWindow? window, DateTimeOffset now)
-    {
-        var timing = RadarResetTiming.Resolve(window);
-        if (timing.Kind == RadarResetTimingKind.Exact && timing.ExactTargetAt is { } exactTarget)
-        {
-            var remaining = exactTarget - now;
-            if (remaining <= TimeSpan.Zero) return "!";
-            if (remaining.TotalHours >= 1) return $"{(int)remaining.TotalHours}h";
-            if (remaining.TotalMinutes >= 1) return $"{(int)remaining.TotalMinutes}m";
-            return "<1m";
-        }
-        if (timing.Kind == RadarResetTimingKind.EstimatedDate)
-        {
-            return timing.CalendarDaysUntil(now) switch
-            {
-                > 0 and var days => $"~{days}d",
-                0 => "~0d",
-                _ => "!",
-            };
-        }
-        return "?";
-    }
-
-    public string RadarResetWindowDetail(RadarResetWindow? window, DateTimeOffset now)
-    {
-        if (window?.Open != true) return string.Empty;
-        var timing = RadarResetTiming.Resolve(window);
-        if (timing.Kind == RadarResetTimingKind.Exact && timing.ExactTargetAt is { } targetAt)
-        {
-            var remaining = targetAt - now;
-            if (remaining <= TimeSpan.Zero)
-            {
-                return T(
-                    "等待官方确认重置完成",
-                    "AWAITING OFFICIAL RESET CONFIRMATION");
-            }
-
-            return T(
-                $"距离预计重置 {FormatResetCountdown(remaining)}",
-                $"EXPECTED RESET IN {FormatResetCountdown(remaining)}");
-        }
-
-        if (timing.Kind == RadarResetTimingKind.EstimatedDate
-            && timing.EstimatedDate is { } estimatedDate)
-        {
-            var remaining = RadarEstimatedDateValue(timing, now);
-            return T(
-                $"推测重置 {estimatedDate.ToString("M/d", CultureInfo.InvariantCulture)} · {remaining}",
-                $"ESTIMATED RESET {estimatedDate.ToString("MM-dd", CultureInfo.InvariantCulture)} · {remaining}");
-        }
-
-        return T("时间未定", "TIME TBA");
-    }
-
-    private string RadarEstimatedDateValue(RadarResetTiming timing, DateTimeOffset now)
-    {
-        return timing.CalendarDaysUntil(now) switch
-        {
-            > 0 and var days => T($"约{days}天", $"~{days}d"),
-            0 => T("今天", "TODAY"),
-            _ => T("待确认", "AWAITING"),
-        };
-    }
-
-    private static string FormatResetCountdown(TimeSpan remaining)
-    {
-        var seconds = Math.Max(0, (long)Math.Floor(remaining.TotalSeconds));
-        return FormattableString.Invariant(
-            $"{seconds / 3600:00}:{seconds % 3600 / 60:00}:{seconds % 60:00}");
-    }
-
-    public string RadarAverageTime(RadarModel model)
-    {
-        if (model.AverageTaskSeconds is { } seconds
-            && double.IsFinite(seconds)
-            && seconds >= 0)
-        {
-            if (seconds < 60) return T("<1分", "<1m");
-            var minutes = Math.Max(
-                1,
-                (int)Math.Round(seconds / 60, MidpointRounding.AwayFromZero));
-            return minutes < 60
-                ? T($"{minutes}分", $"{minutes}m")
-                : T($"{minutes / 60}时{minutes % 60:00}分", $"{minutes / 60}h {minutes % 60:00}m");
-        }
-        return string.IsNullOrWhiteSpace(model.WallTime) ? "—" : model.WallTime;
-    }
-
-    public string RadarError(RadarErrorCode code) => code switch
-    {
-        RadarErrorCode.Timeout => T("Radar 请求超时。", "Radar request timed out."),
-        RadarErrorCode.SchemaChanged => T("Radar 响应格式已变化。", "Radar response format changed."),
-        RadarErrorCode.StateSaveFailed => T("Radar 状态无法保存。", "Radar state could not be saved."),
-        _ => T("Codex Radar 暂不可用。", "Codex Radar is unavailable."),
-    };
-
-    public string RadarChange(RadarAlertChange change)
-    {
-        var previous = Value(change.PreviousValue);
-        var current = Value(change.CurrentValue);
-        return change.Kind switch
-        {
-            RadarAlertChangeKind.Model => T($"模型 {previous} → {current}", $"model {previous} → {current}"),
-            RadarAlertChangeKind.Effort => T($"强度 {previous} → {current}", $"effort {previous} → {current}"),
-            RadarAlertChangeKind.Status => T(
-                $"状态 {RadarStatusLabel(previous)} → {RadarStatusLabel(current)}",
-                $"status {previous} → {current}"),
-            _ => $"IQ {previous} → {current}",
-        };
-    }
-
-    public string RadarPrimaryChanged => T("主结果已变化", "Primary result changed");
-    public string RadarSourceUpdated(DateTimeOffset sourceAt) => T(
-        $"来源 {sourceAt.ToLocalTime():M月d日 HH:mm}",
-        $"source {sourceAt.ToLocalTime():MM-dd HH:mm}");
-    public string RadarSourceTime(DateTimeOffset? sourceAt) => sourceAt is null
-        ? RadarUnknown
-        : T(
-            sourceAt.Value.ToLocalTime().ToString("M月d日 HH:mm"),
-            sourceAt.Value.ToLocalTime().ToString("MM-dd HH:mm", CultureInfo.InvariantCulture));
-    public string RadarTestTitle => T("Codex Radar 测试", "Codex Radar test");
-    public string RadarTestBody => T(
-        "Windows 通知可用；未读取 Radar 数据，也未修改告警状态。",
-        "Windows notifications are available. No Radar data or alert state was changed.");
 
     public string QuotaMilestoneTitle(
         string card,
@@ -1315,22 +1040,6 @@ internal sealed class NativeText
             $"{provider} API 受到速率限制，{FormatCompactReset(retryAt, now)}后重试。",
             $"{provider} API is rate limited. Retry in {FormatCompactReset(retryAt, now)}.");
     }
-
-    public string RadarStatusLabel(string? value)
-    {
-        var normalized = Value(value);
-        return normalized.ToLowerInvariant() switch
-        {
-            "green" or "stable" => RadarStable,
-            "yellow" or "watch" => RadarWatch,
-            "red" or "degraded" => RadarDegraded,
-            "n/a" => RadarUnknown,
-            _ => normalized,
-        };
-    }
-
-    private string Value(string? value) =>
-        string.IsNullOrWhiteSpace(value) ? T("未知", "n/a") : value;
 
     private string T(string zh, string en) => _zh ? zh : en;
 }

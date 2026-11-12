@@ -156,6 +156,6 @@ internal static class PluginLifecycleRegressionTests
         }
 
         public PluginDataSnapshot Success(DateTimeOffset now) => new(Manifest.Id, now,
-            new PluginHealth(PluginHealthCode.Current, true, false, now, "lifecycle.current"), [], [], []);
+            new PluginHealth(PluginHealthCode.Current, true, false, now, "lifecycle.current"), [], []);
     }
 }

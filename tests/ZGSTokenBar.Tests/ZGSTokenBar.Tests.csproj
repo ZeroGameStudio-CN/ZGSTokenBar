@@ -6,6 +6,9 @@
     <SelfContained>true</SelfContained>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\ZGSTokenBar.ProviderTests\UsageProviderFixtureTests.cs" Link="UsageProviderFixtureTests.cs" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\src\ProcessPlugins\ZGSTokenBar.Plugin.AiGatewayObserver\ZGSTokenBar.Plugin.AiGatewayObserver.csproj" />
     <ProjectReference Include="..\..\src\ZGSTokenBar.Core\ZGSTokenBar.Core.csproj" />
     <ProjectReference Include="..\..\src\ZGSTokenBar.App\ZGSTokenBar.App.csproj" />

@@ -307,6 +307,7 @@ internal static class TaskbarPlacement
     public static bool ShowAt(nint window, Point location, Size size)
     {
         if (window == 0 || size.Width <= 0 || size.Height <= 0) return false;
+        if (TaskbarEmbedding.IsChild(window)) return TaskbarEmbedding.TryPlaceChild(window, location, size, keepZOrder: false);
         return SetWindowPos(
             window,
             TopMostWindow,
@@ -320,6 +321,7 @@ internal static class TaskbarPlacement
     public static bool MoveAt(nint window, Point location, Size size)
     {
         if (window == 0 || size.Width <= 0 || size.Height <= 0) return false;
+        if (TaskbarEmbedding.IsChild(window)) return TaskbarEmbedding.TryPlaceChild(window, location, size, keepZOrder: true);
         return SetWindowPos(
             window,
             0,

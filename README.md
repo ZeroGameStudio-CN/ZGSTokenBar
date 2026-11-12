@@ -8,7 +8,9 @@ ZGSTokenBar is an open-source, local-first Windows taskbar companion for monitor
 - Built-in Claude and Codex quota providers plus a bundled DeepSeek Harness Provider. Existing local Provider credentials are detected without copying a key into ZGSTokenBar; an explicit module toggle always wins.
 - Local Codex token summaries and Today, Yesterday, and 30-day API-equivalent USD estimates. Estimates follow a dated model-price snapshot and are not subscription invoices.
 - Multiple Codex accounts are grouped with Pro accounts before Plus accounts, then sorted by remaining quota within each plan.
-- Independent, reorderable and resizable Mini areas with quota details and reset countdowns.
+- A glass taskbar dock: one ring per account with quota, a shared bottom-left percent chip (remaining is always rounded down, so rings and hovers agree), then Router, system metrics and live tok/s. Remote Desktop sessions switch to a topmost floating bar automatically.
+- Usage providers: Grok (plan quota and prepaid balance, silent CLI sign-in renewal), Antigravity (per quota group; the ring follows the Argon group by default, selectable in Settings, and warns when another group runs low), Cursor, Copilot, OpenCode, xAI, OpenRouter and DeepSeek. Only a fixed allowlist of official usage endpoints is contacted.
+- Hover a ring for every window, reset times, pace forecast and subscription dates; the live-rate hover groups per-chat tok/s, a 24-hour curve, and total / today tokens with the cache hit rate.
 - Optional start-at-login registration.
 - Typed Provider SDK, strict manifests, generated built-in registry, and isolated process-plugin support.
 - Local named-pipe control API and a NativeAOT command-line client.
@@ -16,7 +18,7 @@ ZGSTokenBar is an open-source, local-first Windows taskbar companion for monitor
 
 ## Use
 
-Drag the Mini's card area to reposition it along the taskbar or pull it onto the desktop. Closing the bar hides the app to the system tray; click the tray icon to restore it, or use the tray menu's Quit command to exit completely. Hover a real Mini quota capsule to see its exact reset time, live countdown, freshness, and usage details; click to pin the popover. Click outside or press Escape to close it. To open the optional Radar view, hover a Codex logo in Mini when that public data source is enabled.
+Drag the Mini's card area to reposition it along the taskbar or pull it onto the desktop. Closing the bar hides the app to the system tray; click the tray icon to restore it, or use the tray menu's Quit command to exit completely. Hover a real Mini quota capsule to see its exact reset time, live countdown, freshness, and usage details; click to pin the popover. Click outside or press Escape to close it.
 
 Claude, Codex, and DeepSeek Harness reuse credentials already configured by their own local tools. ZGSTokenBar has no Provider API-key field. Unknown or unsupported Codex price classes remain visibly unpriced; a mixed period is shown as a lower-bound estimate such as `≈$1.23+` instead of a false zero.
 

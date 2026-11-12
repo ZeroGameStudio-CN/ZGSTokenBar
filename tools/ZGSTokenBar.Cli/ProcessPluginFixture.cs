@@ -142,7 +142,6 @@ internal static class ProcessPluginFixture
                         "accent.fixture",
                         [new("fixture.value", new("integer", Integer: 7))]),
                 ],
-                [],
                 []);
             return Success(
                 request,

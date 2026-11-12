@@ -71,7 +71,7 @@ public sealed class RouterPlugin : BuiltinPluginBase, IDataSource
         return new(Id, context.Now, new(connected ? PluginHealthCode.Current : PluginHealthCode.Unavailable,
             connected, true, context.Now, connected ? "router.current" : "router.unavailable"),
             _seen ? [new("card.router", Id, "router", ContributionKind.Metric, 0, "Router", "router.icon", "accent.router", summary)] : [],
-            [], []);
+            []);
     }
 
     public override async ValueTask DisposeAsync() { _client.Dispose(); await base.DisposeAsync(); }

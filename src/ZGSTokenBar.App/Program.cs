@@ -16,6 +16,8 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        // Before any window exists: log faults instead of showing the stock .NET exception dialog.
+        AppDiagnostics.Install();
         var dataDirectory = ResolveDataDirectoryOverride(args);
         var allowGlobalStartupRegistration = dataDirectory is null;
         if (HostJobLifetimeIsolation.TryRelaunchOutsideTerminatingJob(
@@ -48,9 +50,17 @@ internal static class Program
             return;
         }
 
-        var bundledPluginInstallFailed = BundledPluginInstaller
-            .EnsureInstalled(store.DataDirectory)
-            .Any(status => !status.Valid);
+        // Developer capture mode: offscreen-render each ring's hover card from live data. An
+        // environment variable (not an argument) so it survives the job-isolation relaunch.
+        if (Environment.GetEnvironmentVariable("ZGSTOKENBAR_CAPTURE_HOVERS") is { } captureDirectory
+            && Path.IsPathFullyQualified(captureDirectory))
+        {
+            BarForm.PendingHoverCaptureDirectory = captureDirectory;
+        }
+        var bundledPluginInstallFailed = BundledPluginWarning.ShouldWarn(
+            store.DataDirectory,
+            BundledPluginInstaller.EnsureInstalled(store.DataDirectory),
+            settingsAvailable ? settings : null);
         if (settingsAvailable) ApplyProviderAutoDiscovery(store, settings);
 
         ApplicationConfiguration.Initialize();

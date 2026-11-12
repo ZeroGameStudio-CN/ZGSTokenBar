@@ -60,7 +60,6 @@ public sealed class SystemMetricsPlugin : BuiltinPluginBase, IDataSource
                                 item.Value,
                                 ObservedAt: context.Now)).ToArray()),
                     ]),
-            ],
-            []));
+            ]));
     }
 }

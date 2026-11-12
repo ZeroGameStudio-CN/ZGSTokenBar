@@ -11,11 +11,16 @@ public static class ProviderProcessActivity
             [ProviderKind.Codex] = ["chatgpt", "codex", "codex-cli"],
         };
 
+    private static readonly HashSet<string> WatchedNames =
+        ProcessNames.Values.SelectMany(names => names).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
     public static IReadOnlySet<ProviderKind> DetectActiveProviders()
     {
         try
         {
             var runningNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (CockpitCodexInstanceActivity.TryReadRunningProcessNames(WatchedNames, runningNames))
+                return DetectFromProcessNames(runningNames);
             foreach (var process in Process.GetProcesses())
             {
                 using (process)

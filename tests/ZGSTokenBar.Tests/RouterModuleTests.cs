@@ -424,6 +424,7 @@ internal static class RouterModuleTests
     {
         Directory.CreateDirectory(directory);
         CaptureIcons(directory);
+        CaptureHoverAndCloseUp(directory);
         foreach (var dpi in new[] { 96, 144, 192 })
         {
             using var form = new RouterMonitorForm(new RouterMonitorClient(new Fixture()), observe: false)
@@ -576,7 +577,7 @@ internal static class RouterModuleTests
     private static IEnumerable<System.Windows.Forms.Control> AllControls(System.Windows.Forms.Control parent) =>
         parent.Controls.Cast<System.Windows.Forms.Control>().SelectMany(child => new[] { child }.Concat(AllControls(child)));
 
-    private static MiniCardContribution Card(string status, long queued = 0) => new("card.router", RouterPlugin.Id,
+    internal static MiniCardContribution Card(string status, long queued = 0) => new("card.router", RouterPlugin.Id,
         "router", ContributionKind.Metric, 0, "Router", "router.icon", "accent.router",
         [new("router.state", new("text", Text: "状态说明只在弹层出现"), status), new("router.queued", new("integer", Integer: queued)),
          new("router.project", new("text", Text: "POB")), new("router.phase", new("text", Text: status switch { "idle" => "空闲", "cleanup" => "清理", _ => "测试" })),
@@ -604,8 +605,9 @@ internal static class RouterModuleTests
         Check(bar.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Router).Collapsed, "New Router modules default to the compact icon");
         var compactWidth = bar.Width;
         Check(bar.SetMiniAreaFromCommand(MiniAreaIds.Router, false, null), "Existing module control expands the Router summary");
-        Check(!bar.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Router).Collapsed && bar.Width > compactWidth,
-            "Expanded and compact modes have different useful content widths");
+        // The glass dock keeps Router as a fixed icon slot; the expand preference is still stored.
+        Check(!bar.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Router).Collapsed && bar.Width == compactWidth,
+            "Router expand state is kept while the glass dock keeps its fixed Router slot");
         bar.SetMiniAreaLayouts(new Dictionary<string, MiniAreaLayout> { [MiniAreaIds.Router] = new(false, 48) });
         Check(bar.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.Router) is { Collapsed: false, Width: 112 },
             "Saved expanded preference is preserved while old widths are normalized for the new content");
@@ -642,7 +644,7 @@ internal static class RouterModuleTests
             host.StartAsync(stop.Token).AsTask().GetAwaiter().GetResult();
             var subscription = host.Subscribe(includeValues: true);
             void Publish(long count) => host.Publish(new(RouterPlugin.Id, DateTimeOffset.UtcNow,
-                new(PluginHealthCode.Current, true, true, DateTimeOffset.UtcNow, "router.current"), [Card("running", count)], [], []));
+                new(PluginHealthCode.Current, true, true, DateTimeOffset.UtcNow, "router.current"), [Card("running", count)], []));
             // Overflow the real bounded Host channel before the consumer starts.
             for (var i = 0; i < 100; i++) Publish(i);
             var recoveries = 0;
@@ -700,6 +702,33 @@ internal static class RouterModuleTests
             Check(!Render(10).SequenceEqual(Render(11)), $"Two-digit queue counts retain their final digit at {dpi} DPI");
             Check(Render(100).SequenceEqual(Render(101)), $"Queue badge overflow remains capped at 99+ at {dpi} DPI");
         }
+    }
+
+    private static void CaptureHoverAndCloseUp(string directory)
+    {
+        foreach (var dpi in new[] { 96, 144, 192 })
+        {
+            using var hover = new RouterHoverCardForm();
+            using var image = hover.RenderForTest(Card("running", 3), chinese: true, dpi);
+            Check(image.Width == (int)Math.Round(248 * dpi / 96f), $"Router hover uses the shared card width at {dpi} DPI");
+            image.Save(Path.Combine(directory, $"router-hover-{dpi}.png"), ImageFormat.Png);
+        }
+        // Close-up: the dock icon (26 px slot) for every state at 6x, with and without a queue.
+        var states = new[] { "idle", "running", "waiting", "cleanup", "attention", "offline", "unknown" };
+        const float zoom = 6;
+        using var sheet = new Bitmap((int)(states.Length * 30 * zoom), (int)(64 * zoom));
+        using var g = Graphics.FromImage(sheet);
+        g.Clear(UiTokens.CardSurface);
+        g.ScaleTransform(zoom, zoom);
+        using var badge = new Font("Segoe UI", 8f, FontStyle.Bold, GraphicsUnit.Pixel);
+        using var caption = new Font("Segoe UI", 4.5f, FontStyle.Regular, GraphicsUnit.Pixel);
+        for (var i = 0; i < states.Length; i++)
+        {
+            RouterCardRenderer.Draw(g, new RectangleF(i * 30 + 2, 2, 26, 26), Card(states[i]), badge, collapsed: true);
+            RouterCardRenderer.Draw(g, new RectangleF(i * 30 + 2, 30, 26, 26), Card(states[i], i == 0 ? 1 : i * 7), badge, collapsed: true);
+            g.DrawString(states[i], caption, Brushes.LightSlateGray, i * 30 + 3, 57);
+        }
+        sheet.Save(Path.Combine(directory, "router-icon-closeup.png"), ImageFormat.Png);
     }
 
     private static void CaptureIcons(string directory)
