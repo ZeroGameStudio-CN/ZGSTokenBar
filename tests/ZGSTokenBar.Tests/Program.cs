@@ -13572,7 +13572,7 @@ static void TestLocalProviderSourcesAutoDetected()
         Check(parsed is not null && parsed.Windows.Count == 5, "agy weekly and five-hour rows are all read");
         // agy's numbers are "remaining"; the parser stores used = 100 - remaining, never inverted.
         Check(string.Join("|", parsed!.Windows.Select(window => window.Label))
-                == "Gemini · 7d|Gemini · 5h|Gemini 4 Argon · 7d|Claude/GPT · 7d|Claude/GPT · 5h"
+                == "Gemini · 7d|Gemini · 5h|Argon · 7d|Claude/GPT · 7d|Claude/GPT · 5h"
             && parsed.Windows.Single(window => window.Label == "Claude/GPT · 7d").UsedPercent is { } claudeUsed && Math.Abs(claudeUsed - 96) < .01
             && parsed.Windows.Single(window => window.Label == "Claude/GPT · 7d").ResetsAt == DateTimeOffset.Parse("2026-11-16T15:42:01Z")
             && parsed.Windows.Single(window => window.Label == "Gemini · 5h").Duration == TimeSpan.FromHours(5),
