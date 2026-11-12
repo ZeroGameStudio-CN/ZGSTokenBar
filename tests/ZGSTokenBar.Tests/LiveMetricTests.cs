@@ -201,7 +201,15 @@ internal static class LiveMetricTests
             Check(broken.Observe(100, 200, at.AddSeconds(42)) is null && broken.SaveFailed && File.ReadAllText(path) == "{broken}",
                 "Malformed history is preserved, never replaced by zero totals.");
             Check(File.ReadAllText(sentinel) == "preserve original settings", "Network history never rewrites settings.");
-            Check(NetworkUsageSampler.Total(1024L * 1024 * 1024) == "1 GB", "Cumulative traffic keeps byte units separate from per-second rates.");
+            Check(NetworkUsageSampler.Total(1024L * 1024 * 1024) == "1.00 GB", "Cumulative traffic keeps byte units separate from per-second rates.");
+            Check(NetworkUsageSampler.Total((long)(1.4 * (1L << 40))) == "1.40 TB" && NetworkUsageSampler.Total((long)(12.54 * (1L << 30))) == "12.5 GB"
+                && NetworkUsageSampler.Total(512L << 20) == "512 MB" && NetworkUsageSampler.Total(512) == "512 B",
+                "Cumulative totals keep three significant digits with fixed decimals so columns line up.");
+            var since = new DateTimeOffset(2026, 10, 30, 16, 12, 0, TimeSpan.FromHours(8));
+            Check(SystemUsagePopoverForm.TotalsSince(since, since.AddDays(13)) == since.ToLocalTime().ToString("M/d HH:mm", System.Globalization.CultureInfo.InvariantCulture),
+                "The totals' start stamp drops the year inside the current year.");
+            Check(SystemUsagePopoverForm.TotalsSince(since, since.AddYears(1)).StartsWith(since.ToLocalTime().Year + "/", StringComparison.Ordinal),
+                "An older start stamp keeps its year.");
         }
         finally { Directory.Delete(directory, true); }
     }

@@ -650,7 +650,7 @@ internal sealed class NativeText
 
     private static string FormatBytesPerSecond(double? bytesPerSecond)
     {
-        if (bytesPerSecond is not { } value || !double.IsFinite(value) || value < 0) return "--";
+        if (bytesPerSecond is not { } value || !double.IsFinite(value) || value < 0) return "—";
         var (divisor, suffix) = value switch
         {
             >= 1_073_741_824 => (1_073_741_824d, "GB/s"),

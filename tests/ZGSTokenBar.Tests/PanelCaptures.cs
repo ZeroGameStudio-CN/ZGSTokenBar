@@ -12,7 +12,7 @@ internal static class PanelCaptures
     internal static void Run(string directory)
     {
         Directory.CreateDirectory(directory);
-        var at = DateTimeOffset.Parse("2026-11-12T07:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        var at = DateTimeOffset.UtcNow;
         var snapshot = Snapshot(at);
         var hourly = Enumerable.Range(0, 24).Select(hour => (long)(40_000_000 + 60_000_000 * Math.Abs(Math.Sin(hour / 3.0)) + hour * 2_000_000)).ToArray();
         CodexConversationTurn Turn(int index, string title, string model, string effort, long output, double elapsed, double measured, double estimated) =>

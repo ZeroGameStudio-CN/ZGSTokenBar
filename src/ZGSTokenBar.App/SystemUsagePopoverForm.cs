@@ -40,6 +40,7 @@ internal sealed class SystemUsagePopoverForm : Form
     private readonly Font _metricValueFont = new("Segoe UI", 11.5f, FontStyle.Bold, GraphicsUnit.Pixel);
     private readonly Font _liveValueFont = new("Segoe UI", 25f, FontStyle.Bold, GraphicsUnit.Pixel);
     private readonly Font _tableValueFont = new("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Pixel);
+    private readonly Font _totalValueFont = new("Segoe UI", 15f, FontStyle.Bold, GraphicsUnit.Pixel);
     private static readonly Color RecordedAccent = Color.FromArgb(110, 231, 183);
     private static readonly Color EstimateAccent = UiPalette.Amber400;
     private static readonly Color ReceiveAccent = Color.FromArgb(125, 211, 252);
@@ -430,15 +431,15 @@ internal sealed class SystemUsagePopoverForm : Form
         TextAt(_metrics[1].Label, _subtitleFont, muted, 24, 115, 118, 12);
         TextAt(live is null ? (zh ? "估算" : "Estimated")
                 : zh ? $"估算 · {live.EstimatedShare:P0}" : $"Estimated · {live.EstimatedShare:P0}",
-            _subtitleFont, muted, 166, 115, 110, 12);
+            _subtitleFont, muted, 158, 115, 118, 12);
         TextAt(_metrics[1].Value, _metricValueFont, live is null ? muted : recorded, 24, 131, 118, 14);
-        TextAt(_metrics[2].Value, _metricValueFont, live is null ? muted : estimated, 166, 131, 110, 14);
+        TextAt(_metrics[2].Value, _metricValueFont, live is null ? muted : estimated, 158, 131, 118, 14);
 
         Panel(158, 40);
         graphics.FillEllipse(recorded, body.X + 24, body.Y + 174, 5, 5);
-        graphics.FillEllipse(send, body.X + 166, body.Y + 174, 5, 5);
+        graphics.FillEllipse(send, body.X + 158, body.Y + 174, 5, 5);
         TextAt(zh ? "生成中" : "Generating", _detailFont, primary, 35, 170, 80, 14);
-        TextAt(zh ? "工具中" : "Tools", _detailFont, primary, 177, 170, 68, 14);
+        TextAt(zh ? "工具中" : "Tools", _detailFont, primary, 169, 170, 76, 14);
         TextAt(live?.Generating.ToString() ?? "—", _metricValueFont, primary, 114, 170, 28, 14, StringAlignment.Far);
         TextAt(live?.Tools.ToString() ?? "—", _metricValueFont, primary, 248, 170, 28, 14, StringAlignment.Far);
 
@@ -463,36 +464,56 @@ internal sealed class SystemUsagePopoverForm : Form
             dy += SessionSectionHeight;
         }
 
+        // Network now: the same two 118-px columns as every row above, arrows drawn by UiIcons.
         Panel(206, 58);
         TextAt(zh ? "本机网络" : "System network", _metricLabelFont, muted, 24, 215, 130, 13);
-        TextAt(zh ? $"默认接口 · {snapshot.NetworkInterfaces}" : $"Default NICs · {snapshot.NetworkInterfaces}",
-            _subtitleFont, muted, 160, 215, 116, 13, StringAlignment.Far);
-        TextAt("↓ " + _metrics[3].Value, _metricValueFont, receive, 24, 238, 118, 15);
-        TextAt("↑ " + _metrics[4].Value, _metricValueFont, send, 166, 238, 110, 15);
+        TextAt(zh ? $"{snapshot.NetworkInterfaces} 个接口" : $"{snapshot.NetworkInterfaces} NIC", _subtitleFont, muted, 176, 215, 100, 13, StringAlignment.Far);
+        UiIcons.ArrowDown(graphics, At(24, 240, 9, 11), ReceiveAccent);
+        TextAt(_metrics[3].Value, _metricValueFont, receive, 37, 238, 105, 15);
+        UiIcons.ArrowUp(graphics, At(158, 240, 9, 11), SendAccent);
+        TextAt(_metrics[4].Value, _metricValueFont, send, 171, 238, 105, 15);
 
+        // Totals: traffic | tokens in two balanced columns. Each column leads with a glyph + short
+        // caption and its big total; two aligned sub-stats follow (glyph, caption, right-aligned value).
         Panel(272, 108);
         var history = snapshot.NetworkHistory;
         TextAt(zh ? "累计" : "Totals", _metricLabelFont, muted, 24, 281, 50, 13);
-        var since = history is null ? (zh ? "等待计数" : "Waiting for counters")
-            : (zh ? $"始于 {history.Since.ToLocalTime():yyyy-MM-dd HH:mm}" : $"Since {history.Since.ToLocalTime():yyyy-MM-dd HH:mm}");
-        if (snapshot.NetworkHistorySaveFailed) since = zh ? "记录待保存/恢复" : "Checkpoint unavailable";
-        TextAt(since, _subtitleFont, muted, 86, 281, 190, 13, StringAlignment.Far);
-        TextAt(zh ? "总流量" : "Network total", _detailFont, primary, 24, 300, 118, 15);
-        TextAt(NetworkUsageSampler.Total(history?.TotalBytes), _metricValueFont, primary, 166, 300, 110, 15, StringAlignment.Far);
-        TextAt("↓ " + NetworkUsageSampler.Total(history?.ReceivedBytes), _subtitleFont, receive, 24, 319, 118, 12);
-        TextAt("↑ " + NetworkUsageSampler.Total(history?.SentBytes), _subtitleFont, send, 166, 319, 110, 12);
-        TextAt(zh ? "总 Token" : "Token total", _detailFont, primary, 24, 342, 118, 14);
-        TextAt(snapshot.CumulativeTokens is { } tokens ? NativeText.FormatTokenCount(tokens) : "—",
-            _metricValueFont, primary, 166, 342, 110, 14, StringAlignment.Far);
-        // Token figures live together: total, then today and today's prompt-cache hit rate.
-        var cache = _content?.Cache;
-        TextAt((zh ? "今日 " : "Today ") + (_content?.TodayTokens is { } today ? NativeText.FormatTokenCount(today) : "—"),
-            _subtitleFont, primary, 24, 361, 130, 12);
-        using (var hitBrush = new SolidBrush(RecordedAccent))
+        if (snapshot.NetworkHistorySaveFailed || history is null)
         {
-            TextAt((zh ? "缓存命中 " : "Cache hit ") + NativeText.FormatCacheHitPercent(cache?.TodayHitPercent),
-                _subtitleFont, cache?.TodayHitPercent is null ? muted : hitBrush, 156, 361, 120, 12, StringAlignment.Far);
+            TextAt(snapshot.NetworkHistorySaveFailed ? (zh ? "记录待保存/恢复" : "Checkpoint unavailable") : (zh ? "等待计数" : "Waiting for counters"),
+                _subtitleFont, muted, 86, 281, 190, 13, StringAlignment.Far);
         }
+        else
+        {
+            var since = TotalsSince(history.Since, snapshot.CapturedAt);
+            var sinceWidth = graphics.MeasureString(since, _subtitleFont, PointF.Empty, StringFormat.GenericTypographic).Width;
+            TextAt(since, _subtitleFont, muted, 86, 281, 190, 13, StringAlignment.Far);
+            UiIcons.Clock(graphics, At(276 - sinceWidth - 13, 282.5f, 9, 9), UiTokens.Muted);
+        }
+        using (var column = new Pen(UiPalette.Slate500.WithAlpha(42), 1))
+            graphics.DrawLine(column, body.X + 150.5f, body.Y + dy + 300, body.X + 150.5f, body.Y + dy + 370);
+        var cache = _content?.Cache;
+        void Column(float x, Action<Graphics, RectangleF, Color> icon, string caption, string total)
+        {
+            icon(graphics, At(x, 302, 10, 10), UiTokens.Muted);
+            TextAt(caption, _subtitleFont, muted, x + 14, 300, 100, 13);
+            TextAt(total, _totalValueFont, primary, x - 1, 315, 118, 20);
+        }
+        void Stat(float x, float y, Action<Graphics, RectangleF, Color> icon, Color tone, string caption, string value, Brush valueBrush)
+        {
+            icon(graphics, At(x, y + 2, 9, 9), tone);
+            TextAt(caption, _subtitleFont, muted, x + 14, y, 50, 13);
+            TextAt(value, _tableValueFont, valueBrush, x + 40, y - .5f, 78, 14, StringAlignment.Far);
+        }
+        Column(24, UiIcons.Traffic, zh ? "流量" : "Traffic", NetworkUsageSampler.Total(history?.TotalBytes));
+        Stat(24, 340, UiIcons.ArrowDown, ReceiveAccent, zh ? "下行" : "Down", NetworkUsageSampler.Total(history?.ReceivedBytes), receive);
+        Stat(24, 357, UiIcons.ArrowUp, SendAccent, zh ? "上行" : "Up", NetworkUsageSampler.Total(history?.SentBytes), send);
+        Column(158, UiIcons.Tokens, "Token", snapshot.CumulativeTokens is { } tokens ? NativeText.FormatTokenCount(tokens) : "—");
+        Stat(158, 340, (g, r, c) => UiIcons.Calendar(g, r, c, today: true), UiTokens.Muted, zh ? "今日" : "Today",
+            _content?.TodayTokens is { } today ? NativeText.FormatTokenCount(today) : "—", _content?.TodayTokens is null ? muted : primary);
+        using (var hitBrush = new SolidBrush(RecordedAccent))
+            Stat(158, 357, UiIcons.Cache, cache?.TodayHitPercent is null ? UiTokens.Muted : RecordedAccent, zh ? "缓存" : "Cache",
+                NativeText.FormatCacheHitPercent(cache?.TodayHitPercent), cache?.TodayHitPercent is null ? muted : hitBrush);
 
         var coverage = live is null ? (zh ? "等待会话读数" : "Waiting for chat data")
             : (zh ? $"{live.Sessions} 个 Codex 会话" : $"{live.Sessions} Codex chats");
@@ -501,8 +522,15 @@ internal sealed class SystemUsagePopoverForm : Form
         TextAt(pending > 0 ? (zh ? $"{pending} 条待追平" : $"{pending} catching up")
                 : live is null ? (zh ? "待读取" : "Waiting") : (zh ? "已追平" : "Caught up"),
             _subtitleFont, muted, 190, 390, 94, 12, StringAlignment.Far);
-        TextAt(zh ? "流量仅统计 Bar 运行时 · 与 Token 独立" : "Traffic while Bar runs · independent of tokens", _subtitleFont, muted, 16, 407, 210, 12);
+        TextAt(zh ? "流量仅在 Bar 运行时计入" : "Traffic counted while Bar runs", _subtitleFont, muted, 16, 407, 210, 12);
         TextAt(snapshot.CapturedAt.ToLocalTime().ToString("HH:mm:ss"), _subtitleFont, muted, 230, 407, 54, 12, StringAlignment.Far);
+    }
+
+    /// <summary>"Since" stamp of the totals: month/day and time, with the year only when it differs.</summary>
+    internal static string TotalsSince(DateTimeOffset since, DateTimeOffset now)
+    {
+        var local = since.ToLocalTime();
+        return local.ToString(local.Year == now.ToLocalTime().Year ? "M/d HH:mm" : "yyyy/M/d HH:mm", System.Globalization.CultureInfo.InvariantCulture);
     }
 
     /// <summary>Area curve of hourly tokens: shared accent, faint baseline, the current hour marked.</summary>
@@ -703,7 +731,7 @@ internal sealed class SystemUsagePopoverForm : Form
 
     private static string FormatUsage(double? value)
     {
-        if (value is null) return "--";
+        if (value is null) return "—";
         if (value <= 0) return "0%";
         if (value < 1) return "<1%";
         return $"{Math.Round(value.Value):0}%";
@@ -752,6 +780,7 @@ internal sealed class SystemUsagePopoverForm : Form
             _metricValueFont.Dispose();
             _liveValueFont.Dispose();
             _tableValueFont.Dispose();
+            _totalValueFont.Dispose();
             _textFormats.Dispose();
         }
         base.Dispose(disposing);
