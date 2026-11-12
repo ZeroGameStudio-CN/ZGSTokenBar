@@ -163,9 +163,13 @@ internal sealed partial class BarForm
                     .FirstOrDefault();
             if (window is null) return null;
             // Every window is listed; ones the provider highlighted (the ring's group) are starred.
+            // The pace series is keyed by the provider's own label, never by the star marker.
             QuotaWindow Project(UsageWindow item) => new(
                 item.Highlighted ? "★ " + item.Label : item.Label,
-                item.UsedPercent, item.ResetsAt, item.Duration ?? TimeSpan.Zero);
+                item.UsedPercent, item.ResetsAt, item.Duration ?? TimeSpan.Zero)
+            {
+                SeriesId = item.Label,
+            };
             var quotaWindow = Project(window);
             var windows = new List<QuotaWindow> { quotaWindow };
             windows.AddRange(account.Windows.Where(item => !ReferenceEquals(item, window) && !item.Unlimited && item.UsedPercent is not null).Select(Project));

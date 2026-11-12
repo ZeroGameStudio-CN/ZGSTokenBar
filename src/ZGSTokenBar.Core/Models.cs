@@ -167,7 +167,14 @@ public sealed record QuotaWindow(
     string Label,
     double? UsedPercent,
     DateTimeOffset? ResetsAt,
-    TimeSpan Duration);
+    TimeSpan Duration)
+{
+    /// <summary>
+    /// Stable pace-history identity when <see cref="Label"/> carries presentation (e.g. the hover's
+    /// "★ " marker on the ring's group), so persisted samples survive marker or pin changes.
+    /// </summary>
+    public string? SeriesId { get; init; }
+}
 
 /// <summary>Codex credits from the usage response's "credits" object (has_credits / unlimited / balance), as CodexBar reads them.</summary>
 public sealed record CodexCreditBalance(bool HasCredits, bool Unlimited, double? Balance);

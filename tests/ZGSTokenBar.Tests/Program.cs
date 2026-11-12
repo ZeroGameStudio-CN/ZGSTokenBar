@@ -476,6 +476,7 @@ var tests = new (string Name, Action Run)[]
     ("Claude failed-refresh cache accuracy", TestQuotaCacheFreshness),
     ("Provider exhausted refresh cadence", TestProviderExhaustedRefreshCadence),
     ("Quota pace adaptive trend estimate", TestQuotaPaceEstimate),
+    ("Pace series survive presentation label markers", TestQuotaPaceSeriesIdentity),
     ("Quota pace weighted daily trend", TestQuotaPaceWeightedDailyTrend),
     ("Quota pace immediate cycle budget", TestQuotaCyclePace),
     ("Quota pace reset and freshness guards", TestQuotaPaceGuards),
@@ -4864,6 +4865,26 @@ static void TestQuotaImportedCompaction()
         ],
     }).Export(now);
     Equal(1, resetClockDrift.Samples.Count, "same-cycle reset clock drift shares one imported bucket");
+}
+
+static void TestQuotaPaceSeriesIdentity()
+{
+    var start = DateTimeOffset.Parse("2026-11-12T00:00:00Z");
+    var reset = start.AddDays(5);
+    QuotaCard Card(string label, double used, DateTimeOffset at) => new(
+        "usage:agy", ProviderKind.Codex, "Antigravity", "Pro", "#10a37f", true,
+        [new QuotaWindow(label, used, reset, TimeSpan.FromDays(7)) { SeriesId = "Argon · 7d" }]) { CapturedAt = at };
+    var tracker = new QuotaPaceTracker();
+    Equal(true, tracker.Observe(PaceSnapshot(start, [Card("Argon · 7d", 10, start)]), start), "plain label sample is recorded");
+    var later = start.AddHours(2);
+    var starred = Card("★ Argon · 7d", 20, later);
+    tracker.Observe(PaceSnapshot(later, [starred]), later);
+    var history = tracker.Export(later);
+    Equal(1, history.Samples.Select(sample => sample.WindowLabel).Distinct().Count(), "starred and plain labels share one persisted series");
+    Equal("argon · 7d", history.Samples[0].WindowLabel, "persisted series uses the stable provider label");
+    var restored = new QuotaPaceTracker(history);
+    Equal(true, restored.Estimate(starred, starred.Windows.Single(), later, 5).Status != QuotaPaceStatus.Learning,
+        "restored history still projects the starred window after a restart");
 }
 
 static QuotaCard PaceCard(
