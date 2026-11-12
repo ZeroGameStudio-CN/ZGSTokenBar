@@ -113,7 +113,8 @@ test('legacy AI Gateway CLI is retired without accepting or mutating credentials
 });
 
 test('bundled Provider trust failures remain visible without weakening package validation', () => {
-  assert.match(program, /EnsureInstalled\(store\.DataDirectory\)[\s\S]*?Any\(status => !status\.Valid\)/);
+  assert.match(program, /BundledPluginWarning\.ShouldWarn\([\s\S]*?EnsureInstalled\(store\.DataDirectory\)/);
+  assert.match(fs.readFileSync('src/ZGSTokenBar.App/BundledPluginWarning.cs', 'utf8'), /Where\(status => !status\.Valid\)/);
   assert.match(application, /if \(bundledPluginInstallFailed\)[\s\S]*?_tray\.ShowBalloonTip\([\s\S]*?PluginBundleTrustFailedTitle[\s\S]*?ToolTipIcon\.Warning/);
 });
 

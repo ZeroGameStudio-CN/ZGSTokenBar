@@ -77,8 +77,8 @@ test('Codex account hover uses the shared dark popover chrome and ordinal anchor
 });
 
 test('Codex quota hover combines the 100 percent estimate with its recorded sample', () => {
-  assert.match(popover, /QuotaTokenUsage is not null/);
-  assert.match(popover, /content\.Card\.Provider == ProviderKind\.Codex && !content\.Card\.IsService/);
+  assert.match(popover, /QuotaTokenUsage =>\s*_content is \{ Card: \{ Provider: ProviderKind\.Codex, IsService: false \} \}/);
+  assert.match(popover, /HasTokenNote\(content\) && tokens\?\.Detail is/);
   const tokenUsage = boundedSlice(nativeText,
     'public (string Label, string Value, string Detail)? CodexQuotaTokenUsage',
     'internal static string FormatTokenCount');

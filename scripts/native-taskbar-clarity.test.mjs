@@ -41,7 +41,9 @@ test('taskbar Mini reserves room for readable quota capsules', () => {
 });
 
 test('available quota details stay bright while blocked and missing states are muted', () => {
-  assert.match(popoverForm, /resetValueBrush = new SolidBrush\([\s\S]*?WeeklyBlockResetAt[\s\S]*?Window\.ResetsAt is null[\s\S]*?UiPalette\.Slate500[\s\S]*?UiPalette\.Slate200/);
+  assert.match(popoverForm, /blocked \|\| content\.Window\.ResetsAt is null \? dimBrush : valueBrush/);
+  assert.match(popoverForm, /var blocked = content\.WeeklyBlockResetAt is not null/);
+  assert.match(popoverForm, /CardValue = UiPalette\.Slate200/);
 });
 
 test('taskbar Mini prefers real quota windows and keeps labels for a fully unavailable provider', () => {
@@ -71,7 +73,8 @@ test('native quota surfaces use one opaque four-level background palette', () =>
   assert.match(settingsForm, /BackgroundPalette = _backgroundPalette/);
   assert.match(settingsForm, /BorderSize = selected \? 2 : 1/);
   assert.match(nativeText, /背景配色/);
-  assert.doesNotMatch(`${barForm}\n${popoverForm}`, /WindowBackdrop|Acrylic|_glassBackdropEnabled/);
+  // The glass dock is a per-pixel-alpha layered window painting its own opaque card; no DWM blur/acrylic.
+  assert.doesNotMatch(`${barForm}\n${popoverForm}`, /Acrylic|_glassBackdropEnabled|WindowBackdrop\.(?!TryPrepareLayered\b)/);
   assert.doesNotMatch(nativeProject, /PackageReference/);
 });
 
@@ -159,9 +162,10 @@ test('quota popover keeps the pace forecast without the redundant budget row', (
   assert.match(popoverForm, /new\("Segoe UI Semibold", 10f, FontStyle\.Regular, GraphicsUnit\.Pixel\)/);
   assert.match(popoverForm, /UiIcons\.Trend\(/);
   assert.doesNotMatch(popoverForm, /DrawCyclePaceIcon|DrawBudgetMarker|QuotaCurrentGoal|QuotaCycle/);
-  assert.match(popoverForm, /var currentPace = content\.Pace\?\.ForDisplay\(now\)/);
+  assert.match(popoverForm, /content\.Pace\?\.ForDisplay\(now\)/);
   assert.match(popoverForm, /UiPaint\.ProgressBar\([\s\S]*?UiPalette\.Slate800\)/);
-  assert.match(popoverForm, /trackBrush = new SolidBrush\(UiPalette\.Slate600\)/);
+  assert.match(popoverForm, /UiPaint\.ProgressBar\(graphics, rail, [\s\S]*?Color\.White\.WithAlpha\(18\)/);
+  assert.match(popoverForm, /QuotaDisplayFormatting\.ExpectedRemaining\(content\.Window, now\)[\s\S]*?UiPaint\.PaceMarker\(graphics, rail/);
   assert.match(nativeText, /"1h"/);
   assert.match(nativeText, /15m初步/);
   assert.match(nativeText, /重置约剩/);
