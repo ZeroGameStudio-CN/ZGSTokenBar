@@ -178,7 +178,8 @@ public static class UsageProviderFixtureTests
         var agyWindows = envelope?.Windows ?? [];
         var pinned = AntigravityGroups.Pin(agyWindows, "ARGON");
         Check(pinned.Count == agyWindows.Count && AntigravityGroups.GroupOf(pinned[0]) == "Gemini 4 Argon"
-            && pinned[0].ResetsAt == DateTimeOffset.Parse("2026-11-16T15:41:46Z"), "antigravity pins the argon group first, case-insensitively");
+            && pinned[0].ResetsAt == DateTimeOffset.Parse("2026-11-16T15:41:46Z") && pinned[0].Label == "Argon · 7d",
+            "antigravity pins the argon group first, case-insensitively, with a short label");
         Check(AntigravityGroups.OtherGroupLow(pinned), "antigravity warns when another group (Claude/GPT 3.6%) is nearly exhausted");
         var withoutArgon = agyWindows.Where(window => AntigravityGroups.GroupOf(window) != "Gemini 4 Argon").ToArray();
         Check(ReferenceEquals(AntigravityGroups.Pin(withoutArgon, "argon"), withoutArgon)

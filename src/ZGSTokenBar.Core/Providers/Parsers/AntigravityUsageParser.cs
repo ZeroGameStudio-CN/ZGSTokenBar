@@ -76,6 +76,9 @@ public static partial class UsageParsers
         var name = group.Trim();
         if (name.EndsWith(" models", StringComparison.OrdinalIgnoreCase)) name = name[..^" models".Length];
         name = name.Replace(" and ", "/", StringComparison.OrdinalIgnoreCase);
+        // "Gemini 4 Argon" → "Argon": the versioned family prefix only truncates the hover row.
+        var versioned = System.Text.RegularExpressions.Regex.Match(name, @"^Gemini\s+[\d.]+\s+(\S.*)$");
+        if (versioned.Success) name = versioned.Groups[1].Value;
         return name.Length == 0 ? group : name;
     }
 
