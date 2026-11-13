@@ -25,6 +25,12 @@ internal static class PanelCaptures
         {
             Turn(1, "重构 Glass dock 渲染与图标缓存", "gpt-5.5", "high", 18_420, 312, 61.4, 0),
             Turn(2, "Fix provider refresh cadence", "gpt-5.5", "medium", 7_210, 95, 0, 38.2),
+            Turn(3, "ZOS-1088 进入戰鬥後無法看到白色提示", "gpt-5.5", "high", 12_400, 180, 0, 37.4),
+            Turn(4, "查找 DreamFX 的 Unity 版本与迁移路径", "gpt-5.5", "medium", 6_800, 140, 21.6, 0),
+            Turn(5, "推进 gd 关卡导出与校验流水线", "gpt-5.5", "medium", 9_100, 220, 0, 36.6),
+            Turn(6, "zgs-ops-workflow · b7b019d4 重试策略", "gpt-5.5", "low", 3_400, 60, 13.1, 0),
+            Turn(7, "立绘精细拆分与离线动作烘焙", "gpt-5.5", "high", 22_000, 410, 9.4, 0),
+            Turn(8, "Router 监视面板与速率卡视觉对齐", "gpt-5.5", "medium", 5_200, 88, 0, 17.8),
         };
         foreach (var locale in new[] { "zh-CN", "en" })
         {

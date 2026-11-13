@@ -25,8 +25,9 @@ internal sealed record TokenCacheStats(long? TodayRead, long? TodayWrite, double
 internal sealed class SystemUsagePopoverForm : Form
 {
     internal const int LogicalBodyWidth = 300;
+    internal const int LiveRateBodyWidth = 640;
     internal const int LogicalBodyHeight = 352;
-    private const int LiveRateBodyHeight = 338;
+    private const int LiveRateBodyHeight = 296;
     private const int LogicalTailSize = 8;
     private const int LogicalGap = 3;
     private const int ToolWindowStyle = 0x00000080;
@@ -54,11 +55,12 @@ internal sealed class SystemUsagePopoverForm : Form
     private MetricRow[] _metrics = [];
     private ProcessRow[] _processes = [];
     private string _capturedAt = string.Empty;
+    private int _logicalBodyWidth = LogicalBodyWidth;
     private int _logicalBodyHeight = LogicalBodyHeight;
     private CodexConversationTurn[] _sessions = [];
     private bool _sessionsVisible;
     private bool _sessionsRecent;
-    private const int MaximumSessionRows = 5;
+    private const int MaximumSessionRows = 8;
     private const int SessionRowHeight = 34;
     private const int SessionHeaderHeight = 30;
     private NativeText _text = NativeText.For("zh-CN");
@@ -169,8 +171,9 @@ internal sealed class SystemUsagePopoverForm : Form
         _sessions = _sessionsVisible
             ? active.Length > 0 ? active : conversations.OrderByDescending(turn => turn.ObservedAt).Take(3).ToArray()
             : [];
+        _logicalBodyWidth = content.LiveRates ? LiveRateBodyWidth : LogicalBodyWidth;
         _logicalBodyHeight = content.LiveRates
-            ? LiveRateBodyHeight + TokenSectionHeight + SessionSectionHeight
+            ? LiveRateBodyHeight + TokenSectionHeight
             : Math.Clamp(282 + Math.Max(0, _processes.Length - 1) * 18, 282, LogicalBodyHeight);
         _capturedAt = _text.SystemUsageCapturedAt(snapshot.CapturedAt);
         Invalidate();
@@ -184,6 +187,8 @@ internal sealed class SystemUsagePopoverForm : Form
 
     private int SessionSectionHeight => !_sessionsVisible ? 0
         : SessionHeaderHeight + Math.Max(1, _sessions.Length) * SessionRowHeight + 8;
+
+    internal int CurrentLogicalBodyWidth => _logicalBodyWidth;
 
     internal int CurrentLogicalBodyHeight => _logicalBodyHeight;
 
@@ -212,7 +217,7 @@ internal sealed class SystemUsagePopoverForm : Form
         UpdateContent(content, text);
         _scale = Math.Max(1, scale);
 
-        var bodySize = new Size(Scale(LogicalBodyWidth), Scale(_logicalBodyHeight));
+        var bodySize = new Size(Scale(_logicalBodyWidth), Scale(_logicalBodyHeight));
         var placement = TaskbarMiniPopoverMath.Place(
             anchorScreen,
             bodySize,
@@ -258,8 +263,8 @@ internal sealed class SystemUsagePopoverForm : Form
         BackColor = UiTokens.CardSurface;
         _scale = Math.Max(1, dpi / 96f);
         _tailSide = PopoverTailSide.Bottom;
-        _tailOffset = LogicalBodyWidth / 2f;
-        ClientSize = new Size(Scale(LogicalBodyWidth), Scale(_logicalBodyHeight + LogicalTailSize));
+        _tailOffset = _logicalBodyWidth / 2f;
+        ClientSize = new Size(Scale(_logicalBodyWidth), Scale(_logicalBodyHeight + LogicalTailSize));
         CreateControl();
         UpdateWindowRegion();
 
@@ -408,9 +413,12 @@ internal sealed class SystemUsagePopoverForm : Form
         RectangleF At(float x, float y, float width, float height) => new(body.X + x, body.Y + y + dy, width, height);
         void TextAt(string value, Font font, Brush brush, float x, float y, float width, float height,
             StringAlignment align = StringAlignment.Near) => DrawString(graphics, value, font, brush, At(x, y, width, height), align);
+        const float leftWidth = 300f;
+        const float rightX = 320f;
+        var rightWidth = Math.Max(120f, body.Width - rightX - 12f);
         void Panel(float y, float height)
         {
-            using var path = RoundedRectangle(At(12, y, body.Width - 24, height), 8);
+            using var path = RoundedRectangle(At(12, y, leftWidth - 24, height), 8);
             using var fill = new SolidBrush(_backgroundTheme.ProviderGroup);
             graphics.FillPath(fill, path);
             graphics.DrawPath(divider, path);
@@ -445,8 +453,7 @@ internal sealed class SystemUsagePopoverForm : Form
         TextAt(live?.Generating.ToString() ?? "—", _metricValueFont, primary, 114, 170, 28, 14, StringAlignment.Far);
         TextAt(live?.Tools.ToString() ?? "—", _metricValueFont, primary, 248, 170, 28, 14, StringAlignment.Far);
 
-        // Compact 12-week activity grid (Daily / Weekly) plus 本周 / 日均 / 周均 / 总量.
-        // Replaces the 24h hourly curve and the token half of the former Totals card.
+        // Compact 12-week activity grid (Daily / Weekly) plus 本周 / 周均 / 本日 / 日均 / 总量.
         Panel(206, TokenSectionHeight - 8);
         var activity = _content?.Activity;
         TextAt(zh ? "用量活动" : "Token activity", _metricLabelFont, muted, 24, 215, 120, 13);
@@ -459,27 +466,21 @@ internal sealed class SystemUsagePopoverForm : Form
             UiPaint.ActivityHeatmap(graphics, At(16, 232, 268, 90), activity, _subtitleFont, zh);
             void Stat(float x, string caption, long value)
             {
-                TextAt(caption, _subtitleFont, muted, x, 324, 60, 11);
-                TextAt(NativeText.FormatTokenCount(value), _tableValueFont, primary, x, 336, 60, 14);
+                TextAt(caption, _subtitleFont, muted, x, 324, 52, 11);
+                TextAt(NativeText.FormatTokenCount(value), _tableValueFont, primary, x, 336, 52, 14);
             }
-            Stat(24, zh ? "本周" : "This week", activity.ThisWeekTokens);
-            Stat(88, zh ? "日均" : "Daily avg", activity.DayAverage);
-            Stat(152, zh ? "周均" : "Weekly avg", activity.WeekAverage);
-            Stat(216, zh ? "总量" : "Total", activity.AllTimeTotal);
+            var labels = zh
+                ? new[] { "本周", "周均", "本日", "日均", "总量" }
+                : new[] { "Week", "Wk avg", "Today", "Day avg", "Total" };
+            var values = new[] { activity.ThisWeekTokens, activity.WeekAverage, activity.TodayTokens, activity.DayAverage, activity.AllTimeTotal };
+            for (var i = 0; i < 5; i++)
+                Stat(24 + i * 51.6f, labels[i], values[i]);
         }
         else
         {
             TextAt(zh ? "暂无按日用量" : "No daily totals yet", _detailFont, muted, 24, 270, 252, 14);
         }
         dy = TokenSectionHeight;
-
-        if (_sessionsVisible)
-        {
-            var height = SessionSectionHeight - 8;
-            Panel(206, height);
-            DrawSessions(graphics, At(12, 206, body.Width - 24, height), primary, muted);
-            dy += SessionSectionHeight;
-        }
 
         // Live rates plus cumulative traffic (token totals now live on the activity card).
         Panel(206, 78);
@@ -512,15 +513,18 @@ internal sealed class SystemUsagePopoverForm : Form
             TextAt(TotalsSince(history.Since, snapshot.CapturedAt), _subtitleFont, muted, 210, 257, 66, 13, StringAlignment.Far);
         }
 
-        var coverage = live is null ? (zh ? "等待会话读数" : "Waiting for chat data")
-            : (zh ? $"{live.Sessions} 个 Codex 会话" : $"{live.Sessions} Codex chats");
-        var pending = snapshot.LiveRate?.Pending ?? 0;
-        TextAt(coverage, _subtitleFont, muted, 16, 294, 174, 12);
-        TextAt(pending > 0 ? (zh ? $"{pending} 条待追平" : $"{pending} catching up")
-                : live is null ? (zh ? "待读取" : "Waiting") : (zh ? "已追平" : "Caught up"),
-            _subtitleFont, muted, 190, 294, 94, 12, StringAlignment.Far);
-        TextAt(zh ? "流量仅在 Bar 运行时计入" : "Traffic counted while Bar runs", _subtitleFont, muted, 16, 311, 210, 12);
-        TextAt(snapshot.CapturedAt.ToLocalTime().ToString("HH:mm:ss"), _subtitleFont, muted, 230, 311, 54, 12, StringAlignment.Far);
+        if (_sessionsVisible)
+        {
+            var sessionTop = 38f;
+            var sessionHeight = (LiveRateBodyHeight + TokenSectionHeight) - sessionTop - 12;
+            using (var path = RoundedRectangle(new RectangleF(body.X + rightX, body.Y + sessionTop, rightWidth, sessionHeight), 8))
+            using (var fill = new SolidBrush(_backgroundTheme.ProviderGroup))
+            {
+                graphics.FillPath(fill, path);
+                graphics.DrawPath(divider, path);
+            }
+            DrawSessions(graphics, new RectangleF(body.X + rightX, body.Y + sessionTop, rightWidth, sessionHeight), primary, muted);
+        }
     }
 
     /// <summary>"Since" stamp of the totals: month/day and time, with the year only when it differs.</summary>
@@ -697,7 +701,7 @@ internal sealed class SystemUsagePopoverForm : Form
 
     private RectangleF BodyBounds() => TaskbarPopoverMath.BodyBounds(
         _tailSide,
-        LogicalBodyWidth,
+        _logicalBodyWidth,
         _logicalBodyHeight,
         LogicalTailSize);
 

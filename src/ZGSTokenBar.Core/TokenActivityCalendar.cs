@@ -19,7 +19,8 @@ public sealed record TokenActivityView(
     long DayAverage,
     long WeekAverage,
     long AllTimeTotal,
-    TokenActivityGrain Grain = TokenActivityGrain.Daily)
+    TokenActivityGrain Grain = TokenActivityGrain.Daily,
+    long TodayTokens = 0)
 {
     public const int DefaultWeekCount = 12;
 
@@ -91,7 +92,10 @@ public static class TokenActivityCalendar
 
         var dayAverage = elapsedDays > 0 ? window / elapsedDays : 0;
         var weekAverage = window / weekCount;
-        return new TokenActivityView(today, start, weekCount, days, thisWeek, dayAverage, weekAverage, Math.Max(0, allTimeTotal), grain);
+        long todayTokens = 0;
+        if (byDay.TryGetValue(today, out var todayValue) && todayValue > 0)
+            todayTokens = todayValue;
+        return new TokenActivityView(today, start, weekCount, days, thisWeek, dayAverage, weekAverage, Math.Max(0, allTimeTotal), grain, todayTokens);
     }
 
     /// <summary>
