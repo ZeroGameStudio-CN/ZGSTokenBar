@@ -15,8 +15,8 @@ internal static class PanelCaptures
         var at = DateTimeOffset.UtcNow;
         var snapshot = Snapshot(at);
         var hourly = Enumerable.Range(0, 24).Select(hour => (long)(40_000_000 + 60_000_000 * Math.Abs(Math.Sin(hour / 3.0)) + hour * 2_000_000)).ToArray();
-        CodexConversationTurn Turn(int index, string title, string model, string effort, long output, double elapsed, double measured, double estimated, double? firstToken = null, long? input = null, long? cached = null) =>
-            new($"session-{index:0000}", $"turn-{index}", model, effort, at.AddSeconds(-elapsed), at, output, elapsed, false, true)
+        CodexConversationTurn Turn(int index, string title, string model, string effort, long output, double elapsed, double measured, double estimated, double? firstToken = null, long? input = null, long? cached = null, bool completed = false) =>
+            new($"session-{index:0000}", $"turn-{index}", model, effort, at.AddSeconds(-elapsed), at, output, elapsed, completed, true)
             {
                 Title = title,
                 LiveRate = measured + estimated > 0 ? new ConversationOutputRate($"session-{index:0000}", $"turn-{index}", measured, estimated) : null,
@@ -34,6 +34,8 @@ internal static class PanelCaptures
             Turn(6, "zgs-ops-workflow · b7b019d4 重试策略", "gpt-5.5", "low", 3_400, 60, 13.1, 0, null, 8_000, 7_500),
             Turn(7, "立绘精细拆分与离线动作烘焙", "gpt-5.5", "high", 22_000, 410, 9.4, 0, 3.1, 120_000, 110_000),
             Turn(8, "Router 监视面板与速率卡视觉对齐", "gpt-5.5", "medium", 5_200, 88, 0, 17.8, 0.4, 9_000, 1_000),
+            Turn(9, "整理多语言文案与截图规范", "gpt-5.5", "low", 14_800, 200, 80.0, 0, 2.2, 36_000, 30_000, completed: true),
+            Turn(10, "核对构建产物与版本号", "gpt-5.5", "medium", 6_400, 110, 0, 72.0, 1.0, 16_000, 8_000, completed: true),
         };
         foreach (var locale in new[] { "zh-CN", "en" })
         {

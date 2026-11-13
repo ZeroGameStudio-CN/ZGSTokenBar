@@ -60,7 +60,7 @@ internal sealed class SystemUsagePopoverForm : Form
     private CodexConversationTurn[] _sessions = [];
     private bool _sessionsVisible;
     private bool _sessionsRecent;
-    private const int MaximumSessionRows = 8;
+    private const int MaximumSessionRows = 10;
     private const int SessionRowHeight = 34;
     private const int SessionHeaderHeight = 30;
     private NativeText _text = NativeText.For("zh-CN");
@@ -163,7 +163,8 @@ internal sealed class SystemUsagePopoverForm : Form
         var conversations = content.Conversations ?? [];
         var active = conversations
             .Where(turn => turn.LiveRate is { Total: > 0 } || turn.State == "running")
-            .OrderByDescending(turn => turn.LiveRate?.Total ?? 0)
+            .OrderByDescending(turn => turn.State == "running")
+            .ThenByDescending(turn => turn.LiveRate?.Total ?? 0)
             .ThenByDescending(turn => turn.ObservedAt)
             .Take(MaximumSessionRows)
             .ToArray();
@@ -574,14 +575,28 @@ internal sealed class SystemUsagePopoverForm : Form
         var title = _sessionsRecent
             ? (zh ? "最近会话" : "Recent chats")
             : (zh ? $"活跃会话 · {_sessions.Length}" : $"Active chats · {_sessions.Length}");
+        const float pad = 12f;
+        const float chipWidth = 46f;
+        const float speedWidth = 44f;
+        const float metricWidth = 50f;
+        var speedLeft = panel.Right - pad - speedWidth;
+        var totalLeft = panel.Right - pad - metricWidth;
+        var cacheLeft = totalLeft - metricWidth;
+        var firstLeft = cacheLeft - metricWidth;
+        var modelLeft = panel.X + pad;
+        var modelWidth = Math.Max(48f, firstLeft - 6 - modelLeft);
+        var chipLeft = panel.X + pad;
+        var titleLeft = chipLeft + chipWidth + 6;
+        var titleWidth = Math.Max(48f, speedLeft - 6 - titleLeft);
+
         DrawString(graphics, title, _metricLabelFont, muted,
-            new RectangleF(panel.X + 12, panel.Y + 9, 150, 13), StringAlignment.Near);
+            new RectangleF(panel.X + pad, panel.Y + 9, Math.Max(80f, speedLeft - 8 - (panel.X + pad)), 13), StringAlignment.Near);
         DrawString(graphics, zh ? "实时 tok/s" : "live tok/s", _subtitleFont, muted,
-            new RectangleF(panel.Right - 112, panel.Y + 9, 100, 13), StringAlignment.Far);
+            new RectangleF(speedLeft, panel.Y + 9, speedWidth, 13), StringAlignment.Far);
         if (_sessions.Length == 0)
         {
             DrawString(graphics, zh ? "暂无 Codex 会话读数" : "No Codex chat data yet", _detailFont, muted,
-                new RectangleF(panel.X + 12, panel.Y + SessionHeaderHeight + 6, panel.Width - 24, 15), StringAlignment.Near);
+                new RectangleF(panel.X + pad, panel.Y + SessionHeaderHeight + 6, panel.Width - 24, 15), StringAlignment.Near);
             return;
         }
 
@@ -589,39 +604,57 @@ internal sealed class SystemUsagePopoverForm : Form
         using var estimated = new SolidBrush(EstimateAccent);
         using var idle = new SolidBrush(UiPalette.Slate500);
         using var rowDivider = new Pen(UiPalette.Slate400.WithAlpha(28), 1);
+        using var chipFill = new SolidBrush(Color.FromArgb(56, RecordedAccent));
+        using var chipText = new SolidBrush(RecordedAccent);
         using var trimmed = new StringFormat(StringFormatFlags.NoWrap)
         {
             Trimming = StringTrimming.EllipsisCharacter,
             LineAlignment = StringAlignment.Center,
         };
+        using var chipLabel = new StringFormat(StringFormatFlags.NoWrap)
+        {
+            Alignment = StringAlignment.Center,
+            LineAlignment = StringAlignment.Center,
+            Trimming = StringTrimming.EllipsisCharacter,
+        };
         for (var index = 0; index < _sessions.Length; index++)
         {
             var turn = _sessions[index];
             var top = panel.Y + SessionHeaderHeight + index * SessionRowHeight;
-            if (index > 0) graphics.DrawLine(rowDivider, panel.X + 12, top - 1, panel.Right - 12, top - 1);
+            if (index > 0) graphics.DrawLine(rowDivider, panel.X + pad, top - 1, panel.Right - pad, top - 1);
             var live = turn.LiveRate is { Total: > 0 } rate ? rate : null;
             var accent = live is null ? (turn.State == "running" ? recorded : idle)
                 : live.Estimated > 0 ? estimated : recorded;
-            graphics.FillEllipse(accent, panel.X + 12, top + 8, 5, 5);
+
+            // Line 1: agent-client chip (this list is Codex session logs only) · short title · tok/s.
+            var chip = new RectangleF(chipLeft, top + 3, chipWidth, 14);
+            using (var path = RoundedRectangle(chip, 7))
+                graphics.FillPath(chipFill, path);
+            graphics.DrawString("Codex", _subtitleFont, chipText, chip, chipLabel);
+
             graphics.DrawString(_text.CodexTurnName(turn), _detailFont, primary,
-                new RectangleF(panel.X + 21, top + 2, panel.Width - 112, 15), trimmed);
+                new RectangleF(titleLeft, top + 2, titleWidth, 15), trimmed);
             var speed = live is null
                 ? "—"
                 : live.Total.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
             DrawString(graphics, speed, _metricValueFont,
-                live is null ? muted : accent, new RectangleF(panel.Right - 88, top + 2, 76, 15), StringAlignment.Far);
+                live is null ? muted : accent, new RectangleF(speedLeft, top + 2, speedWidth, 15), StringAlignment.Far);
 
-            // Line 2 uses the full row: first-token latency (task_complete time_to_first_token_ms),
-            // prompt-cache hit rate, and this turn's input+output tokens. Missing first-token
-            // measurements stay "—" — we do not invent a timestamp fallback.
+            // Line 2: model · effort from turn_context, then first-token / cache / this-turn tokens.
             var metricsTop = top + 17;
-            var col = (panel.Width - 33) / 3f;
             void Metric(float x, Action<Graphics, RectangleF, Color> icon, string value)
             {
                 icon(graphics, new RectangleF(x, metricsTop + 1.5f, 10, 10), UiTokens.Muted);
                 DrawString(graphics, value, _subtitleFont, muted,
-                    new RectangleF(x + 12, metricsTop, col - 14, 13), StringAlignment.Near);
+                    new RectangleF(x + 12, metricsTop, metricWidth - 14, 13), StringAlignment.Near);
             }
+            var modelEffort = string.IsNullOrWhiteSpace(turn.Model) && string.IsNullOrWhiteSpace(turn.Effort)
+                ? "—"
+                : string.IsNullOrWhiteSpace(turn.Effort) ? turn.Model ?? "—"
+                : string.IsNullOrWhiteSpace(turn.Model) ? turn.Effort
+                : $"{turn.Model} · {turn.Effort}";
+            graphics.DrawString(modelEffort, _subtitleFont, muted,
+                new RectangleF(modelLeft, metricsTop, modelWidth, 13), trimmed);
             var first = turn.FirstTokenSeconds is { } seconds && double.IsFinite(seconds) && seconds >= 0
                 ? (seconds < 10
                     ? seconds.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)
@@ -631,9 +664,9 @@ internal sealed class SystemUsagePopoverForm : Form
             var totalText = turn.InputTokens is null && turn.OutputTokens <= 0
                 ? "—"
                 : NativeText.FormatTokenCount(total);
-            Metric(panel.X + 21, UiIcons.Clock, first);
-            Metric(panel.X + 21 + col, UiIcons.Cache, NativeText.FormatCacheHitPercent(turn.CacheHitPercent));
-            Metric(panel.X + 21 + col * 2, UiIcons.Tokens, totalText);
+            Metric(firstLeft, UiIcons.Clock, first);
+            Metric(cacheLeft, UiIcons.Cache, NativeText.FormatCacheHitPercent(turn.CacheHitPercent));
+            Metric(totalLeft, UiIcons.Tokens, totalText);
         }
     }
 
