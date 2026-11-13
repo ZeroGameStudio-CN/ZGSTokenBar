@@ -6534,17 +6534,25 @@ static void TestCodexApiEquivalentPricing()
     Equal("2026-03-08", dstWindow.Yesterday, "DST yesterday subtracts a local calendar day instead of 24 UTC hours");
     Equal("2026-02-08", dstWindow.Last30DaysCutoff, "30d cutoff uses local DateOnly arithmetic across DST");
     Equal(
-        true,
+        false,
         CodexTokenUsageReader.ShouldPruneHistoricalSpend(
             "2026-01-15",
             DateTimeOffset.Parse("2026-01-16T12:00:00Z", CultureInfo.InvariantCulture),
+            dstBoundary,
+            easternTime),
+        "12-week activity retention keeps closed sessions within the 90-day window");
+    Equal(
+        true,
+        CodexTokenUsageReader.ShouldPruneHistoricalSpend(
+            "2025-11-15",
+            DateTimeOffset.Parse("2025-11-16T12:00:00Z", CultureInfo.InvariantCulture),
             dstBoundary,
             easternTime),
         "clearly expired closed sessions are eligible for spend-scan pruning");
     Equal(
         false,
         CodexTokenUsageReader.ShouldPruneHistoricalSpend(
-            "2026-01-15",
+            "2025-11-15",
             dstBoundary,
             dstBoundary,
             easternTime),
@@ -6775,7 +6783,7 @@ static void TestCodexApiEquivalentPricing()
         var historicalSessions = Path.Combine(historicalHome, "sessions");
         Directory.CreateDirectory(historicalSessions);
         var historicalPath = Path.Combine(historicalSessions, "historical.jsonl");
-        var historicalAt = now.AddDays(-60);
+        var historicalAt = now.AddDays(-120);
         File.WriteAllText(
             historicalPath,
             TokenSessionMetaJsonLine(historicalAt.AddMinutes(-5), "gpt-5.6-sol") + "\n"

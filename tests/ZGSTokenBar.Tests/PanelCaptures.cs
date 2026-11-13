@@ -15,29 +15,49 @@ internal static class PanelCaptures
         var at = DateTimeOffset.UtcNow;
         var snapshot = Snapshot(at);
         var hourly = Enumerable.Range(0, 24).Select(hour => (long)(40_000_000 + 60_000_000 * Math.Abs(Math.Sin(hour / 3.0)) + hour * 2_000_000)).ToArray();
-        CodexConversationTurn Turn(int index, string title, string model, string effort, long output, double elapsed, double measured, double estimated) =>
-            new($"session-{index:0000}", $"turn-{index}", model, effort, at.AddSeconds(-elapsed), at, output, elapsed, false, true)
+        CodexConversationTurn Turn(int index, string title, string model, string effort, long output, double elapsed, double measured, double estimated, double? firstToken = null, long? input = null, long? cached = null, bool completed = false, int instance = 1, double remaining = 54) =>
+            new($"session-{index:0000}", $"turn-{index}", model, effort, at.AddSeconds(-elapsed), at, output, elapsed, completed, true)
             {
                 Title = title,
                 LiveRate = measured + estimated > 0 ? new ConversationOutputRate($"session-{index:0000}", $"turn-{index}", measured, estimated) : null,
+                FirstTokenSeconds = firstToken,
+                InputTokens = input,
+                CachedInputTokens = cached,
+                InstanceLabel = $"Codex · {instance}",
+                InstanceNumber = instance,
+                InstanceRemainingPercent = remaining,
             };
         var turns = new[]
         {
-            Turn(1, "重构 Glass dock 渲染与图标缓存", "gpt-5.5", "high", 18_420, 312, 61.4, 0),
-            Turn(2, "Fix provider refresh cadence", "gpt-5.5", "medium", 7_210, 95, 0, 38.2),
+            Turn(1, "重构 Glass dock 渲染与图标缓存", "gpt-5.5", "high", 18_420, 312, 61.4, 0, 1.2, 82_000, 74_000, instance: 2, remaining: 54),
+            Turn(2, "Fix provider refresh cadence", "gpt-5.5", "medium", 7_210, 95, 0, 38.2, null, 21_000, 4_200, instance: 1, remaining: 19),
+            Turn(3, "ZOS-1088 进入戰鬥後無法看到白色提示", "gpt-5.5", "high", 12_400, 180, 0, 37.4, 0.8, 44_000, 39_600, instance: 2, remaining: 54),
+            Turn(4, "查找 DreamFX 的 Unity 版本与迁移路径", "gpt-5.5", "medium", 6_800, 140, 21.6, 0, 2.4, 15_000, 0, instance: 1, remaining: 19),
+            Turn(5, "推进 gd 关卡导出与校验流水线", "gpt-5.5", "medium", 9_100, 220, 0, 36.6, 1.6, 25_000, 20_000, instance: 2, remaining: 54),
+            Turn(6, "zgs-ops-workflow · b7b019d4 重试策略", "gpt-5.5", "low", 3_400, 60, 13.1, 0, null, 8_000, 7_500, instance: 1, remaining: 19),
+            Turn(7, "立绘精细拆分与离线动作烘焙", "gpt-5.5", "high", 22_000, 410, 9.4, 0, 3.1, 120_000, 110_000, instance: 2, remaining: 54),
+            Turn(8, "Router 监视面板与速率卡视觉对齐", "gpt-5.5", "medium", 5_200, 88, 0, 17.8, 0.4, 9_000, 1_000, instance: 3, remaining: 37),
+            Turn(9, "整理多语言文案与截图规范", "gpt-5.5", "low", 14_800, 200, 80.0, 0, 2.2, 36_000, 30_000, completed: true, instance: 2, remaining: 54),
+            Turn(10, "核对构建产物与版本号", "gpt-5.5", "medium", 6_400, 110, 0, 72.0, 1.0, 16_000, 8_000, completed: true, instance: 1, remaining: 19),
         };
         foreach (var locale in new[] { "zh-CN", "en" })
         {
             var text = NativeText.For(locale);
             var theme = QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette);
+            var today = DateOnly.FromDateTime(new DateTime(2026, 11, 13));
+            var daily = ActivityFixture(today, TokenActivityGrain.Daily);
+            var weekly = daily with { Grain = TokenActivityGrain.Weekly };
             var rateContent = new SystemUsagePopoverContent(snapshot, false, true)
             {
                 TodayTokens = 1_840_000_000,
                 HourlyTokens = hourly,
                 Cache = new TokenCacheStats(1_800_000_000, 18_000_000, 99.0, 98.4),
+                Activity = daily,
             };
             Save(directory, $"panel-rates-{locale}.png", popover => popover.RenderForTest(rateContent, text, theme, 144));
             Save(directory, $"panel-rates-sessions-{locale}.png", popover => popover.RenderForTest(rateContent with { Conversations = turns }, text, theme, 144));
+            Save(directory, $"panel-rates-activity-daily-{locale}.png", popover => popover.RenderForTest(rateContent with { Conversations = turns }, text, theme, 144));
+            Save(directory, $"panel-rates-activity-weekly-{locale}.png", popover => popover.RenderForTest(rateContent with { Conversations = turns, Activity = weekly }, text, theme, 144));
             Save(directory, $"panel-system-{locale}.png", popover => popover.RenderForTest(new SystemUsagePopoverContent(snapshot, false), text, theme, 144));
         }
 
@@ -113,6 +133,25 @@ internal static class PanelCaptures
             bitmap.Save(path, ImageFormat.Png);
             Console.WriteLine(path);
         }
+
+        RouterModuleTests.CaptureMonitor(directory);
+    }
+
+    internal static TokenActivityView ActivityFixture(DateOnly today, TokenActivityGrain grain)
+    {
+        var byDay = new Dictionary<DateOnly, long>();
+        var start = TokenActivityCalendar.StartMonday(today, TokenActivityView.DefaultWeekCount);
+        for (var i = 0; i < TokenActivityView.DefaultWeekCount * 7; i++)
+        {
+            var date = start.AddDays(i);
+            if (date > today) break;
+            var weekend = date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
+            var wave = 0.55 + 0.45 * Math.Sin(i / 5.5);
+            var spike = i % 11 == 0 ? 1.8 : 1;
+            var tokens = i % 17 == 3 ? 0 : (long)((weekend ? 80_000_000d : 420_000_000d) * wave * spike);
+            byDay[date] = tokens;
+        }
+        return TokenActivityCalendar.FromDailyTotals(byDay, today, 743_000_000_000, grain: grain);
     }
 
     private static SystemUsageSnapshot Snapshot(DateTimeOffset at) =>

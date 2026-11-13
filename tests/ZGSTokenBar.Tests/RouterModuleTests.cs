@@ -760,6 +760,27 @@ internal static class RouterModuleTests
             expanded.Save(Path.Combine(directory, $"router-bar-expanded-{dpi}.png"), ImageFormat.Png);
         }
     }
+    internal static void CaptureMonitor(string directory)
+    {
+        Directory.CreateDirectory(directory);
+        using var handler = new Fixture();
+        using var form = new RouterMonitorForm(new RouterMonitorClient(handler), observe: false)
+        {
+            ShowInTaskbar = false,
+            StartPosition = System.Windows.Forms.FormStartPosition.Manual,
+            Location = new(-30000, -30000),
+        };
+        form.Prewarm(1.5f, QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
+        form.SetPinned(true);
+        form.Show();
+        Pump(form.RefreshViewAsync());
+        Pump(form.HistoryAsync(forceRefresh: true));
+        var path = Path.Combine(directory, "panel-router-current.png");
+        Save(form, path);
+        Console.WriteLine(path + " " + form.ClientSize.Width + "x" + form.ClientSize.Height);
+        form.Close();
+    }
+
     private static void Save(System.Windows.Forms.Form form, string path)
     {
         using var bitmap = new Bitmap(form.ClientSize.Width, form.ClientSize.Height);

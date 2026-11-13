@@ -16,6 +16,8 @@ internal sealed record SystemUsagePopoverContent(SystemUsageSnapshot Snapshot, b
     public IReadOnlyList<long>? HourlyTokens { get; init; }
     /// <summary>Prompt-cache figures: today's read/write tokens and hit rates (today, all retained).</summary>
     public TokenCacheStats? Cache { get; init; }
+    /// <summary>Compact 12-week token activity (Codex-style grid) plus week / average / total stats.</summary>
+    public TokenActivityView? Activity { get; init; }
 }
 
 internal sealed record TokenCacheStats(long? TodayRead, long? TodayWrite, double? TodayHitPercent, double? TotalHitPercent);
@@ -23,8 +25,9 @@ internal sealed record TokenCacheStats(long? TodayRead, long? TodayWrite, double
 internal sealed class SystemUsagePopoverForm : Form
 {
     internal const int LogicalBodyWidth = 300;
+    internal const int LiveRateBodyWidth = 640;
     internal const int LogicalBodyHeight = 352;
-    private const int LiveRateBodyHeight = 428;
+    private const int LiveRateBodyHeight = 296;
     private const int LogicalTailSize = 8;
     private const int LogicalGap = 3;
     private const int ToolWindowStyle = 0x00000080;
@@ -45,6 +48,7 @@ internal sealed class SystemUsagePopoverForm : Form
     private static readonly Color EstimateAccent = UiPalette.Amber400;
     private static readonly Color ReceiveAccent = Color.FromArgb(125, 211, 252);
     private static readonly Color SendAccent = Color.FromArgb(196, 181, 253);
+    private static readonly Image OpenAiLogo = BarForm.LoadEmbeddedImage("ZGSTokenBar.App.Assets.openai-official-ios-icon.png");
     private readonly AlignedStringFormats _textFormats = new();
     private readonly System.Windows.Forms.Timer _entranceTimer = new() { Interval = 16 };
     private readonly System.Windows.Forms.Timer _exitTimer = new() { Interval = 16 };
@@ -52,11 +56,12 @@ internal sealed class SystemUsagePopoverForm : Form
     private MetricRow[] _metrics = [];
     private ProcessRow[] _processes = [];
     private string _capturedAt = string.Empty;
+    private int _logicalBodyWidth = LogicalBodyWidth;
     private int _logicalBodyHeight = LogicalBodyHeight;
     private CodexConversationTurn[] _sessions = [];
     private bool _sessionsVisible;
     private bool _sessionsRecent;
-    private const int MaximumSessionRows = 5;
+    private const int MaximumSessionRows = 10;
     private const int SessionRowHeight = 34;
     private const int SessionHeaderHeight = 30;
     private NativeText _text = NativeText.For("zh-CN");
@@ -159,7 +164,8 @@ internal sealed class SystemUsagePopoverForm : Form
         var conversations = content.Conversations ?? [];
         var active = conversations
             .Where(turn => turn.LiveRate is { Total: > 0 } || turn.State == "running")
-            .OrderByDescending(turn => turn.LiveRate?.Total ?? 0)
+            .OrderByDescending(turn => turn.State == "running")
+            .ThenByDescending(turn => turn.LiveRate?.Total ?? 0)
             .ThenByDescending(turn => turn.ObservedAt)
             .Take(MaximumSessionRows)
             .ToArray();
@@ -167,8 +173,9 @@ internal sealed class SystemUsagePopoverForm : Form
         _sessions = _sessionsVisible
             ? active.Length > 0 ? active : conversations.OrderByDescending(turn => turn.ObservedAt).Take(3).ToArray()
             : [];
+        _logicalBodyWidth = content.LiveRates ? LiveRateBodyWidth : LogicalBodyWidth;
         _logicalBodyHeight = content.LiveRates
-            ? LiveRateBodyHeight + TokenSectionHeight + SessionSectionHeight
+            ? LiveRateBodyHeight + TokenSectionHeight
             : Math.Clamp(282 + Math.Max(0, _processes.Length - 1) * 18, 282, LogicalBodyHeight);
         _capturedAt = _text.SystemUsageCapturedAt(snapshot.CapturedAt);
         Invalidate();
@@ -178,10 +185,12 @@ internal sealed class SystemUsagePopoverForm : Form
 
     internal int SessionRowCountForAcceptance => _sessions.Length;
 
-    private const int TokenSectionHeight = 88;
+    private const int TokenSectionHeight = 164;
 
     private int SessionSectionHeight => !_sessionsVisible ? 0
         : SessionHeaderHeight + Math.Max(1, _sessions.Length) * SessionRowHeight + 8;
+
+    internal int CurrentLogicalBodyWidth => _logicalBodyWidth;
 
     internal int CurrentLogicalBodyHeight => _logicalBodyHeight;
 
@@ -210,7 +219,7 @@ internal sealed class SystemUsagePopoverForm : Form
         UpdateContent(content, text);
         _scale = Math.Max(1, scale);
 
-        var bodySize = new Size(Scale(LogicalBodyWidth), Scale(_logicalBodyHeight));
+        var bodySize = new Size(Scale(_logicalBodyWidth), Scale(_logicalBodyHeight));
         var placement = TaskbarMiniPopoverMath.Place(
             anchorScreen,
             bodySize,
@@ -256,16 +265,21 @@ internal sealed class SystemUsagePopoverForm : Form
         BackColor = UiTokens.CardSurface;
         _scale = Math.Max(1, dpi / 96f);
         _tailSide = PopoverTailSide.Bottom;
-        _tailOffset = LogicalBodyWidth / 2f;
-        ClientSize = new Size(Scale(LogicalBodyWidth), Scale(_logicalBodyHeight + LogicalTailSize));
+        _tailOffset = _logicalBodyWidth / 2f;
+        var size = new Size(Scale(_logicalBodyWidth), Scale(_logicalBodyHeight + LogicalTailSize));
+        ClientSize = size;
         CreateControl();
         UpdateWindowRegion();
 
         var bitmap = new Bitmap(
-            ClientSize.Width,
-            ClientSize.Height,
+            size.Width,
+            size.Height,
             System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
-        DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+        using (var graphics = Graphics.FromImage(bitmap))
+        {
+            graphics.Clear(BackColor);
+            OnPaint(new PaintEventArgs(graphics, new Rectangle(Point.Empty, size)));
+        }
         return bitmap;
     }
 
@@ -406,9 +420,12 @@ internal sealed class SystemUsagePopoverForm : Form
         RectangleF At(float x, float y, float width, float height) => new(body.X + x, body.Y + y + dy, width, height);
         void TextAt(string value, Font font, Brush brush, float x, float y, float width, float height,
             StringAlignment align = StringAlignment.Near) => DrawString(graphics, value, font, brush, At(x, y, width, height), align);
+        const float leftWidth = 300f;
+        const float rightX = 320f;
+        var rightWidth = Math.Max(120f, body.Width - rightX - 12f);
         void Panel(float y, float height)
         {
-            using var path = RoundedRectangle(At(12, y, body.Width - 24, height), 8);
+            using var path = RoundedRectangle(At(12, y, leftWidth - 24, height), 8);
             using var fill = new SolidBrush(_backgroundTheme.ProviderGroup);
             graphics.FillPath(fill, path);
             graphics.DrawPath(divider, path);
@@ -443,87 +460,78 @@ internal sealed class SystemUsagePopoverForm : Form
         TextAt(live?.Generating.ToString() ?? "—", _metricValueFont, primary, 114, 170, 28, 14, StringAlignment.Far);
         TextAt(live?.Tools.ToString() ?? "—", _metricValueFont, primary, 248, 170, 28, 14, StringAlignment.Far);
 
-        // The last 24 hours, hour by hour (UiKit area curve; never on the bar itself). Totals, today
-        // and the cache rate are grouped in the Totals card below, so this card is only the curve.
+        // Compact 12-week activity grid (Daily / Weekly) plus 本周 / 周均 / 本日 / 日均 / 总量.
         Panel(206, TokenSectionHeight - 8);
-        var hourly = _content?.HourlyTokens;
-        var peak = hourly is { Count: > 0 } ? hourly.Max() : 0;
-        TextAt(zh ? "近 24 小时 · 每小时" : "Last 24 h · hourly", _metricLabelFont, muted, 24, 215, 150, 13);
-        TextAt(peak > 0 ? (zh ? $"峰值 {NativeText.FormatTokenCount(peak)}/时" : $"peak {NativeText.FormatTokenCount(peak)}/h") : "",
-            _subtitleFont, muted, 150, 216, 126, 12, StringAlignment.Far);
-        DrawHourlyCurve(graphics, At(24, 233, 252, 36), hourly);
-        TextAt("-24h", _subtitleFont, muted, 24, 271, 60, 11);
-        TextAt(zh ? "现在" : "now", _subtitleFont, muted, 216, 271, 60, 11, StringAlignment.Far);
-        dy = TokenSectionHeight;
-
-        if (_sessionsVisible)
+        var activity = _content?.Activity;
+        TextAt(zh ? "用量活动" : "Token activity", _metricLabelFont, muted, 24, 215, 120, 13);
+        var grain = activity?.Grain ?? TokenActivityGrain.Daily;
+        UiPaint.Segmented(graphics, At(168, 212, 108, 18),
+            zh ? new[] { "每日", "每周" } : new[] { "Daily", "Weekly" },
+            grain == TokenActivityGrain.Weekly ? 1 : 0, _subtitleFont);
+        if (activity is not null)
         {
-            var height = SessionSectionHeight - 8;
-            Panel(206, height);
-            DrawSessions(graphics, At(12, 206, body.Width - 24, height), primary, muted);
-            dy += SessionSectionHeight;
-        }
-
-        // Network now: the same two 118-px columns as every row above, arrows drawn by UiIcons.
-        Panel(206, 58);
-        TextAt(zh ? "本机网络" : "System network", _metricLabelFont, muted, 24, 215, 130, 13);
-        TextAt(zh ? $"{snapshot.NetworkInterfaces} 个接口" : $"{snapshot.NetworkInterfaces} NIC", _subtitleFont, muted, 176, 215, 100, 13, StringAlignment.Far);
-        UiIcons.ArrowDown(graphics, At(24, 240, 9, 11), ReceiveAccent);
-        TextAt(_metrics[3].Value, _metricValueFont, receive, 37, 238, 105, 15);
-        UiIcons.ArrowUp(graphics, At(158, 240, 9, 11), SendAccent);
-        TextAt(_metrics[4].Value, _metricValueFont, send, 171, 238, 105, 15);
-
-        // Totals: traffic | tokens in two balanced columns. Each column leads with a glyph + short
-        // caption and its big total; two aligned sub-stats follow (glyph, caption, right-aligned value).
-        Panel(272, 108);
-        var history = snapshot.NetworkHistory;
-        TextAt(zh ? "累计" : "Totals", _metricLabelFont, muted, 24, 281, 50, 13);
-        if (snapshot.NetworkHistorySaveFailed || history is null)
-        {
-            TextAt(snapshot.NetworkHistorySaveFailed ? (zh ? "记录待保存/恢复" : "Checkpoint unavailable") : (zh ? "等待计数" : "Waiting for counters"),
-                _subtitleFont, muted, 86, 281, 190, 13, StringAlignment.Far);
+            UiPaint.ActivityHeatmap(graphics, At(16, 232, 268, 90), activity, _subtitleFont, zh);
+            void Stat(float x, string caption, long value)
+            {
+                TextAt(caption, _subtitleFont, muted, x, 324, 52, 11);
+                TextAt(NativeText.FormatTokenCount(value), _tableValueFont, primary, x, 336, 52, 14);
+            }
+            var labels = zh
+                ? new[] { "本周", "周均", "本日", "日均", "总量" }
+                : new[] { "Week", "Wk avg", "Today", "Day avg", "Total" };
+            var values = new[] { activity.ThisWeekTokens, activity.WeekAverage, activity.TodayTokens, activity.DayAverage, activity.AllTimeTotal };
+            for (var i = 0; i < 5; i++)
+                Stat(24 + i * 51.6f, labels[i], values[i]);
         }
         else
         {
-            var since = TotalsSince(history.Since, snapshot.CapturedAt);
-            var sinceWidth = graphics.MeasureString(since, _subtitleFont, PointF.Empty, StringFormat.GenericTypographic).Width;
-            TextAt(since, _subtitleFont, muted, 86, 281, 190, 13, StringAlignment.Far);
-            UiIcons.Clock(graphics, At(276 - sinceWidth - 16, 282.5f, 9, 9), UiTokens.Muted);
+            TextAt(zh ? "暂无按日用量" : "No daily totals yet", _detailFont, muted, 24, 270, 252, 14);
         }
-        using (var column = new Pen(UiPalette.Slate500.WithAlpha(42), 1))
-            graphics.DrawLine(column, body.X + 150.5f, body.Y + dy + 300, body.X + 150.5f, body.Y + dy + 370);
-        var cache = _content?.Cache;
-        void Column(float x, Action<Graphics, RectangleF, Color> icon, string caption, string total)
-        {
-            icon(graphics, At(x, 302, 10, 10), UiTokens.Muted);
-            TextAt(caption, _subtitleFont, muted, x + 14, 300, 100, 13);
-            TextAt(total, _totalValueFont, primary, x - 1, 315, 118, 20);
-        }
-        void Stat(float x, float y, Action<Graphics, RectangleF, Color> icon, Color tone, string caption, string value, Brush valueBrush)
-        {
-            icon(graphics, At(x, y + 2, 9, 9), tone);
-            TextAt(caption, _subtitleFont, muted, x + 14, y, 50, 13);
-            TextAt(value, _tableValueFont, valueBrush, x + 40, y - .5f, 78, 14, StringAlignment.Far);
-        }
-        Column(24, UiIcons.Traffic, zh ? "流量" : "Traffic", NetworkUsageSampler.Total(history?.TotalBytes));
-        Stat(24, 340, UiIcons.ArrowDown, ReceiveAccent, zh ? "下行" : "Down", NetworkUsageSampler.Total(history?.ReceivedBytes), receive);
-        Stat(24, 357, UiIcons.ArrowUp, SendAccent, zh ? "上行" : "Up", NetworkUsageSampler.Total(history?.SentBytes), send);
-        Column(158, UiIcons.Tokens, "Token", snapshot.CumulativeTokens is { } tokens ? NativeText.FormatTokenCount(tokens) : "—");
-        Stat(158, 340, (g, r, c) => UiIcons.Calendar(g, r, c, today: true), UiTokens.Muted, zh ? "今日" : "Today",
-            _content?.TodayTokens is { } today ? NativeText.FormatTokenCount(today) : "—", _content?.TodayTokens is null ? muted : primary);
-        using (var hitBrush = new SolidBrush(RecordedAccent))
-            Stat(158, 357, UiIcons.Cache, cache?.TodayHitPercent is null ? UiTokens.Muted : RecordedAccent, zh ? "缓存" : "Cache",
-                NativeText.FormatCacheHitPercent(cache?.TodayHitPercent), cache?.TodayHitPercent is null ? muted : hitBrush);
+        dy = TokenSectionHeight;
 
-        var coverage = live is null ? (zh ? "等待会话读数" : "Waiting for chat data")
-            : (zh ? $"{live.Sessions} 个 Codex 会话" : $"{live.Sessions} Codex chats");
-        var pending = snapshot.LiveRate?.Pending ?? 0;
-        TextAt(coverage, _subtitleFont, muted, 16, 390, 174, 12);
-        TextAt(pending > 0 ? (zh ? $"{pending} 条待追平" : $"{pending} catching up")
-                : live is null ? (zh ? "待读取" : "Waiting") : (zh ? "已追平" : "Caught up"),
-            _subtitleFont, muted, 190, 390, 94, 12, StringAlignment.Far);
-        TextAt(zh ? "流量仅在 Bar 运行时计入" : "Traffic counted while Bar runs", _subtitleFont, muted, 16, 407, 210, 12);
-        TextAt(snapshot.CapturedAt.ToLocalTime().ToString("HH:mm:ss"), _subtitleFont, muted, 230, 407, 54, 12, StringAlignment.Far);
+        // Live rates plus cumulative traffic (token totals now live on the activity card).
+        Panel(206, 78);
+        var history = snapshot.NetworkHistory;
+        TextAt(zh ? "本机网络" : "System network", _metricLabelFont, muted, 24, 215, 110, 13);
+        var cache = _content?.Cache;
+        TextAt(cache?.TodayHitPercent is { } hit
+                ? (zh ? $"缓存 {NativeText.FormatCacheHitPercent(hit)}" : $"cache {NativeText.FormatCacheHitPercent(hit)}")
+                : (zh ? $"{snapshot.NetworkInterfaces} 个接口" : $"{snapshot.NetworkInterfaces} NIC"),
+            _subtitleFont, muted, 150, 215, 126, 13, StringAlignment.Far);
+        UiIcons.ArrowDown(graphics, At(24, 236, 9, 11), ReceiveAccent);
+        TextAt(_metrics[3].Value, _metricValueFont, receive, 37, 234, 100, 15);
+        UiIcons.ArrowUp(graphics, At(158, 236, 9, 11), SendAccent);
+        TextAt(_metrics[4].Value, _metricValueFont, send, 171, 234, 105, 15);
+        if (history is null)
+        {
+            TextAt(snapshot.NetworkHistorySaveFailed
+                    ? (zh ? "流量记录待保存" : "Traffic checkpoint pending")
+                    : (zh ? "等待流量计数" : "Waiting for traffic"),
+                _subtitleFont, muted, 24, 257, 252, 13);
+        }
+        else
+        {
+            UiIcons.Traffic(graphics, At(24, 258, 10, 10), UiTokens.Muted);
+            TextAt(NetworkUsageSampler.Total(history.TotalBytes), _subtitleFont, muted, 36, 257, 52, 13);
+            UiIcons.ArrowDown(graphics, At(92, 259, 8, 9), ReceiveAccent);
+            TextAt(NetworkUsageSampler.Total(history.ReceivedBytes), _subtitleFont, muted, 102, 257, 52, 13);
+            UiIcons.ArrowUp(graphics, At(158, 259, 8, 9), SendAccent);
+            TextAt(NetworkUsageSampler.Total(history.SentBytes), _subtitleFont, muted, 168, 257, 52, 13);
+            TextAt(TotalsSince(history.Since, snapshot.CapturedAt), _subtitleFont, muted, 210, 257, 66, 13, StringAlignment.Far);
+        }
+
+        if (_sessionsVisible)
+        {
+            var sessionTop = 38f;
+            var sessionHeight = (LiveRateBodyHeight + TokenSectionHeight) - sessionTop - 12;
+            using (var path = RoundedRectangle(new RectangleF(body.X + rightX, body.Y + sessionTop, rightWidth, sessionHeight), 8))
+            using (var fill = new SolidBrush(_backgroundTheme.ProviderGroup))
+            {
+                graphics.FillPath(fill, path);
+                graphics.DrawPath(divider, path);
+            }
+            DrawSessions(graphics, new RectangleF(body.X + rightX, body.Y + sessionTop, rightWidth, sessionHeight), primary, muted);
+        }
     }
 
     /// <summary>"Since" stamp of the totals: month/day and time, with the year only when it differs.</summary>
@@ -573,14 +581,29 @@ internal sealed class SystemUsagePopoverForm : Form
         var title = _sessionsRecent
             ? (zh ? "最近会话" : "Recent chats")
             : (zh ? $"活跃会话 · {_sessions.Length}" : $"Active chats · {_sessions.Length}");
+        const float pad = 12f;
+        var hasNumberedInstance = _sessions.Any(s => s.InstanceNumber > 0 || (s.InstanceLabel is { Length: > 5 }));
+        var chipWidth = hasNumberedInstance ? 62f : 50f;
+        const float speedWidth = 56f;
+        const float totalWidth = 46f;
+        const float cacheWidth = 48f;
+        const float firstWidth = 38f;
+        var speedLeft = panel.Right - pad - speedWidth;
+        var totalLeft = speedLeft - totalWidth;
+        var cacheLeft = totalLeft - cacheWidth;
+        var firstLeft = cacheLeft - firstWidth;
+        var modelLeft = panel.X + pad;
+        var modelWidth = Math.Max(48f, firstLeft - 4 - modelLeft);
+        var chipLeft = panel.X + pad;
+        var titleLeft = chipLeft + chipWidth + 6;
+        var titleWidth = Math.Max(48f, panel.Right - pad - titleLeft);
+
         DrawString(graphics, title, _metricLabelFont, muted,
-            new RectangleF(panel.X + 12, panel.Y + 9, 150, 13), StringAlignment.Near);
-        DrawString(graphics, zh ? "实时 tok/s" : "live tok/s", _subtitleFont, muted,
-            new RectangleF(panel.Right - 112, panel.Y + 9, 100, 13), StringAlignment.Far);
+            new RectangleF(panel.X + pad, panel.Y + 9, panel.Width - pad * 2, 13), StringAlignment.Near);
         if (_sessions.Length == 0)
         {
             DrawString(graphics, zh ? "暂无 Codex 会话读数" : "No Codex chat data yet", _detailFont, muted,
-                new RectangleF(panel.X + 12, panel.Y + SessionHeaderHeight + 6, panel.Width - 24, 15), StringAlignment.Near);
+                new RectangleF(panel.X + pad, panel.Y + SessionHeaderHeight + 6, panel.Width - 24, 15), StringAlignment.Near);
             return;
         }
 
@@ -593,23 +616,107 @@ internal sealed class SystemUsagePopoverForm : Form
             Trimming = StringTrimming.EllipsisCharacter,
             LineAlignment = StringAlignment.Center,
         };
+        using var chipLabel = new StringFormat(StringFormatFlags.NoWrap)
+        {
+            Alignment = StringAlignment.Center,
+            LineAlignment = StringAlignment.Center,
+            Trimming = StringTrimming.EllipsisCharacter,
+        };
         for (var index = 0; index < _sessions.Length; index++)
         {
             var turn = _sessions[index];
             var top = panel.Y + SessionHeaderHeight + index * SessionRowHeight;
-            if (index > 0) graphics.DrawLine(rowDivider, panel.X + 12, top - 1, panel.Right - 12, top - 1);
+            if (index > 0) graphics.DrawLine(rowDivider, panel.X + pad, top - 1, panel.Right - pad, top - 1);
             var live = turn.LiveRate is { Total: > 0 } rate ? rate : null;
             var accent = live is null ? (turn.State == "running" ? recorded : idle)
                 : live.Estimated > 0 ? estimated : recorded;
-            graphics.FillEllipse(accent, panel.X + 12, top + 8, 5, 5);
-            graphics.DrawString(_text.CodexTurnName(turn), _detailFont, primary,
-                new RectangleF(panel.X + 21, top + 2, panel.Width - 112, 15), trimmed);
-            DrawString(graphics, live is null ? "—" : _text.CodexTurnLiveSpeed(turn), _metricValueFont,
-                live is null ? muted : accent, new RectangleF(panel.Right - 88, top + 2, 76, 15), StringAlignment.Far);
 
-            // Second (last) line: only the prompt-cache hit rate, under the speed.
-            DrawString(graphics, (zh ? "缓存 " : "cache ") + NativeText.FormatCacheHitPercent(turn.CacheHitPercent), _subtitleFont, muted,
-                new RectangleF(panel.Right - 112, top + 17, 100, 13), StringAlignment.Far);
+            // Line 1: taskbar-ring-linked Codex instance chip · full-width title.
+            var instanceLabel = string.IsNullOrWhiteSpace(turn.InstanceLabel)
+                ? (turn.InstanceNumber > 0 ? $"Codex · {turn.InstanceNumber}" : "Codex")
+                : turn.InstanceLabel;
+            var ringColor = InstanceRingColor(turn.InstanceRemainingPercent);
+            var chip = new RectangleF(chipLeft, top + 2, chipWidth, 15);
+            using (var path = RoundedRectangle(chip, 7.5f))
+            using (var chipFill = new SolidBrush(Color.FromArgb(36, ringColor)))
+            using (var chipBorder = new Pen(Color.FromArgb(88, ringColor), 1f))
+            {
+                graphics.FillPath(chipFill, path);
+                graphics.DrawPath(chipBorder, path);
+            }
+            DrawInstanceRing(graphics, new RectangleF(chip.X + 2.5f, chip.Y + 1.5f, 12f, 12f), turn.InstanceRemainingPercent, ringColor);
+            using (var chipText = new SolidBrush(ringColor))
+            {
+                graphics.DrawString(instanceLabel, _subtitleFont, chipText,
+                    new RectangleF(chip.X + 15.5f, chip.Y, chip.Width - 17.5f, chip.Height), chipLabel);
+            }
+
+            graphics.DrawString(_text.CodexTurnName(turn), _detailFont, primary,
+                new RectangleF(titleLeft, top + 2, titleWidth, 15), trimmed);
+
+            // Line 2: model · effort, first-token latency, cache hit rate, this-turn tokens, and live tok/s.
+            var metricsTop = top + 17;
+            void Metric(float x, float width, Action<Graphics, RectangleF, Color> icon, string value)
+            {
+                icon(graphics, new RectangleF(x, metricsTop + 1.5f, 10, 10), UiTokens.Muted);
+                DrawString(graphics, value, _subtitleFont, muted,
+                    new RectangleF(x + 12, metricsTop, width - 13, 13), StringAlignment.Near);
+            }
+            var modelEffort = string.IsNullOrWhiteSpace(turn.Model) && string.IsNullOrWhiteSpace(turn.Effort)
+                ? "—"
+                : string.IsNullOrWhiteSpace(turn.Effort) ? turn.Model ?? "—"
+                : string.IsNullOrWhiteSpace(turn.Model) ? turn.Effort
+                : $"{turn.Model} · {turn.Effort}";
+            graphics.DrawString(modelEffort, _subtitleFont, muted,
+                new RectangleF(modelLeft, metricsTop, modelWidth, 13), trimmed);
+            var first = turn.FirstTokenSeconds is { } seconds && double.IsFinite(seconds) && seconds >= 0
+                ? (seconds < 10
+                    ? seconds.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)
+                    : seconds.ToString("0", System.Globalization.CultureInfo.InvariantCulture)) + "s"
+                : "—";
+            var total = Math.Max(0, turn.OutputTokens) + Math.Max(0, turn.InputTokens ?? 0);
+            var totalText = turn.InputTokens is null && turn.OutputTokens <= 0
+                ? "—"
+                : NativeText.FormatTokenCount(total);
+            Metric(firstLeft, firstWidth, UiIcons.Clock, first);
+            Metric(cacheLeft, cacheWidth, UiIcons.Cache, NativeText.FormatCacheHitPercent(turn.CacheHitPercent));
+            Metric(totalLeft, totalWidth, UiIcons.Tokens, totalText);
+            var speed = live is null
+                ? "—"
+                : $"{live.Total.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)} tok/s";
+            DrawString(graphics, speed, _tableValueFont,
+                live is null ? muted : accent, new RectangleF(speedLeft, metricsTop - .5f, speedWidth, 14), StringAlignment.Far);
+        }
+    }
+
+    private static Color InstanceRingColor(double? remaining) => GlassDockLayout.Band(remaining) switch
+    {
+        "red" => Color.FromArgb(255, 99, 99),
+        "amber" => Color.FromArgb(252, 196, 64),
+        "green" => Color.FromArgb(52, 220, 150),
+        _ => RecordedAccent,
+    };
+
+    private void DrawInstanceRing(Graphics graphics, RectangleF bounds, double? remaining, Color ringColor)
+    {
+        const float stroke = 1.4f;
+        var core = RectangleF.Inflate(bounds, -stroke - .2f, -stroke - .2f);
+        var pixels = Math.Max(8, (int)MathF.Round(core.Width * _scale));
+        var baked = GlassDockPainter.BakedIcon(OpenAiLogo, pixels, .3f * _scale, .92f);
+        var interpolation = graphics.InterpolationMode;
+        graphics.InterpolationMode = InterpolationMode.HighQualityBilinear;
+        graphics.DrawImage(baked, core);
+        graphics.InterpolationMode = interpolation;
+
+        var ellipse = RectangleF.Inflate(bounds, -stroke / 2, -stroke / 2);
+        using (var track = new Pen(Color.FromArgb(52, 255, 255, 255), stroke))
+            graphics.DrawEllipse(track, ellipse);
+        var sweep = remaining is null ? 360f : GlassDockLayout.RingSweep(remaining);
+        if (sweep > 0)
+        {
+            using var arc = new Pen(ringColor, stroke) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            if (sweep >= 360f) graphics.DrawEllipse(arc, ellipse);
+            else graphics.DrawArc(arc, ellipse, GlassDockLayout.RingStart(remaining), sweep);
         }
     }
 
@@ -700,7 +807,7 @@ internal sealed class SystemUsagePopoverForm : Form
 
     private RectangleF BodyBounds() => TaskbarPopoverMath.BodyBounds(
         _tailSide,
-        LogicalBodyWidth,
+        _logicalBodyWidth,
         _logicalBodyHeight,
         LogicalTailSize);
 

@@ -85,6 +85,55 @@ internal static class CockpitCodexInstanceActivity
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
+    internal static IReadOnlyDictionary<string, string> ReadHomeAccountIds(
+        string? home = null,
+        string? defaultCodexHome = null)
+    {
+        var cockpitHome = home ?? Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".antigravity_cockpit");
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var path = Path.Combine(cockpitHome, "codex_instances.json");
+            var file = new FileInfo(path);
+            if (!file.Exists || file.Length is <= 0 or > MaximumJsonBytes) return result;
+
+            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            if (document.RootElement.TryGetProperty("defaultSettings", out var defaults)
+                && defaults.ValueKind == JsonValueKind.Object
+                && defaults.StringProperty("bindAccountId") is { Length: > 0 } defaultAccountId
+                && NormalizeDirectory(defaultCodexHome ?? CodexQuotaService.CodexHome()) is { } resolvedDefault)
+            {
+                result[resolvedDefault] = defaultAccountId;
+            }
+        }
+        catch
+        {
+            return result;
+        }
+
+        foreach (var (accountId, codexHome) in ReadInstanceDirectories(cockpitHome))
+        {
+            if (string.IsNullOrWhiteSpace(accountId)) continue;
+            if (NormalizeDirectory(codexHome) is { } normalized) result[normalized] = accountId;
+        }
+
+        return result;
+    }
+
+    internal static string? NormalizeDirectory(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return null;
+        try
+        {
+            return Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static IReadOnlyList<(string? AccountId, string CodexHome)> ReadInstanceDirectories(string home)
     {
         try

@@ -419,6 +419,15 @@ internal sealed partial class BarForm : Form
             TodayTokens = _systemAnchorIsLive ? _codexTokenUsage?.TodayTokens : null,
             HourlyTokens = _systemAnchorIsLive ? HourlyTokens(DateTimeOffset.Now) : null,
             Cache = _systemAnchorIsLive && _codexTokenUsage is { } usage ? CacheStats(usage, DateTimeOffset.Now) : null,
+            Activity = _systemAnchorIsLive && _codexTokenUsage is { } tokens
+                ? TokenActivityCalendar.FromDailyTotals(
+                    tokens.ActivityDays
+                        .Where(day => DateOnly.TryParse(day.LocalDate, out _))
+                        .GroupBy(day => DateOnly.Parse(day.LocalDate))
+                        .ToDictionary(group => group.Key, group => group.Sum(day => day.Spend.TotalTokens)),
+                    DateOnly.FromDateTime(DateTime.Now),
+                    tokens.LocalTokens)
+                : null,
         };
 
     private (DateTimeOffset Hour, CodexTokenUsageSummary? Usage, long[] Buckets)? _hourlyTokensCache;
@@ -464,13 +473,13 @@ internal sealed partial class BarForm : Form
         return buckets;
     }
 
-    /// <summary>Codex conversations joined with their live per-conversation output rates.</summary>
+    /// <summary>Codex conversations joined with their live per-conversation output rates and taskbar ring identity.</summary>
     private IReadOnlyList<CodexConversationTurn> LiveConversationRows(SystemUsageSnapshot snapshot)
     {
         if (_codexTokenUsage is not { } usage || !_activeProviders.Contains(ProviderKind.Codex)) return [];
         var now = DateTimeOffset.UtcNow;
         return CodexConversationDisplay.Select(usage.ConversationTurns,
-            snapshot.CurrentOutputRate is not null ? snapshot.LiveRate : null, now);
+            snapshot.CurrentOutputRate is not null ? snapshot.LiveRate : null, now, _snapshot);
     }
 
     public void SetSystemUsage(SystemUsageSnapshot snapshot)

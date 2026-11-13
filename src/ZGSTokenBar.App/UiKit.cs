@@ -346,6 +346,128 @@ internal static class UiPaint
         TextRenderer.DrawText(g, label, font, bounds, labelColor, flags | TextFormatFlags.Left);
         TextRenderer.DrawText(g, value, font, bounds, valueColor, flags | TextFormatFlags.Right);
     }
+
+    /// <summary>Compact two-or-more segment toggle (Daily / Weekly), painted in logical pixels.</summary>
+    internal static void Segmented(Graphics g, RectangleF bounds, IReadOnlyList<string> options, int selected, Font font)
+    {
+        if (options.Count == 0) return;
+        selected = Math.Clamp(selected, 0, options.Count - 1);
+        using (var fill = new SolidBrush(UiPalette.Slate500.WithAlpha(28)))
+            FillRounded(g, fill, bounds, bounds.Height / 2);
+        var slot = bounds.Width / options.Count;
+        var pad = 1.5f;
+        var thumb = new RectangleF(bounds.X + selected * slot + pad, bounds.Y + pad, slot - pad * 2, bounds.Height - pad * 2);
+        using (var brush = new SolidBrush(UiPalette.Slate500.WithAlpha(70)))
+            FillRounded(g, brush, thumb, thumb.Height / 2);
+        using var muted = new SolidBrush(UiTokens.Muted);
+        using var strong = new SolidBrush(UiTokens.TextStrong);
+        for (var i = 0; i < options.Count; i++)
+        {
+            var cell = new RectangleF(bounds.X + i * slot, bounds.Y, slot, bounds.Height);
+            Text(g, options[i], font, i == selected ? strong : muted, cell, StringAlignment.Center, ellipsis: false);
+        }
+    }
+
+    /// <summary>
+    /// Compact GitHub-style activity grid: 7 weekday rows, one column per week, Monday-first.
+    /// Weekly grain collapses each column to a single rounded cell. Intensity is relative to the
+    /// visible window (four steps above empty), in the indigo scale used across the app.
+    /// </summary>
+    internal static void ActivityHeatmap(
+        Graphics g,
+        RectangleF bounds,
+        TokenActivityView activity,
+        Font captionFont,
+        bool chinese)
+    {
+        var weekdays = chinese
+            ? new[] { "一", "二", "三", "四", "五", "六", "日" }
+            : new[] { "M", "T", "W", "T", "F", "S", "S" };
+        var weekly = activity.Grain == TokenActivityGrain.Weekly;
+        const float labelW = 14f;
+        const float monthH = 12f;
+        var labelWidth = weekly ? 0f : labelW;
+        var grid = new RectangleF(bounds.X + labelWidth, bounds.Y, Math.Max(8, bounds.Width - labelWidth), Math.Max(8, bounds.Height - monthH));
+        var weeks = activity.WeekCount;
+        var vGap = weeks >= 12 ? 2.2f : 3f;
+        var cell = weekly
+            ? Math.Max(6, (grid.Width - vGap * (weeks - 1)) / weeks)
+            : Math.Min((grid.Width - vGap * (weeks - 1)) / weeks, (grid.Height - vGap * 6) / 7);
+        var hGap = weeks > 1 ? Math.Max(vGap, (grid.Width - cell * weeks) / (weeks - 1)) : vGap;
+        var gridH = weekly ? grid.Height : cell * 7 + vGap * 6;
+        var originX = grid.X;
+        var originY = grid.Y + (weekly ? 0 : Math.Max(0, (grid.Height - gridH) / 2));
+
+        using var muted = new SolidBrush(UiTokens.Muted);
+        if (!weekly)
+        {
+            for (var row = 0; row < 7; row++)
+            {
+                var y = originY + row * (cell + vGap);
+                Text(g, weekdays[row], captionFont, muted,
+                    new RectangleF(bounds.X, y - 1, labelW, cell + 2), StringAlignment.Near, ellipsis: false);
+            }
+        }
+
+        var values = weekly ? activity.WeekTotals : activity.Days;
+        var peak = values.Count == 0 ? 0 : values.Max();
+        var todayIndex = activity.Today.DayNumber - activity.StartMonday.DayNumber;
+
+        Color Level(long tokens)
+        {
+            if (tokens <= 0 || peak <= 0) return Color.FromArgb(38, 42, 52);
+            var t = tokens / (double)peak;
+            if (t < 0.15) return Color.FromArgb(55, 48, 120);
+            if (t < 0.35) return Color.FromArgb(67, 56, 202);
+            if (t < 0.65) return Color.FromArgb(99, 102, 241);
+            return Color.FromArgb(165, 180, 252);
+        }
+
+        using var todayPen = new Pen(Color.White.WithAlpha(200), 1);
+        for (var week = 0; week < weeks; week++)
+        {
+            var x = originX + week * (cell + hGap);
+            if (weekly)
+            {
+                var tokens = week < values.Count ? values[week] : 0;
+                var barH = Math.Max(cell, grid.Height * 0.55f + grid.Height * 0.45f * (peak > 0 ? tokens / (float)peak : 0));
+                var box = new RectangleF(x, originY + grid.Height - barH, cell, barH);
+                using var brush = new SolidBrush(Level(tokens));
+                FillRounded(g, brush, box, Math.Min(3, cell / 3));
+                continue;
+            }
+
+            for (var row = 0; row < 7; row++)
+            {
+                var index = week * 7 + row;
+                var date = activity.StartMonday.AddDays(index);
+                var tokens = index < activity.Days.Count && date <= activity.Today ? activity.Days[index] : 0;
+                var box = new RectangleF(x, originY + row * (cell + vGap), cell, cell);
+                var emptyFuture = date > activity.Today;
+                using (var brush = new SolidBrush(emptyFuture ? Color.FromArgb(28, 31, 38) : Level(tokens)))
+                    FillRounded(g, brush, box, Math.Min(2.4f, cell / 3));
+                if (index == todayIndex)
+                {
+                    using var outline = RoundedPath(RectangleF.Inflate(box, -0.4f, -0.4f), Math.Min(2f, cell / 3));
+                    g.DrawPath(todayPen, outline);
+                }
+            }
+        }
+
+        var lastMonth = 0;
+        for (var week = 0; week < weeks; week++)
+        {
+            var date = activity.StartMonday.AddDays(week * 7);
+            if (week > 0 && date.Month == lastMonth) continue;
+            lastMonth = date.Month;
+            var label = chinese
+                ? $"{date.Month}月"
+                : date.ToString("MMM", System.Globalization.CultureInfo.GetCultureInfo("en-US"));
+            var x = originX + week * (cell + hGap);
+            Text(g, label, captionFont, muted,
+                new RectangleF(x, bounds.Bottom - monthH, cell * 3 + hGap * 2, monthH), StringAlignment.Near, ellipsis: false);
+        }
+    }
 }
 
 /// <summary>
