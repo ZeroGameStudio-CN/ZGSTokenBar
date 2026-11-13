@@ -29,6 +29,11 @@ Phase 1：检查现有数据，给出一套统一设计，用真实 WinForms 离
   - 排序：先 `running`，再按速度降序。
   - 最多约 10 条会话。
   - 「总 token」仍是**当前轮**（input+output），不是会话一生累计。
+- **V5 最终定稿与合入安装授权**（用户 14:09 / 14:12 拍板）：
+  - **实例芯片与任务栏小圈挂钩**：查明每个 Codex 会话归属的 Codex 实例目录（默认 `~/.codex` 或 `~/.antigravity_cockpit/instances/codex/<id>`），按 `~/.antigravity_cockpit/codex_instances.json` 的 `defaultSettings.bindAccountId` 与 `instances[*].bindAccountId` 对应到 `QuotaSnapshot` 中的 `CodexAccountQuota` / `QuotaCard`，用任务栏小圈的 OpenAI 图标、剩余额度圆弧、配色档位（绿/琥珀/红）和序号（如 `Codex · 1`、`Codex · 2`，无序号时退回 `Codex`）绘制第 1 行左侧芯片。
+  - **第 1 行只放实例芯片和完整名字**（一直铺到卡片右边缘，不再被右上角速度截断），右上角去掉「实时 tok/s」。
+  - **所有数据（含速度）统一放第 2 行**：左侧 `model · effort`，右侧依次对齐首 token、缓存率、本轮总 token、右对齐 `tok/s`。
+  - **确认合入并安装本机便携版**，装好后提供速率面板截图。
 
 ### 「已追平」原逻辑（已从 UI 移除，只记录在此）
 
@@ -42,26 +47,27 @@ Phase 1：检查现有数据，给出一套统一设计，用真实 WinForms 离
 
 `CaughtUp` = `state.Offset >= length`（解析到 EOF）。页脚原文：`live == null` →「待读取」；`Pending > 0` →「N 条待追平」；否则「已追平」。「N 个 Codex 会话」是已追上、未失败的活会话数（`LiveOutputRate.Sessions`），不是历史会话总数。这是日志追平状态，**不是**用量统计，用户要求去掉。
 
-### 会话行数据来源（V4）
+### 会话行数据来源（V5 最终）
 
-- **Agent instance 芯片**：当前**没有**「Claude / Codex / 某客户端实例 ID」这种按行字段。速率面板的会话列表只来自 `BarForm.LiveConversationRows` → `_codexTokenUsage.ConversationTurns`（Codex 会话日志）；Claude 等其它 agent 不会出现在此列表。`CodexConversationTurn` 上也没有 client/instance/account 字段（最接近的是 `SessionId` 和来自 cwd 末段的 `ProjectName`，都不是 agent 实例）。因此芯片固定画 **「Codex」**，表示数据源是 Codex 客户端。以后若接入其它 agent 的活会话，需要新增来源字段，不能从现有字段猜。
-- **短标题**：`CodexTurnName` = `Title`（`CodexConversationTitleReader` 按 SessionId 补上的会话标题），没有标题时退回 `ProjectName · SessionId` 末 8 位。过长 ellipsis。
-- **model/effort**：`turn.Model`、`turn.Effort`，来自会话日志 `turn_context`（及同轮写入的模型/强度）。显示为 `gpt-5.5 · high`，缺则「—」。
-- **首 token**：延迟（秒），不是 tok/s。只采 `event_msg` 的 `task_complete` / `turn_aborted` 载荷字段 `time_to_first_token_ms`（有限、≥0、且不超过该轮时长）再 `/ 1000`，写入 `FirstTokenSeconds`。缺失不估算（不用第一次 `token_count` 时间戳）。
-- **缓存**：`CacheHitPercent` = `CachedInputTokens / InputTokens`。
-- **总 token**：该轮 `InputTokens + OutputTokens`（缓存是输入的子集）。**不是**整个 session 的历史总和。
-- **速度**：3 秒窗口 `live.Total`，不再加「≈」。估算中仍用琥珀色数字。历史表 `CodexTurnLiveSpeed` 未改。
-- **排序**：`State == "running"` 优先，然后 `LiveRate.Total` 降序，再 `ObservedAt` 降序。筛选仍是「有活速率或 running」。
+- **Codex 实例芯片（与任务栏小圈挂钩）**：
+  - `CodexConversationTitleReader.Apply` 按 `session_index.jsonl` 所在主目录及 `_recentSessionPaths`（`CodexConversationUsageReader.SessionCodexHome`）在返回给 UI 的 `CodexConversationTurn` 上标记 `[JsonIgnore] CodexHome`（不改动持久化 `ConversationHistory` 快路径）。
+  - `CockpitCodexInstanceActivity.ReadHomeAccountIds` 读取 `~/.antigravity_cockpit/codex_instances.json` 的 `defaultSettings.bindAccountId`（绑定默认 `~/.codex`）及 `instances[*]`（`userDataDir` → `bindAccountId`）。
+  - `CodexConversationDisplay.AttachInstances` 将 `CodexHome` 映射到 `QuotaSnapshot.CodexAccounts` / `QuotaSnapshot.Cards`，填入 `InstanceLabel`（如 `Codex · 1`、`Codex · 2`，未匹配或多账号未区分时退回 `Codex`）、`InstanceNumber` 和 `InstanceRemainingPercent`（任务栏小圈使用的剩余百分比）。
+  - `SystemUsagePopoverForm.DrawSessions` 使用 `GlassDockLayout.Band` / `RingSweep` / `RingStart` 与 `OpenAiLogo` 在芯片左侧绘制迷你任务栏小圈 + 对应配色的 `Codex · N` 标签。
+- **完整标题（第 1 行）**：`CodexTurnName` = `Title`（`CodexConversationTitleReader` 按 SessionId 补上的会话标题），没有标题时退回 `ProjectName · SessionId` 末 8 位。第 1 行右侧不再放速度，标题一直延伸到行尾（超出时 ellipsis）。右上角表头去掉「实时 tok/s」。
+- **第 2 行指标**：左侧 `turn.Model · turn.Effort`；右侧四列对齐：首 token 延迟（时钟图标 + 秒）、缓存命中率（缓存图标 + 百分比）、本轮总 token（柱状图标 + `InputTokens + OutputTokens`）、右对齐实时速度（`61.4 tok/s`，已记录翡翠绿 / 估算琥珀色，不加 `≈`）。
+- **排序**：`State == "running"` 优先，然后 `LiveRate.Total` 降序，再 `ObservedAt` 降序，最多 10 条。
 
-## 当前状态（2026-11-13 14:10 北京时间）
+## 当前状态（2026-11-13 15:25 北京时间）
 
-- 分支已推远程：`origin/feat/panel-activity-unify`。
+- 分支：`feat/panel-activity-unify`。
 - V1：`c4d471a` Preview: compact 12-week token activity on the live-rate panel.
 - 交接文档初稿：`5a5efa3` Docs: handoff for the panel-activity-unify preview branch.
 - V2：`d4419a5` Preview: widen the rate panel and use a five-stat activity row.
 - V3：`6fea030` Preview: session rows show first-token latency, cache, and total tokens.
-- **V4 代码已落地、测试工程 Release 编译 0 警告 0 错误，离屏 PNG 已出。本提交含 V4 代码与本文档更新。未 merge、未安装。**
-- 已安装的仍是 PR #47 构建：`D:\projects\ZGSTokenBar\release\ZGSTokenBar-v3.0.0\ZGSTokenBar.exe`。不要动它。
+- V4：`ee88a7d` Preview: two-line session rows with Codex chip, model/effort, and running-first sort.
+- **V5：已完成实例芯片与任务栏小圈绑定、第 1 行全宽标题、第 2 行统一展示全部指标与 `tok/s`、去掉右上角「实时 tok/s」，并通过全量 114 项 `ZGSTokenBar.Tests`、静态门禁与 Node 测试。**
+- 离屏截图源文件：`C:\Users\2025\AppData\Local\Temp\panel-v5\`。
 
 ### V2 / V3 仍有效的实现要点
 

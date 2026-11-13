@@ -18,6 +18,14 @@ public sealed record CodexConversationTurn(
     public string? ProjectName { get; init; }
     [JsonIgnore]
     public string? Title { get; init; }
+    [JsonIgnore]
+    public string? CodexHome { get; init; }
+    [JsonIgnore]
+    public string? InstanceLabel { get; init; }
+    [JsonIgnore]
+    public int InstanceNumber { get; init; }
+    [JsonIgnore]
+    public double? InstanceRemainingPercent { get; init; }
     public string? ServiceTier { get; init; }
     public string? ResponseModels { get; init; }
     public string? RoutedFromModel { get; init; }
@@ -209,11 +217,32 @@ public sealed class CodexConversationUsageReader
         return consumed;
     }
 
-    private static string SessionId(string path)
+    internal static string SessionId(string path)
     {
         var name = Path.GetFileNameWithoutExtension(path);
         return name.Length >= 36 && Guid.TryParse(name[^36..], out _) ? name[^36..]
             : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(path))))[..16].ToLowerInvariant();
+    }
+
+    internal static string? SessionCodexHome(string path)
+    {
+        try
+        {
+            var directory = new FileInfo(path).Directory;
+            while (directory is not null)
+            {
+                if (directory.Name.Equals("sessions", StringComparison.OrdinalIgnoreCase)
+                    || directory.Name.Equals("archived_sessions", StringComparison.OrdinalIgnoreCase))
+                {
+                    return directory.Parent?.FullName;
+                }
+                directory = directory.Parent;
+            }
+        }
+        catch
+        {
+        }
+        return null;
     }
 
     private static DateTimeOffset? Date(JsonElement value, string name) =>

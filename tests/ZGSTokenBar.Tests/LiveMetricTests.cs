@@ -45,6 +45,7 @@ internal static class LiveMetricTests
         ReaderIntervals(at);
         AllRunningConversations(at);
         SharedConversationRates(at);
+        CodexSessionInstanceMapping(at);
         NetworkHistory(at);
         var network = new NetworkUsageSampler();
         Check(network.Observe([new("a", 1000, 2000)], 1).Received is null, "Network needs a baseline.");
@@ -392,6 +393,78 @@ internal static class LiveMetricTests
             var saved = ledger.Refresh(at.AddSeconds(6))!;
             Check(saved.RecentTurns.Single().HasRecordedUsage == false && saved.ConversationHistory.Count == 0,
                 "Usage-free identity rows remain transient and are never added to durable measured history.");
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
+    private static void CodexSessionInstanceMapping(DateTimeOffset at)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "tokenbar-instance-map-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var defaultHome = Path.Combine(directory, "default-codex");
+            var instOneHome = Path.Combine(directory, "instances", "codex", "inst-1");
+            var instTwoHome = Path.Combine(directory, "instances", "codex", "inst-2");
+            Directory.CreateDirectory(Path.Combine(defaultHome, "sessions", "2026", "11", "13"));
+            Directory.CreateDirectory(Path.Combine(instOneHome, "sessions", "2026", "11", "13"));
+            Directory.CreateDirectory(instTwoHome);
+            var storePath = Path.Combine(directory, "codex_instances.json");
+            File.WriteAllText(storePath, JsonSerializer.Serialize(new
+            {
+                defaultSettings = new { bindAccountId = "acc-two" },
+                instances = new object[]
+                {
+                    new { id = "i1", userDataDir = instOneHome, bindAccountId = "acc-one" },
+                    new { id = "i2", userDataDir = instTwoHome, bindAccountId = "acc-one" },
+                },
+            }));
+            var map = CockpitCodexInstanceActivity.ReadHomeAccountIds(directory, defaultHome);
+            Check(map[CockpitCodexInstanceActivity.NormalizeDirectory(defaultHome)!] == "acc-two"
+                && map[CockpitCodexInstanceActivity.NormalizeDirectory(instOneHome)!] == "acc-one"
+                && map[CockpitCodexInstanceActivity.NormalizeDirectory(instTwoHome)!] == "acc-one",
+                "Cockpit instance store maps default and isolated Codex homes to their bound account IDs.");
+
+            var sessionOne = Path.Combine(instOneHome, "sessions", "2026", "11", "13", "rollout-2026-11-13T10-00-00-019a0000-0000-7000-8000-000000000001.jsonl");
+            var sessionTwo = Path.Combine(defaultHome, "sessions", "2026", "11", "13", "rollout-2026-11-13T10-00-00-019a0000-0000-7000-8000-000000000002.jsonl");
+            Check(CodexConversationUsageReader.SessionCodexHome(sessionOne) == instOneHome
+                && CodexConversationUsageReader.SessionCodexHome(sessionTwo) == defaultHome,
+                "SessionCodexHome extracts the owning Codex home root from nested rollout paths.");
+
+            var cardKeyOne = CodexQuotaService.StableCardKey("acc-one");
+            var cardKeyTwo = CodexQuotaService.StableCardKey("acc-two");
+            var quota = new QuotaSnapshot(
+                [
+                    new QuotaCard(cardKeyOne, ProviderKind.Codex, "Codex · 1", "pro", "#10a37f", true,
+                        [new QuotaWindow("5h", 81, at.AddHours(2), TimeSpan.FromHours(5))]),
+                    new QuotaCard(cardKeyTwo, ProviderKind.Codex, "Codex · 2", "pro", "#10a37f", true,
+                        [new QuotaWindow("5h", 46, at.AddHours(2), TimeSpan.FromHours(5))]),
+                ],
+                [new ProviderHealth(ProviderKind.Codex, true, "current", ProviderHealthCode.Current)],
+                at)
+            {
+                CodexAccounts =
+                [
+                    new CodexAccountQuota("acc-one", [new QuotaWindow("5h", 81, at.AddHours(2), TimeSpan.FromHours(5))], at)
+                    { CardKey = cardKeyOne },
+                    new CodexAccountQuota("acc-two", [new QuotaWindow("5h", 46, at.AddHours(2), TimeSpan.FromHours(5))], at)
+                    { CardKey = cardKeyTwo },
+                ],
+            };
+            var turns = new[]
+            {
+                new CodexConversationTurn("019a0000-0000-7000-8000-000000000001", "t1", "gpt-5.5", "high", at.AddSeconds(-10), at, 100, 10, false, true)
+                { CodexHome = instOneHome },
+                new CodexConversationTurn("019a0000-0000-7000-8000-000000000002", "t2", "gpt-5.5", "medium", at.AddSeconds(-10), at, 100, 10, false, true)
+                { CodexHome = defaultHome },
+            };
+            var attached = CodexConversationDisplay.AttachInstances(turns, quota, map);
+            Check(attached[0].InstanceLabel == "Codex · 1" && attached[0].InstanceNumber == 1
+                && attached[0].InstanceRemainingPercent is { } rem1 && Math.Abs(rem1 - 19) < .001,
+                "First instance turn resolves to taskbar ring Codex · 1 with 19% remaining.");
+            Check(attached[1].InstanceLabel == "Codex · 2" && attached[1].InstanceNumber == 2
+                && attached[1].InstanceRemainingPercent is { } rem2 && Math.Abs(rem2 - 54) < .001,
+                "Default home turn resolves to taskbar ring Codex · 2 with 54% remaining.");
         }
         finally { Directory.Delete(directory, true); }
     }

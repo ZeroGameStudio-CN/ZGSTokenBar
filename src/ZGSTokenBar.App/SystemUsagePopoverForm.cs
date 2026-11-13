@@ -48,6 +48,7 @@ internal sealed class SystemUsagePopoverForm : Form
     private static readonly Color EstimateAccent = UiPalette.Amber400;
     private static readonly Color ReceiveAccent = Color.FromArgb(125, 211, 252);
     private static readonly Color SendAccent = Color.FromArgb(196, 181, 253);
+    private static readonly Image OpenAiLogo = BarForm.LoadEmbeddedImage("ZGSTokenBar.App.Assets.openai-official-ios-icon.png");
     private readonly AlignedStringFormats _textFormats = new();
     private readonly System.Windows.Forms.Timer _entranceTimer = new() { Interval = 16 };
     private readonly System.Windows.Forms.Timer _exitTimer = new() { Interval = 16 };
@@ -265,15 +266,20 @@ internal sealed class SystemUsagePopoverForm : Form
         _scale = Math.Max(1, dpi / 96f);
         _tailSide = PopoverTailSide.Bottom;
         _tailOffset = _logicalBodyWidth / 2f;
-        ClientSize = new Size(Scale(_logicalBodyWidth), Scale(_logicalBodyHeight + LogicalTailSize));
+        var size = new Size(Scale(_logicalBodyWidth), Scale(_logicalBodyHeight + LogicalTailSize));
+        ClientSize = size;
         CreateControl();
         UpdateWindowRegion();
 
         var bitmap = new Bitmap(
-            ClientSize.Width,
-            ClientSize.Height,
+            size.Width,
+            size.Height,
             System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
-        DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+        using (var graphics = Graphics.FromImage(bitmap))
+        {
+            graphics.Clear(BackColor);
+            OnPaint(new PaintEventArgs(graphics, new Rectangle(Point.Empty, size)));
+        }
         return bitmap;
     }
 
@@ -576,23 +582,24 @@ internal sealed class SystemUsagePopoverForm : Form
             ? (zh ? "最近会话" : "Recent chats")
             : (zh ? $"活跃会话 · {_sessions.Length}" : $"Active chats · {_sessions.Length}");
         const float pad = 12f;
-        const float chipWidth = 46f;
-        const float speedWidth = 44f;
-        const float metricWidth = 50f;
+        var hasNumberedInstance = _sessions.Any(s => s.InstanceNumber > 0 || (s.InstanceLabel is { Length: > 5 }));
+        var chipWidth = hasNumberedInstance ? 62f : 50f;
+        const float speedWidth = 56f;
+        const float totalWidth = 46f;
+        const float cacheWidth = 48f;
+        const float firstWidth = 38f;
         var speedLeft = panel.Right - pad - speedWidth;
-        var totalLeft = panel.Right - pad - metricWidth;
-        var cacheLeft = totalLeft - metricWidth;
-        var firstLeft = cacheLeft - metricWidth;
+        var totalLeft = speedLeft - totalWidth;
+        var cacheLeft = totalLeft - cacheWidth;
+        var firstLeft = cacheLeft - firstWidth;
         var modelLeft = panel.X + pad;
-        var modelWidth = Math.Max(48f, firstLeft - 6 - modelLeft);
+        var modelWidth = Math.Max(48f, firstLeft - 4 - modelLeft);
         var chipLeft = panel.X + pad;
         var titleLeft = chipLeft + chipWidth + 6;
-        var titleWidth = Math.Max(48f, speedLeft - 6 - titleLeft);
+        var titleWidth = Math.Max(48f, panel.Right - pad - titleLeft);
 
         DrawString(graphics, title, _metricLabelFont, muted,
-            new RectangleF(panel.X + pad, panel.Y + 9, Math.Max(80f, speedLeft - 8 - (panel.X + pad)), 13), StringAlignment.Near);
-        DrawString(graphics, zh ? "实时 tok/s" : "live tok/s", _subtitleFont, muted,
-            new RectangleF(speedLeft, panel.Y + 9, speedWidth, 13), StringAlignment.Far);
+            new RectangleF(panel.X + pad, panel.Y + 9, panel.Width - pad * 2, 13), StringAlignment.Near);
         if (_sessions.Length == 0)
         {
             DrawString(graphics, zh ? "暂无 Codex 会话读数" : "No Codex chat data yet", _detailFont, muted,
@@ -604,8 +611,6 @@ internal sealed class SystemUsagePopoverForm : Form
         using var estimated = new SolidBrush(EstimateAccent);
         using var idle = new SolidBrush(UiPalette.Slate500);
         using var rowDivider = new Pen(UiPalette.Slate400.WithAlpha(28), 1);
-        using var chipFill = new SolidBrush(Color.FromArgb(56, RecordedAccent));
-        using var chipText = new SolidBrush(RecordedAccent);
         using var trimmed = new StringFormat(StringFormatFlags.NoWrap)
         {
             Trimming = StringTrimming.EllipsisCharacter,
@@ -626,27 +631,36 @@ internal sealed class SystemUsagePopoverForm : Form
             var accent = live is null ? (turn.State == "running" ? recorded : idle)
                 : live.Estimated > 0 ? estimated : recorded;
 
-            // Line 1: agent-client chip (this list is Codex session logs only) · short title · tok/s.
-            var chip = new RectangleF(chipLeft, top + 3, chipWidth, 14);
-            using (var path = RoundedRectangle(chip, 7))
+            // Line 1: taskbar-ring-linked Codex instance chip · full-width title.
+            var instanceLabel = string.IsNullOrWhiteSpace(turn.InstanceLabel)
+                ? (turn.InstanceNumber > 0 ? $"Codex · {turn.InstanceNumber}" : "Codex")
+                : turn.InstanceLabel;
+            var ringColor = InstanceRingColor(turn.InstanceRemainingPercent);
+            var chip = new RectangleF(chipLeft, top + 2, chipWidth, 15);
+            using (var path = RoundedRectangle(chip, 7.5f))
+            using (var chipFill = new SolidBrush(Color.FromArgb(36, ringColor)))
+            using (var chipBorder = new Pen(Color.FromArgb(88, ringColor), 1f))
+            {
                 graphics.FillPath(chipFill, path);
-            graphics.DrawString("Codex", _subtitleFont, chipText, chip, chipLabel);
+                graphics.DrawPath(chipBorder, path);
+            }
+            DrawInstanceRing(graphics, new RectangleF(chip.X + 2.5f, chip.Y + 1.5f, 12f, 12f), turn.InstanceRemainingPercent, ringColor);
+            using (var chipText = new SolidBrush(ringColor))
+            {
+                graphics.DrawString(instanceLabel, _subtitleFont, chipText,
+                    new RectangleF(chip.X + 15.5f, chip.Y, chip.Width - 17.5f, chip.Height), chipLabel);
+            }
 
             graphics.DrawString(_text.CodexTurnName(turn), _detailFont, primary,
                 new RectangleF(titleLeft, top + 2, titleWidth, 15), trimmed);
-            var speed = live is null
-                ? "—"
-                : live.Total.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
-            DrawString(graphics, speed, _metricValueFont,
-                live is null ? muted : accent, new RectangleF(speedLeft, top + 2, speedWidth, 15), StringAlignment.Far);
 
-            // Line 2: model · effort from turn_context, then first-token / cache / this-turn tokens.
+            // Line 2: model · effort, first-token latency, cache hit rate, this-turn tokens, and live tok/s.
             var metricsTop = top + 17;
-            void Metric(float x, Action<Graphics, RectangleF, Color> icon, string value)
+            void Metric(float x, float width, Action<Graphics, RectangleF, Color> icon, string value)
             {
                 icon(graphics, new RectangleF(x, metricsTop + 1.5f, 10, 10), UiTokens.Muted);
                 DrawString(graphics, value, _subtitleFont, muted,
-                    new RectangleF(x + 12, metricsTop, metricWidth - 14, 13), StringAlignment.Near);
+                    new RectangleF(x + 12, metricsTop, width - 13, 13), StringAlignment.Near);
             }
             var modelEffort = string.IsNullOrWhiteSpace(turn.Model) && string.IsNullOrWhiteSpace(turn.Effort)
                 ? "—"
@@ -664,9 +678,45 @@ internal sealed class SystemUsagePopoverForm : Form
             var totalText = turn.InputTokens is null && turn.OutputTokens <= 0
                 ? "—"
                 : NativeText.FormatTokenCount(total);
-            Metric(firstLeft, UiIcons.Clock, first);
-            Metric(cacheLeft, UiIcons.Cache, NativeText.FormatCacheHitPercent(turn.CacheHitPercent));
-            Metric(totalLeft, UiIcons.Tokens, totalText);
+            Metric(firstLeft, firstWidth, UiIcons.Clock, first);
+            Metric(cacheLeft, cacheWidth, UiIcons.Cache, NativeText.FormatCacheHitPercent(turn.CacheHitPercent));
+            Metric(totalLeft, totalWidth, UiIcons.Tokens, totalText);
+            var speed = live is null
+                ? "—"
+                : $"{live.Total.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)} tok/s";
+            DrawString(graphics, speed, _tableValueFont,
+                live is null ? muted : accent, new RectangleF(speedLeft, metricsTop - .5f, speedWidth, 14), StringAlignment.Far);
+        }
+    }
+
+    private static Color InstanceRingColor(double? remaining) => GlassDockLayout.Band(remaining) switch
+    {
+        "red" => Color.FromArgb(255, 99, 99),
+        "amber" => Color.FromArgb(252, 196, 64),
+        "green" => Color.FromArgb(52, 220, 150),
+        _ => RecordedAccent,
+    };
+
+    private void DrawInstanceRing(Graphics graphics, RectangleF bounds, double? remaining, Color ringColor)
+    {
+        const float stroke = 1.4f;
+        var core = RectangleF.Inflate(bounds, -stroke - .2f, -stroke - .2f);
+        var pixels = Math.Max(8, (int)MathF.Round(core.Width * _scale));
+        var baked = GlassDockPainter.BakedIcon(OpenAiLogo, pixels, .3f * _scale, .92f);
+        var interpolation = graphics.InterpolationMode;
+        graphics.InterpolationMode = InterpolationMode.HighQualityBilinear;
+        graphics.DrawImage(baked, core);
+        graphics.InterpolationMode = interpolation;
+
+        var ellipse = RectangleF.Inflate(bounds, -stroke / 2, -stroke / 2);
+        using (var track = new Pen(Color.FromArgb(52, 255, 255, 255), stroke))
+            graphics.DrawEllipse(track, ellipse);
+        var sweep = remaining is null ? 360f : GlassDockLayout.RingSweep(remaining);
+        if (sweep > 0)
+        {
+            using var arc = new Pen(ringColor, stroke) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            if (sweep >= 360f) graphics.DrawEllipse(arc, ellipse);
+            else graphics.DrawArc(arc, ellipse, GlassDockLayout.RingStart(remaining), sweep);
         }
     }
 

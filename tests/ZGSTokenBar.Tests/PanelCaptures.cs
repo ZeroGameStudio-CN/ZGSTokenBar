@@ -15,7 +15,7 @@ internal static class PanelCaptures
         var at = DateTimeOffset.UtcNow;
         var snapshot = Snapshot(at);
         var hourly = Enumerable.Range(0, 24).Select(hour => (long)(40_000_000 + 60_000_000 * Math.Abs(Math.Sin(hour / 3.0)) + hour * 2_000_000)).ToArray();
-        CodexConversationTurn Turn(int index, string title, string model, string effort, long output, double elapsed, double measured, double estimated, double? firstToken = null, long? input = null, long? cached = null, bool completed = false) =>
+        CodexConversationTurn Turn(int index, string title, string model, string effort, long output, double elapsed, double measured, double estimated, double? firstToken = null, long? input = null, long? cached = null, bool completed = false, int instance = 1, double remaining = 54) =>
             new($"session-{index:0000}", $"turn-{index}", model, effort, at.AddSeconds(-elapsed), at, output, elapsed, completed, true)
             {
                 Title = title,
@@ -23,19 +23,22 @@ internal static class PanelCaptures
                 FirstTokenSeconds = firstToken,
                 InputTokens = input,
                 CachedInputTokens = cached,
+                InstanceLabel = $"Codex · {instance}",
+                InstanceNumber = instance,
+                InstanceRemainingPercent = remaining,
             };
         var turns = new[]
         {
-            Turn(1, "重构 Glass dock 渲染与图标缓存", "gpt-5.5", "high", 18_420, 312, 61.4, 0, 1.2, 82_000, 74_000),
-            Turn(2, "Fix provider refresh cadence", "gpt-5.5", "medium", 7_210, 95, 0, 38.2, null, 21_000, 4_200),
-            Turn(3, "ZOS-1088 进入戰鬥後無法看到白色提示", "gpt-5.5", "high", 12_400, 180, 0, 37.4, 0.8, 44_000, 39_600),
-            Turn(4, "查找 DreamFX 的 Unity 版本与迁移路径", "gpt-5.5", "medium", 6_800, 140, 21.6, 0, 2.4, 15_000, 0),
-            Turn(5, "推进 gd 关卡导出与校验流水线", "gpt-5.5", "medium", 9_100, 220, 0, 36.6, 1.6, 25_000, 20_000),
-            Turn(6, "zgs-ops-workflow · b7b019d4 重试策略", "gpt-5.5", "low", 3_400, 60, 13.1, 0, null, 8_000, 7_500),
-            Turn(7, "立绘精细拆分与离线动作烘焙", "gpt-5.5", "high", 22_000, 410, 9.4, 0, 3.1, 120_000, 110_000),
-            Turn(8, "Router 监视面板与速率卡视觉对齐", "gpt-5.5", "medium", 5_200, 88, 0, 17.8, 0.4, 9_000, 1_000),
-            Turn(9, "整理多语言文案与截图规范", "gpt-5.5", "low", 14_800, 200, 80.0, 0, 2.2, 36_000, 30_000, completed: true),
-            Turn(10, "核对构建产物与版本号", "gpt-5.5", "medium", 6_400, 110, 0, 72.0, 1.0, 16_000, 8_000, completed: true),
+            Turn(1, "重构 Glass dock 渲染与图标缓存", "gpt-5.5", "high", 18_420, 312, 61.4, 0, 1.2, 82_000, 74_000, instance: 2, remaining: 54),
+            Turn(2, "Fix provider refresh cadence", "gpt-5.5", "medium", 7_210, 95, 0, 38.2, null, 21_000, 4_200, instance: 1, remaining: 19),
+            Turn(3, "ZOS-1088 进入戰鬥後無法看到白色提示", "gpt-5.5", "high", 12_400, 180, 0, 37.4, 0.8, 44_000, 39_600, instance: 2, remaining: 54),
+            Turn(4, "查找 DreamFX 的 Unity 版本与迁移路径", "gpt-5.5", "medium", 6_800, 140, 21.6, 0, 2.4, 15_000, 0, instance: 1, remaining: 19),
+            Turn(5, "推进 gd 关卡导出与校验流水线", "gpt-5.5", "medium", 9_100, 220, 0, 36.6, 1.6, 25_000, 20_000, instance: 2, remaining: 54),
+            Turn(6, "zgs-ops-workflow · b7b019d4 重试策略", "gpt-5.5", "low", 3_400, 60, 13.1, 0, null, 8_000, 7_500, instance: 1, remaining: 19),
+            Turn(7, "立绘精细拆分与离线动作烘焙", "gpt-5.5", "high", 22_000, 410, 9.4, 0, 3.1, 120_000, 110_000, instance: 2, remaining: 54),
+            Turn(8, "Router 监视面板与速率卡视觉对齐", "gpt-5.5", "medium", 5_200, 88, 0, 17.8, 0.4, 9_000, 1_000, instance: 3, remaining: 37),
+            Turn(9, "整理多语言文案与截图规范", "gpt-5.5", "low", 14_800, 200, 80.0, 0, 2.2, 36_000, 30_000, completed: true, instance: 2, remaining: 54),
+            Turn(10, "核对构建产物与版本号", "gpt-5.5", "medium", 6_400, 110, 0, 72.0, 1.0, 16_000, 8_000, completed: true, instance: 1, remaining: 19),
         };
         foreach (var locale in new[] { "zh-CN", "en" })
         {

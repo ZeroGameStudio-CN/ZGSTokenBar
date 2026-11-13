@@ -9,13 +9,14 @@ internal sealed class CodexConversationTitleReader
     private readonly Dictionary<string, IndexSnapshot> _cache = new(StringComparer.OrdinalIgnoreCase);
 
     internal CodexTokenUsageSummary Apply(CodexTokenUsageSummary summary, IReadOnlyList<string> homes,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, IReadOnlyList<string>? sessionPaths = null)
     {
         var sources = new List<IndexSnapshot>(4);
         var retained = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var home in homes.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var normalizedHome = CockpitCodexInstanceActivity.NormalizeDirectory(home) ?? home;
             var path = Path.Combine(home, "session_index.jsonl");
             retained.Add(path);
             _cache.TryGetValue(path, out var cached);
@@ -50,7 +51,7 @@ internal sealed class CodexConversationTitleReader
                                 || title.Any(value => char.IsControl(value) && !char.IsWhiteSpace(value))) continue;
                             title = string.Join(' ', title.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
                             DateTimeOffset.TryParse(root.StringProperty("updated_at"), out var updatedAt);
-                            var entry = new TitleEntry(title, updatedAt);
+                            var entry = new TitleEntry(title, updatedAt, normalizedHome);
                             if (!entries.TryGetValue(id, out var prior) || entry.UpdatedAt >= prior.UpdatedAt)
                                 entries[id] = entry;
                         }
@@ -75,11 +76,28 @@ internal sealed class CodexConversationTitleReader
             _mergedTitles = titles;
             _mergedSources = sources.ToArray();
         }
+        var pathHomes = _pathHomes;
+        if (sessionPaths is { Count: > 0 } && !ReferenceEquals(sessionPaths, _lastSessionPaths))
+        {
+            pathHomes = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var sessionPath in sessionPaths)
+            {
+                if (CodexConversationUsageReader.SessionCodexHome(sessionPath) is { } sessionHome)
+                    pathHomes.TryAdd(CodexConversationUsageReader.SessionId(sessionPath), sessionHome);
+            }
+            _pathHomes = pathHomes;
+            _lastSessionPaths = sessionPaths;
+        }
         foreach (var path in _cache.Keys.Where(path => !retained.Contains(path)).ToArray()) _cache.Remove(path);
         CodexConversationTurn WithTitle(CodexConversationTurn turn)
         {
-            var title = titles.GetValueOrDefault(turn.SessionId)?.Title;
-            return string.Equals(turn.Title, title, StringComparison.Ordinal) ? turn : turn with { Title = title };
+            var entry = titles.GetValueOrDefault(turn.SessionId);
+            var title = entry?.Title;
+            var home = entry?.Home ?? pathHomes?.GetValueOrDefault(turn.SessionId) ?? turn.CodexHome;
+            return string.Equals(turn.Title, title, StringComparison.Ordinal)
+                && string.Equals(turn.CodexHome, home, StringComparison.OrdinalIgnoreCase)
+                ? turn
+                : turn with { Title = title, CodexHome = home };
         }
         return summary with
         {
@@ -118,7 +136,9 @@ internal sealed class CodexConversationTitleReader
 
     private Dictionary<string, TitleEntry>? _mergedTitles;
     private IndexSnapshot[] _mergedSources = [];
+    private Dictionary<string, string>? _pathHomes;
+    private IReadOnlyList<string>? _lastSessionPaths;
 
-    private sealed record TitleEntry(string Title, DateTimeOffset UpdatedAt);
+    private sealed record TitleEntry(string Title, DateTimeOffset UpdatedAt, string Home);
     private sealed record IndexSnapshot(long Length, long WriteTicks, IReadOnlyDictionary<string, TitleEntry> Titles);
 }

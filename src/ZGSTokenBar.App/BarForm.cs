@@ -473,13 +473,13 @@ internal sealed partial class BarForm : Form
         return buckets;
     }
 
-    /// <summary>Codex conversations joined with their live per-conversation output rates.</summary>
+    /// <summary>Codex conversations joined with their live per-conversation output rates and taskbar ring identity.</summary>
     private IReadOnlyList<CodexConversationTurn> LiveConversationRows(SystemUsageSnapshot snapshot)
     {
         if (_codexTokenUsage is not { } usage || !_activeProviders.Contains(ProviderKind.Codex)) return [];
         var now = DateTimeOffset.UtcNow;
         return CodexConversationDisplay.Select(usage.ConversationTurns,
-            snapshot.CurrentOutputRate is not null ? snapshot.LiveRate : null, now);
+            snapshot.CurrentOutputRate is not null ? snapshot.LiveRate : null, now, _snapshot);
     }
 
     public void SetSystemUsage(SystemUsageSnapshot snapshot)

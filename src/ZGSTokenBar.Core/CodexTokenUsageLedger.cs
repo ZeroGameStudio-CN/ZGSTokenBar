@@ -70,7 +70,7 @@ public sealed class CodexTokenUsageLedger
         {
             if (_pending is null && _store.TryLoadCodexTokenUsageIndex(out var index))
                 _summary = new CodexTokenUsageReader(index).Snapshot(now);
-            return _summary is null ? null : _titles.Apply(_summary, _homes());
+            return _summary is null ? null : _titles.Apply(_summary, _homes(), default, _recentSessionPaths);
         }
     }
 
@@ -115,7 +115,7 @@ public sealed class CodexTokenUsageLedger
                 };
                 _summary = PersistConversationHistory(_summary, now);
             }
-            return _summary is null ? null : _titles.Apply(_summary, _homes(), cancellationToken);
+            return _summary is null ? null : _titles.Apply(_summary, _homes(), cancellationToken, _recentSessionPaths);
         }
     }
 
@@ -132,7 +132,7 @@ public sealed class CodexTokenUsageLedger
                 LiveRateFeed = _conversations.LiveRateFeed,
             };
             _summary = PersistConversationHistory(_summary, now);
-            return _titles.Apply(_summary, _homes(), cancellationToken);
+            return _titles.Apply(_summary, _homes(), cancellationToken, _recentSessionPaths);
         }
     }
 
