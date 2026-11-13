@@ -95,6 +95,10 @@ public sealed record WindowInspection(
     public string? CoreModuleId { get; init; }
     public string? DataDirectory { get; init; }
     public bool TaskbarDocked { get; init; }
+    public bool Visible { get; init; }
+    public bool EmbeddedInTaskbar { get; init; }
+    public string? TaskbarEmbedStatus { get; init; }
+    public bool RemoteSession { get; init; }
     public double? ObservedOutputTokensPerSecond { get; init; }
     public DateTimeOffset? OutputRateCapturedAt { get; init; }
     public double? MeasuredOutputTokensPerSecond { get; init; }

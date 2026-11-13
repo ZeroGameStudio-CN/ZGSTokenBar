@@ -8,12 +8,16 @@ namespace ZGSTokenBar.App;
 /// <summary>Platform host: taskbar placement, display topology, drag-to-move, DPI/region and window messages.</summary>
 internal sealed partial class BarForm
 {
+    private const int WmWtsSessionChange = 0x02B1;
+    private bool _sessionNotificationsRegistered;
+
     public void SyncTaskbarPlacement()
     {
         if (!_taskbarDocked && _embedParent != 0) DetachFromTaskbar("undocked");
         if (_hiddenToTray
             || !_taskbarDocked
             || _taskbarDragging
+            || _embedTransition
             || IsDisposed
             || !IsHandleCreated)
         {
@@ -120,6 +124,7 @@ internal sealed partial class BarForm
         _glassFrameSize = Size.Empty;
         if (!_renderOnly)
         {
+            _sessionNotificationsRegistered = WTSRegisterSessionNotification(Handle, 0);
             _foregroundChangedHook = SetWinEventHook(
                 EventSystemForeground,
                 EventSystemForeground,
@@ -147,6 +152,11 @@ internal sealed partial class BarForm
 
     protected override void OnHandleDestroyed(EventArgs e)
     {
+        if (_sessionNotificationsRegistered)
+        {
+            _ = WTSUnRegisterSessionNotification(Handle);
+            _sessionNotificationsRegistered = false;
+        }
         if (_foregroundChangedHook != 0)
         {
             _ = UnhookWinEvent(_foregroundChangedHook);
@@ -358,6 +368,8 @@ internal sealed partial class BarForm
         var dockStateChanged = _taskbarDocked != activation.Profile.IsDocked;
         _taskbarDocked = activation.Profile.IsDocked;
         _resolvedTaskbarMonitor = null;
+        // The shell can still have had its old geometry when the first capture started.
+        TaskbarPlacement.InvalidateCache();
         if (dockStateChanged || !string.Equals(previousKey, topology.Key, StringComparison.Ordinal)) HidePopovers();
         if (_taskbarDocked) SyncTaskbarPlacement();
         else
@@ -407,7 +419,10 @@ internal sealed partial class BarForm
         base.OnDpiChanged(e);
         HidePopovers();
         UpdateDpiAndRegion();
+        TaskbarPlacement.InvalidateCache();
         ApplySnapshotLayout();
+        RepushLayeredFrame();
+        RequestTopologyRefresh(topologyMayHaveChanged: false);
     }
 
     protected override void OnVisibleChanged(EventArgs e)
@@ -618,6 +633,17 @@ internal sealed partial class BarForm
     {
         NoteEmbeddedDestroy(message.Msg);
         base.WndProc(ref message);
+        if (message.Msg == WmWtsSessionChange)
+        {
+            // Reconnecting with the same resolution need not send WM_DISPLAYCHANGE. Rebuild
+            // session-scoped placement and the layered frame even when the monitor names match.
+            _embedRetryAfter = DateTime.MinValue;
+            if (_taskbarDragging) _topologyChangedDuringDrag = true;
+            if (RemoteSession() && _embedParent != 0) DetachFromTaskbar("remote-session");
+            HidePopovers();
+            RepushLayeredFrame();
+            RequestTopologyRefresh(topologyMayHaveChanged: true);
+        }
         if (message.Msg == TaskbarCreatedMessage
             || message.Msg is WmSettingChange or WmDisplayChange)
         {
@@ -656,4 +682,10 @@ internal sealed partial class BarForm
         Region?.Dispose();
         Region = new Region(path);
     }
+
+    [DllImport("wtsapi32.dll")]
+    private static extern bool WTSRegisterSessionNotification(nint window, uint flags);
+
+    [DllImport("wtsapi32.dll")]
+    private static extern bool WTSUnRegisterSessionNotification(nint window);
 }

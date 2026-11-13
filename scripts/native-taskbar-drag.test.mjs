@@ -111,7 +111,6 @@ test('taskbar drag enumerates secondary taskbars and selects a persisted monitor
   assert.match(placement, /_cachedTracks/);
   assert.match(placement, /CanReuseCachedTracks\(/);
   assert.match(placement, /requiredMonitor/);
-  assert.match(placement, /SetWindowPositionNoZOrder/);
   assert.match(placement, /DistanceToTaskbar/);
   assert.match(placement, /DockThreshold = 32/);
   assert.match(placement, /SelectTrack\(tracks, preferredMonitor/);

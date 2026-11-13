@@ -15,6 +15,8 @@ internal static class TaskbarEmbedding
     private const int GwlExStyle = -20;
     private const long WsChild = 0x40000000L;
     private const long WsPopup = 0x80000000L;
+    private const long WsVisible = 0x10000000L;
+    private const long WsExTopmost = 0x00000008L;
     private const long WsExNoParentNotify = 0x00000004L;
     private const uint WmNull = 0x0000;
     private const uint SmtoAbortIfHung = 0x0002;
@@ -22,6 +24,7 @@ internal static class TaskbarEmbedding
     private const uint SwpNoSize = 0x0001;
     private const uint SwpNoZOrder = 0x0004;
     private const uint SwpNoActivate = 0x0010;
+    private const uint SwpFrameChanged = 0x0020;
     private const uint SwpAsyncWindowPos = 0x4000;
     private const uint GaParent = 1;
     private static readonly nint Top = 0;
@@ -90,10 +93,34 @@ internal static class TaskbarEmbedding
     internal static void Detach(nint child, (long Style, long ExStyle) original)
     {
         if (child == 0 || !IsWindow(child)) return;
-        if (IsChild(child)) _ = SetParent(child, 0);
-        SetWindowLongPtr(child, GwlStyle, (nint)original.Style);
+        var hasBounds = TryGetScreenBounds(child, out var bounds);
+        var visibleStyle = GetWindowLongPtr(child, GwlStyle).ToInt64() & WsVisible;
+        // WinForms may rebuild the styles without WS_CHILD while the native parent is still
+        // Explorer. Always clear that parent; testing WS_CHILD leaves a clipped, misplaced bar.
+        _ = SetParent(child, 0);
+        SetWindowLongPtr(child, GwlStyle, (nint)((original.Style & ~WsVisible) | visibleStyle));
         SetWindowLongPtr(child, GwlExStyle, (nint)original.ExStyle);
+        if (hasBounds)
+        {
+            // Reparenting changes the coordinate space and can remove native topmost state.
+            // Restore both before the next drag/paint, without activating or showing the bar.
+            var topmost = (original.ExStyle & WsExTopmost) != 0;
+            _ = SetWindowPos(child, topmost ? new nint(-1) : Top,
+                bounds.X, bounds.Y, bounds.Width, bounds.Height,
+                SwpNoActivate | SwpFrameChanged | (topmost ? 0 : SwpNoZOrder));
+        }
     }
+
+    internal static bool TryGetScreenBounds(nint window, out Rectangle bounds)
+    {
+        bounds = Rectangle.Empty;
+        if (window == 0 || !GetWindowRect(window, out var native)) return false;
+        bounds = Rectangle.FromLTRB(native.Left, native.Top, native.Right, native.Bottom);
+        return true;
+    }
+
+    internal static bool IsTopmost(nint window) =>
+        window != 0 && (GetWindowLongPtr(window, GwlExStyle).ToInt64() & WsExTopmost) != 0;
 
     internal static bool IsChild(nint window) =>
         window != 0 && (GetWindowLongPtr(window, GwlStyle).ToInt64() & WsChild) != 0;
@@ -132,6 +159,18 @@ internal static class TaskbarEmbedding
         public int X;
         public int Y;
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(nint window, out NativeRect bounds);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern nint FindWindow(string className, string? windowName);

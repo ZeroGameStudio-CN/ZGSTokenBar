@@ -32,7 +32,8 @@ internal sealed class DisplayTopologySnapshot
             ';',
             screens
                 .OrderBy(screen => screen.GdiName, StringComparer.OrdinalIgnoreCase)
-                .Select(screen => NormalizeGdiName(screen.GdiName) + "=" + screen.MonitorKey));
+                .Select(screen => FormattableString.Invariant(
+                    $"{NormalizeGdiName(screen.GdiName)}={screen.MonitorKey}|{screen.Primary}|{screen.Bounds.X},{screen.Bounds.Y},{screen.Bounds.Width},{screen.Bounds.Height}|{screen.WorkingArea.X},{screen.WorkingArea.Y},{screen.WorkingArea.Width},{screen.WorkingArea.Height}")));
     }
 
     public string Key { get; }

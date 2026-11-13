@@ -207,6 +207,11 @@ its on-disk hash alone does not prove the running behavior matches the source.
 `window inspect` reports the loaded App/Core module IDs, the actual UI Token
 total. Compare module IDs
 with the built DLLs instead of relying on a hash computed from a path after launch.
+It reports native screen bounds and topmost state, plus `visible`,
+`embeddedInTaskbar`, `taskbarEmbedStatus` and `remoteSession` for diagnosing taskbar
+occlusion and remote reconnects. `--taskbar-window-regressions` on the .NET test
+executable checks detach coordinates, stale-parent recovery, drag z-order and
+same-resolution session reconnects with isolated windows and synthetic topology.
 It also reports `recentConversationCount` and
 `latestTurnOutputTokensPerSecond`. The latter is output tokens divided by the
 entire turn's wall time, including tools and waiting, not server decode throughput.

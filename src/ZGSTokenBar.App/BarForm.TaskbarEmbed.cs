@@ -16,6 +16,7 @@ internal sealed partial class BarForm
     private readonly System.Windows.Forms.Timer _embedWatchdog = new() { Interval = 2000 };
     private TaskbarCreatedListener? _taskbarCreatedListener;
     private bool _embedRequested;
+    private bool _embedTransition;
     private nint _embedParent;
     private (long Style, long ExStyle)? _embedOriginalStyle;
     private bool _embedHandleLost;
@@ -39,6 +40,9 @@ internal sealed partial class BarForm
 
     /// <summary>Window origin in screen coordinates whether embedded (child) or top-level.</summary>
     private Point ScreenLocation => EmbeddedInTaskbar ? PointToScreen(Point.Empty) : Location;
+
+    internal Rectangle ScreenBounds => IsHandleCreated && TaskbarEmbedding.TryGetScreenBounds(Handle, out var bounds)
+        ? bounds : new Rectangle(ScreenLocation, Size);
 
     private void ApplyTaskbarEmbedSetting(bool enabled)
     {
@@ -82,6 +86,7 @@ internal sealed partial class BarForm
     /// <summary>Called from the docked placement path right before the bar is positioned.</summary>
     private void EnsureTaskbarEmbedding(string? resolvedMonitor)
     {
+        if (_embedTransition) return;
         if (!_embedRequested || !_taskbarDocked || _taskbarDragging || !IsHandleCreated || IsDisposed)
         {
             if (_embedParent != 0) DetachFromTaskbar(_embedRequested ? "undocked" : "off");
@@ -101,7 +106,8 @@ internal sealed partial class BarForm
             || string.Equals(Screen.FromHandle(tray).DeviceName, resolvedMonitor, StringComparison.OrdinalIgnoreCase));
         if (_embedParent != 0)
         {
-            if (_embedParent == tray && onPrimary && TaskbarEmbedding.ParentOf(Handle) == tray) return;
+            if (_embedParent == tray && onPrimary && TaskbarEmbedding.ParentOf(Handle) == tray
+                && TaskbarEmbedding.IsChild(Handle)) return;
             DetachFromTaskbar(onPrimary ? "taskbar-changed" : "secondary-monitor");
             if (!onPrimary) return;
         }
@@ -111,7 +117,19 @@ internal sealed partial class BarForm
             return;
         }
         if (DateTime.UtcNow < _embedRetryAfter) return;
-        var original = TaskbarEmbedding.Attach(Handle, tray, out var failure);
+        (long Style, long ExStyle)? original;
+        string failure;
+        _embedTransition = true;
+        try
+        {
+            original = TaskbarEmbedding.Attach(Handle, tray, out failure);
+            if (original is not null)
+            {
+                _embedOriginalStyle = original;
+                _embedParent = tray;
+            }
+        }
+        finally { _embedTransition = false; }
         if (original is null)
         {
             TaskbarEmbedStatus = "fallback:" + failure;
@@ -119,8 +137,6 @@ internal sealed partial class BarForm
             System.Diagnostics.Trace.WriteLine("ZGSTokenBar: taskbar embed fallback: " + failure);
             return;
         }
-        _embedOriginalStyle = original;
-        _embedParent = tray;
         _embedHungTicks = 0;
         TaskbarEmbedStatus = "embedded";
         TaskbarPlacement.InvalidateCache();
@@ -134,17 +150,21 @@ internal sealed partial class BarForm
     {
         if (_embedParent == 0) return;
         _embedParent = 0;
-        if (IsHandleCreated && _embedOriginalStyle is { } original) TaskbarEmbedding.Detach(Handle, original);
-        _embedOriginalStyle = null;
+        _embedTransition = true;
+        try
+        {
+            if (IsHandleCreated && _embedOriginalStyle is { } original) TaskbarEmbedding.Detach(Handle, original);
+            _embedOriginalStyle = null;
+        }
+        finally { _embedTransition = false; }
         TaskbarEmbedStatus = _embedRequested ? "fallback:" + reason : "off";
         TaskbarPlacement.InvalidateCache();
         RepushLayeredFrame();
-        if (IsHandleCreated && Visible && _taskbarDocked && !_taskbarDragging) SyncTaskbarPlacement();
     }
 
     private void EmbedWatchdogTick()
     {
-        if (!_embedRequested || IsDisposed) return;
+        if (!_embedRequested || _embedTransition || IsDisposed) return;
         if (_embedHandleLost)
         {
             // Explorer went away and destroyed our child window with it; rebuild a top-level
@@ -170,12 +190,16 @@ internal sealed partial class BarForm
                 // A console session was taken over by Remote Desktop: leave the taskbar now; the
                 // watchdog re-embeds once the session is back on the console.
                 DetachFromTaskbar("remote-session");
+                RequestTopologyRefresh(topologyMayHaveChanged: true);
+                if (_taskbarDocked) SyncTaskbarPlacement();
                 return;
             }
-            if (!TaskbarEmbedding.IsAlive(_embedParent) || TaskbarEmbedding.ParentOf(Handle) != _embedParent)
+            if (!TaskbarEmbedding.IsAlive(_embedParent) || TaskbarEmbedding.ParentOf(Handle) != _embedParent
+                || !TaskbarEmbedding.IsChild(Handle))
             {
                 DetachFromTaskbar("taskbar-lost");
                 _embedRetryAfter = DateTime.UtcNow + TimeSpan.FromSeconds(4);
+                if (_taskbarDocked) SyncTaskbarPlacement();
                 return;
             }
             if (TaskbarEmbedding.IsHung(_embedParent))
@@ -186,6 +210,7 @@ internal sealed partial class BarForm
                     // hung Explorer can freeze the bar too.
                     DetachFromTaskbar("explorer-hung");
                     _embedRetryAfter = DateTime.UtcNow + EmbedRetryAfterHang;
+                    if (_taskbarDocked) SyncTaskbarPlacement();
                 }
                 return;
             }
@@ -225,6 +250,7 @@ internal sealed partial class BarForm
     private void DisposeTaskbarEmbedding()
     {
         _embedClosing = true;
+        _embedTransition = true;
         _embedWatchdog.Stop();
         _embedWatchdog.Dispose();
         _taskbarCreatedListener?.DestroyHandle();

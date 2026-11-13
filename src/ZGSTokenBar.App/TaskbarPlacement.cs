@@ -11,7 +11,6 @@ internal static class TaskbarPlacement
     private const int Gap = 6;
     private const int DockThreshold = 32;
     private const int MonitorSwitchInset = 8;
-    private const uint SetWindowPositionNoZOrder = 0x0004;
     private const uint SetWindowPositionNoActivate = 0x0010;
     private static readonly nint TopMostWindow = new(-1);
     private static PlacementTrack[]? _cachedTracks;
@@ -324,12 +323,12 @@ internal static class TaskbarPlacement
         if (TaskbarEmbedding.IsChild(window)) return TaskbarEmbedding.TryPlaceChild(window, location, size, keepZOrder: true);
         return SetWindowPos(
             window,
-            0,
+            TopMostWindow,
             location.X,
             location.Y,
             size.Width,
             size.Height,
-            SetWindowPositionNoActivate | SetWindowPositionNoZOrder);
+            SetWindowPositionNoActivate);
     }
 
     public static bool ShouldHideForFullscreen()

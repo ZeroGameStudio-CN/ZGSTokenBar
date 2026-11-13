@@ -312,6 +312,16 @@ if (args.Length == 1
     }
 }
 
+if (args.Length == 1 && args[0] == "--taskbar-window-regressions")
+{
+    System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
+    TestDisplayTopologyIdentity();
+    TestTaskbarEmbeddingWithFakeTaskbar();
+    TestNativeWindowLifecycle();
+    Console.WriteLine("PASS taskbar detach, drag z-order and session reconnect regressions");
+    return 0;
+}
+
 if (args.Length == 1
     && string.Equals(args[0], "--codex-startup-cache", StringComparison.OrdinalIgnoreCase))
 {
@@ -11326,6 +11336,19 @@ static void TestDisplayTopologyIdentity()
     Equal(local.Key, reordered.Key, "topology key ignores GDI numbering, order, geometry, resolution, primary, and work area");
     Equal(false, string.Equals(local.IdentitySignature, reordered.IdentitySignature, StringComparison.Ordinal), "settle signature retains GDI mapping changes");
 
+    var resized = DisplayTopology.CreateSnapshot("console", localSources.Select(source => source with
+    {
+        Bounds = new Rectangle(source.Bounds.Location, new Size(1280, 720)),
+    }));
+    Equal(local.Key, resized.Key, "resolution changes retain the saved placement profile");
+    Equal(false, local.IdentitySignature == resized.IdentitySignature, "resolution changes must settle before placement is activated");
+    var workAreaChanged = DisplayTopology.CreateSnapshot("console", localSources.Select(source => source with
+    {
+        WorkingArea = Rectangle.Inflate(source.WorkingArea, 0, -12),
+    }));
+    Equal(local.Key, workAreaChanged.Key, "taskbar geometry changes retain the saved profile");
+    Equal(false, local.IdentitySignature == workAreaChanged.IdentitySignature, "taskbar geometry participates in settling");
+
     var remote = DisplayTopology.CreateSnapshot("rdp", localSources);
     Equal(false, string.Equals(local.Key, remote.Key, StringComparison.Ordinal), "console and RDP topologies are isolated");
     var single = DisplayTopology.CreateSnapshot("console", [localSources[1]]);
@@ -11854,6 +11877,18 @@ static void TestNativeWindowLifecycle()
                 form.Hide();
                 System.Windows.Forms.Application.DoEvents();
                 Equal(false, form.Visible, "production form hide path succeeds");
+                form.HideToTray();
+
+                var remoteTopology = DisplayTopology.CreateSnapshot(
+                    "rdp", [new(deviceName, "path:lifecycle-monitor", true, bounds, workingArea)]);
+                topology = remoteTopology;
+                _ = NativeWindowMethods.SendMessage(handle, 0x02B1, 3, 0);
+                Equal(true, PumpWindowMessagesUntil(
+                    () => form.ActiveTopologyForAcceptance?.SessionClass == "rdp"
+                        && !form.TopologyCaptureRunningForAcceptance,
+                    TimeSpan.FromSeconds(5)), "a session reconnect refreshes placement without a display-change message");
+                Equal(false, form.Visible, "session refresh preserves a hidden window");
+                Equal(true, form.ScreenBounds.Width > 0, "inspection resolves native screen bounds");
             }
 
             using var delayedCaptureEntered = new ManualResetEventSlim();
@@ -12559,9 +12594,12 @@ static void TestTaskbarEmbeddingWithFakeTaskbar()
         Location = new Point(10, 10),
         Size = new Size(120, 30),
         Opacity = .01,
+        TopMost = true,
     };
     child.Show();
     System.Windows.Forms.Application.DoEvents();
+    Check(TaskbarPlacement.ShowAt(child.Handle, new Point(10, 10), child.Size), "overlay is placed through the production topmost path");
+    Check(TaskbarEmbedding.IsTopmost(child.Handle), "overlay starts natively topmost before embedding");
     var original = TaskbarEmbedding.Attach(child.Handle, parent, out var failure);
     Check(original is not null, "attach succeeds against a responsive parent: " + failure);
     Check(TaskbarEmbedding.ParentOf(child.Handle) == parent && TaskbarEmbedding.IsChild(child.Handle), "child is re-parented with WS_CHILD");
@@ -12571,6 +12609,31 @@ static void TestTaskbarEmbeddingWithFakeTaskbar()
     Check(screen == new Point(140, 69), $"embedded child lands at the requested screen point (got {screen})");
     TaskbarEmbedding.Detach(child.Handle, original!.Value);
     Check(!TaskbarEmbedding.IsChild(child.Handle) && TaskbarEmbedding.ParentOf(child.Handle) != parent, "detach restores a top-level window");
+    Check(TaskbarEmbedding.TryGetScreenBounds(child.Handle, out var detachedBounds)
+        && detachedBounds.Location == screen, "detach preserves screen coordinates at a nonzero taskbar origin");
+    Check(TaskbarEmbedding.IsTopmost(child.Handle), "detach restores native topmost state immediately");
+
+    original = TaskbarEmbedding.Attach(child.Handle, parent, out failure);
+    Check(original is not null, "attach before the WinForms style reset succeeds: " + failure);
+    Check(TaskbarPlacement.ShowAt(child.Handle, new Point(160, 72), child.Size), "style-reset fixture is placed");
+    System.Windows.Forms.Application.DoEvents();
+    // WinForms can regenerate its top-level style while SetParent still points at Explorer.
+    // This recreates the live failure without touching Explorer or injecting pointer input.
+    var style = NativeWindowMethods.GetWindowLongPtr(child.Handle, -16).ToInt64();
+    _ = NativeWindowMethods.SetWindowLongPtr(child.Handle, -16, (nint)(style & ~0x40000000L));
+    Check(!TaskbarEmbedding.IsChild(child.Handle) && TaskbarEmbedding.ParentOf(child.Handle) == parent,
+        "style reset leaves a stale native parent even without WS_CHILD");
+    Check(TaskbarEmbedding.TryGetScreenBounds(child.Handle, out var beforeDetach), "stale-parent bounds are available");
+    TaskbarEmbedding.Detach(child.Handle, original!.Value);
+    Check(TaskbarEmbedding.ParentOf(child.Handle) != parent, "detach clears a stale parent when WS_CHILD is already absent");
+    Check(TaskbarEmbedding.TryGetScreenBounds(child.Handle, out detachedBounds)
+        && detachedBounds == beforeDetach, "stale-parent recovery preserves screen bounds");
+    Check(child.Visible && TaskbarEmbedding.IsTopmost(child.Handle), "stale-parent recovery keeps the overlay visible and topmost");
+
+    _ = NativeWindowMethods.SetWindowPos(child.Handle, new nint(-2), 0, 0, 0, 0, 0x0013);
+    Check(!TaskbarEmbedding.IsTopmost(child.Handle), "drag fixture starts below topmost windows");
+    Check(TaskbarPlacement.MoveAt(child.Handle, new Point(180, 76), child.Size), "overlay drag placement succeeds");
+    Check(TaskbarEmbedding.IsTopmost(child.Handle), "dragging reasserts native topmost state");
 
     original = TaskbarEmbedding.Attach(child.Handle, parent, out failure);
     Check(original is not null, "re-attach succeeds: " + failure);
@@ -13760,6 +13823,15 @@ sealed class UnknownLengthContent(byte[] payload) : HttpContent
 
 static class NativeWindowMethods
 {
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    internal static extern nint GetWindowLongPtr(nint window, int index);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    internal static extern nint SetWindowLongPtr(nint window, int index, nint value);
+
+    [DllImport("user32.dll")]
+    internal static extern bool SetWindowPos(nint window, nint insertAfter, int x, int y, int width, int height, uint flags);
+
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool IsWindow(nint window);
