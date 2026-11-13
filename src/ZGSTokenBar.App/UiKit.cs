@@ -416,7 +416,13 @@ internal static class UiPaint
         }
 
         using var todayPen = new Pen(Color.White.WithAlpha(200), 1);
-        using var hoverPen = new Pen(UiPalette.Slate100.WithAlpha(220), 1.2f);
+        using var hoverGlowPen = new Pen(Color.FromArgb(70, 199, 210, 254), 2f);
+        using var hoverPen = new Pen(Color.White.WithAlpha(235), 1.3f);
+        static Color Brighten(Color color, int delta) => Color.FromArgb(
+            color.A,
+            Math.Min(255, color.R + delta),
+            Math.Min(255, color.G + delta),
+            Math.Min(255, color.B + delta));
         for (var week = 0; week < layout.Weeks; week++)
         {
             var x = layout.OriginX + week * (layout.Cell + layout.HGap);
@@ -425,11 +431,14 @@ internal static class UiPaint
                 var tokens = week < values.Count ? values[week] : 0;
                 var box = WeeklyBarBounds(layout, week, tokens, peak);
                 var radius = Math.Min(3, layout.Cell / 3);
-                using var brush = new SolidBrush(Level(tokens));
+                var hovered = week == hitWeek;
+                using var brush = new SolidBrush(hovered ? Brighten(Level(tokens), 28) : Level(tokens));
                 FillRounded(g, brush, box, radius);
-                if (week == hitWeek)
+                if (hovered)
                 {
-                    using var outline = RoundedPath(RectangleF.Inflate(box, -0.4f, -0.4f), radius);
+                    using var glow = RoundedPath(RectangleF.Inflate(box, 0.8f, 0.8f), radius + 0.6f);
+                    g.DrawPath(hoverGlowPen, glow);
+                    using var outline = RoundedPath(RectangleF.Inflate(box, -0.3f, -0.3f), radius);
                     g.DrawPath(hoverPen, outline);
                 }
                 continue;
@@ -442,12 +451,17 @@ internal static class UiPaint
                 var tokens = index < activity.Days.Count && date <= activity.Today ? activity.Days[index] : 0;
                 var box = new RectangleF(x, layout.OriginY + row * (layout.Cell + layout.VGap), layout.Cell, layout.Cell);
                 var emptyFuture = date > activity.Today;
+                var hovered = !emptyFuture && week == hitWeek && row == hitDay;
                 var radius = Math.Min(2.4f, layout.Cell / 3);
-                using (var brush = new SolidBrush(emptyFuture ? Color.FromArgb(28, 31, 38) : Level(tokens)))
+                var fill = emptyFuture ? Color.FromArgb(28, 31, 38) : Level(tokens);
+                if (hovered) fill = Brighten(fill, 28);
+                using (var brush = new SolidBrush(fill))
                     FillRounded(g, brush, box, radius);
-                if (week == hitWeek && row == hitDay)
+                if (hovered)
                 {
-                    using var outline = RoundedPath(RectangleF.Inflate(box, -0.4f, -0.4f), Math.Min(2f, layout.Cell / 3));
+                    using var glow = RoundedPath(RectangleF.Inflate(box, 0.9f, 0.9f), Math.Min(3f, layout.Cell / 3 + 0.6f));
+                    g.DrawPath(hoverGlowPen, glow);
+                    using var outline = RoundedPath(RectangleF.Inflate(box, -0.3f, -0.3f), Math.Min(2.2f, layout.Cell / 3));
                     g.DrawPath(hoverPen, outline);
                 }
                 else if (index == todayIndex)
@@ -479,17 +493,30 @@ internal static class UiPaint
         PointF point,
         out string label,
         out int hitWeek,
-        out int hitDay)
+        out int hitDay) =>
+        TryHitActivityHeatmap(bounds, activity, point, chinese: true, out label, out hitWeek, out hitDay, out _);
+
+    internal static bool TryHitActivityHeatmap(
+        RectangleF bounds,
+        TokenActivityView activity,
+        PointF point,
+        bool chinese,
+        out string label,
+        out int hitWeek,
+        out int hitDay,
+        out RectangleF hitBounds)
     {
         label = string.Empty;
         hitWeek = -1;
         hitDay = -1;
+        hitBounds = RectangleF.Empty;
         if (bounds.Width <= 0 || bounds.Height <= 0 || !bounds.Contains(point)) return false;
 
         var layout = ComputeActivityHeatmapLayout(bounds, activity);
         if (layout.Weekly)
         {
             var values = activity.WeekTotals;
+            var peak = values.Count == 0 ? 0 : values.Max();
             for (var week = 0; week < layout.Weeks; week++)
             {
                 var x = layout.OriginX + week * (layout.Cell + layout.HGap);
@@ -502,11 +529,14 @@ internal static class UiPaint
                 var tokens = week < values.Count ? values[week] : 0;
                 label = $"{weekStart.Month}/{weekStart.Day}–{weekEnd.Month}/{weekEnd.Day} · {NativeText.FormatTokenCount(tokens)}";
                 hitWeek = week;
+                hitBounds = WeeklyBarBounds(layout, week, tokens, peak);
                 return true;
             }
             return false;
         }
 
+        var zhWeekdays = new[] { "一", "二", "三", "四", "五", "六", "日" };
+        var enWeekdays = new[] { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" };
         for (var week = 0; week < layout.Weeks; week++)
         {
             var x = layout.OriginX + week * (layout.Cell + layout.HGap);
@@ -519,9 +549,11 @@ internal static class UiPaint
                 if (!RectangleF.Inflate(box, 1.2f, 1.2f).Contains(point)) continue;
 
                 var tokens = index < activity.Days.Count ? activity.Days[index] : 0;
-                label = $"{date.Month}/{date.Day} · {NativeText.FormatTokenCount(tokens)}";
+                var dayName = chinese ? $"周{zhWeekdays[row]}" : enWeekdays[row];
+                label = $"{date.Month}/{date.Day} {dayName} · {NativeText.FormatTokenCount(tokens)}";
                 hitWeek = week;
                 hitDay = row;
+                hitBounds = box;
                 return true;
             }
         }

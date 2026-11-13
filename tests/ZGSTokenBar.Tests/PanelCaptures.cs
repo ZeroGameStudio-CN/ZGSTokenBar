@@ -56,8 +56,18 @@ internal static class PanelCaptures
             };
             Save(directory, $"panel-rates-{locale}.png", popover => popover.RenderForTest(rateContent, text, theme, 144));
             Save(directory, $"panel-rates-sessions-{locale}.png", popover => popover.RenderForTest(rateContent with { Conversations = turns }, text, theme, 144));
-            Save(directory, $"panel-rates-activity-daily-{locale}.png", popover => popover.RenderForTest(rateContent with { Conversations = turns }, text, theme, 144));
-            Save(directory, $"panel-rates-activity-weekly-{locale}.png", popover => popover.RenderForTest(rateContent with { Conversations = turns, Activity = weekly }, text, theme, 144));
+            Save(directory, $"panel-rates-activity-daily-{locale}.png", popover =>
+            {
+                using (popover.RenderForTest(rateContent with { Conversations = turns }, text, theme, 144)) { }
+                popover.UpdateHoverAtLogicalPoint(new PointF(214, 262));
+                return popover.RenderForTest(rateContent with { Conversations = turns }, text, theme, 144);
+            });
+            Save(directory, $"panel-rates-activity-weekly-{locale}.png", popover =>
+            {
+                using (popover.RenderForTest(rateContent with { Conversations = turns, Activity = weekly }, text, theme, 144)) { }
+                popover.UpdateHoverAtLogicalPoint(new PointF(214, 262));
+                return popover.RenderForTest(rateContent with { Conversations = turns, Activity = weekly }, text, theme, 144);
+            });
             Save(directory, $"panel-system-{locale}.png", popover => popover.RenderForTest(new SystemUsagePopoverContent(snapshot, false), text, theme, 144));
         }
 

@@ -125,16 +125,19 @@ internal static class LiveMetricTests
             && popover.EffectiveActivityGrain == TokenActivityGrain.Weekly,
             "Clicking Weekly on the segmented toggle switches the activity chart grain.");
         popover.UpdateHoverAtLogicalPoint(new System.Drawing.PointF(276, 260));
-        Check(popover.HoverHeatmapLabelForAcceptance is { Length: > 0 } weeklyLabel && weeklyLabel.Contains('–') && weeklyLabel.Contains('·'),
-            "Hovering a weekly bar reports its week range and token total.");
+        Check(popover.HoverHeatmapLabelForAcceptance is { Length: > 0 } weeklyLabel && weeklyLabel.Contains('–') && weeklyLabel.Contains('·')
+                && popover.HoverHeatmapBoundsForAcceptance.Width > 0,
+            "Hovering a weekly bar reports its week range, token total and target bounds.");
         Check(popover.SelectActivityGrainAtLogicalPoint(new System.Drawing.PointF(195, 221))
             && popover.EffectiveActivityGrain == TokenActivityGrain.Daily,
             "Clicking Daily on the segmented toggle switches back to the daily heatmap.");
         popover.UpdateHoverAtLogicalPoint(new System.Drawing.PointF(276, 260));
-        Check(popover.HoverHeatmapLabelForAcceptance is { Length: > 0 } dailyLabel && dailyLabel.Contains('/') && dailyLabel.Contains('·'),
-            "Hovering a daily heatmap cell reports its date and token total.");
+        Check(popover.HoverHeatmapLabelForAcceptance is { Length: > 0 } dailyLabel && dailyLabel.Contains('/') && dailyLabel.Contains('周') && dailyLabel.Contains('·')
+                && popover.HoverHeatmapBoundsForAcceptance.Width > 0,
+            "Hovering a daily heatmap cell reports its date, weekday, token total and target bounds.");
         popover.UpdateHoverAtLogicalPoint(null);
-        Check(popover.HoverHeatmapLabelForAcceptance is null, "Leaving the heatmap clears the hover readout.");
+        Check(popover.HoverHeatmapLabelForAcceptance is null && popover.HoverHeatmapBoundsForAcceptance.IsEmpty,
+            "Leaving the heatmap clears the hover readout and target bounds.");
 
         popover.UpdateContent(new SystemUsagePopoverContent(snapshot, true), text);
         Check(!popover.LiveRatesContentForAcceptance && popover.ProcessRowCountForAcceptance == 1,

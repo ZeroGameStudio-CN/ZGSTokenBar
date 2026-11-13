@@ -158,7 +158,8 @@ PR #47 备份：`release\local-backups\PRE-PR47-CLOCKWISE-20261112-172737`。
 
 ## 关键文件
 
-- `src/ZGSTokenBar.App/SystemUsagePopoverForm.cs` — 速率面板绘制、两栏、五格统计、会话两行、排序。
+- `src/ZGSTokenBar.App/SystemUsagePopoverForm.cs` — 速率面板绘制、两栏、3×2 分组统计卡（含缓存）、活动悬停浮层、会话两行。
+- `src/ZGSTokenBar.App/RouterMonitorForm.cs`、`RouterModule.cs` — Router 后台预热数据与按变更按需刷新历史、减少打开重排。
 - `src/ZGSTokenBar.App/BarForm.cs` — `LiveConversationRows`（目前只接 Codex）。
 - `src/ZGSTokenBar.App/UiKit.cs` — `UiPaint.Segmented`、`UiPaint.ActivityHeatmap`、`UiIcons`。
 - `src/ZGSTokenBar.Core/TokenActivityCalendar.cs`、`TokenActivityView`。

@@ -64,6 +64,10 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     private int _historyLoadOffset = -1, _queueGeneration;
     private bool _queueLoading, _applyingQueue, _hasHistoryCounts;
     private int _completedCount, _failedCount;
+    private Size _appliedWindowSize;
+    private PopoverTailSide _appliedTailSide = PopoverTailSide.Bottom;
+    private int _appliedTailOffset = -1;
+    private string _historySignature = "";
     private string? _project;
     internal RouterSnapshot? Snapshot => _snapshot;
     internal string FreshnessText => _freshness.Text;
@@ -253,7 +257,17 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         SuspendLayout();
         if (Math.Abs(nextScale - _popoverScale) > .001) Scale(new SizeF(nextScale / _popoverScale, nextScale / _popoverScale));
         _popoverScale = nextScale;
-        ClientSize = new Size((int)(PreferredBodySize.Width * nextScale), (int)(PreferredBodySize.Height * nextScale));
+        _bodySize = new Size((int)(PreferredBodySize.Width * nextScale), (int)(PreferredBodySize.Height * nextScale));
+        var tail = (int)(8 * nextScale);
+        _tailSide = PopoverTailSide.Bottom;
+        _tailOffset = _bodySize.Width / 2f;
+        var windowSize = new Size(_bodySize.Width, _bodySize.Height + tail);
+        Padding = new Padding(2, 2, 2, 2 + tail);
+        ClientSize = windowSize;
+        using (var path = SurfacePath()) { var old = Region; Region = new Region(path); old?.Dispose(); }
+        _appliedWindowSize = windowSize;
+        _appliedTailSide = _tailSide;
+        _appliedTailOffset = (int)Math.Round(_tailOffset);
         ResumeLayout(false);
         _ = Handle;
         foreach (var control in Children(this)) _ = control.Handle;
@@ -261,6 +275,14 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         ApplyPalette(theme);
         _appliedScale = _popoverScale; _appliedTheme = theme;
         PerformLayout();
+    }
+
+    internal Task WarmInBackgroundAsync()
+    {
+        if (Visible || _refreshing || _controlling || IsDisposed) return Task.CompletedTask;
+        if (_snapshot is not null && (DateTimeOffset.UtcNow - _snapshot.ReceivedAt).TotalSeconds < 6)
+            return Task.CompletedTask;
+        return RefreshViewAsync();
     }
 
     internal void ShowFor(BarForm owner, Rectangle anchor, bool pinned, float scale, QuotaBackgroundTheme theme)
@@ -301,11 +323,26 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         var tail = (int)(8 * _popoverScale);
         var placement = TaskbarMiniPopoverMath.Place(anchor, _bodySize, tail, (int)(3 * _popoverScale), area);
         _tailSide = placement.TailSide; _tailOffset = placement.TailOffset;
-        Padding = new Padding(2 + (_tailSide == PopoverTailSide.Left ? tail : 0), 2 + (_tailSide == PopoverTailSide.Top ? tail : 0),
-            2 + (_tailSide == PopoverTailSide.Right ? tail : 0), 2 + (_tailSide == PopoverTailSide.Bottom ? tail : 0));
-        ClientSize = placement.WindowSize;
+        if (_appliedWindowSize != placement.WindowSize || _appliedTailSide != _tailSide)
+        {
+            SuspendLayout();
+            Padding = new Padding(2 + (_tailSide == PopoverTailSide.Left ? tail : 0), 2 + (_tailSide == PopoverTailSide.Top ? tail : 0),
+                2 + (_tailSide == PopoverTailSide.Right ? tail : 0), 2 + (_tailSide == PopoverTailSide.Bottom ? tail : 0));
+            ClientSize = placement.WindowSize;
+            ResumeLayout(true);
+            _appliedWindowSize = placement.WindowSize;
+            _appliedTailSide = _tailSide;
+        }
         Location = placement.Location;
-        using (var path = SurfacePath()) { var old = Region; Region = new Region(path); old?.Dispose(); }
+        var tailOffsetRounded = (int)Math.Round(_tailOffset);
+        if (_appliedTailOffset != tailOffsetRounded || Region is null)
+        {
+            using var path = SurfacePath();
+            var old = Region;
+            Region = new Region(path);
+            old?.Dispose();
+            _appliedTailOffset = tailOffsetRounded;
+        }
     }
     private void SetLogicalFont(Control control, string family, float pixels, FontStyle style = FontStyle.Regular)
     {
@@ -571,7 +608,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
 
     private void ResetHistory()
     {
-        _historyGeneration++; _historyBuffer.Clear(); _historyReadAt = default;
+        _historyGeneration++; _historyBuffer.Clear(); _historyReadAt = default; _historySignature = "";
         _historyRequest?.Cancel(); _historyLoad = null; _historyLoadKey = "";
     }
 
@@ -587,6 +624,20 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         UpdateControls();
     }
 
+    private static string ComputeHistorySignature(RouterSnapshot snapshot)
+    {
+        var recorded = 0;
+        var pending = 0;
+        foreach (var row in snapshot.Projects.EnumerateArray())
+        {
+            if (RouterJson.Text(row, "key") != snapshot.ProjectKey) continue;
+            recorded = RouterJson.Integer(row, "recorded");
+            pending = RouterJson.Integer(row, "pending");
+            break;
+        }
+        return $"{snapshot.InstanceId}|{snapshot.ProjectKey}|{recorded}|{pending}|{RouterJson.Text(snapshot.View, "requestId")}";
+    }
+
     internal async Task RefreshViewAsync()
     {
         if (_refreshing || _controlling || IsDisposed) return;
@@ -597,14 +648,21 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
             var snapshot = await _client.SnapshotAsync(_project, _stop.Token);
             if (generation != _generation || IsDisposed) return;
             ApplySnapshot(snapshot);
-            await RefreshQueueAsync();
+            var signature = ComputeHistorySignature(snapshot);
+            var historyDue = !InteractionOpen
+                && _historyOffset == 0
+                && (_historyReadAt == default
+                    || !string.Equals(_historySignature, signature, StringComparison.Ordinal)
+                    || (DateTimeOffset.UtcNow - _historyReadAt).TotalSeconds >= 60);
+            if (historyDue)
+                await Task.WhenAll(RefreshQueueAsync(), HistoryAsync(forceRefresh: true));
+            else
+                await RefreshQueueAsync();
             if (_openDataPending)
             {
                 _openDataPending = false;
                 PerfTrace.Note($"router.panel.open-to-data {System.Diagnostics.Stopwatch.GetElapsedTime(_openDataStamp).TotalMilliseconds:0.00}ms");
             }
-            if (!InteractionOpen && _historyOffset == 0 && (DateTimeOffset.UtcNow - _historyReadAt).TotalSeconds >= 10)
-                await HistoryAsync(forceRefresh: true);
         }
         catch (Exception e) when (Expected(e))
         { if (!IsDisposed && !_stop.IsCancellationRequested && generation == _generation) ApplyUnavailable(e is RouterMonitorHttpException monitor ? monitor.UserMessage : e.Message); }
@@ -737,6 +795,8 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
                 _completedCount = RouterJson.Integer(counts, "completed");
                 _failedCount = RouterJson.Integer(counts, "failed");
                 _hasHistoryCounts = true;
+                if (kind == "all" && outcome == "finished" && day == "all" && string.IsNullOrWhiteSpace(query) && _snapshot is { } currentSnapshot)
+                    _historySignature = ComputeHistorySignature(currentSnapshot);
                 UpdateOverviewStats();
             }
             _statistics = $"成功 {RouterJson.Integer(counts, "completed")} · 失败 {RouterJson.Integer(counts, "failed")} · 取消 {RouterJson.Integer(counts, "cancelled")}" + Environment.NewLine
