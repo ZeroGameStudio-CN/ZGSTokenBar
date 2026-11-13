@@ -1,5 +1,17 @@
 # 面板活动统一（feat/panel-activity-unify）交接
 
+## 交付状态（2026-11-13）
+
+- [PR #50](https://github.com/ZeroGameStudio-CN/ZGSTokenBar/pull/50) 已合入 `main`（`340d157`）。V7 包含活动图独立悬停叠层、三组双行统计卡（本周/周均、本日/日均、总量/缓存），以及 Router 后台预热、队列与历史并行读取和减少重复布局。
+- Router 面板直接调用本机 `127.0.0.1:18761` HTTP 监视服务，打开面板不启动 Router CLI。
+- 运行版通过同一面板显示路径连续三次测得端到端命令耗时 137–149 毫秒，包含 CLI 启动与本机通信；每次均确认面板可见并恢复隐藏。该数据不等同于鼠标点击到首帧的时间。
+- 后续运行代码 `66dab5c` 已通过 `npm run verify` 和 [main CI](https://github.com/ZeroGameStudio-CN/ZGSTokenBar/actions/runs/43450637136)，本机运行实例的 App/Core 模块 ID 已与该提交的全新构建核对，覆盖 V7 与远程窗口修复。
+- 已使用固定的 .NET SDK `10.0.113` 重新生成合成数据截图，核对每日/每周悬停叠层、统计卡与 Router 布局。预览期间的 `rollForward: latestFeature` 属临时配置，收尾恢复为仓库的 `disable`，不提交该放宽设置。
+
+以下保留各阶段的历史设计和约束；其中“待确认”“禁止安装”及旧版部署状态不再作为当前待办。
+
+## 历史设计记录
+
 > 分支：`feat/panel-activity-unify`（基于 `main` `8b81351`）
 > 仓库：`D:\projects\ZGSTokenBar`（远程 `ZeroGameStudio-CN/ZGSTokenBar`）
 > **未确认前禁止 merge、禁止安装、禁止动正在运行的 Bar、禁止改 AppData。**
@@ -58,7 +70,7 @@ Phase 1：检查现有数据，给出一套统一设计，用真实 WinForms 离
 - **第 2 行指标**：左侧 `turn.Model · turn.Effort`；右侧四列对齐：首 token 延迟（时钟图标 + 秒）、缓存命中率（缓存图标 + 百分比）、本轮总 token（柱状图标 + `InputTokens + OutputTokens`）、右对齐实时速度（`61.4 tok/s`，已记录翡翠绿 / 估算琥珀色，不加 `≈`）。
 - **排序**：`State == "running"` 优先，然后 `LiveRate.Total` 降序，再 `ObservedAt` 降序，最多 10 条。
 
-## 当前状态（2026-11-13 15:25 北京时间）
+## 阶段记录（2026-11-13 15:25 北京时间）
 
 - 分支：`feat/panel-activity-unify`。
 - V1：`c4d471a` Preview: compact 12-week token activity on the live-rate panel.
@@ -106,7 +118,7 @@ V4（请给用户看这批）：
 
 源文件在用户机：`C:\Users\2025\AppData\Local\Temp\panel-v4\`。
 
-## 下一步（待用户确认后才做）
+## 历史待确认事项（已由后续交付替代）
 
 1. 用户看 V4 mockup：两行布局、Codex 芯片、model/effort、running-first 排序，是否就这样。
 2. 无会话时右侧大空区：是否要在无会话时收窄回 300。
