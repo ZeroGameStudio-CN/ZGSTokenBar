@@ -22,6 +22,9 @@ Phase 1：检查现有数据，给出一套统一设计，用真实 WinForms 离
 - 去掉 24 小时曲线和原「累计」Token 卡；网络累计并入「本机网络」卡。
 - Router：保持现有 Graphite 卡片风格；**建议的四格统计条（排队 / 当前 / 今日完成 / 失败）仍待用户确认**，尚未改代码。
 - `SpendRetentionDays`：32 → **90**（保证 12 周格子刷新后还在）。`SpendHistory` API 仍只暴露 30 天；活动图走单独的 `ActivityDays`（最多 84 天）。
+- 用户对 V2 的评价：「还行」。随后要求做 V3（仍不 merge / 不安装）：
+  - 去掉会话行 tok/s 前面的「≈」（只改速率面板绘制；历史表用的 `CodexTurnLiveSpeed` 未动，那里仍用 ≈ 表示含估算）。
+  - 会话第二行横排展示：**首 token 延迟、缓存率、该轮总 token**（图标标注，用满行宽）。
 
 ### 「已追平」原逻辑（已从 UI 移除，只记录在此）
 
@@ -35,22 +38,36 @@ Phase 1：检查现有数据，给出一套统一设计，用真实 WinForms 离
 
 `CaughtUp` = `state.Offset >= length`（解析到 EOF）。页脚原文：`live == null` →「待读取」；`Pending > 0` →「N 条待追平」；否则「已追平」。「N 个 Codex 会话」是已追上、未失败的活会话数（`LiveOutputRate.Sessions`），不是历史会话总数。这是日志追平状态，**不是**用量统计，用户要求去掉。
 
-## 当前状态（2026-11-13 13:55 北京时间）
+### 首 token 怎么算（V3）
+
+可靠来源只有 Codex 会话日志里，`event_msg` 的 `task_complete` / `turn_aborted` 载荷字段 **`time_to_first_token_ms`**：有限、≥ 0、且不超过该轮时长（`end - StartedAt`）时，写入 `CodexConversationTurn.FirstTokenSeconds = ms / 1000`。这是官方记录的 **首 token 延迟（秒）**，不是 tok/s。界面显示为 `1.2s`（≥ 10 秒则不留小数），配时钟图标。
+
+若该字段缺失（轮次还在跑、旧日志没有、或数值不合理），显示「—」。**不会**用「第一次 `token_count` 时间 − 开始时间」去估：`token_count` 是阶段性记账，可能夹着工具/等待，不能当成 TTFT。历史面板也已约定「首字仅使用日志记录」。
+
+「总 token」= 该轮 `InputTokens + OutputTokens`（缓存是输入的子集，单独用命中率表示）。输入未知且输出为 0 时显示「—」，否则至少显示已记录的输出。
+
+## 当前状态（2026-11-13 14:00 北京时间）
 
 - 分支已推远程：`origin/feat/panel-activity-unify`。
-- V1 已提交：`c4d471a` Preview: compact 12-week token activity on the live-rate panel.
-- 交接文档已提交并推送：`5a5efa3` Docs: handoff for the panel-activity-unify preview branch.
-- **V2 代码已落地、测试工程 Release 编译 0 警告 0 错误，离屏 PNG 已出。本提交含 V2 代码与本文档更新。未 merge、未安装。**
+- V1：`c4d471a` Preview: compact 12-week token activity on the live-rate panel.
+- 交接文档初稿：`5a5efa3` Docs: handoff for the panel-activity-unify preview branch.
+- V2：`d4419a5` Preview: widen the rate panel and use a five-stat activity row.
+- **V3 代码已落地、测试工程 Release 编译 0 警告 0 错误，离屏 PNG 已出。本提交含 V3 代码与本文档更新。未 merge、未安装。**
 - 已安装的仍是 PR #47 构建：`D:\projects\ZGSTokenBar\release\ZGSTokenBar-v3.0.0\ZGSTokenBar.exe`。不要动它。
 
-### V2 实现要点
+### V2 实现要点（仍有效）
 
-- `SystemUsagePopoverForm.LiveRateBodyWidth = 640`（约 1.5× 系统用量宽）；两栏：左约 300（速率 + 活动 + 网络），右约 304（活跃会话，最多 8 行）。
-- 系统用量仍用 `LogicalBodyWidth = 300`。测试：`TestSystemUsagePopoverPresentation`；离屏系统面板 450×540（144 DPI），速率面板 960×702。
-- `LiveRateBodyHeight = 296`，高度不再叠会话区（会话改到右侧）。无会话时右侧留空（可后续再收窄，尚未做）。
-- `TokenActivityView` 增加 `TodayTokens`（`FromDailyTotals` 从同一 `byDay` 取值）。
-- 页脚废话已删除。
-- 离屏 fixture 用合成会话标题，没有真实会话名。
+- `SystemUsagePopoverForm.LiveRateBodyWidth = 640`；两栏：左约 300（速率 + 活动 + 网络），右约 304（活跃会话，最多 8 行）。
+- 系统用量仍用 `LogicalBodyWidth = 300`。离屏系统面板 450×540（144 DPI），速率面板 960×702。
+- `LiveRateBodyHeight = 296`，高度不再叠会话区。无会话时右侧留空（可后续再收窄，尚未做）。
+- `TokenActivityView.TodayTokens` 与热力图同一日序列。
+- 页脚废话已删除。离屏 fixture 只用合成会话标题。
+
+### V3 实现要点
+
+- 会话行 tok/s：直接画 `live.Total`（`0.#`），不再走 `CodexTurnLiveSpeed`，因此没有「≈」。估算中的会话仍用琥珀色数字，只是不再加前缀。
+- 第二行三列：`UiIcons.Clock` + 首 token 秒数，`UiIcons.Cache` + 命中率，`UiIcons.Tokens` + 该轮总 token。
+- fixture 里有两条故意不给 `FirstTokenSeconds`，用来演示「—」。
 
 ### Mockup 路径（box）
 
@@ -66,20 +83,27 @@ V1（四格统计、窄面板，仅对照）：
 - `/workspace/panel-redesign/rate-panel-weekly.png`
 - `/workspace/panel-redesign/router-panel-current.png`
 
-V2（请给用户看这批）：
+V2（两栏 + 五格统计，仅对照）：
 
-- `/workspace/panel-redesign/v2-rate-panel-daily.png`（中文，每日 + 8 条会话）
-- `/workspace/panel-redesign/v2-rate-panel-weekly.png`（中文，每周）
+- `/workspace/panel-redesign/v2-rate-panel-daily.png`
+- `/workspace/panel-redesign/v2-rate-panel-weekly.png`
 - `/workspace/panel-redesign/v2-rate-panel-daily-en.png`
 - `/workspace/panel-redesign/v2-rate-panel-weekly-en.png`
-- `/workspace/panel-redesign/v2-rate-panel-no-sessions.png`（无会话，右侧留空）
-- `/workspace/panel-redesign/v2-router-panel-current.png`（Router 现态，尚未按建议改）
+- `/workspace/panel-redesign/v2-rate-panel-no-sessions.png`
+- `/workspace/panel-redesign/v2-router-panel-current.png`
 
-源文件在用户机：`C:\Users\2025\AppData\Local\Temp\panel-v2\`。
+V3（请给用户看这批）：
+
+- `/workspace/panel-redesign/v3-rate-panel-daily.png`（中文，每日 + 8 条会话）
+- `/workspace/panel-redesign/v3-rate-panel-weekly.png`（中文，每周）
+- `/workspace/panel-redesign/v3-rate-panel-daily-en.png`
+- `/workspace/panel-redesign/v3-rate-panel-weekly-en.png`
+
+源文件在用户机：`C:\Users\2025\AppData\Local\Temp\panel-v3\`。
 
 ## 下一步（待用户确认后才做）
 
-1. 用户看 V2 mockup：五格统计、两栏宽度、8 行会话、去页脚，是否就这样。
+1. 用户看 V3 mockup：去「≈」、第二行三指标，是否就这样。
 2. 无会话时右侧大空区：是否要在无会话时收窄回 300。
 3. Router 四格统计条（排队 / 当前 / 今日完成 / 失败）是否要做；确认前不要改 Router 布局。
 4. 确认后：再谈 merge / 安装（需用户明确点头）。官方 `npm run verify` 本地跑不了（`global.json` 钉 10.0.113 + `rollForward: disable`，机器是 10.0.115）。**不要提交 rollForward 改动。** 本地预览构建可临时改、用完必须改回 `disable`。
@@ -122,13 +146,15 @@ PR #47 备份：`release\local-backups\PRE-PR47-CLOCKWISE-20261112-172737`。
 - 不要把 `SpendHistory` 从 30 天改成 90；90 天只给活动图用的 `ActivityDays`。
 - 不要改系统用量面板的 300 逻辑宽度。
 - 不要提交或汇报真实 token / 真实会话标题。
+- 不要用时间戳去估算缺失的首 token 延迟。
 - `git pull` `/workspace/zgs-agent-skills` 会因 SSH 到 100.64.0.14 超时而失败；继续用本地副本，可能偏旧。
 
 ## 关键文件
 
-- `src/ZGSTokenBar.App/SystemUsagePopoverForm.cs` — 速率面板绘制、两栏、五格统计。
-- `src/ZGSTokenBar.App/UiKit.cs` — `UiPaint.Segmented`、`UiPaint.ActivityHeatmap`。
+- `src/ZGSTokenBar.App/SystemUsagePopoverForm.cs` — 速率面板绘制、两栏、五格统计、会话第二行。
+- `src/ZGSTokenBar.App/UiKit.cs` — `UiPaint.Segmented`、`UiPaint.ActivityHeatmap`、`UiIcons`。
 - `src/ZGSTokenBar.Core/TokenActivityCalendar.cs`、`TokenActivityView`。
+- `src/ZGSTokenBar.Core/CodexConversationUsageReader.cs` — `FirstTokenSeconds` 来自 `time_to_first_token_ms`。
 - `src/ZGSTokenBar.Core/CodexTokenUsageReader.cs` — `SpendRetentionDays = 90`、`BuildActivityDays`。
 - `src/ZGSTokenBar.App/BarForm.cs` — `Activity` 从 `usage.ActivityDays` 接入。
 - `tests/ZGSTokenBar.Tests/PanelCaptures.cs` — `--panel-captures`。

@@ -605,12 +605,35 @@ internal sealed class SystemUsagePopoverForm : Form
             graphics.FillEllipse(accent, panel.X + 12, top + 8, 5, 5);
             graphics.DrawString(_text.CodexTurnName(turn), _detailFont, primary,
                 new RectangleF(panel.X + 21, top + 2, panel.Width - 112, 15), trimmed);
-            DrawString(graphics, live is null ? "—" : _text.CodexTurnLiveSpeed(turn), _metricValueFont,
+            var speed = live is null
+                ? "—"
+                : live.Total.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+            DrawString(graphics, speed, _metricValueFont,
                 live is null ? muted : accent, new RectangleF(panel.Right - 88, top + 2, 76, 15), StringAlignment.Far);
 
-            // Second (last) line: only the prompt-cache hit rate, under the speed.
-            DrawString(graphics, (zh ? "缓存 " : "cache ") + NativeText.FormatCacheHitPercent(turn.CacheHitPercent), _subtitleFont, muted,
-                new RectangleF(panel.Right - 112, top + 17, 100, 13), StringAlignment.Far);
+            // Line 2 uses the full row: first-token latency (task_complete time_to_first_token_ms),
+            // prompt-cache hit rate, and this turn's input+output tokens. Missing first-token
+            // measurements stay "—" — we do not invent a timestamp fallback.
+            var metricsTop = top + 17;
+            var col = (panel.Width - 33) / 3f;
+            void Metric(float x, Action<Graphics, RectangleF, Color> icon, string value)
+            {
+                icon(graphics, new RectangleF(x, metricsTop + 1.5f, 10, 10), UiTokens.Muted);
+                DrawString(graphics, value, _subtitleFont, muted,
+                    new RectangleF(x + 12, metricsTop, col - 14, 13), StringAlignment.Near);
+            }
+            var first = turn.FirstTokenSeconds is { } seconds && double.IsFinite(seconds) && seconds >= 0
+                ? (seconds < 10
+                    ? seconds.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)
+                    : seconds.ToString("0", System.Globalization.CultureInfo.InvariantCulture)) + "s"
+                : "—";
+            var total = Math.Max(0, turn.OutputTokens) + Math.Max(0, turn.InputTokens ?? 0);
+            var totalText = turn.InputTokens is null && turn.OutputTokens <= 0
+                ? "—"
+                : NativeText.FormatTokenCount(total);
+            Metric(panel.X + 21, UiIcons.Clock, first);
+            Metric(panel.X + 21 + col, UiIcons.Cache, NativeText.FormatCacheHitPercent(turn.CacheHitPercent));
+            Metric(panel.X + 21 + col * 2, UiIcons.Tokens, totalText);
         }
     }
 
