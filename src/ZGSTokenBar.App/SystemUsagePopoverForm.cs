@@ -16,6 +16,8 @@ internal sealed record SystemUsagePopoverContent(SystemUsageSnapshot Snapshot, b
     public IReadOnlyList<long>? HourlyTokens { get; init; }
     /// <summary>Prompt-cache figures: today's read/write tokens and hit rates (today, all retained).</summary>
     public TokenCacheStats? Cache { get; init; }
+    /// <summary>Compact 12-week token activity (Codex-style grid) plus week / average / total stats.</summary>
+    public TokenActivityView? Activity { get; init; }
 }
 
 internal sealed record TokenCacheStats(long? TodayRead, long? TodayWrite, double? TodayHitPercent, double? TotalHitPercent);
@@ -24,7 +26,7 @@ internal sealed class SystemUsagePopoverForm : Form
 {
     internal const int LogicalBodyWidth = 300;
     internal const int LogicalBodyHeight = 352;
-    private const int LiveRateBodyHeight = 428;
+    private const int LiveRateBodyHeight = 338;
     private const int LogicalTailSize = 8;
     private const int LogicalGap = 3;
     private const int ToolWindowStyle = 0x00000080;
@@ -178,7 +180,7 @@ internal sealed class SystemUsagePopoverForm : Form
 
     internal int SessionRowCountForAcceptance => _sessions.Length;
 
-    private const int TokenSectionHeight = 88;
+    private const int TokenSectionHeight = 164;
 
     private int SessionSectionHeight => !_sessionsVisible ? 0
         : SessionHeaderHeight + Math.Max(1, _sessions.Length) * SessionRowHeight + 8;
@@ -443,17 +445,32 @@ internal sealed class SystemUsagePopoverForm : Form
         TextAt(live?.Generating.ToString() ?? "—", _metricValueFont, primary, 114, 170, 28, 14, StringAlignment.Far);
         TextAt(live?.Tools.ToString() ?? "—", _metricValueFont, primary, 248, 170, 28, 14, StringAlignment.Far);
 
-        // The last 24 hours, hour by hour (UiKit area curve; never on the bar itself). Totals, today
-        // and the cache rate are grouped in the Totals card below, so this card is only the curve.
+        // Compact 12-week activity grid (Daily / Weekly) plus 本周 / 日均 / 周均 / 总量.
+        // Replaces the 24h hourly curve and the token half of the former Totals card.
         Panel(206, TokenSectionHeight - 8);
-        var hourly = _content?.HourlyTokens;
-        var peak = hourly is { Count: > 0 } ? hourly.Max() : 0;
-        TextAt(zh ? "近 24 小时 · 每小时" : "Last 24 h · hourly", _metricLabelFont, muted, 24, 215, 150, 13);
-        TextAt(peak > 0 ? (zh ? $"峰值 {NativeText.FormatTokenCount(peak)}/时" : $"peak {NativeText.FormatTokenCount(peak)}/h") : "",
-            _subtitleFont, muted, 150, 216, 126, 12, StringAlignment.Far);
-        DrawHourlyCurve(graphics, At(24, 233, 252, 36), hourly);
-        TextAt("-24h", _subtitleFont, muted, 24, 271, 60, 11);
-        TextAt(zh ? "现在" : "now", _subtitleFont, muted, 216, 271, 60, 11, StringAlignment.Far);
+        var activity = _content?.Activity;
+        TextAt(zh ? "用量活动" : "Token activity", _metricLabelFont, muted, 24, 215, 120, 13);
+        var grain = activity?.Grain ?? TokenActivityGrain.Daily;
+        UiPaint.Segmented(graphics, At(168, 212, 108, 18),
+            zh ? new[] { "每日", "每周" } : new[] { "Daily", "Weekly" },
+            grain == TokenActivityGrain.Weekly ? 1 : 0, _subtitleFont);
+        if (activity is not null)
+        {
+            UiPaint.ActivityHeatmap(graphics, At(16, 232, 268, 90), activity, _subtitleFont, zh);
+            void Stat(float x, string caption, long value)
+            {
+                TextAt(caption, _subtitleFont, muted, x, 324, 60, 11);
+                TextAt(NativeText.FormatTokenCount(value), _tableValueFont, primary, x, 336, 60, 14);
+            }
+            Stat(24, zh ? "本周" : "This week", activity.ThisWeekTokens);
+            Stat(88, zh ? "日均" : "Daily avg", activity.DayAverage);
+            Stat(152, zh ? "周均" : "Weekly avg", activity.WeekAverage);
+            Stat(216, zh ? "总量" : "Total", activity.AllTimeTotal);
+        }
+        else
+        {
+            TextAt(zh ? "暂无按日用量" : "No daily totals yet", _detailFont, muted, 24, 270, 252, 14);
+        }
         dy = TokenSectionHeight;
 
         if (_sessionsVisible)
@@ -464,66 +481,46 @@ internal sealed class SystemUsagePopoverForm : Form
             dy += SessionSectionHeight;
         }
 
-        // Network now: the same two 118-px columns as every row above, arrows drawn by UiIcons.
-        Panel(206, 58);
-        TextAt(zh ? "本机网络" : "System network", _metricLabelFont, muted, 24, 215, 130, 13);
-        TextAt(zh ? $"{snapshot.NetworkInterfaces} 个接口" : $"{snapshot.NetworkInterfaces} NIC", _subtitleFont, muted, 176, 215, 100, 13, StringAlignment.Far);
-        UiIcons.ArrowDown(graphics, At(24, 240, 9, 11), ReceiveAccent);
-        TextAt(_metrics[3].Value, _metricValueFont, receive, 37, 238, 105, 15);
-        UiIcons.ArrowUp(graphics, At(158, 240, 9, 11), SendAccent);
-        TextAt(_metrics[4].Value, _metricValueFont, send, 171, 238, 105, 15);
-
-        // Totals: traffic | tokens in two balanced columns. Each column leads with a glyph + short
-        // caption and its big total; two aligned sub-stats follow (glyph, caption, right-aligned value).
-        Panel(272, 108);
+        // Live rates plus cumulative traffic (token totals now live on the activity card).
+        Panel(206, 78);
         var history = snapshot.NetworkHistory;
-        TextAt(zh ? "累计" : "Totals", _metricLabelFont, muted, 24, 281, 50, 13);
-        if (snapshot.NetworkHistorySaveFailed || history is null)
+        TextAt(zh ? "本机网络" : "System network", _metricLabelFont, muted, 24, 215, 110, 13);
+        var cache = _content?.Cache;
+        TextAt(cache?.TodayHitPercent is { } hit
+                ? (zh ? $"缓存 {NativeText.FormatCacheHitPercent(hit)}" : $"cache {NativeText.FormatCacheHitPercent(hit)}")
+                : (zh ? $"{snapshot.NetworkInterfaces} 个接口" : $"{snapshot.NetworkInterfaces} NIC"),
+            _subtitleFont, muted, 150, 215, 126, 13, StringAlignment.Far);
+        UiIcons.ArrowDown(graphics, At(24, 236, 9, 11), ReceiveAccent);
+        TextAt(_metrics[3].Value, _metricValueFont, receive, 37, 234, 100, 15);
+        UiIcons.ArrowUp(graphics, At(158, 236, 9, 11), SendAccent);
+        TextAt(_metrics[4].Value, _metricValueFont, send, 171, 234, 105, 15);
+        if (history is null)
         {
-            TextAt(snapshot.NetworkHistorySaveFailed ? (zh ? "记录待保存/恢复" : "Checkpoint unavailable") : (zh ? "等待计数" : "Waiting for counters"),
-                _subtitleFont, muted, 86, 281, 190, 13, StringAlignment.Far);
+            TextAt(snapshot.NetworkHistorySaveFailed
+                    ? (zh ? "流量记录待保存" : "Traffic checkpoint pending")
+                    : (zh ? "等待流量计数" : "Waiting for traffic"),
+                _subtitleFont, muted, 24, 257, 252, 13);
         }
         else
         {
-            var since = TotalsSince(history.Since, snapshot.CapturedAt);
-            var sinceWidth = graphics.MeasureString(since, _subtitleFont, PointF.Empty, StringFormat.GenericTypographic).Width;
-            TextAt(since, _subtitleFont, muted, 86, 281, 190, 13, StringAlignment.Far);
-            UiIcons.Clock(graphics, At(276 - sinceWidth - 16, 282.5f, 9, 9), UiTokens.Muted);
+            UiIcons.Traffic(graphics, At(24, 258, 10, 10), UiTokens.Muted);
+            TextAt(NetworkUsageSampler.Total(history.TotalBytes), _subtitleFont, muted, 36, 257, 52, 13);
+            UiIcons.ArrowDown(graphics, At(92, 259, 8, 9), ReceiveAccent);
+            TextAt(NetworkUsageSampler.Total(history.ReceivedBytes), _subtitleFont, muted, 102, 257, 52, 13);
+            UiIcons.ArrowUp(graphics, At(158, 259, 8, 9), SendAccent);
+            TextAt(NetworkUsageSampler.Total(history.SentBytes), _subtitleFont, muted, 168, 257, 52, 13);
+            TextAt(TotalsSince(history.Since, snapshot.CapturedAt), _subtitleFont, muted, 210, 257, 66, 13, StringAlignment.Far);
         }
-        using (var column = new Pen(UiPalette.Slate500.WithAlpha(42), 1))
-            graphics.DrawLine(column, body.X + 150.5f, body.Y + dy + 300, body.X + 150.5f, body.Y + dy + 370);
-        var cache = _content?.Cache;
-        void Column(float x, Action<Graphics, RectangleF, Color> icon, string caption, string total)
-        {
-            icon(graphics, At(x, 302, 10, 10), UiTokens.Muted);
-            TextAt(caption, _subtitleFont, muted, x + 14, 300, 100, 13);
-            TextAt(total, _totalValueFont, primary, x - 1, 315, 118, 20);
-        }
-        void Stat(float x, float y, Action<Graphics, RectangleF, Color> icon, Color tone, string caption, string value, Brush valueBrush)
-        {
-            icon(graphics, At(x, y + 2, 9, 9), tone);
-            TextAt(caption, _subtitleFont, muted, x + 14, y, 50, 13);
-            TextAt(value, _tableValueFont, valueBrush, x + 40, y - .5f, 78, 14, StringAlignment.Far);
-        }
-        Column(24, UiIcons.Traffic, zh ? "流量" : "Traffic", NetworkUsageSampler.Total(history?.TotalBytes));
-        Stat(24, 340, UiIcons.ArrowDown, ReceiveAccent, zh ? "下行" : "Down", NetworkUsageSampler.Total(history?.ReceivedBytes), receive);
-        Stat(24, 357, UiIcons.ArrowUp, SendAccent, zh ? "上行" : "Up", NetworkUsageSampler.Total(history?.SentBytes), send);
-        Column(158, UiIcons.Tokens, "Token", snapshot.CumulativeTokens is { } tokens ? NativeText.FormatTokenCount(tokens) : "—");
-        Stat(158, 340, (g, r, c) => UiIcons.Calendar(g, r, c, today: true), UiTokens.Muted, zh ? "今日" : "Today",
-            _content?.TodayTokens is { } today ? NativeText.FormatTokenCount(today) : "—", _content?.TodayTokens is null ? muted : primary);
-        using (var hitBrush = new SolidBrush(RecordedAccent))
-            Stat(158, 357, UiIcons.Cache, cache?.TodayHitPercent is null ? UiTokens.Muted : RecordedAccent, zh ? "缓存" : "Cache",
-                NativeText.FormatCacheHitPercent(cache?.TodayHitPercent), cache?.TodayHitPercent is null ? muted : hitBrush);
 
         var coverage = live is null ? (zh ? "等待会话读数" : "Waiting for chat data")
             : (zh ? $"{live.Sessions} 个 Codex 会话" : $"{live.Sessions} Codex chats");
         var pending = snapshot.LiveRate?.Pending ?? 0;
-        TextAt(coverage, _subtitleFont, muted, 16, 390, 174, 12);
+        TextAt(coverage, _subtitleFont, muted, 16, 294, 174, 12);
         TextAt(pending > 0 ? (zh ? $"{pending} 条待追平" : $"{pending} catching up")
                 : live is null ? (zh ? "待读取" : "Waiting") : (zh ? "已追平" : "Caught up"),
-            _subtitleFont, muted, 190, 390, 94, 12, StringAlignment.Far);
-        TextAt(zh ? "流量仅在 Bar 运行时计入" : "Traffic counted while Bar runs", _subtitleFont, muted, 16, 407, 210, 12);
-        TextAt(snapshot.CapturedAt.ToLocalTime().ToString("HH:mm:ss"), _subtitleFont, muted, 230, 407, 54, 12, StringAlignment.Far);
+            _subtitleFont, muted, 190, 294, 94, 12, StringAlignment.Far);
+        TextAt(zh ? "流量仅在 Bar 运行时计入" : "Traffic counted while Bar runs", _subtitleFont, muted, 16, 311, 210, 12);
+        TextAt(snapshot.CapturedAt.ToLocalTime().ToString("HH:mm:ss"), _subtitleFont, muted, 230, 311, 54, 12, StringAlignment.Far);
     }
 
     /// <summary>"Since" stamp of the totals: month/day and time, with the year only when it differs.</summary>

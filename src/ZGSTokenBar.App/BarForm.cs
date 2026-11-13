@@ -419,6 +419,15 @@ internal sealed partial class BarForm : Form
             TodayTokens = _systemAnchorIsLive ? _codexTokenUsage?.TodayTokens : null,
             HourlyTokens = _systemAnchorIsLive ? HourlyTokens(DateTimeOffset.Now) : null,
             Cache = _systemAnchorIsLive && _codexTokenUsage is { } usage ? CacheStats(usage, DateTimeOffset.Now) : null,
+            Activity = _systemAnchorIsLive && _codexTokenUsage is { } tokens
+                ? TokenActivityCalendar.FromDailyTotals(
+                    tokens.ActivityDays
+                        .Where(day => DateOnly.TryParse(day.LocalDate, out _))
+                        .GroupBy(day => DateOnly.Parse(day.LocalDate))
+                        .ToDictionary(group => group.Key, group => group.Sum(day => day.Spend.TotalTokens)),
+                    DateOnly.FromDateTime(DateTime.Now),
+                    tokens.LocalTokens)
+                : null,
         };
 
     private (DateTimeOffset Hour, CodexTokenUsageSummary? Usage, long[] Buckets)? _hourlyTokensCache;

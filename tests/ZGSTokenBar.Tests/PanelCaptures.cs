@@ -30,14 +30,20 @@ internal static class PanelCaptures
         {
             var text = NativeText.For(locale);
             var theme = QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette);
+            var today = DateOnly.FromDateTime(new DateTime(2026, 11, 13));
+            var daily = ActivityFixture(today, TokenActivityGrain.Daily);
+            var weekly = daily with { Grain = TokenActivityGrain.Weekly };
             var rateContent = new SystemUsagePopoverContent(snapshot, false, true)
             {
                 TodayTokens = 1_840_000_000,
                 HourlyTokens = hourly,
                 Cache = new TokenCacheStats(1_800_000_000, 18_000_000, 99.0, 98.4),
+                Activity = daily,
             };
             Save(directory, $"panel-rates-{locale}.png", popover => popover.RenderForTest(rateContent, text, theme, 144));
             Save(directory, $"panel-rates-sessions-{locale}.png", popover => popover.RenderForTest(rateContent with { Conversations = turns }, text, theme, 144));
+            Save(directory, $"panel-rates-activity-daily-{locale}.png", popover => popover.RenderForTest(rateContent with { Conversations = turns }, text, theme, 144));
+            Save(directory, $"panel-rates-activity-weekly-{locale}.png", popover => popover.RenderForTest(rateContent with { Conversations = turns, Activity = weekly }, text, theme, 144));
             Save(directory, $"panel-system-{locale}.png", popover => popover.RenderForTest(new SystemUsagePopoverContent(snapshot, false), text, theme, 144));
         }
 
@@ -113,6 +119,25 @@ internal static class PanelCaptures
             bitmap.Save(path, ImageFormat.Png);
             Console.WriteLine(path);
         }
+
+        RouterModuleTests.CaptureMonitor(directory);
+    }
+
+    internal static TokenActivityView ActivityFixture(DateOnly today, TokenActivityGrain grain)
+    {
+        var byDay = new Dictionary<DateOnly, long>();
+        var start = TokenActivityCalendar.StartMonday(today, TokenActivityView.DefaultWeekCount);
+        for (var i = 0; i < TokenActivityView.DefaultWeekCount * 7; i++)
+        {
+            var date = start.AddDays(i);
+            if (date > today) break;
+            var weekend = date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
+            var wave = 0.55 + 0.45 * Math.Sin(i / 5.5);
+            var spike = i % 11 == 0 ? 1.8 : 1;
+            var tokens = i % 17 == 3 ? 0 : (long)((weekend ? 80_000_000d : 420_000_000d) * wave * spike);
+            byDay[date] = tokens;
+        }
+        return TokenActivityCalendar.FromDailyTotals(byDay, today, 743_000_000_000, grain: grain);
     }
 
     private static SystemUsageSnapshot Snapshot(DateTimeOffset at) =>

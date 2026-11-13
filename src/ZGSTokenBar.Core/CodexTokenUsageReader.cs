@@ -20,6 +20,8 @@ public sealed record CodexTokenUsageSummary(
     CodexSpendPeriod? Last30DaysSpend = null,
     CodexSpendHistory? SpendHistory = null)
 {
+    /// <summary>Per-day spend totals covering the compact activity window (older than SpendHistory).</summary>
+    public IReadOnlyList<CodexSpendDay> ActivityDays { get; init; } = [];
     public IReadOnlyList<CodexConversationTurn> RecentTurns { get; init; } = [];
     public IReadOnlyList<CodexConversationTurn> ConversationHistory { get; init; } = [];
     public int PendingConversationCount { get; init; }
@@ -195,7 +197,7 @@ public sealed class CodexTokenUsageReader
     internal const int InitialTailBytes = 256 * 1024;
     internal const int MaximumTailProbeBytes = 8 * 1024 * 1024;
     internal const int MaximumCandidateFiles = 4096;
-    internal const int SpendRetentionDays = 32;
+    internal const int SpendRetentionDays = 90;
     private const string StandardPricingTier = "standard";
     private const int MaximumSpendModelDisplayLength = 64;
     private const string UnknownSpendModel = "unknown";
@@ -462,7 +464,13 @@ public sealed class CodexTokenUsageReader
                 todaySpend,
                 yesterdaySpend,
                 last30DaysSpend,
-                spendHistory);
+                spendHistory)
+            {
+                ActivityDays = BuildActivityDays(
+                    spendBuckets,
+                    LocalCalendarDate(now, TimeZoneInfo.Local),
+                    TokenActivityView.DefaultWeekCount * 7),
+            };
     }
 
     private DateTimeOffset LatestIndexedWriteAt(DateTimeOffset now)
@@ -1598,6 +1606,26 @@ public sealed class CodexTokenUsageReader
         }
         var lastNewline = buffer.AsSpan(0, read).LastIndexOf((byte)'\n');
         return lastNewline >= 0 ? start + lastNewline + 1 : 0;
+    }
+
+    /// <summary>
+    /// Local-day spend totals for the compact activity grid (up to <paramref name="days"/> days,
+    /// oldest first). SpendHistory stays a 30-day window for existing consumers.
+    /// </summary>
+    private static IReadOnlyList<CodexSpendDay> BuildActivityDays(
+        IReadOnlyList<CodexDailyModelUsage> usage,
+        DateOnly today,
+        int days)
+    {
+        var cutoff = FormatLocalDate(today.AddDays(-(Math.Max(1, days) - 1)));
+        var todayText = FormatLocalDate(today);
+        return usage
+            .Where(item => string.CompareOrdinal(item.LocalDate, cutoff) >= 0
+                && string.CompareOrdinal(item.LocalDate, todayText) <= 0)
+            .GroupBy(item => item.LocalDate, StringComparer.Ordinal)
+            .Select(group => new CodexSpendDay(group.Key, SummarizeSpendPeriod(group)))
+            .OrderBy(item => item.LocalDate, StringComparer.Ordinal)
+            .ToArray();
     }
 
     private static CodexSpendPeriod SummarizeSpendPeriod(
