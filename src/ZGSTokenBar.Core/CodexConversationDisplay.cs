@@ -25,19 +25,28 @@ public static class CodexConversationDisplay
     }
 
     private static readonly object HomeAccountsGate = new();
-    private static (long Length, long Ticks, string Home)? _homeAccountsStamp;
+    private static (long InstancesTicks, long AccountsTicks, long AuthTicks, string Home)? _homeAccountsStamp;
     private static IReadOnlyDictionary<string, string> _homeAccounts =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+    private static long FileStampTicks(string path)
+    {
+        var file = new FileInfo(path);
+        return file.Exists ? file.LastWriteTimeUtc.Ticks : -1;
+    }
+
     private static IReadOnlyDictionary<string, string> CachedHomeAccountIds()
     {
-        var registry = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".antigravity_cockpit", "codex_instances.json");
+        var cockpitHome = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".antigravity_cockpit");
+        var codexHome = CodexQuotaService.CodexHome();
         try
         {
-            var file = new FileInfo(registry);
-            var current = file.Exists ? (file.Length, file.LastWriteTimeUtc.Ticks, CodexQuotaService.CodexHome())
-                : (-1, 0, CodexQuotaService.CodexHome());
+            var current = (
+                FileStampTicks(Path.Combine(cockpitHome, "codex_instances.json")),
+                FileStampTicks(Path.Combine(cockpitHome, "codex_accounts.json")),
+                FileStampTicks(Path.Combine(codexHome, "auth.json")),
+                codexHome);
             lock (HomeAccountsGate)
             {
                 if (_homeAccountsStamp != current)
@@ -91,9 +100,12 @@ public static class CodexConversationDisplay
             }
             var normalizedHome = CockpitCodexInstanceActivity.NormalizeDirectory(turn.CodexHome);
             var accountId = normalizedHome is not null && homeAccounts.TryGetValue(normalizedHome, out var bound) ? bound : null;
+            var quotaIdentity = accountId is null ? null : CodexQuotaService.StableCardKey($"strategy:{accountId}");
             var accountQuota = accountId is null
                 ? null
-                : snapshot.CodexAccounts.FirstOrDefault(a => string.Equals(a.AccountId, accountId, StringComparison.Ordinal));
+                : snapshot.CodexAccounts.FirstOrDefault(a =>
+                    string.Equals(a.AccountId, accountId, StringComparison.Ordinal)
+                    || string.Equals(a.QuotaIdentity, quotaIdentity, StringComparison.Ordinal));
             var cardKey = accountQuota?.CardKey
                 ?? (accountId is not null ? CodexQuotaService.StableCardKey($"cockpit:{accountId}") : null);
             QuotaCard? card = null;

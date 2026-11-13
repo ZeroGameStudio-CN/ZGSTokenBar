@@ -18,6 +18,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     private readonly ContextMenuStrip _projectMenu = new() { ShowImageMargin = false };
     private string _projectMenuRevision = "";
     private readonly Label _freshness = Label("连接中", 350);
+    private readonly Label _overviewStats = Label("", 340);
     private readonly RouterBrandMark _brand = new() { Width = 110, Height = 30, Margin = Padding.Empty };
     private float _appliedScale = -1;
     private QuotaBackgroundTheme? _appliedTheme;
@@ -61,7 +62,8 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     private Task<JsonElement>? _historyLoad;
     private string _historyLoadKey = "";
     private int _historyLoadOffset = -1, _queueGeneration;
-    private bool _queueLoading, _applyingQueue;
+    private bool _queueLoading, _applyingQueue, _hasHistoryCounts;
+    private int _completedCount, _failedCount;
     private string? _project;
     internal RouterSnapshot? Snapshot => _snapshot;
     internal string FreshnessText => _freshness.Text;
@@ -97,7 +99,8 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _kind.AccessibleName = "任务类型"; _outcome.AccessibleName = "结果"; _day.AccessibleName = "日期"; _query.AccessibleName = "搜索任务或对话";
         _pin = IconButton(RouterButtonIcon.Pin, "固定弹层", () => { PinChanged?.Invoke(this, !_pinned); return Task.CompletedTask; });
         var brand = _brand;
-        var header = Header(Flow(brand), Flow(_freshness, IconButton(RouterButtonIcon.Refresh, "刷新", async () => { await RefreshViewAsync(); await HistoryAsync(forceRefresh: true); }), _pin,
+        _overviewStats.Margin = new Padding(8, 0, 0, 0);
+        var header = Header(Flow(brand, _overviewStats), Flow(_freshness, IconButton(RouterButtonIcon.Refresh, "刷新", async () => { await RefreshViewAsync(); await HistoryAsync(forceRefresh: true); }), _pin,
             IconButton(RouterButtonIcon.Close, "收起弹层", () => { CloseRequested?.Invoke(this, EventArgs.Empty); return Task.CompletedTask; })), 240);
         var navigation = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 1, RowCount = 2 };
         navigation.ColumnStyles.Add(new(SizeType.Percent, 100));
@@ -112,7 +115,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _root.Controls.Add(navigation, 0, 0);
         SetLogicalFont(_headline, Font.FontFamily.Name, 10.5f, FontStyle.Bold);
         SetLogicalFont(_task, Font.FontFamily.Name, 12, FontStyle.Bold);
-        foreach (var label in new[] { _metrics, _detail, _source, _freshness, _notice, _historySummary })
+        foreach (var label in new[] { _metrics, _detail, _source, _freshness, _overviewStats, _notice, _historySummary })
             SetLogicalFont(label, Font.FontFamily.Name, 10.5f);
         foreach (var label in new[] { _currentHeading, _queueHeading, _historyHeading })
             SetLogicalFont(label, "Segoe UI", UiTokens.FontBody, FontStyle.Bold);
@@ -175,8 +178,8 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _filters = Flow(_kind, _outcome, _day, search, Button("筛选", async () => { _historyOffset = 0; await HistoryAsync(); }, RouterButtonKind.Primary));
         _filters.Visible = false; _historyBody.Controls.Add(_filters, 0, 1);
         _history.EmptyTitle = "没有匹配的记录"; _history.EmptyDetail = "调整筛选条件后重试";
-        _history.Columns.AddRange(Column("createdLocal", "提交时间", 115), Column("task", "任务", 255), Column("source", "来源对话", 150),
-            Column("state", "结果", 90), Column("executionSeconds", "占用", 70), Column("cleanupVerified", "释放", 55));
+        _history.Columns.AddRange(Column("createdLocal", "提交时间", 115), Column("task", "任务", 240), Column("source", "来源对话", 150),
+            Column("state", "结果", 90), Column("executionSeconds", "占用", 70), Column("cleanupVerified", "释放", 70));
         // Headers sit over their values: centred status pill and check, right-aligned durations.
         Align(_history.Columns["state"]!, DataGridViewContentAlignment.MiddleCenter);
         Align(_history.Columns["executionSeconds"]!, DataGridViewContentAlignment.MiddleRight);
@@ -473,7 +476,22 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _queueHeading.Text = "排队  ·  " + RouterJson.Integer(snapshot.View, "queuedCount");
         _freshness.Text = snapshot.IsFresh(DateTimeOffset.UtcNow) ? "更新于 " + snapshot.ReceivedAt.ToLocalTime().ToString("HH:mm:ss") : "数据过期 · 状态未确认";
         _freshness.ForeColor = snapshot.IsFresh(DateTimeOffset.UtcNow) ? UiPalette.Slate400 : Color.Salmon;
+        UpdateOverviewStats();
         UpdateControls();
+    }
+
+    private void UpdateOverviewStats()
+    {
+        if (!_available || _snapshot is null)
+        {
+            _overviewStats.Text = "";
+            return;
+        }
+        var active = RouterJson.IsHex(RouterJson.Text(_snapshot.View, "requestId"), 32) ? 1 : 0;
+        var queued = RouterJson.Integer(_snapshot.View, "queuedCount");
+        _overviewStats.Text = _hasHistoryCounts
+            ? $"当前 {active}  ·  排队 {queued}  ·  成功 {_completedCount}  ·  失败 {_failedCount}"
+            : $"当前 {active}  ·  排队 {queued}";
     }
 
     internal static JsonElement[] OrderedProjects(JsonElement projects) => projects.EnumerateArray()
@@ -544,7 +562,8 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         if (_controlling || key == _project) return;
         if (!_pinned) PinChanged?.Invoke(this, true);
         _project = key; _generation++; _queueOffset = _historyOffset = 0; ResetHistory(); _queueRequest?.Cancel();
-        _snapshot = null; _available = false; _headline.Text = "读取中"; _task.Text = ""; _detail.Text = ""; _source.Text = ""; _metrics.Text = "";
+        _snapshot = null; _available = false; _hasHistoryCounts = false; _completedCount = 0; _failedCount = 0; _headline.Text = "读取中"; _task.Text = ""; _detail.Text = ""; _source.Text = ""; _metrics.Text = "";
+        UpdateOverviewStats();
         _queue.Rows.Clear(); _history.Rows.Clear();
         foreach (var item in _projectButtons) item.Value.Selected = item.Key == key;
         UpdateControls(); await RefreshViewAsync(); await HistoryAsync();
@@ -564,6 +583,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         _freshness.ForeColor = localQueueUnavailable ? Color.Goldenrod : Color.Salmon;
         _headline.Text = "状态未确认"; _headline.Accent = RouterVisualPalette.State("warning"); _headline.Invalidate();
         _notice.Text = message;
+        UpdateOverviewStats();
         UpdateControls();
     }
 
@@ -712,6 +732,13 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
             Options(_day, new[] { ("all", "全部日期") }.Concat(RouterJson.Rows(metadata, "days").Select(d => (RouterJson.Text(d, "date"), RouterJson.Text(d, "date")))).ToArray());
             _day.SelectedItem = _day.Items.Cast<Choice>().FirstOrDefault(c => c.Key == selectedDay) ?? _day.Items[0];
             var counts = RouterJson.Field(metadata, "counts");
+            if (kind == "all" && outcome == "finished" && day == "all" && string.IsNullOrWhiteSpace(query) || !_hasHistoryCounts)
+            {
+                _completedCount = RouterJson.Integer(counts, "completed");
+                _failedCount = RouterJson.Integer(counts, "failed");
+                _hasHistoryCounts = true;
+                UpdateOverviewStats();
+            }
             _statistics = $"成功 {RouterJson.Integer(counts, "completed")} · 失败 {RouterJson.Integer(counts, "failed")} · 取消 {RouterJson.Integer(counts, "cancelled")}" + Environment.NewLine
                 + string.Join("   ", RouterJson.Rows(metadata, "groups").Where(g => RouterJson.Integer(g, "count") > 0)
                     .Select(g => $"{RouterJson.Text(g, "category")} P95 排队/占用/清理 {Seconds(g, "queueSecondsP95")}/{Seconds(g, "executionSecondsP95")}/{Seconds(g, "cleanupSecondsP95")}"));

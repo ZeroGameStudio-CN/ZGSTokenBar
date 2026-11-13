@@ -378,11 +378,170 @@ internal static class UiPaint
         RectangleF bounds,
         TokenActivityView activity,
         Font captionFont,
-        bool chinese)
+        bool chinese,
+        PointF? hoverPoint = null)
     {
+        var layout = ComputeActivityHeatmapLayout(bounds, activity);
         var weekdays = chinese
             ? new[] { "一", "二", "三", "四", "五", "六", "日" }
             : new[] { "M", "T", "W", "T", "F", "S", "S" };
+
+        using var muted = new SolidBrush(UiTokens.Muted);
+        if (!layout.Weekly)
+        {
+            for (var row = 0; row < 7; row++)
+            {
+                var y = layout.OriginY + row * (layout.Cell + layout.VGap);
+                Text(g, weekdays[row], captionFont, muted,
+                    new RectangleF(bounds.X, y - 1, layout.LabelWidth, layout.Cell + 2), StringAlignment.Near, ellipsis: false);
+            }
+        }
+
+        var values = layout.Weekly ? activity.WeekTotals : activity.Days;
+        var peak = values.Count == 0 ? 0 : values.Max();
+        var todayIndex = activity.Today.DayNumber - activity.StartMonday.DayNumber;
+        var hitWeek = -1;
+        var hitDay = -1;
+        if (hoverPoint is { } hoverPt)
+            TryHitActivityHeatmap(bounds, activity, hoverPt, out _, out hitWeek, out hitDay);
+
+        Color Level(long tokens)
+        {
+            if (tokens <= 0 || peak <= 0) return Color.FromArgb(38, 42, 52);
+            var t = tokens / (double)peak;
+            if (t < 0.15) return Color.FromArgb(55, 48, 120);
+            if (t < 0.35) return Color.FromArgb(67, 56, 202);
+            if (t < 0.65) return Color.FromArgb(99, 102, 241);
+            return Color.FromArgb(165, 180, 252);
+        }
+
+        using var todayPen = new Pen(Color.White.WithAlpha(200), 1);
+        using var hoverPen = new Pen(UiPalette.Slate100.WithAlpha(220), 1.2f);
+        for (var week = 0; week < layout.Weeks; week++)
+        {
+            var x = layout.OriginX + week * (layout.Cell + layout.HGap);
+            if (layout.Weekly)
+            {
+                var tokens = week < values.Count ? values[week] : 0;
+                var box = WeeklyBarBounds(layout, week, tokens, peak);
+                var radius = Math.Min(3, layout.Cell / 3);
+                using var brush = new SolidBrush(Level(tokens));
+                FillRounded(g, brush, box, radius);
+                if (week == hitWeek)
+                {
+                    using var outline = RoundedPath(RectangleF.Inflate(box, -0.4f, -0.4f), radius);
+                    g.DrawPath(hoverPen, outline);
+                }
+                continue;
+            }
+
+            for (var row = 0; row < 7; row++)
+            {
+                var index = week * 7 + row;
+                var date = activity.StartMonday.AddDays(index);
+                var tokens = index < activity.Days.Count && date <= activity.Today ? activity.Days[index] : 0;
+                var box = new RectangleF(x, layout.OriginY + row * (layout.Cell + layout.VGap), layout.Cell, layout.Cell);
+                var emptyFuture = date > activity.Today;
+                var radius = Math.Min(2.4f, layout.Cell / 3);
+                using (var brush = new SolidBrush(emptyFuture ? Color.FromArgb(28, 31, 38) : Level(tokens)))
+                    FillRounded(g, brush, box, radius);
+                if (week == hitWeek && row == hitDay)
+                {
+                    using var outline = RoundedPath(RectangleF.Inflate(box, -0.4f, -0.4f), Math.Min(2f, layout.Cell / 3));
+                    g.DrawPath(hoverPen, outline);
+                }
+                else if (index == todayIndex)
+                {
+                    using var outline = RoundedPath(RectangleF.Inflate(box, -0.4f, -0.4f), Math.Min(2f, layout.Cell / 3));
+                    g.DrawPath(todayPen, outline);
+                }
+            }
+        }
+
+        var lastMonth = 0;
+        for (var week = 0; week < layout.Weeks; week++)
+        {
+            var date = activity.StartMonday.AddDays(week * 7);
+            if (week > 0 && date.Month == lastMonth) continue;
+            lastMonth = date.Month;
+            var label = chinese
+                ? $"{date.Month}月"
+                : date.ToString("MMM", System.Globalization.CultureInfo.GetCultureInfo("en-US"));
+            var x = layout.OriginX + week * (layout.Cell + layout.HGap);
+            Text(g, label, captionFont, muted,
+                new RectangleF(x, bounds.Bottom - layout.MonthH, layout.Cell * 3 + layout.HGap * 2, layout.MonthH), StringAlignment.Near, ellipsis: false);
+        }
+    }
+
+    internal static bool TryHitActivityHeatmap(
+        RectangleF bounds,
+        TokenActivityView activity,
+        PointF point,
+        out string label,
+        out int hitWeek,
+        out int hitDay)
+    {
+        label = string.Empty;
+        hitWeek = -1;
+        hitDay = -1;
+        if (bounds.Width <= 0 || bounds.Height <= 0 || !bounds.Contains(point)) return false;
+
+        var layout = ComputeActivityHeatmapLayout(bounds, activity);
+        if (layout.Weekly)
+        {
+            var values = activity.WeekTotals;
+            for (var week = 0; week < layout.Weeks; week++)
+            {
+                var x = layout.OriginX + week * (layout.Cell + layout.HGap);
+                var column = new RectangleF(x - layout.HGap / 2f, layout.OriginY, layout.Cell + layout.HGap, layout.Grid.Height);
+                if (!column.Contains(point)) continue;
+
+                var weekStart = activity.StartMonday.AddDays(week * 7);
+                if (weekStart > activity.Today) continue;
+                var weekEnd = weekStart.AddDays(6) > activity.Today ? activity.Today : weekStart.AddDays(6);
+                var tokens = week < values.Count ? values[week] : 0;
+                label = $"{weekStart.Month}/{weekStart.Day}–{weekEnd.Month}/{weekEnd.Day} · {NativeText.FormatTokenCount(tokens)}";
+                hitWeek = week;
+                return true;
+            }
+            return false;
+        }
+
+        for (var week = 0; week < layout.Weeks; week++)
+        {
+            var x = layout.OriginX + week * (layout.Cell + layout.HGap);
+            for (var row = 0; row < 7; row++)
+            {
+                var index = week * 7 + row;
+                var date = activity.StartMonday.AddDays(index);
+                if (date > activity.Today) continue;
+                var box = new RectangleF(x, layout.OriginY + row * (layout.Cell + layout.VGap), layout.Cell, layout.Cell);
+                if (!RectangleF.Inflate(box, 1.2f, 1.2f).Contains(point)) continue;
+
+                var tokens = index < activity.Days.Count ? activity.Days[index] : 0;
+                label = $"{date.Month}/{date.Day} · {NativeText.FormatTokenCount(tokens)}";
+                hitWeek = week;
+                hitDay = row;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private readonly record struct ActivityHeatmapLayout(
+        bool Weekly,
+        float LabelWidth,
+        float MonthH,
+        RectangleF Grid,
+        int Weeks,
+        float VGap,
+        float Cell,
+        float HGap,
+        float OriginX,
+        float OriginY);
+
+    private static ActivityHeatmapLayout ComputeActivityHeatmapLayout(RectangleF bounds, TokenActivityView activity)
+    {
         var weekly = activity.Grain == TokenActivityGrain.Weekly;
         const float labelW = 14f;
         const float monthH = 12f;
@@ -397,76 +556,14 @@ internal static class UiPaint
         var gridH = weekly ? grid.Height : cell * 7 + vGap * 6;
         var originX = grid.X;
         var originY = grid.Y + (weekly ? 0 : Math.Max(0, (grid.Height - gridH) / 2));
+        return new(weekly, labelW, monthH, grid, weeks, vGap, cell, hGap, originX, originY);
+    }
 
-        using var muted = new SolidBrush(UiTokens.Muted);
-        if (!weekly)
-        {
-            for (var row = 0; row < 7; row++)
-            {
-                var y = originY + row * (cell + vGap);
-                Text(g, weekdays[row], captionFont, muted,
-                    new RectangleF(bounds.X, y - 1, labelW, cell + 2), StringAlignment.Near, ellipsis: false);
-            }
-        }
-
-        var values = weekly ? activity.WeekTotals : activity.Days;
-        var peak = values.Count == 0 ? 0 : values.Max();
-        var todayIndex = activity.Today.DayNumber - activity.StartMonday.DayNumber;
-
-        Color Level(long tokens)
-        {
-            if (tokens <= 0 || peak <= 0) return Color.FromArgb(38, 42, 52);
-            var t = tokens / (double)peak;
-            if (t < 0.15) return Color.FromArgb(55, 48, 120);
-            if (t < 0.35) return Color.FromArgb(67, 56, 202);
-            if (t < 0.65) return Color.FromArgb(99, 102, 241);
-            return Color.FromArgb(165, 180, 252);
-        }
-
-        using var todayPen = new Pen(Color.White.WithAlpha(200), 1);
-        for (var week = 0; week < weeks; week++)
-        {
-            var x = originX + week * (cell + hGap);
-            if (weekly)
-            {
-                var tokens = week < values.Count ? values[week] : 0;
-                var barH = Math.Max(cell, grid.Height * 0.55f + grid.Height * 0.45f * (peak > 0 ? tokens / (float)peak : 0));
-                var box = new RectangleF(x, originY + grid.Height - barH, cell, barH);
-                using var brush = new SolidBrush(Level(tokens));
-                FillRounded(g, brush, box, Math.Min(3, cell / 3));
-                continue;
-            }
-
-            for (var row = 0; row < 7; row++)
-            {
-                var index = week * 7 + row;
-                var date = activity.StartMonday.AddDays(index);
-                var tokens = index < activity.Days.Count && date <= activity.Today ? activity.Days[index] : 0;
-                var box = new RectangleF(x, originY + row * (cell + vGap), cell, cell);
-                var emptyFuture = date > activity.Today;
-                using (var brush = new SolidBrush(emptyFuture ? Color.FromArgb(28, 31, 38) : Level(tokens)))
-                    FillRounded(g, brush, box, Math.Min(2.4f, cell / 3));
-                if (index == todayIndex)
-                {
-                    using var outline = RoundedPath(RectangleF.Inflate(box, -0.4f, -0.4f), Math.Min(2f, cell / 3));
-                    g.DrawPath(todayPen, outline);
-                }
-            }
-        }
-
-        var lastMonth = 0;
-        for (var week = 0; week < weeks; week++)
-        {
-            var date = activity.StartMonday.AddDays(week * 7);
-            if (week > 0 && date.Month == lastMonth) continue;
-            lastMonth = date.Month;
-            var label = chinese
-                ? $"{date.Month}月"
-                : date.ToString("MMM", System.Globalization.CultureInfo.GetCultureInfo("en-US"));
-            var x = originX + week * (cell + hGap);
-            Text(g, label, captionFont, muted,
-                new RectangleF(x, bounds.Bottom - monthH, cell * 3 + hGap * 2, monthH), StringAlignment.Near, ellipsis: false);
-        }
+    private static RectangleF WeeklyBarBounds(ActivityHeatmapLayout layout, int week, long tokens, long peak)
+    {
+        var x = layout.OriginX + week * (layout.Cell + layout.HGap);
+        var barH = Math.Max(layout.Cell, layout.Grid.Height * 0.55f + layout.Grid.Height * 0.45f * (peak > 0 ? tokens / (float)peak : 0));
+        return new RectangleF(x, layout.OriginY + layout.Grid.Height - barH, layout.Cell, barH);
     }
 }
 
