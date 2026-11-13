@@ -14,7 +14,7 @@ internal sealed class RouterModule : IDisposable
     /// <summary>A failing monitor read backs off 2 → 4 → 8 → 16 s and returns to 2 s on success.</summary>
     internal static readonly TimeSpan MaxRefreshBackoff = TimeSpan.FromSeconds(16);
     private readonly RefreshScheduler _scheduler;
-    private readonly System.Windows.Forms.Timer _warmup = new() { Interval = 4_000 };
+    private readonly System.Windows.Forms.Timer _warmup = new() { Interval = 600 };
     private RouterMonitorForm? _window;
     private RouterHoverCardForm? _hover;
     private bool _disposed;
@@ -26,11 +26,14 @@ internal sealed class RouterModule : IDisposable
         (_bar, _host, _enabled, _shutdown, _scheduler) = (bar, host, enabled, shutdown, scheduler);
         _bar.PluginPopoverRequested += Requested;
         _scheduler.Add(RefreshSource, () => RefreshInterval, RefreshMonitorAsync, maxBackoff: MaxRefreshBackoff);
-        // Build the (control-heavy) panel once while idle so the first click only has to show it.
+        // Build the (control-heavy) panel and warm initial data shortly after startup so first click is instant.
         _warmup.Tick += (_, _) =>
         {
             _warmup.Stop();
-            if (!_shutdown.IsCancellationRequested && _enabled()) EnsureWindow().Prewarm(_bar.UiScale, _bar.UiTheme);
+            if (_shutdown.IsCancellationRequested || !_enabled()) return;
+            var window = EnsureWindow();
+            window.Prewarm(_bar.UiScale, _bar.UiTheme);
+            _ = window.WarmInBackgroundAsync();
         };
         _warmup.Start();
     }
@@ -42,6 +45,11 @@ internal sealed class RouterModule : IDisposable
         try
         {
             await _host.RefreshPluginAsync(RouterPlugin.Id, "monitor", _shutdown);
+            if (_window is { IsDisposed: false, Visible: false } && !_bar.IsDisposed && _bar.IsHandleCreated)
+            {
+                try { _bar.BeginInvoke(() => { if (_window is { IsDisposed: false, Visible: false } window) _ = window.WarmInBackgroundAsync(); }); }
+                catch (InvalidOperationException) { }
+            }
             return true;
         }
         catch (OperationCanceledException) { return true; }

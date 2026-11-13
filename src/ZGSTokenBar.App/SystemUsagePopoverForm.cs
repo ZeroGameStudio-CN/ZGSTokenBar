@@ -67,6 +67,7 @@ internal sealed class SystemUsagePopoverForm : Form
     private RectangleF _heatmapBounds;
     private PointF? _hoverLogicalPoint;
     private string? _hoverHeatmapLabel;
+    private RectangleF _hoverHeatmapTargetBounds;
     private const int MaximumSessionRows = 10;
     private const int SessionRowHeight = 34;
     private const int SessionHeaderHeight = 30;
@@ -199,6 +200,7 @@ internal sealed class SystemUsagePopoverForm : Form
             _grainToggleBounds = RectangleF.Empty;
             _heatmapBounds = RectangleF.Empty;
             _hoverHeatmapLabel = null;
+            _hoverHeatmapTargetBounds = RectangleF.Empty;
         }
         _logicalBodyWidth = content.LiveRates ? LiveRateBodyWidth : LogicalBodyWidth;
         _logicalBodyHeight = content.LiveRates
@@ -217,7 +219,9 @@ internal sealed class SystemUsagePopoverForm : Form
 
     internal string? HoverHeatmapLabelForAcceptance => _hoverHeatmapLabel;
 
-    private const int TokenSectionHeight = 164;
+    internal RectangleF HoverHeatmapBoundsForAcceptance => _hoverHeatmapTargetBounds;
+
+    private const int TokenSectionHeight = 168;
 
     private int SessionSectionHeight => !_sessionsVisible ? 0
         : SessionHeaderHeight + Math.Max(1, _sessions.Length) * SessionRowHeight + 8;
@@ -387,20 +391,24 @@ internal sealed class SystemUsagePopoverForm : Form
         if (Cursor != cursor) Cursor = cursor;
 
         string? nextLabel = null;
+        var nextBounds = RectangleF.Empty;
         if (_content?.LiveRates == true
             && _content.Activity is { } activity
             && logicalPoint is { } point)
         {
             var effective = activity with { Grain = EffectiveActivityGrain };
             if (_heatmapBounds.Width > 0
-                && UiPaint.TryHitActivityHeatmap(_heatmapBounds, effective, point, out var label, out _, out _))
+                && UiPaint.TryHitActivityHeatmap(_heatmapBounds, effective, point, _text.IsChinese, out var label, out _, out _, out var hitBounds))
             {
                 nextLabel = label;
+                nextBounds = hitBounds;
             }
         }
-        if (!string.Equals(_hoverHeatmapLabel, nextLabel, StringComparison.Ordinal))
+        if (!string.Equals(_hoverHeatmapLabel, nextLabel, StringComparison.Ordinal)
+            || _hoverHeatmapTargetBounds != nextBounds)
         {
             _hoverHeatmapLabel = nextLabel;
+            _hoverHeatmapTargetBounds = nextBounds;
             Invalidate();
         }
     }
@@ -551,57 +559,93 @@ internal sealed class SystemUsagePopoverForm : Form
         TextAt(live?.Generating.ToString() ?? "—", _metricValueFont, primary, 114, 170, 28, 14, StringAlignment.Far);
         TextAt(live?.Tools.ToString() ?? "—", _metricValueFont, primary, 248, 170, 28, 14, StringAlignment.Far);
 
-        // Compact 12-week activity grid (Daily / Weekly) plus 本周 / 周均 / 本日 / 日均 / 总量.
+        // Compact 12-week activity grid (Daily / Weekly) plus 3x2 grouped metrics (本周/周均 · 本日/日均 · 总量/缓存).
         Panel(206, TokenSectionHeight - 8);
         var activity = _content?.Activity;
         var grain = _grainOverride ?? activity?.Grain ?? TokenActivityGrain.Daily;
         var effectiveActivity = activity is null ? null : activity with { Grain = grain };
         _grainToggleBounds = At(168, 212, 108, 18);
-        _heatmapBounds = effectiveActivity is null ? RectangleF.Empty : At(16, 232, 268, 90);
-        TextAt(zh ? "用量活动" : "Token activity", _metricLabelFont, muted, 24, 215, 70, 13);
-        if (effectiveActivity is not null
-            && _hoverLogicalPoint is { } hoverPt
-            && UiPaint.TryHitActivityHeatmap(_heatmapBounds, effectiveActivity, hoverPt, out var hoverLabel, out _, out _))
+        _heatmapBounds = effectiveActivity is null ? RectangleF.Empty : At(16, 232, 268, 86);
+        TextAt(zh ? "用量活动" : "Token activity", _metricLabelFont, muted, 24, 215, 130, 13);
+        UiPaint.Segmented(graphics, _grainToggleBounds,
+            zh ? new[] { "每日", "每周" } : new[] { "Daily", "Weekly" },
+            grain == TokenActivityGrain.Weekly ? 1 : 0, _subtitleFont);
+
+        string? hoverTip = null;
+        var hoverTarget = RectangleF.Empty;
+        if (effectiveActivity is not null)
         {
-            _hoverHeatmapLabel = hoverLabel;
-            TextAt(hoverLabel, _subtitleFont, recorded, 78, 215, 86, 13, StringAlignment.Far);
+            if (_hoverLogicalPoint is { } hoverPt
+                && UiPaint.TryHitActivityHeatmap(_heatmapBounds, effectiveActivity, hoverPt, zh, out var computedLabel, out _, out _, out var computedBounds))
+            {
+                hoverTip = computedLabel;
+                hoverTarget = computedBounds;
+                _hoverHeatmapLabel = computedLabel;
+                _hoverHeatmapTargetBounds = computedBounds;
+            }
+            else
+            {
+                _hoverHeatmapLabel = null;
+                _hoverHeatmapTargetBounds = RectangleF.Empty;
+            }
+
+            UiPaint.ActivityHeatmap(graphics, _heatmapBounds, effectiveActivity, _subtitleFont, zh, _hoverLogicalPoint);
+            using var tileFill = new SolidBrush(UiPalette.Slate500.WithAlpha(22));
+            using var tileBorder = new Pen(UiPalette.Slate500.WithAlpha(36), 1);
+            using var avgBrush = new SolidBrush(UiPalette.Slate300);
+            void StatCard(float x, string topLabel, string topValue, string bottomLabel, string bottomValue, Font bottomFont, Brush bottomBrush)
+            {
+                var box = At(x, 321, 82, 38);
+                using var tilePath = RoundedRectangle(box, 5);
+                graphics.FillPath(tileFill, tilePath);
+                graphics.DrawPath(tileBorder, tilePath);
+                TextAt(topLabel, _subtitleFont, muted, x + 6, 325, 34, 14);
+                TextAt(topValue, _tableValueFont, primary, x + 32, 325, 44, 14, StringAlignment.Far);
+                TextAt(bottomLabel, _subtitleFont, muted, x + 6, 342, 34, 13);
+                TextAt(bottomValue, bottomFont, bottomBrush, x + 32, 342, 44, 13, StringAlignment.Far);
+            }
+
+            var cache = _content?.Cache;
+            var cacheHit = cache?.TodayHitPercent ?? cache?.TotalHitPercent;
+            var cacheText = cacheHit is { } hit ? NativeText.FormatCacheHitPercent(hit) : "—";
+            StatCard(
+                20,
+                zh ? "本周" : "Week",
+                NativeText.FormatTokenCount(effectiveActivity.ThisWeekTokens),
+                zh ? "周均" : "Wk avg",
+                NativeText.FormatTokenCount(effectiveActivity.WeekAverage),
+                _subtitleFont,
+                avgBrush);
+            StatCard(
+                109,
+                zh ? "本日" : "Today",
+                NativeText.FormatTokenCount(effectiveActivity.TodayTokens),
+                zh ? "日均" : "Day avg",
+                NativeText.FormatTokenCount(effectiveActivity.DayAverage),
+                _subtitleFont,
+                avgBrush);
+            StatCard(
+                198,
+                zh ? "总量" : "Total",
+                NativeText.FormatTokenCount(effectiveActivity.AllTimeTotal),
+                zh ? "缓存" : "Cache",
+                cacheText,
+                cacheHit is not null ? _tableValueFont : _subtitleFont,
+                cacheHit is not null ? recorded : muted);
         }
         else
         {
             _hoverHeatmapLabel = null;
-        }
-        UiPaint.Segmented(graphics, _grainToggleBounds,
-            zh ? new[] { "每日", "每周" } : new[] { "Daily", "Weekly" },
-            grain == TokenActivityGrain.Weekly ? 1 : 0, _subtitleFont);
-        if (effectiveActivity is not null)
-        {
-            UiPaint.ActivityHeatmap(graphics, _heatmapBounds, effectiveActivity, _subtitleFont, zh, _hoverLogicalPoint);
-            void Stat(float x, string caption, long value)
-            {
-                TextAt(caption, _subtitleFont, muted, x, 324, 52, 11);
-                TextAt(NativeText.FormatTokenCount(value), _tableValueFont, primary, x, 336, 52, 14);
-            }
-            var labels = zh
-                ? new[] { "本周", "周均", "本日", "日均", "总量" }
-                : new[] { "Week", "Wk avg", "Today", "Day avg", "Total" };
-            var values = new[] { effectiveActivity.ThisWeekTokens, effectiveActivity.WeekAverage, effectiveActivity.TodayTokens, effectiveActivity.DayAverage, effectiveActivity.AllTimeTotal };
-            for (var i = 0; i < 5; i++)
-                Stat(24 + i * 51.6f, labels[i], values[i]);
-        }
-        else
-        {
+            _hoverHeatmapTargetBounds = RectangleF.Empty;
             TextAt(zh ? "暂无按日用量" : "No daily totals yet", _detailFont, muted, 24, 270, 252, 14);
         }
         dy = TokenSectionHeight;
 
-        // Live rates plus cumulative traffic (token totals now live on the activity card).
+        // Live rates plus cumulative traffic (token totals + cache now live on the activity card).
         Panel(206, 78);
         var history = snapshot.NetworkHistory;
         TextAt(zh ? "本机网络" : "System network", _metricLabelFont, muted, 24, 215, 110, 13);
-        var cache = _content?.Cache;
-        TextAt(cache?.TodayHitPercent is { } hit
-                ? (zh ? $"缓存 {NativeText.FormatCacheHitPercent(hit)}" : $"cache {NativeText.FormatCacheHitPercent(hit)}")
-                : (zh ? $"{snapshot.NetworkInterfaces} 个接口" : $"{snapshot.NetworkInterfaces} NIC"),
+        TextAt(zh ? $"{snapshot.NetworkInterfaces} 个接口" : $"{snapshot.NetworkInterfaces} NIC",
             _subtitleFont, muted, 150, 215, 126, 13, StringAlignment.Far);
         UiIcons.ArrowDown(graphics, At(24, 236, 9, 11), ReceiveAccent);
         TextAt(_metrics[3].Value, _metricValueFont, receive, 37, 234, 100, 15);
@@ -637,6 +681,73 @@ internal sealed class SystemUsagePopoverForm : Form
             }
             DrawSessions(graphics, new RectangleF(body.X + rightX, body.Y + sessionTop, rightWidth, sessionHeight), primary, muted);
         }
+
+        if (hoverTip is { Length: > 0 } && hoverTarget.Width > 0)
+            DrawHeatmapHoverOverlay(graphics, body, hoverTip, hoverTarget);
+    }
+
+    private void DrawHeatmapHoverOverlay(Graphics graphics, RectangleF body, string tip, RectangleF target)
+    {
+        var split = tip.IndexOf(" · ", StringComparison.Ordinal);
+        var dateText = split >= 0 ? tip[..split] : tip;
+        var valueText = split >= 0 ? tip[(split + 3)..] : string.Empty;
+
+        var dateWidth = graphics.MeasureString(dateText, _detailFont).Width;
+        var valueWidth = valueText.Length > 0 ? graphics.MeasureString(valueText, _tableValueFont).Width : 0f;
+        const float height = 22f;
+        var width = 8f + 4f + 4f + dateWidth + (valueWidth > 0 ? 4f + valueWidth : 0f) + 6f;
+
+        var centerX = target.X + target.Width / 2f;
+        var minX = body.X + 14f;
+        var maxX = body.X + 286f - width;
+        var x = Math.Clamp(centerX - width / 2f, minX, Math.Max(minX, maxX));
+
+        const float gap = 5f;
+        var placeAbove = target.Y - height - gap >= body.Y + 206f;
+        var y = placeAbove ? target.Y - height - gap : target.Bottom + gap;
+        var pill = new RectangleF(x, y, width, height);
+
+        var smoothing = graphics.SmoothingMode;
+        graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using (var shadowPath = RoundedRectangle(new RectangleF(pill.X, pill.Y + 2f, pill.Width, pill.Height), 6f))
+        using (var shadowBrush = new SolidBrush(Color.FromArgb(95, 0, 0, 0)))
+            graphics.FillPath(shadowBrush, shadowPath);
+
+        using var bgBrush = new SolidBrush(Color.FromArgb(246, 15, 20, 30));
+        using var borderPen = new Pen(Color.FromArgb(190, 129, 140, 248), 1f);
+        using (var pillPath = RoundedRectangle(pill, 6f))
+        {
+            graphics.FillPath(bgBrush, pillPath);
+            graphics.DrawPath(borderPen, pillPath);
+        }
+
+        var tipX = Math.Clamp(centerX, pill.X + 7f, pill.Right - 7f);
+        if (placeAbove)
+        {
+            PointF[] fillTri = [new(tipX - 4f, pill.Bottom - 0.6f), new(tipX + 4f, pill.Bottom - 0.6f), new(tipX, pill.Bottom + 3.6f)];
+            graphics.FillPolygon(bgBrush, fillTri);
+            graphics.DrawLine(borderPen, tipX - 4f, pill.Bottom, tipX, pill.Bottom + 3.6f);
+            graphics.DrawLine(borderPen, tipX, pill.Bottom + 3.6f, tipX + 4f, pill.Bottom);
+        }
+        else
+        {
+            PointF[] fillTri = [new(tipX - 4f, pill.Top + 0.6f), new(tipX + 4f, pill.Top + 0.6f), new(tipX, pill.Top - 3.6f)];
+            graphics.FillPolygon(bgBrush, fillTri);
+            graphics.DrawLine(borderPen, tipX - 4f, pill.Top, tipX, pill.Top - 3.6f);
+            graphics.DrawLine(borderPen, tipX, pill.Top - 3.6f, tipX + 4f, pill.Top);
+        }
+
+        using var dotBrush = new SolidBrush(RecordedAccent);
+        graphics.FillEllipse(dotBrush, pill.X + 8f, pill.Y + (pill.Height - 4f) / 2f, 4f, 4f);
+        using var dateBrush = new SolidBrush(UiPalette.Slate200);
+        UiPaint.Text(graphics, dateText, _detailFont, dateBrush,
+            new RectangleF(pill.X + 16f, pill.Y + 3.5f, dateWidth + 2f, 15f), StringAlignment.Near, ellipsis: false);
+        if (valueText.Length > 0)
+        {
+            UiPaint.Text(graphics, valueText, _tableValueFont, dotBrush,
+                new RectangleF(pill.X + 16f + dateWidth + 4f, pill.Y + 3.5f, valueWidth + 2f, 15f), StringAlignment.Near, ellipsis: false);
+        }
+        graphics.SmoothingMode = smoothing;
     }
 
     /// <summary>"Since" stamp of the totals: month/day and time, with the year only when it differs.</summary>
