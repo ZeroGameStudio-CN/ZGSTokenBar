@@ -59,8 +59,14 @@ internal sealed class SystemUsagePopoverForm : Form
     private int _logicalBodyWidth = LogicalBodyWidth;
     private int _logicalBodyHeight = LogicalBodyHeight;
     private CodexConversationTurn[] _sessions = [];
+    private int _activeSessionCount;
     private bool _sessionsVisible;
     private bool _sessionsRecent;
+    private TokenActivityGrain? _grainOverride;
+    private RectangleF _grainToggleBounds;
+    private RectangleF _heatmapBounds;
+    private PointF? _hoverLogicalPoint;
+    private string? _hoverHeatmapLabel;
     private const int MaximumSessionRows = 10;
     private const int SessionRowHeight = 34;
     private const int SessionHeaderHeight = 30;
@@ -169,10 +175,31 @@ internal sealed class SystemUsagePopoverForm : Form
             .ThenByDescending(turn => turn.ObservedAt)
             .Take(MaximumSessionRows)
             .ToArray();
+        _activeSessionCount = active.Length;
         _sessionsRecent = active.Length == 0;
-        _sessions = _sessionsVisible
-            ? active.Length > 0 ? active : conversations.OrderByDescending(turn => turn.ObservedAt).Take(3).ToArray()
-            : [];
+        if (!_sessionsVisible)
+        {
+            _sessions = [];
+        }
+        else if (active.Length >= MaximumSessionRows)
+        {
+            _sessions = active;
+        }
+        else
+        {
+            var activeSet = active.ToHashSet();
+            var recent = conversations
+                .Where(turn => !activeSet.Contains(turn))
+                .OrderByDescending(turn => turn.ObservedAt)
+                .Take(MaximumSessionRows - active.Length);
+            _sessions = [.. active, .. recent];
+        }
+        if (!content.LiveRates)
+        {
+            _grainToggleBounds = RectangleF.Empty;
+            _heatmapBounds = RectangleF.Empty;
+            _hoverHeatmapLabel = null;
+        }
         _logicalBodyWidth = content.LiveRates ? LiveRateBodyWidth : LogicalBodyWidth;
         _logicalBodyHeight = content.LiveRates
             ? LiveRateBodyHeight + TokenSectionHeight
@@ -184,6 +211,11 @@ internal sealed class SystemUsagePopoverForm : Form
     internal bool LiveRatesContentForAcceptance => _content?.LiveRates == true;
 
     internal int SessionRowCountForAcceptance => _sessions.Length;
+
+    internal TokenActivityGrain EffectiveActivityGrain =>
+        _grainOverride ?? _content?.Activity?.Grain ?? TokenActivityGrain.Daily;
+
+    internal string? HoverHeatmapLabelForAcceptance => _hoverHeatmapLabel;
 
     private const int TokenSectionHeight = 164;
 
@@ -333,6 +365,65 @@ internal sealed class SystemUsagePopoverForm : Form
         base.WndProc(ref message);
     }
 
+    internal bool SelectActivityGrainAtLogicalPoint(PointF logicalPoint)
+    {
+        if (_content?.LiveRates != true || !_grainToggleBounds.Contains(logicalPoint)) return false;
+        var next = logicalPoint.X < _grainToggleBounds.Left + _grainToggleBounds.Width / 2f
+            ? TokenActivityGrain.Daily
+            : TokenActivityGrain.Weekly;
+        if (EffectiveActivityGrain == next && _grainOverride == next) return true;
+        _grainOverride = next;
+        UpdateHoverAtLogicalPoint(logicalPoint);
+        Invalidate();
+        return true;
+    }
+
+    internal void UpdateHoverAtLogicalPoint(PointF? logicalPoint)
+    {
+        _hoverLogicalPoint = logicalPoint;
+        var cursor = logicalPoint is { } pt && _grainToggleBounds.Contains(pt)
+            ? Cursors.Hand
+            : Cursors.Default;
+        if (Cursor != cursor) Cursor = cursor;
+
+        string? nextLabel = null;
+        if (_content?.LiveRates == true
+            && _content.Activity is { } activity
+            && logicalPoint is { } point)
+        {
+            var effective = activity with { Grain = EffectiveActivityGrain };
+            if (_heatmapBounds.Width > 0
+                && UiPaint.TryHitActivityHeatmap(_heatmapBounds, effective, point, out var label, out _, out _))
+            {
+                nextLabel = label;
+            }
+        }
+        if (!string.Equals(_hoverHeatmapLabel, nextLabel, StringComparison.Ordinal))
+        {
+            _hoverHeatmapLabel = nextLabel;
+            Invalidate();
+        }
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        if (e.Button == MouseButtons.Left)
+            SelectActivityGrainAtLogicalPoint(new PointF(e.X / _scale, e.Y / _scale));
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        UpdateHoverAtLogicalPoint(new PointF(e.X / _scale, e.Y / _scale));
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        base.OnMouseLeave(e);
+        UpdateHoverAtLogicalPoint(null);
+    }
+
     private void DrawContent(Graphics graphics, RectangleF body)
     {
         if (_content is not { } content) return;
@@ -463,14 +554,28 @@ internal sealed class SystemUsagePopoverForm : Form
         // Compact 12-week activity grid (Daily / Weekly) plus 本周 / 周均 / 本日 / 日均 / 总量.
         Panel(206, TokenSectionHeight - 8);
         var activity = _content?.Activity;
-        TextAt(zh ? "用量活动" : "Token activity", _metricLabelFont, muted, 24, 215, 120, 13);
-        var grain = activity?.Grain ?? TokenActivityGrain.Daily;
-        UiPaint.Segmented(graphics, At(168, 212, 108, 18),
+        var grain = _grainOverride ?? activity?.Grain ?? TokenActivityGrain.Daily;
+        var effectiveActivity = activity is null ? null : activity with { Grain = grain };
+        _grainToggleBounds = At(168, 212, 108, 18);
+        _heatmapBounds = effectiveActivity is null ? RectangleF.Empty : At(16, 232, 268, 90);
+        TextAt(zh ? "用量活动" : "Token activity", _metricLabelFont, muted, 24, 215, 70, 13);
+        if (effectiveActivity is not null
+            && _hoverLogicalPoint is { } hoverPt
+            && UiPaint.TryHitActivityHeatmap(_heatmapBounds, effectiveActivity, hoverPt, out var hoverLabel, out _, out _))
+        {
+            _hoverHeatmapLabel = hoverLabel;
+            TextAt(hoverLabel, _subtitleFont, recorded, 78, 215, 86, 13, StringAlignment.Far);
+        }
+        else
+        {
+            _hoverHeatmapLabel = null;
+        }
+        UiPaint.Segmented(graphics, _grainToggleBounds,
             zh ? new[] { "每日", "每周" } : new[] { "Daily", "Weekly" },
             grain == TokenActivityGrain.Weekly ? 1 : 0, _subtitleFont);
-        if (activity is not null)
+        if (effectiveActivity is not null)
         {
-            UiPaint.ActivityHeatmap(graphics, At(16, 232, 268, 90), activity, _subtitleFont, zh);
+            UiPaint.ActivityHeatmap(graphics, _heatmapBounds, effectiveActivity, _subtitleFont, zh, _hoverLogicalPoint);
             void Stat(float x, string caption, long value)
             {
                 TextAt(caption, _subtitleFont, muted, x, 324, 52, 11);
@@ -479,7 +584,7 @@ internal sealed class SystemUsagePopoverForm : Form
             var labels = zh
                 ? new[] { "本周", "周均", "本日", "日均", "总量" }
                 : new[] { "Week", "Wk avg", "Today", "Day avg", "Total" };
-            var values = new[] { activity.ThisWeekTokens, activity.WeekAverage, activity.TodayTokens, activity.DayAverage, activity.AllTimeTotal };
+            var values = new[] { effectiveActivity.ThisWeekTokens, effectiveActivity.WeekAverage, effectiveActivity.TodayTokens, effectiveActivity.DayAverage, effectiveActivity.AllTimeTotal };
             for (var i = 0; i < 5; i++)
                 Stat(24 + i * 51.6f, labels[i], values[i]);
         }
@@ -579,8 +684,8 @@ internal sealed class SystemUsagePopoverForm : Form
     {
         var zh = _text.IsChinese;
         var title = _sessionsRecent
-            ? (zh ? "最近会话" : "Recent chats")
-            : (zh ? $"活跃会话 · {_sessions.Length}" : $"Active chats · {_sessions.Length}");
+            ? (zh ? $"最近会话 · {_sessions.Length}" : $"Recent chats · {_sessions.Length}")
+            : (zh ? $"活跃会话 · {_activeSessionCount}" : $"Active chats · {_activeSessionCount}");
         const float pad = 12f;
         var hasNumberedInstance = _sessions.Any(s => s.InstanceNumber > 0 || (s.InstanceLabel is { Length: > 5 }));
         var chipWidth = hasNumberedInstance ? 62f : 50f;
@@ -609,6 +714,7 @@ internal sealed class SystemUsagePopoverForm : Form
 
         using var recorded = new SolidBrush(RecordedAccent);
         using var estimated = new SolidBrush(EstimateAccent);
+        using var toolBrush = new SolidBrush(SendAccent);
         using var idle = new SolidBrush(UiPalette.Slate500);
         using var rowDivider = new Pen(UiPalette.Slate400.WithAlpha(28), 1);
         using var trimmed = new StringFormat(StringFormatFlags.NoWrap)
@@ -681,11 +787,33 @@ internal sealed class SystemUsagePopoverForm : Form
             Metric(firstLeft, firstWidth, UiIcons.Clock, first);
             Metric(cacheLeft, cacheWidth, UiIcons.Cache, NativeText.FormatCacheHitPercent(turn.CacheHitPercent));
             Metric(totalLeft, totalWidth, UiIcons.Tokens, totalText);
-            var speed = live is null
-                ? "—"
-                : $"{live.Total.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)} tok/s";
-            DrawString(graphics, speed, _tableValueFont,
-                live is null ? muted : accent, new RectangleF(speedLeft, metricsTop - .5f, speedWidth, 14), StringAlignment.Far);
+            string speed;
+            Brush speedBrush;
+            var speedFont = _tableValueFont;
+            if (live is not null)
+            {
+                speed = $"{live.Total.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)} tok/s";
+                speedBrush = accent;
+            }
+            else if (turn.State == "running")
+            {
+                speed = zh ? "工具中" : "Tools";
+                speedBrush = toolBrush;
+                speedFont = _subtitleFont;
+            }
+            else if (turn.OutputTokensPerSecond is { } avg && double.IsFinite(avg) && avg > 0)
+            {
+                speed = $"{avg.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)} tok/s";
+                speedBrush = muted;
+                speedFont = _subtitleFont;
+            }
+            else
+            {
+                speed = "—";
+                speedBrush = muted;
+            }
+            DrawString(graphics, speed, speedFont,
+                speedBrush, new RectangleF(speedLeft, metricsTop - .5f, speedWidth, 14), StringAlignment.Far);
         }
     }
 

@@ -66,7 +66,14 @@ Phase 1：检查现有数据，给出一套统一设计，用真实 WinForms 离
 - V2：`d4419a5` Preview: widen the rate panel and use a five-stat activity row.
 - V3：`6fea030` Preview: session rows show first-token latency, cache, and total tokens.
 - V4：`ee88a7d` Preview: two-line session rows with Codex chip, model/effort, and running-first sort.
-- **V5：已完成实例芯片与任务栏小圈绑定、第 1 行全宽标题、第 2 行统一展示全部指标与 `tok/s`、去掉右上角「实时 tok/s」，并通过全量 114 项 `ZGSTokenBar.Tests`、静态门禁与 Node 测试。**
+- **V5：已完成实例芯片与任务栏小圈绑定、第 1 行全宽标题、第 2 行统一展示全部指标与 `tok/s`、去掉右上角「实时 tok/s」，已合入 `main` (`ae44a04`) 并部署本机。**
+- **V6 终审 6 项优化**：
+  1. 「每日 / 每周」切换按钮支持左键点击即时切换 `TokenActivityGrain`（含手型光标）；
+  2. 12 周活动热力图格子 / 周柱悬停高亮并内联显示日期/周区间与 token 用量；
+  3. 活跃会话不足 10 条时自动用最近完成会话补全至 10 条（显示平均速率），避免右侧卡片留白；
+  4. `running` 状态但 3 秒内无输出（工具执行阶段）显示紫色 `工具中` / `Tools`；
+  5. `CockpitCodexInstanceActivity.ReadHomeAccountIds` 在默认 `.codex` 目录缺失 `defaultSettings.bindAccountId` 时回退读取 `auth.json` 与 `codex_accounts.json`，并通过 `QuotaIdentity` 匹配任务栏小圈；
+  6. `RouterMonitorForm` 加宽历史表「释放」列消除高 DPI 截断，并在顶栏品牌旁增加「当前 · 排队 · 成功 · 失败」四格概览。
 - 离屏截图源文件：`C:\Users\2025\AppData\Local\Temp\panel-v5\`。
 
 ### V2 / V3 仍有效的实现要点

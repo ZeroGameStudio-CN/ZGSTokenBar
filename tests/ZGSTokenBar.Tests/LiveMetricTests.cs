@@ -101,6 +101,41 @@ internal static class LiveMetricTests
             && popover.ProcessRowCountForAcceptance == 0,
             "Rate hover contains output/network metrics without CPU or process rows.");
 
+        var today = new DateOnly(2026, 11, 13);
+        var activity = PanelCaptures.ActivityFixture(today, TokenActivityGrain.Daily);
+        var capturedAt = snapshot.CapturedAt;
+        var backfillTurns = new[]
+        {
+            new CodexConversationTurn("s1", "t1", "gpt-5.5", "high", capturedAt.AddSeconds(-10), capturedAt, 500, 10, false, true)
+            { LiveRate = new ConversationOutputRate("s1", "t1", 40, 0) },
+            new CodexConversationTurn("s2", "t2", "gpt-5.5", "medium", capturedAt.AddSeconds(-10), capturedAt, 300, 10, false, true),
+            new CodexConversationTurn("s3", "t3", "gpt-5.5", "low", capturedAt.AddMinutes(-2), capturedAt.AddMinutes(-1), 200, 5, true, true),
+            new CodexConversationTurn("s4", "t4", "gpt-5.5", "high", capturedAt.AddMinutes(-5), capturedAt.AddMinutes(-4), 100, 4, true, true),
+            new CodexConversationTurn("s5", "t5", "gpt-5.5", "medium", capturedAt.AddMinutes(-8), capturedAt.AddMinutes(-7), 150, 6, true, true),
+        };
+        var rateContent = new SystemUsagePopoverContent(snapshot, false, true)
+        {
+            Activity = activity,
+            Conversations = backfillTurns,
+        };
+        using (var _ = popover.RenderForTest(rateContent, text, QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), 96)) { }
+        Check(popover.SessionRowCountForAcceptance == 5,
+            "Active session lists backfill recent completed turns up to ten rows.");
+        Check(popover.SelectActivityGrainAtLogicalPoint(new System.Drawing.PointF(250, 221))
+            && popover.EffectiveActivityGrain == TokenActivityGrain.Weekly,
+            "Clicking Weekly on the segmented toggle switches the activity chart grain.");
+        popover.UpdateHoverAtLogicalPoint(new System.Drawing.PointF(276, 260));
+        Check(popover.HoverHeatmapLabelForAcceptance is { Length: > 0 } weeklyLabel && weeklyLabel.Contains('–') && weeklyLabel.Contains('·'),
+            "Hovering a weekly bar reports its week range and token total.");
+        Check(popover.SelectActivityGrainAtLogicalPoint(new System.Drawing.PointF(195, 221))
+            && popover.EffectiveActivityGrain == TokenActivityGrain.Daily,
+            "Clicking Daily on the segmented toggle switches back to the daily heatmap.");
+        popover.UpdateHoverAtLogicalPoint(new System.Drawing.PointF(276, 260));
+        Check(popover.HoverHeatmapLabelForAcceptance is { Length: > 0 } dailyLabel && dailyLabel.Contains('/') && dailyLabel.Contains('·'),
+            "Hovering a daily heatmap cell reports its date and token total.");
+        popover.UpdateHoverAtLogicalPoint(null);
+        Check(popover.HoverHeatmapLabelForAcceptance is null, "Leaving the heatmap clears the hover readout.");
+
         popover.UpdateContent(new SystemUsagePopoverContent(snapshot, true), text);
         Check(!popover.LiveRatesContentForAcceptance && popover.ProcessRowCountForAcceptance == 1,
             "Switching back to a pinned CPU hover restores only CPU details.");
@@ -465,6 +500,37 @@ internal static class LiveMetricTests
             Check(attached[1].InstanceLabel == "Codex · 2" && attached[1].InstanceNumber == 2
                 && attached[1].InstanceRemainingPercent is { } rem2 && Math.Abs(rem2 - 54) < .001,
                 "Default home turn resolves to taskbar ring Codex · 2 with 54% remaining.");
+
+            var fallbackCockpit = Path.Combine(directory, "empty-cockpit");
+            var fallbackDefault = Path.Combine(directory, "fallback-codex");
+            Directory.CreateDirectory(fallbackCockpit);
+            Directory.CreateDirectory(fallbackDefault);
+            File.WriteAllText(Path.Combine(fallbackDefault, "auth.json"),
+                JsonSerializer.Serialize(new { tokens = new { account_id = "raw-chatgpt-acc" } }));
+            var fallbackMap = CockpitCodexInstanceActivity.ReadHomeAccountIds(fallbackCockpit, fallbackDefault);
+            Check(fallbackMap[CockpitCodexInstanceActivity.NormalizeDirectory(fallbackDefault)!] == "raw-chatgpt-acc",
+                "Default Codex home falls back to auth.json account_id when codex_instances.json is absent.");
+            var strategyQuota = new QuotaSnapshot(
+                quota.Cards,
+                quota.Health,
+                at)
+            {
+                CodexAccounts =
+                [
+                    new CodexAccountQuota("cockpit-uuid-2", [new QuotaWindow("5h", 46, at.AddHours(2), TimeSpan.FromHours(5))], at)
+                    {
+                        CardKey = cardKeyTwo,
+                        QuotaIdentity = CodexQuotaService.StableCardKey("strategy:raw-chatgpt-acc"),
+                    },
+                ],
+            };
+            var fallbackAttached = CodexConversationDisplay.AttachInstances(
+                [turns[1] with { CodexHome = fallbackDefault, InstanceLabel = null, InstanceNumber = 0, InstanceRemainingPercent = null }],
+                strategyQuota,
+                fallbackMap);
+            Check(fallbackAttached[0].InstanceLabel == "Codex · 2" && fallbackAttached[0].InstanceNumber == 2
+                && fallbackAttached[0].InstanceRemainingPercent is { } remFallback && Math.Abs(remFallback - 54) < .001,
+                "Default home raw ChatGPT account_id resolves via QuotaIdentity to its taskbar ring.");
         }
         finally { Directory.Delete(directory, true); }
     }

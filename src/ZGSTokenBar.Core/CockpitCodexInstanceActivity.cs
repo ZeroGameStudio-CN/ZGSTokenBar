@@ -92,24 +92,26 @@ internal static class CockpitCodexInstanceActivity
         var cockpitHome = home ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".antigravity_cockpit");
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var resolvedDefault = NormalizeDirectory(defaultCodexHome ?? CodexQuotaService.CodexHome());
         try
         {
             var path = Path.Combine(cockpitHome, "codex_instances.json");
             var file = new FileInfo(path);
-            if (!file.Exists || file.Length is <= 0 or > MaximumJsonBytes) return result;
-
-            using var document = JsonDocument.Parse(File.ReadAllText(path));
-            if (document.RootElement.TryGetProperty("defaultSettings", out var defaults)
-                && defaults.ValueKind == JsonValueKind.Object
-                && defaults.StringProperty("bindAccountId") is { Length: > 0 } defaultAccountId
-                && NormalizeDirectory(defaultCodexHome ?? CodexQuotaService.CodexHome()) is { } resolvedDefault)
+            if (file.Exists && file.Length is > 0 and <= MaximumJsonBytes)
             {
-                result[resolvedDefault] = defaultAccountId;
+                using var document = JsonDocument.Parse(File.ReadAllText(path));
+                if (document.RootElement.TryGetProperty("defaultSettings", out var defaults)
+                    && defaults.ValueKind == JsonValueKind.Object
+                    && defaults.StringProperty("bindAccountId") is { Length: > 0 } defaultAccountId
+                    && resolvedDefault is not null)
+                {
+                    result[resolvedDefault] = defaultAccountId;
+                }
             }
         }
         catch
         {
-            return result;
+            // Keep partial instance mappings if codex_instances.json cannot be parsed.
         }
 
         foreach (var (accountId, codexHome) in ReadInstanceDirectories(cockpitHome))
@@ -118,8 +120,94 @@ internal static class CockpitCodexInstanceActivity
             if (NormalizeDirectory(codexHome) is { } normalized) result[normalized] = accountId;
         }
 
+        if (resolvedDefault is not null
+            && !result.ContainsKey(resolvedDefault)
+            && TryResolveDefaultHomeAccountId(cockpitHome, resolvedDefault) is { Length: > 0 } fallbackAccountId)
+        {
+            result[resolvedDefault] = fallbackAccountId;
+        }
+
         return result;
     }
+
+    private static string? TryResolveDefaultHomeAccountId(string cockpitHome, string defaultCodexHome)
+    {
+        string? authAccountId = null;
+        string? authEmail = null;
+        try
+        {
+            var authPath = Path.Combine(defaultCodexHome, "auth.json");
+            var authFile = new FileInfo(authPath);
+            if (authFile.Exists && authFile.Length is > 0 and <= MaximumJsonBytes)
+            {
+                using var document = JsonDocument.Parse(File.ReadAllText(authPath));
+                var root = document.RootElement;
+                var tokens = root.ObjectProperty("tokens");
+                var accessToken = tokens?.StringProperty("access_token");
+                var idToken = tokens?.StringProperty("id_token");
+                authAccountId = tokens?.StringProperty("account_id")
+                    ?? root.StringProperty("account_id")
+                    ?? OpenAiAccountId(idToken)
+                    ?? OpenAiAccountId(accessToken);
+                authEmail = tokens?.StringProperty("email")
+                    ?? root.StringProperty("email")
+                    ?? CredentialSupport.JwtString(idToken, "email")
+                    ?? CredentialSupport.JwtString(accessToken, "email");
+            }
+        }
+        catch
+        {
+            // Fall back to Cockpit's index if auth.json is unreadable.
+        }
+
+        try
+        {
+            var indexPath = Path.Combine(cockpitHome, "codex_accounts.json");
+            var indexFile = new FileInfo(indexPath);
+            if (indexFile.Exists && indexFile.Length is > 0 and <= MaximumJsonBytes)
+            {
+                using var index = JsonDocument.Parse(File.ReadAllText(indexPath));
+                if (index.RootElement.TryGetProperty("accounts", out var items)
+                    && items.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in items.EnumerateArray())
+                    {
+                        var id = item.StringProperty("id");
+                        if (string.IsNullOrWhiteSpace(id)) continue;
+                        if (!string.IsNullOrWhiteSpace(authAccountId)
+                            && (string.Equals(id, authAccountId, StringComparison.Ordinal)
+                                || string.Equals(item.StringProperty("account_id"), authAccountId, StringComparison.Ordinal)))
+                        {
+                            return id;
+                        }
+                        if (!string.IsNullOrWhiteSpace(authEmail)
+                            && string.Equals(item.StringProperty("email"), authEmail, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return id;
+                        }
+                    }
+                }
+                if (string.IsNullOrWhiteSpace(authAccountId)
+                    && index.RootElement.StringProperty("current_account_id") is { Length: > 0 } currentId)
+                {
+                    return currentId;
+                }
+            }
+        }
+        catch
+        {
+            // Keep auth.json account_id fallback if Cockpit's index cannot be read.
+        }
+
+        return string.IsNullOrWhiteSpace(authAccountId) ? null : authAccountId;
+    }
+
+    private static string? OpenAiAccountId(string? token) =>
+        CredentialSupport.JwtNestedString(token, "https://api.openai.com/auth", "chatgpt_account_id")
+        ?? CredentialSupport.JwtString(
+            token,
+            "chatgpt_account_id",
+            "https://api.openai.com/auth.chatgpt_account_id");
 
     internal static string? NormalizeDirectory(string? path)
     {

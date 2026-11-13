@@ -36,9 +36,9 @@ internal static class PanelCaptures
             Turn(5, "推进 gd 关卡导出与校验流水线", "gpt-5.5", "medium", 9_100, 220, 0, 36.6, 1.6, 25_000, 20_000, instance: 2, remaining: 54),
             Turn(6, "zgs-ops-workflow · b7b019d4 重试策略", "gpt-5.5", "low", 3_400, 60, 13.1, 0, null, 8_000, 7_500, instance: 1, remaining: 19),
             Turn(7, "立绘精细拆分与离线动作烘焙", "gpt-5.5", "high", 22_000, 410, 9.4, 0, 3.1, 120_000, 110_000, instance: 2, remaining: 54),
-            Turn(8, "Router 监视面板与速率卡视觉对齐", "gpt-5.5", "medium", 5_200, 88, 0, 17.8, 0.4, 9_000, 1_000, instance: 3, remaining: 37),
-            Turn(9, "整理多语言文案与截图规范", "gpt-5.5", "low", 14_800, 200, 80.0, 0, 2.2, 36_000, 30_000, completed: true, instance: 2, remaining: 54),
-            Turn(10, "核对构建产物与版本号", "gpt-5.5", "medium", 6_400, 110, 0, 72.0, 1.0, 16_000, 8_000, completed: true, instance: 1, remaining: 19),
+            Turn(8, "Router 监视面板与速率卡视觉对齐", "gpt-5.5", "medium", 5_200, 88, 0, 0, 0.4, 9_000, 1_000, instance: 3, remaining: 37),
+            Turn(9, "整理多语言文案与截图规范", "gpt-5.5", "low", 14_800, 200, 0, 0, 2.2, 36_000, 30_000, completed: true, instance: 2, remaining: 54),
+            Turn(10, "核对构建产物与版本号", "gpt-5.5", "medium", 6_400, 110, 0, 0, 1.0, 16_000, 8_000, completed: true, instance: 1, remaining: 19),
         };
         foreach (var locale in new[] { "zh-CN", "en" })
         {
