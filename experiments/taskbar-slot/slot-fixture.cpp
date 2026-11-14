@@ -10,6 +10,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string_view>
+#include <thread>
 
 using namespace slot;
 using Windows::Foundation::Point;
@@ -54,6 +55,68 @@ double Left(FrameworkElement const& element, Grid const& root) {
 LRESULT CALLBACK HostProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     if (msg == WM_DESTROY) PostQuitMessage(0);
     return DefWindowProcW(hwnd, msg, wparam, lparam);
+}
+
+// A different thread owns the test window. Simulate a cleanup that entered
+// its window procedure but is still executing when the caller times out.
+void TestBoundedDispatch() {
+    constexpr UINT SlowCleanup = WM_APP + 17;
+    struct Signals {
+        winrt::handle ready{CreateEventW(nullptr, TRUE, FALSE, nullptr)};
+        winrt::handle entered{CreateEventW(nullptr, TRUE, FALSE, nullptr)};
+        winrt::handle release{CreateEventW(nullptr, TRUE, FALSE, nullptr)};
+        winrt::handle finished{CreateEventW(nullptr, TRUE, FALSE, nullptr)};
+        std::atomic<HWND> hwnd{};
+    } signals;
+    Require(signals.ready && signals.entered && signals.release && signals.finished, "Create dispatch test signals");
+    std::jthread owner([&] {
+        WNDCLASSW cls{};
+        cls.hInstance = GetModuleHandleW(nullptr);
+        cls.lpszClassName = L"TokenBarSlotDispatchFixture";
+        cls.lpfnWndProc = [](HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) -> LRESULT {
+            if (msg == WM_NCCREATE) {
+                auto create = reinterpret_cast<CREATESTRUCTW const*>(lp);
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(create->lpCreateParams));
+            } else if (msg == SlowCleanup) {
+                auto& s = *reinterpret_cast<Signals*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+                SetEvent(s.entered.get());
+                WaitForSingleObject(s.release.get(), 4000);
+                SetEvent(s.finished.get());
+                return 0;
+            } else if (msg == WM_DESTROY) {
+                PostQuitMessage(0);
+            }
+            return DefWindowProcW(hwnd, msg, wp, lp);
+        };
+        HWND window{};
+        if (RegisterClassW(&cls))
+            window = CreateWindowExW(0, cls.lpszClassName, L"", 0, 0, 0, 0, 0,
+                HWND_MESSAGE, nullptr, cls.hInstance, &signals);
+        signals.hwnd.store(window);
+        SetEvent(signals.ready.get());
+        if (!window) return;
+        MSG msg{};
+        while (GetMessageW(&msg, nullptr, 0, 0) > 0) DispatchMessageW(&msg);
+    });
+    struct Close {
+        Signals& signals;
+        ~Close() {
+            SetEvent(signals.release.get());
+            if (auto window = signals.hwnd.load()) PostMessageW(window, WM_CLOSE, 0, 0);
+        }
+    } close{signals};
+    Require(WaitForSingleObject(signals.ready.get(), 3000) == WAIT_OBJECT_0 && signals.hwnd.load(),
+        "Taskbar-thread test window is ready");
+    const auto before = GetTickCount64();
+    Require(Dispatch(signals.hwnd.load(), SlowCleanup, 1, 150) == DispatchResult::TimedOut
+        && GetTickCount64() - before < 2000, "Close returns on timeout instead of waiting for the UI thread");
+    Require(WaitForSingleObject(signals.entered.get(), 0) == WAIT_OBJECT_0
+        && WaitForSingleObject(signals.finished.get(), 0) == WAIT_TIMEOUT,
+        "The owner callback may still be executing after the caller returned");
+    SetEvent(signals.release.get());
+    Require(WaitForSingleObject(signals.finished.get(), 3000) == WAIT_OBJECT_0,
+        "The owner callback finishes after the UI thread can continue");
+    std::cout << "PASS blocked taskbar dispatch times out and the owner callback can finish afterward\n";
 }
 
 int Run(bool preview) {
@@ -143,6 +206,8 @@ int Run(bool preview) {
     Require(reserved.Attach(tray, tile), "Insert the same reservation as the mod");
     Require(!reserved.Attach(tray, tile), "Repeated enable must not add another column");
     arrange();
+    reserved.WatchLayout();
+    reserved.Recheck();
     Near(tray.ActualWidth() - trayBaseline, Width, "Tray grows by exactly 321 DIP");
     Near(baseline - scroll.ActualWidth(), Width, "App area yields exactly 321 DIP");
     Require(reserved.HasFullWidth(), "The tile fills its whole reserved column");
@@ -186,6 +251,30 @@ int Run(bool preview) {
             && unbox_value<int>(clock.ReadLocalValue(Grid::ColumnProperty())) == 1,
         "Disable restores both local and default column properties");
     Near(scroll.ActualWidth(), baseline, "Disable restores the original app viewport width");
+
+    Require(reserved.Attach(tray, tile), "Enable for the tray rebuild regression");
+    arrange();
+    reserved.WatchLayout();
+    reserved.Recheck();
+    // A replacement can be assigned its original, unshifted column. In the
+    // reviewed version the slot still passed HasFullWidth and covered 54 DIP.
+    uint32_t quickIndex{};
+    Require(tray.Children().IndexOf(quick, quickIndex), "Original tray button is attached");
+    tray.Children().RemoveAt(quickIndex);
+    auto replacement = AddButton(tray, L"Replacement", 54);
+    Grid::SetColumn(replacement, 0);
+    arrange();
+    Require(!reserved.Active() && reserved.Rejected() && !hit(tile),
+        "A conflicting tray rebuild automatically removes the slot");
+    Require(tray.ColumnDefinitions().Size() == 2 && Grid::GetColumn(replacement) == 0
+        && Grid::GetColumn(clock) == 1 && hit(replacement) && hit(clock),
+        "Rollback preserves the replacement and restores the original clock column");
+    Near(scroll.ActualWidth(), baseline, "Conflict rollback returns the full original viewport");
+    tray.Children().Clear();
+    tray.Children().Append(quick);
+    tray.Children().Append(clock);
+    arrange();
+
     for (int cycle=0; cycle<3; ++cycle) {
         Require(reserved.Attach(tray, tile), "A removed reservation can be enabled again");
         reserved.Remove();
@@ -195,7 +284,8 @@ int Run(bool preview) {
     std::cout << "PASS real XAML: viewport " << baseline << " -> " << baseline - Width
               << " -> " << baseline << " DIP; reserved " << Width
               << " DIP (" << Width * dpi << " physical px); 33 app buttons; "
-              << "four hit targets; exact rollback over four cycles\n";
+              << "four hit targets; exact rollback over four cycles; safe rollback on a tray rebuild\n";
+    TestBoundedDispatch();
 
     if (preview) {
         Require(reserved.Attach(tray, tile), "Restore the reservation for preview");

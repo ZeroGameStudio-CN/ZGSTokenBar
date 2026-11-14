@@ -15,7 +15,9 @@ This requires Visual Studio C++ x64 build tools and Windows SDK 10.0.26100.0
 row briefly. The taskbar in this fixture is simulated: XAML measures a fixed tray
 column next to a scrollable app-button strip. The test verifies that crowding
 preserves the width, four XAML controls stay hit-testable, and disabling restores
-the original columns and bounds over repeated cycles.
+the original columns and bounds over repeated cycles. It also recreates a tray
+button in the reserved column and checks automatic rollback, then exercises a
+cross-thread close that times out while the target callback is still executing.
 
 The mod is off by default. Its .wh.cpp is standalone and compiles with the
 official Windhawk 1.7.3 x64 compiler. It is bound to Windows 11 build
@@ -23,13 +25,22 @@ official Windhawk 1.7.3 x64 compiler. It is bound to Windows 11 build
 symbols and member signature. Use an explicitly authorized temporary Windhawk
 session and turn on **Show the trial slot** for the live check. Compare with the
 original bounds, add enough apps to overflow, check Start/app/tray/clock hit
-targets, then switch the slot off and verify the exact base geometry. A closed
-or disabled slot must leave no additional taskbar column.
+targets, then switch the slot off and verify the exact base geometry. An
+overlapping or detached layout withdraws the trial slot rather than moving
+any new native controls.
 
-The live trial runs in Explorer. If the taskbar hangs or Explorer restarts,
-file management or the desktop may be interrupted. That failure path is not
-covered by the fixture. The reservation uses no credentials, elevation, startup
-registration or permanent Windows settings changes.
+The live trial runs in Explorer. Cross-thread close waits at most 750 ms for
+message dispatch. A timeout is reported as unconfirmed rollback; an active slot
+is removed on the taskbar thread when it starts processing messages again.
+The trial DLL remains mapped until that Explorer process exits so that late
+callbacks can finish safely. After disabling or unloading the mod, use a new
+Explorer session to try it again. Disabling the setting without unloading the
+mod still allows another trial after a confirmed rollback.
+
+If Explorer hangs or exits, file management or the desktop may be interrupted.
+The fixture does not verify real Explorer loading, reflow or recovery. The
+reservation uses no credentials, elevation, startup registration or permanent
+Windows settings changes.
 
 The shell bridge follows the MIT-licensed [Taskbar Media Presence implementation
 at e2a6610](https://github.com/MrBoxik/Taskbar-Media-Presence/blob/e2a6610237a214432cc3c245c8a3015cfdb55194/taskbar-media-presence.wh.cpp#L9453-L9578).
