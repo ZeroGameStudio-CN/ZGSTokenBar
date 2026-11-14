@@ -171,6 +171,13 @@ internal sealed class OtherToolsModule : IDisposable
     public void ShowOverview()
     {
         if (_disposed || _bar.IsDisposed) return;
+        if (_popup is { Visible: true })
+        {
+            _popup.Close();
+            _popup.Dispose();
+            _popup = null;
+            return;
+        }
         _popup?.Dispose();
         _popup = new UsageBoardForm(
             Math.Max(1, _bar.DeviceDpi / 96f),
@@ -189,6 +196,10 @@ internal sealed class OtherToolsModule : IDisposable
             : anchor.Bottom;
         _popup.Location = new Point(x, y);
         _popup.FormClosed += (_, _) => _light = _popup?.Light == true;
+        _popup.Deactivate += (_, _) =>
+        {
+            if (!(_popup?.IsDisposed ?? true)) _popup.Close();
+        };
         _popup.ShowPopover(BarForm.PopoverOwnerFor(_bar));
     }
 

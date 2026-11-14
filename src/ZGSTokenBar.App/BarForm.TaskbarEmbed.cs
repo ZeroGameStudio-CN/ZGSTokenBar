@@ -79,8 +79,11 @@ internal sealed partial class BarForm
     /// </summary>
     private void RepushLayeredFrame()
     {
+        _resetLayeredStyle = true;
         _glassFrameSize = Size.Empty;
-        if (GlassLayered) QueueGlassRender();
+        if (!GlassLayered) return;
+        if (IsHandleCreated && !IsDisposed && Visible) RenderGlassLayered();
+        QueueGlassRender();
     }
 
     /// <summary>Called from the docked placement path right before the bar is positioned.</summary>

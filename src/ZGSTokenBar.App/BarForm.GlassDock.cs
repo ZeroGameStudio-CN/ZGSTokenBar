@@ -14,6 +14,7 @@ internal sealed partial class BarForm
     private bool _glassExpanded;
     private bool _glassChipHovered;
     private bool _glassRenderQueued;
+    private bool _resetLayeredStyle;
     private byte[] _glassFrame = [];
     private byte[] _glassFrameScratch = [];
     private Size _glassFrameSize;
@@ -401,7 +402,8 @@ internal sealed partial class BarForm
         // for unchanged frames removes the bulk of the bar's idle kernel time.
         if (!CaptureGlassFrame(bitmap)) return;
         using (PerfTrace.Measure("glass.render.update-layered"))
-            if (!LayeredWindow.Update(Handle, bitmap)) _glassFrameSize = Size.Empty;
+            if (LayeredWindow.Update(Handle, bitmap, _resetLayeredStyle)) _resetLayeredStyle = false;
+            else _glassFrameSize = Size.Empty;
         if (PerfTrace.Enabled)
             PerfTrace.Note($"glass.bounds chip={Rectangle.Round(ScaleRect(_glassChipBounds))} router={Rectangle.Round(ScaleRect(GlassDockLayout.RouterBoundsFor(CurrentGlassPlan().Width)))} client={ClientSize}");
     }

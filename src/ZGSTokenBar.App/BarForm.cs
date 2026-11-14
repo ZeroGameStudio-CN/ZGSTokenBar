@@ -602,7 +602,7 @@ internal sealed partial class BarForm : Form
             if (_embedParent == 0 || TaskbarEmbedding.ParentOf(Handle) != _embedParent) SyncTaskbarPlacement();
             else TaskbarEmbedding.RaiseChild(Handle);
         }
-        if (GlassLayered) { _glassFrameSize = Size.Empty; QueueGlassRender(); }
+        if (GlassLayered) RepushLayeredFrame();
         PerfTrace.Note($"embed.health {reason} visible={Visible} embedded={EmbeddedInTaskbar} status={TaskbarEmbedStatus}");
     }
 

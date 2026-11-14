@@ -137,13 +137,20 @@ internal static class WindowBackdrop
 internal static class LayeredWindow
 {
     public const int ExStyle = 0x00080000;
+    private const int GwlExStyle = -20;
     private const int UlwAlpha = 2;
     private const byte AcSrcOver = 0;
     private const byte AcSrcAlpha = 1;
 
-    public static bool Update(IntPtr handle, Bitmap bitmap)
+    public static bool Update(IntPtr handle, Bitmap bitmap, bool resetStyle = false)
     {
         if (handle == IntPtr.Zero || !OperatingSystem.IsWindows()) return false;
+        if (resetStyle)
+        {
+            var exStyle = GetWindowLongPtr(handle, GwlExStyle).ToInt64();
+            SetWindowLongPtr(handle, GwlExStyle, new IntPtr(exStyle & ~ExStyle));
+            SetWindowLongPtr(handle, GwlExStyle, new IntPtr(exStyle | ExStyle));
+        }
         var screen = GetDC(IntPtr.Zero);
         var memory = CreateCompatibleDC(screen);
         var hbitmap = IntPtr.Zero;
@@ -184,6 +191,12 @@ internal static class LayeredWindow
         int colorKey,
         ref BlendFunction blend,
         int flags);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    private static extern IntPtr GetWindowLongPtr(IntPtr window, int index);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    private static extern IntPtr SetWindowLongPtr(IntPtr window, int index, IntPtr value);
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetDC(IntPtr window);

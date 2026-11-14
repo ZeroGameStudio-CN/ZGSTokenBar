@@ -12635,6 +12635,37 @@ static void TestTaskbarEmbeddingWithFakeTaskbar()
     Check(TaskbarPlacement.MoveAt(child.Handle, new Point(180, 76), child.Size), "overlay drag placement succeeds");
     Check(TaskbarEmbedding.IsTopmost(child.Handle), "dragging reasserts native topmost state");
 
+    using (var layered = new System.Windows.Forms.Form
+    {
+        FormBorderStyle = System.Windows.Forms.FormBorderStyle.None,
+        ShowInTaskbar = false,
+        StartPosition = System.Windows.Forms.FormStartPosition.Manual,
+        Location = new Point(20, 20),
+        Size = new Size(64, 32),
+        TopMost = true,
+    })
+    using (var bitmap = new Bitmap(64, 32, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+    {
+        _ = layered.Handle;
+        var initialExStyle = NativeWindowMethods.GetWindowLongPtr(layered.Handle, -20).ToInt64();
+        _ = NativeWindowMethods.SetWindowLongPtr(layered.Handle, -20, (nint)(initialExStyle | LayeredWindow.ExStyle));
+        layered.Show();
+        System.Windows.Forms.Application.DoEvents();
+        Check(LayeredWindow.Update(layered.Handle, bitmap), "top-level layered frame update succeeds");
+
+        var layeredOriginal = TaskbarEmbedding.Attach(layered.Handle, parent, out var layeredFailure);
+        Check(layeredOriginal is not null, "layered attach succeeds: " + layeredFailure);
+        Check(TaskbarPlacement.ShowAt(layered.Handle, new Point(150, 70), layered.Size), "layered embedded placement succeeds");
+        Check(LayeredWindow.Update(layered.Handle, bitmap, resetStyle: true), "layered update with resetStyle succeeds after attach");
+        Check((NativeWindowMethods.GetWindowLongPtr(layered.Handle, -20).ToInt64() & LayeredWindow.ExStyle) == LayeredWindow.ExStyle,
+            "layered ExStyle is preserved after embedded resetStyle update");
+
+        TaskbarEmbedding.Detach(layered.Handle, layeredOriginal!.Value);
+        Check(LayeredWindow.Update(layered.Handle, bitmap, resetStyle: true), "layered update with resetStyle succeeds after detach");
+        Check((NativeWindowMethods.GetWindowLongPtr(layered.Handle, -20).ToInt64() & LayeredWindow.ExStyle) == LayeredWindow.ExStyle,
+            "layered ExStyle is preserved after detached resetStyle update");
+    }
+
     original = TaskbarEmbedding.Attach(child.Handle, parent, out failure);
     Check(original is not null, "re-attach succeeds: " + failure);
     var childHandle = child.Handle;

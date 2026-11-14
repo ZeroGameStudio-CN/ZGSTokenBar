@@ -75,9 +75,11 @@ internal sealed partial class BarForm
             _resolvedTaskbarMonitor = resolvedMonitor;
             if (WindowState != FormWindowState.Normal) WindowState = FormWindowState.Normal;
             if (!Visible) Show();
+            var wasEmbedded = EmbeddedInTaskbar;
             using (PerfTrace.Measure("placement.embed")) EnsureTaskbarEmbedding(resolvedMonitor);
             using (PerfTrace.Measure("placement.show-at"))
                 if (!TaskbarPlacement.ShowAt(Handle, location, placementSize) && !EmbeddedInTaskbar) Location = location;
+            if (EmbeddedInTaskbar && !wasEmbedded) RepushLayeredFrame();
             using (PerfTrace.Measure("placement.reposition-popovers")) RepositionPopovers();
             return;
         }
@@ -458,8 +460,8 @@ internal sealed partial class BarForm
         if (!_taskbarDragMoved)
         {
             var dragSize = SystemInformation.DragSize;
-            if (Math.Abs(deltaX) < Math.Max(1, dragSize.Width / 2)
-                && Math.Abs(deltaY) < Math.Max(1, dragSize.Height / 2))
+            if (Math.Abs(deltaX) < Math.Max(dragSize.Width, Scale(6))
+                && Math.Abs(deltaY) < Math.Max(dragSize.Height, Scale(6)))
             {
                 return;
             }
@@ -582,6 +584,8 @@ internal sealed partial class BarForm
                 CompleteTaskbarDrag(deferredTopology, restorePlacement: false);
             }
             else CompleteTaskbarDrag(deferredTopology, restorePlacement: true);
+            if (_embedRequested && _embedParent == 0 && _taskbarDocked && IsHandleCreated && Visible) SyncTaskbarPlacement();
+            ScheduleEmbedHealthCheck("drag");
             return;
         }
 

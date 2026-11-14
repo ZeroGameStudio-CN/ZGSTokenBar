@@ -31,6 +31,8 @@ internal sealed class UsageBoardForm : Form, IPluginPopoverContent
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
+        TopMost = true;
+        KeyPreview = true;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
         MouseClick += (_, args) =>
         {
@@ -64,6 +66,16 @@ internal sealed class UsageBoardForm : Form, IPluginPopoverContent
     {
         base.OnHandleCreated(e);
         ApplyBackdrop();
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (e.KeyCode == Keys.Escape)
+        {
+            e.Handled = true;
+            Close();
+        }
     }
 
     protected override void OnPaint(PaintEventArgs e)

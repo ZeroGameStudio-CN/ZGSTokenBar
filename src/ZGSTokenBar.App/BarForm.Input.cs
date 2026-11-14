@@ -163,7 +163,7 @@ internal sealed partial class BarForm
     {
         base.OnMouseClick(e);
         if (e.Button != MouseButtons.Left) return;
-        if (DateTime.UtcNow <= _suppressClickUntil) return;
+        if (_taskbarDragMoved || DateTime.UtcNow <= _suppressClickUntil) return;
         var logical = ToLogical(e.Location);
         if (!_glassChipBounds.IsEmpty && _glassChipBounds.Contains(logical))
         {
@@ -189,7 +189,6 @@ internal sealed partial class BarForm
             return;
         }
         HidePopovers();
-        OverviewRequested?.Invoke(this, EventArgs.Empty);
     }
 
     private MiniQuotaTarget? TaskbarQuotaTargetAt(PointF point) =>
