@@ -383,9 +383,25 @@ internal sealed partial class SettingsForm : Form
     {
         // Native DPI initialization can rewrite fonts even with AutoScaleMode.None.
         // These fonts already include the same DPI factor as the manual row geometry.
+        // Clone on assignment so WinForms' DPI scaling never disposes the cached _designFonts instance.
         foreach (var (control, font) in _designFonts)
         {
-            if (!control.IsDisposed && !control.Font.Equals(font)) control.Font = font;
+            if (control.IsDisposed) continue;
+            if (!IsFontUsable(control.Font)) control.Font = Control.DefaultFont;
+            if (!control.Font.Equals(font)) control.Font = (Font)font.Clone();
+        }
+    }
+
+    private static bool IsFontUsable(Font font)
+    {
+        try
+        {
+            _ = font.Height;
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
         }
     }
 
@@ -403,7 +419,8 @@ internal sealed partial class SettingsForm : Form
 
     internal Panel ScrollViewport => _activePage;
 
-    internal bool FontsMatchLayout => _designFonts.All(pair => pair.Key.Font.Equals(pair.Value));
+    internal bool FontsMatchLayout => _designFonts.All(pair =>
+        !pair.Key.IsDisposed && IsFontUsable(pair.Key.Font) && pair.Key.Font.Equals(pair.Value));
 
     internal (int Offset, int Maximum, bool ThemedBarVisible) ScrollStateForAcceptance =>
         _activePage.ScrollState;

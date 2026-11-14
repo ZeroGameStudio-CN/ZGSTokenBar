@@ -13201,6 +13201,16 @@ static void TestNativeSettingsPanelContract()
                     form.Hide();
                     foreach (var font in rewrittenFonts) font.Dispose();
                 }
+                // Model Control.SetScaledFont disposing a control's restored Font on WM_DPICHANGED_BEFOREPARENT:
+                // SettingsForm must keep its own _designFonts master copy intact so restored fonts
+                // never read a disposed Font on subsequent opens.
+                var combo = descendants.First(control => control.AccessibleRole == System.Windows.Forms.AccessibleRole.ComboBox);
+                combo.Font.Dispose();
+                form.Show();
+                System.Windows.Forms.Application.DoEvents();
+                Equal(true, combo.Font.Height > 0 && combo.PreferredSize.Height > 0, $"{locale} {dpi} DPI: control keeps valid font after DPI scaling font disposal");
+                Equal(true, form.FontsMatchLayout, $"{locale} {dpi} DPI: design fonts stay intact after font disposal recovery");
+                form.Hide();
                 Equal(false, form.TopMost, "settings stay in the normal window band");
                 Equal(true, form.ShowInTaskbar, "settings remain reachable like a normal window");
                 Equal(

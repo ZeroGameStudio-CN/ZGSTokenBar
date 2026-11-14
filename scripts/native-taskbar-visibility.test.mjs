@@ -17,7 +17,7 @@ test('taskbar Mini restores a system-minimized window during its placement tick'
   assert.match(body, /WindowState != FormWindowState\.Normal/);
   assert.match(body, /WindowState = FormWindowState\.Normal/);
   assert.match(body, /TaskbarPlacement\.ShowAt\(Handle, location, placementSize\)/);
-  assert.match(body, /TaskbarPlacement\.ShouldHideForFullscreen\(\)/);
+  assert.match(body, /TaskbarPlacement\.ShouldHideForFullscreen\(/);
   assert.match(body, /\+\+_taskbarPlacementMisses < TaskbarPlacementMissThreshold/);
   assert.match(body, /_taskbarPlacementEstablished = true/);
 });

@@ -29,7 +29,7 @@ internal sealed partial class BarForm
             return;
         }
         using var probe = PerfTrace.Measure("placement.probe");
-        if (TaskbarPlacement.ShouldHideForFullscreen())
+        if (!EmbeddedInTaskbar && TaskbarPlacement.ShouldHideForFullscreen(PreferredTaskbarMonitor()))
         {
             _taskbarPlacementMisses = 0;
             _taskbarPlacementEstablished = false;
@@ -429,7 +429,7 @@ internal sealed partial class BarForm
     {
         base.OnVisibleChanged(e);
         if (!Visible) HidePopovers();
-        else if (GlassLayered) QueueGlassRender();
+        else if (GlassLayered) RepushLayeredFrame();
     }
 
     protected override void OnInvalidated(InvalidateEventArgs e)

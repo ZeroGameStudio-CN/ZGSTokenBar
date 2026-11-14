@@ -199,9 +199,12 @@ internal sealed partial class BarForm
             .ToArray();
         _visibleTaskbarAreas = SelectVisibleTaskbarAreas(_taskbarContentAreas);
         var miniLogicalWidth = CurrentGlassPlan().Width;
+        var previousClientSize = ClientSize;
         using (PerfTrace.Measure("layout.client-size")) ClientSize = new Size(Scale(miniLogicalWidth), Scale(TaskbarMiniLayoutMath.Height));
+        var sizeChanged = ClientSize != previousClientSize;
+        if (sizeChanged) _glassFrameSize = Size.Empty;
         using (PerfTrace.Measure("layout.region")) UpdateWindowRegion();
-        if (!_renderOnly && updatePlacement)
+        if (!_renderOnly && (updatePlacement || sizeChanged))
         {
             using var placement = PerfTrace.Measure("layout.placement");
             if (_taskbarDocked)

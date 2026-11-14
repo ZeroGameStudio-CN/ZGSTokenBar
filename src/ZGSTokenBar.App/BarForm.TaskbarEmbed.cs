@@ -216,9 +216,10 @@ internal sealed partial class BarForm
             }
             _embedHungTicks = 0;
             TaskbarEmbedding.RaiseChild(Handle);
+            if (GlassLayered && _glassFrameSize != ClientSize) RepushLayeredFrame();
             return;
         }
-        if (_taskbarDocked && Visible && DateTime.UtcNow >= _embedRetryAfter
+        if (_taskbarDocked && !_hiddenToTray && DateTime.UtcNow >= _embedRetryAfter
             && (TaskbarEmbedStatus != "fallback:remote-session" || !RemoteSession()))
         {
             SyncTaskbarPlacement();

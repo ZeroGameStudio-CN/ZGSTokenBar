@@ -25,7 +25,6 @@ internal static class TaskbarEmbedding
     private const uint SwpNoZOrder = 0x0004;
     private const uint SwpNoActivate = 0x0010;
     private const uint SwpFrameChanged = 0x0020;
-    private const uint SwpAsyncWindowPos = 0x4000;
     private const uint GaParent = 1;
     private static readonly nint Top = 0;
 
@@ -140,14 +139,14 @@ internal static class TaskbarEmbedding
         var point = new NativePoint { X = screenLocation.X, Y = screenLocation.Y };
         if (!ScreenToClient(parent, ref point)) return false;
         return SetWindowPos(window, Top, point.X, point.Y, size.Width, size.Height,
-            SwpNoActivate | SwpAsyncWindowPos | (keepZOrder ? SwpNoZOrder : 0));
+            SwpNoActivate | (keepZOrder ? SwpNoZOrder : 0));
     }
 
     /// <summary>Re-asserts top z-order among the taskbar's children without moving or resizing.</summary>
     internal static void RaiseChild(nint window)
     {
         if (!IsChild(window)) return;
-        _ = SetWindowPos(window, Top, 0, 0, 0, 0, SwpNoActivate | SwpAsyncWindowPos | SwpNoSize | 0x0002);
+        _ = SetWindowPos(window, Top, 0, 0, 0, 0, SwpNoActivate | SwpNoSize | 0x0002);
     }
 
     /// <summary>The topmost window under a screen point (passive hit-test, no input is sent).</summary>

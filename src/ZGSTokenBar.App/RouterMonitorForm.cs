@@ -347,7 +347,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     private void SetLogicalFont(Control control, string family, float pixels, FontStyle style = FontStyle.Regular)
     {
         _logicalFonts[control] = (family, pixels, style);
-        control.Font = ScaledFont((family, pixels, style));
+        control.Font = (Font)ScaledFont((family, pixels, style)).Clone();
     }
     private Font ScaledFont((string Family, float Pixels, FontStyle Style) logical)
     {
@@ -359,14 +359,26 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     /// <summary>Cheap check (no font allocation): does the form's font still match its logical size?</summary>
     private bool FontsDrifted() =>
         _logicalFonts.TryGetValue(this, out var logical)
-        && Math.Abs(Font.Size - logical.Pixels * _popoverScale) > .1;
+        && (!IsFontUsable(Font) || Math.Abs(Font.Size - logical.Pixels * _popoverScale) > .1);
+
+    private static bool IsFontUsable(Font font)
+    {
+        try { _ = font.Height; return true; }
+        catch (ArgumentException) { return false; }
+    }
 
     private void ApplyLogicalFonts()
     {
         SuspendLayout();
         // Include project chips created after construction, without retaining disposed chips.
+        // Give each control its own Font clone so WinForms' WM_DPICHANGED_BEFOREPARENT scaling
+        // on one child never disposes the Font still bound to sibling ComboBoxes.
         foreach (var control in new[] { this }.Concat(Children(this)))
-            control.Font = ScaledFont(_logicalFonts.GetValueOrDefault(control, _logicalFonts[this]));
+        {
+            var expected = ScaledFont(_logicalFonts.GetValueOrDefault(control, _logicalFonts[this]));
+            if (!IsFontUsable(control.Font)) control.Font = Control.DefaultFont;
+            if (!control.Font.Equals(expected)) control.Font = (Font)expected.Clone();
+        }
         ResumeLayout(true);
     }
     private GraphicsPath SurfacePath()

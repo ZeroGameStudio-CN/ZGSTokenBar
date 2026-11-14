@@ -12,6 +12,7 @@ internal static class TaskbarPlacement
     private const int DockThreshold = 32;
     private const int MonitorSwitchInset = 8;
     private const uint SetWindowPositionNoActivate = 0x0010;
+    private const uint GwHwndNext = 2;
     private static readonly nint TopMostWindow = new(-1);
     private static PlacementTrack[]? _cachedTracks;
     private static Size _cachedTrackWindowSize;
@@ -331,7 +332,7 @@ internal static class TaskbarPlacement
             SetWindowPositionNoActivate);
     }
 
-    public static bool ShouldHideForFullscreen()
+    public static bool ShouldHideForFullscreen(string? monitorName = null)
     {
         var taskbar = FindWindow("Shell_TrayWnd", null);
         var foreground = GetForegroundWindow();
@@ -340,7 +341,7 @@ internal static class TaskbarPlacement
         var className = new StringBuilder(128);
         _ = GetClassName(foreground, className, className.Capacity);
         var foregroundClass = className.ToString();
-        if (foregroundClass is "Progman" or "WorkerW" or "Shell_TrayWnd"
+        if (foregroundClass is "Progman" or "WorkerW" or "Shell_TrayWnd" or SecondaryTaskbarClass
             || ShellSurfaceClasses.Contains(foregroundClass))
         {
             return false;
@@ -348,11 +349,56 @@ internal static class TaskbarPlacement
         if (IsZoomed(foreground)) return false;
         if (!GetWindowRect(foreground, out var bounds)) return false;
 
+        var foregroundScreen = Screen.FromHandle(foreground);
+        if (!string.IsNullOrWhiteSpace(monitorName)
+            && !string.Equals(foregroundScreen.DeviceName, monitorName, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
         var screen = Screen.FromHandle(foreground).Bounds;
-        return bounds.Left <= screen.Left + 1
+        var coversScreen = bounds.Left <= screen.Left + 1
             && bounds.Top <= screen.Top + 1
             && bounds.Right >= screen.Right - 1
             && bounds.Bottom >= screen.Bottom - 1;
+        if (!coversScreen) return false;
+
+        var monitorTaskbar = FindTaskbarForMonitor(foregroundScreen.DeviceName, taskbar);
+        return monitorTaskbar == 0 || !IsWindowAbove(monitorTaskbar, foreground);
+    }
+
+    private static nint FindTaskbarForMonitor(string monitorName, nint primaryTaskbar)
+    {
+        if (primaryTaskbar != 0
+            && GetWindowRect(primaryTaskbar, out var primaryBounds)
+            && string.Equals(Screen.FromRectangle(primaryBounds.Rectangle).DeviceName, monitorName, StringComparison.OrdinalIgnoreCase))
+        {
+            return primaryTaskbar;
+        }
+
+        nint match = 0;
+        EnumWindowsProc callback = (window, _) =>
+        {
+            if (!IsWindowVisible(window) || WindowClass(window) != SecondaryTaskbarClass) return true;
+            if (!GetWindowRect(window, out var bounds)) return true;
+            if (!string.Equals(Screen.FromRectangle(bounds.Rectangle).DeviceName, monitorName, StringComparison.OrdinalIgnoreCase)) return true;
+            match = window;
+            return false;
+        };
+        _ = EnumWindows(callback, 0);
+        return match;
+    }
+
+    private static bool IsWindowAbove(nint first, nint second)
+    {
+        // GW_HWNDNEXT walks downward in Z-order; seeing `second` below `first` means `first` is in front of it.
+        var current = GetWindow(first, GwHwndNext);
+        for (var step = 0; current != 0 && step < 512; step++)
+        {
+            if (current == second) return true;
+            current = GetWindow(current, GwHwndNext);
+        }
+        return false;
     }
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
@@ -375,6 +421,9 @@ internal static class TaskbarPlacement
 
     [DllImport("user32.dll")]
     private static extern bool IsZoomed(nint window);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetWindow(nint window, uint command);
 
     [DllImport("user32.dll")]
     private static extern bool SetWindowPos(
