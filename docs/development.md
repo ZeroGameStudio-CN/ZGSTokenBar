@@ -212,6 +212,23 @@ read-only local performance probe runs with the same command and
 `--router-history-benchmark <temporary-output-directory>`; it measures live reads
 and cached native page rendering without execution controls or production settings.
 
+The **Work intake** tray entry is a separate read-only window. It uses the
+current user's managed Zero OS CLI and its existing session. The project list
+comes from work item read access; access to a project does not imply that
+automatic dispatch is enabled there. Select a recent item or enter its number
+to view the original status and transition history. Diagnostics are requested
+only for the selected item and keep the server's authorization and evidence
+limits. An empty diagnosis does not establish dispatch, failure, or inactivity.
+Closing the window stops reads. The client stores no work item data on disk.
+
+For the optional **Open in ZOS** link, set
+`ZGSTOKENBAR_WORKFLOW_WEB_ORIGIN` in the app's environment to the intended HTTPS
+web origin (no path, query, or fragment). The original conversation link is
+available only when the card supplies a structured conversation ID.
+`ZGSTokenBar.Cli intake show|hide --json` controls presentation only;
+`window inspect --json` reports visibility and aggregate row counts. Run the
+isolated fixture with `--intake-observer [capture-directory]` on the test executable.
+
 All acceptance is non-interactive and CLI-only. Do not use desktop automation, injected pointer/keyboard input, or user-performed GUI interaction as required evidence.
 
 Delegation skills and their policy, prices and installation belong entirely to

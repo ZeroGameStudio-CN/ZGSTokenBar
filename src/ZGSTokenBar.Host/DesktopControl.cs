@@ -31,5 +31,7 @@ public interface IDesktopControl
     ValueTask OpenSettingsAsync(CancellationToken cancellationToken);
     ValueTask SetRouterVisibleAsync(bool visible, CancellationToken cancellationToken) =>
         ValueTask.FromException(new HostCommandException("command_requires_desktop", "Router view requires the native desktop."));
+    ValueTask SetIntakeVisibleAsync(bool visible, CancellationToken cancellationToken) =>
+        ValueTask.FromException(new HostCommandException("command_requires_desktop", "Work intake view requires the native desktop."));
     ValueTask RequestExitAsync(CancellationToken cancellationToken);
 }

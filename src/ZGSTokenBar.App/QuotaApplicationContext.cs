@@ -41,6 +41,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
     private readonly ToolStripMenuItem _refreshMenuItem;
     private readonly ToolStripMenuItem _updateMenuItem;
     private readonly ToolStripMenuItem _settingsMenuItem;
+    private readonly ToolStripMenuItem _intakeMenuItem;
     private readonly ToolStripMenuItem _quitMenuItem;
     private readonly QuotaMilestoneTracker _milestoneTracker;
     private readonly System.Windows.Forms.Timer _clockTimer;
@@ -56,6 +57,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
     private readonly ZgsTokenBarHost _pluginHost;
     private readonly RouterModule _routerModule;
     private readonly OtherToolsModule _otherToolsModule;
+    private IntakeObserverForm? _intakeObserver;
     private readonly ZgsNamedPipeServer _apiServer;
     private readonly ZgsTokenBarHost.Subscription _pluginSubscription;
     private readonly Task _pluginEventTask;
@@ -199,6 +201,8 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         menu.Items.Add(_updateMenuItem);
         _settingsMenuItem = new ToolStripMenuItem(_text.Settings, null, (_, _) => OpenSettings());
         menu.Items.Add(_settingsMenuItem);
+        _intakeMenuItem = new ToolStripMenuItem(_text.IntakeObserver, null, (_, _) => ShowIntakeObserver());
+        menu.Items.Add(_intakeMenuItem);
         menu.Items.Add(new ToolStripSeparator());
         _quitMenuItem = new ToolStripMenuItem(_text.Quit, null, (_, _) => Quit());
         menu.Items.Add(_quitMenuItem);
@@ -391,6 +395,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
             _confirmationTimer.Dispose();
             _activationWait.Unregister(null);
             _settingsDialog?.Dispose();
+            _intakeObserver?.Dispose();
             _tray.Dispose();
             _bar.Dispose();
             _coordinator.Dispose();

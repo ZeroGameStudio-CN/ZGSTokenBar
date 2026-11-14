@@ -15,6 +15,16 @@
       "nextAction": "Confirm live package identity and obtain user visual feedback."
     },
     {
+      "id": "work-intake-observer",
+      "title": "Work intake observer",
+      "stage": "Previewable",
+      "availability": "InternalOnly",
+      "targetReleaseId": "",
+      "entrance": "TokenBar tray menu → Work intake",
+      "resourcePath": "src/ZGSTokenBar.App/IntakeObserverForm.cs",
+      "nextAction": "Review the local panel; add dispatch evidence only when the workflow publishes it through the existing diagnostic service."
+    },
+    {
       "id": "linked-worktree-build-cleanup",
       "title": "Linked worktree build output cleanup",
       "stage": "Ready",

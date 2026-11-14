@@ -128,6 +128,14 @@ if (args.Length > 0 && args[0] == "--router-module")
     return 0;
 }
 
+if (args.Length is 1 or 2 && args[0] == "--intake-observer")
+{
+    System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
+    IntakeObserverTests.Run(args.Length == 2 ? args[1] : null);
+    Console.WriteLine("PASS read-only work intake, multi-project access, history and diagnostic isolation");
+    return 0;
+}
+
 if (args.Length == 1 && args[0] == "--quota-pace-review")
 {
     TestQuotaPaceEstimate();
@@ -529,6 +537,7 @@ var tests = new (string Name, Action Run)[]
     ("Release update discovery", TestReleaseUpdateDiscovery),
     ("Settings v2 plugin migration", TestSettingsV2PluginMigration),
     ("Native Router module", RouterModuleTests.Run),
+    ("Read-only work intake", () => IntakeObserverTests.Run()),
     ("Provider local credential auto-discovery", TestProviderLocalCredentialAutoDiscovery),
     ("Bundled plugin extraction closes package file", TestBundledPluginExtraction),
     ("Plugin profile state redaction", TestPluginProfileStateRedaction),

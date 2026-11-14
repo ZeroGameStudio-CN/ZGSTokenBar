@@ -715,7 +715,8 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
                 "ui.codex.history.export" => await CodexHistoryExportAsync(request.Params, cancellationToken),
                 "app.requestRefresh" => await RequestRefreshAsync(request.Params, cancellationToken),
                 "app.openSettings" => await OpenSettingsAsync(cancellationToken),
-                "ui.router.setVisible" => await RouterVisibleAsync(request.Params, cancellationToken),
+                "ui.router.setVisible" => await MonitorVisibleAsync(request.Params, intake: false, cancellationToken),
+                "ui.intake.setVisible" => await MonitorVisibleAsync(request.Params, intake: true, cancellationToken),
                 "app.requestExit" => await RequestExitAsync(cancellationToken),
                 "events.watch" => throw new HostCommandException("invalid_request", "events.watch requires a streaming transport."),
                 _ => throw new HostCommandException("unknown_method", "API method is unknown."),
@@ -831,11 +832,13 @@ public sealed class ZgsTokenBarHost : IAsyncDisposable
         return ToElement(commands, PluginSdkJsonContext.Default.CommandDescriptorArray);
     }
 
-    private async ValueTask<JsonElement> RouterVisibleAsync(JsonElement? parameters, CancellationToken cancellationToken)
+    private async ValueTask<JsonElement> MonitorVisibleAsync(JsonElement? parameters, bool intake, CancellationToken cancellationToken)
     {
         EnsureFields(parameters, ["visible"]);
         var visible = RequiredBoolean(parameters, "visible");
-        await RequireDesktop().SetRouterVisibleAsync(visible, cancellationToken);
+        var desktop = RequireDesktop();
+        if (intake) await desktop.SetIntakeVisibleAsync(visible, cancellationToken);
+        else await desktop.SetRouterVisibleAsync(visible, cancellationToken);
         using var result = JsonDocument.Parse(visible ? "{\"visible\":true}" : "{\"visible\":false}");
         return result.RootElement.Clone();
     }

@@ -272,6 +272,11 @@ internal sealed partial class QuotaApplicationContext
                 SettingsVisible = _settingsDialog is { Visible: true },
                 SettingsFontsMatchLayout = _settingsDialog?.FontsMatchLayout,
                 RouterVisible = _routerModule.Visible,
+                IntakeVisible = _intakeObserver is { Visible: true, IsDisposed: false },
+                IntakeProjectCount = _intakeObserver is { Visible: true, IsDisposed: false } intake
+                    ? intake.Observation.Projects : 0,
+                IntakeWorkItemCount = _intakeObserver is { Visible: true, IsDisposed: false } items
+                    ? items.Observation.Recent : 0,
                 DisplayedRouterQueuedCount = _bar.DisplayedRouterQueuedCount,
                 DisplayedRouterState = _bar.DisplayedRouterState,
                 RouterProjectKey = _routerModule.Snapshot?.ProjectKey,
@@ -330,6 +335,14 @@ internal sealed partial class QuotaApplicationContext
 
     public ValueTask SetRouterVisibleAsync(bool visible, CancellationToken cancellationToken) =>
         new(InvokeOnUiAsync(() => { _routerModule.SetVisible(visible); return true; }, cancellationToken));
+
+    public ValueTask SetIntakeVisibleAsync(bool visible, CancellationToken cancellationToken) =>
+        new(InvokeOnUiAsync(() =>
+        {
+            if (visible) ShowIntakeObserver();
+            else _intakeObserver?.Close();
+            return true;
+        }, cancellationToken));
 
     public ValueTask RequestExitAsync(CancellationToken cancellationToken) =>
         new(InvokeOnUiAsync(

@@ -17,3 +17,10 @@ Process plugins are installed from either an explicit local `.zgsplugin` package
 Usage providers go through one transport that only allows HTTPS requests to a fixed method/host/path allowlist (`UsageEndpoints`) and refuses redirects; response bodies are size-bounded. The error log (`%LOCALAPPDATA%\ZGSTokenBar\diagnostics\errors.log`) passes every entry through `SecretRedactor`, which masks bearer tokens, JWTs, API keys and token-named JSON/query fields.
 
 Disabled Providers make no Provider requests. The public build contains no organization-private endpoints, credentials, deployment topology, or machine-specific paths.
+
+The optional Work intake window starts only on demand. It invokes the current
+user's managed Zero OS CLI without a shell, using fixed work item reads and one
+authorized diagnostic query. TokenBar does not read or copy its session file.
+The window keeps bounded, projected fields in memory and does not return
+work item content through the local API. The optional browser link uses an
+explicit local HTTPS origin.

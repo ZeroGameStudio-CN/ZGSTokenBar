@@ -242,6 +242,7 @@ internal sealed partial class QuotaApplicationContext
         _refreshMenuItem.Text = _text.RefreshNow;
         if (_availableUpdate is { } update) _updateMenuItem.Text = _text.UpdateTo(update.Version);
         _settingsMenuItem.Text = _text.Settings;
+        _intakeMenuItem.Text = _text.IntakeObserver;
         _quitMenuItem.Text = _text.Quit;
         _tray.Text = _text.TrayText;
     }
