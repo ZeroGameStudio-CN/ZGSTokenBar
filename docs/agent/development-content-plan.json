@@ -13,6 +13,17 @@
       "entrance": "Separate collapsed Grok and Antigravity taskbar cards and Settings switches",
       "resourcePath": "src/ZGSTokenBar.App/OtherToolsModule.cs",
       "nextAction": "Confirm live package identity and obtain user visual feedback."
+    },
+    {
+      "id": "linked-worktree-build-cleanup",
+      "title": "Linked worktree build output cleanup",
+      "stage": "Ready",
+      "availability": "InternalOnly",
+      "targetReleaseId": "",
+      "responsibleChat": "01a1c3de-3498-7ec0-a0de-5a3040b65dcc",
+      "entrance": "Preview and apply explicitly listed ignored build files in a linked worktree.",
+      "resourcePath": "scripts/cleanup-worktree-builds.ps1",
+      "nextAction": "Use after independently confirming task closure, exact scope and absence of active use."
     }
   ]
 }
