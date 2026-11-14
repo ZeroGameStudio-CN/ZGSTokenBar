@@ -178,7 +178,7 @@ internal sealed partial class BarForm
             PlacementCommitted?.Invoke(this, dockedCommit);
         }
         if (!_hiddenToTray && IsHandleCreated && TaskbarPlacement.TryGetTrack(Size, resolvedMonitor, out var track))
-            ApplyDockedTarget(track, Size, track.Constrain(anchor));
+            ApplyDockedTarget(track, Size, track.Constrain(anchor), preserveAdjacentPosition: false);
     }
 
     private void ApplySnapshotLayout(bool updatePlacement = true)

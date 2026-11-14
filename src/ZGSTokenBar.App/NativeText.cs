@@ -67,10 +67,10 @@ internal sealed class NativeText
         "启用细微过渡与刷新动画",
         "Enable subtle transitions and refresh animation");
     public string AnimationsTitle => T("动画效果", "Animation effects");
-    public string EmbedTaskbarTitle => T("嵌入任务栏（实验）", "Embed in taskbar (experimental)");
+    public string EmbedTaskbarTitle => T("任务栏同排显示（实验）", "Show in taskbar row (experimental)");
     public string EmbedTaskbarHint => T(
-        "主任务栏有足够空位时同排显示；空间不足或无法确认时，整条 Bar 移到任务栏旁边。",
-        "Show the full Bar in a clear gap on the primary taskbar, or beside it when space cannot be verified.");
+        "空位稳定后同排显示；空间不足时，整条 Bar 移到任务栏旁边，保留完整宽度。",
+        "Show the full Bar in a stable gap on the primary taskbar. When space runs out, move the entire Bar beside it.");
     public string AllowClaudeRefresh => T(
         "Claude OAuth 过期时允许刷新",
         "Allow Claude OAuth refresh when expired");

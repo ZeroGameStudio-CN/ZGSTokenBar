@@ -317,6 +317,7 @@ if (args.Length == 1 && args[0] == "--taskbar-window-regressions")
     System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
     TestDisplayTopologyIdentity();
     TestTaskbarFullWidthPlacement();
+    TestTaskbarRowStability();
     TestTaskbarEmbeddingWithFakeTaskbar();
     TestNativeWindowLifecycle();
     Console.WriteLine("PASS taskbar detach, drag z-order and session reconnect regressions");
@@ -558,6 +559,7 @@ var tests = new (string Name, Action Run)[]
     ("Taskbar compact AI Gateway balance", TestTaskbarCompactAiGatewayBalance),
     ("Taskbar monitor selection", TestTaskbarMonitorSelection),
     ("Taskbar full-width placement avoids shell controls", TestTaskbarFullWidthPlacement),
+    ("Taskbar keeps a clear seat and waits for a stable gap", TestTaskbarRowStability),
     ("Taskbar Mini collapse anchor", TestTaskbarMiniCollapseAnchor),
     ("Taskbar Mini popover placement", TestTaskbarMiniPopoverPlacement),
     ("Taskbar embed attach, detach and parent loss", TestTaskbarEmbeddingWithFakeTaskbar),
@@ -12578,6 +12580,17 @@ static void TestTaskbarFullWidthPlacement()
     Check(row.Contains(bar) && !bar.IntersectsWith(apps) && !bar.IntersectsWith(tray),
         "the full bar fits without blocking native buttons");
     Equal(435, inRow.X, "nearest legal leading edge includes a gap from the first button");
+    Check(TaskbarPlacement.TryGetRowLocation(track, size, anchor, [tray, apps], out var buffered, extraClearance: 48),
+        "leave room for buttons to grow without reducing the bar's width");
+    Equal(387, buffered.X, "new seats leave extra room next to the task buttons when available");
+    Check(TaskbarPlacement.CurrentRowLocationFits(track, size, new Point(350, row.Top + 4), [tray, apps], extraClearance: 48),
+        "an existing clear seat away from the preferred coordinate remains safe during a short refresh");
+    Check(TaskbarPlacement.CurrentRowLocationFits(track, size, inRow, [tray, apps])
+        && !TaskbarPlacement.CurrentRowLocationFits(track, size, inRow, [tray, apps], extraClearance: 48),
+        "an exact fit is safe once confirmed, but lacks clearance while the layout changes");
+    Check(!TaskbarPlacement.CurrentRowLocationFits(track, size, buffered,
+        [tray, new Rectangle(1025, row.Y, 1732, row.Height)]),
+        "a new button that uses the available clearance forces a move");
 
     var crowded = new Rectangle(542, row.Y, 2500, row.Height);
     Check(!TaskbarPlacement.TryGetRowLocation(track, size, anchor, [crowded, tray], out _),
@@ -12601,6 +12614,36 @@ static void TestTaskbarFullWidthPlacement()
     Equal(new Point(-1866, 240), adjacent, "left-side taskbar fallback stays to its right");
     Check(!TaskbarPlacement.TryGetAdjacentLocation(left, new Size(1921, 44), Point.Empty, out _),
         "a bar wider than its screen is never partially shown over it");
+}
+
+static void TestTaskbarRowStability()
+{
+    var state = new TaskbarRowStability();
+    var left = new Rectangle(114, 2068, 642, 88);
+    var right = left with { X = 2630 };
+
+    Check(!state.CanReturn(left, 1000), "first verified gap keeps the full bar beside the taskbar");
+    Check(!state.CanReturn(left, 1000) && !state.CanReturn(left, 2999),
+        "a reused reading or less than two verified seconds cannot return to the row");
+    Check(state.CanReturn(left, 3000), "a new matching read after two seconds can return");
+    Check(!state.CanReturn(right, 5000), "a different safe position starts a new settling interval");
+    Check(!state.CanReturn(right with { Width = 700 }, 7000), "a width change also requires a fresh fit");
+
+    var before = state.LayoutRevision;
+    state.OnLayoutChanged(8000);
+    Check(state.CanKeepCurrent(sameSize: true, 8120) && !state.CanKeepCurrent(sameSize: false, 8120),
+        "a brief recheck can retain an unchanged safe bar, but never an unverified resize");
+    state.OnLayoutChanged(8400);
+    Check(!state.CanKeepCurrent(sameSize: true, 8500), "a stream of notices cannot extend stale geometry indefinitely");
+    Check(!state.ConfirmLayout(before) && state.AwaitingLayout, "an in-flight read from before a layout event is discarded");
+    Check(state.ConfirmLayout(state.LayoutRevision) && !state.AwaitingLayout
+        && state.CanKeepCurrent(sameSize: true, 8550), "a current read restores the verified position");
+    Check(!state.CanReturn(left, 8570) && state.CanReturn(left, 10570),
+        "after crowding or an event, the same full-size gap must be reverified");
+    var revision = state.LayoutRevision;
+    state.ForgetLayout();
+    Check(!state.ConfirmLayout(revision) && !state.CanReturn(left, 11000),
+        "a changed taskbar cannot inherit a sample or return timing from an old window");
 }
 
 static void TestTaskbarEmbeddingWithFakeTaskbar()

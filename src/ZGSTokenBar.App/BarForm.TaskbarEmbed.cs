@@ -8,9 +8,11 @@ internal sealed partial class BarForm
 {
     private const int WmDestroy = 0x0002;
     private const int EmbedHungTicksBeforeFallback = 2;
-    private const int LayoutPollMs = 2000;
+    private const int LayoutPollMs = TaskbarRowStability.ReturnDelayMs;
     private const int LayoutUnavailablePollMs = 4000;
     private const int LayoutMaximumAgeMs = 3500;
+    // Roughly half a standard app button; a centered group grows toward both sides.
+    private const int RowBreathingRoom = 24;
     private static readonly TimeSpan EmbedRetryAfterFailure = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan EmbedRetryAfterHang = TimeSpan.FromMinutes(2);
     private readonly System.Windows.Forms.Timer _embedWatchdog = new() { Interval = 1000 };
@@ -18,10 +20,11 @@ internal sealed partial class BarForm
     private TaskbarCreatedListener? _taskbarCreatedListener;
     private nint _taskbarRowHook, _watchedTaskbar;
     private bool _taskbarRowProbePending;
-    private long _taskbarRowProbeGeneration;
     private long _taskbarRowProbeAfter;
+    private long _taskbarRowPollAfter;
     private (nint Window, Rectangle Row, Rectangle Tray)? _taskbarRowKey;
     private (Rectangle[]? Occupied, long ReadAt) _taskbarRowSample;
+    private readonly TaskbarRowStability _taskbarRowStability = new();
     private bool _embedRequested;
     private bool _embedTransition;
     private nint _embedParent;
@@ -82,7 +85,8 @@ internal sealed partial class BarForm
     private bool _embedWatchdogWired;
 
     private bool TryGetSafeRowLocation(
-        TaskbarPlacement.PlacementTrack track, Size size, Point anchor, out Point location, out string reason)
+        TaskbarPlacement.PlacementTrack track, Size size, Point anchor, Rectangle currentBounds,
+        out Point location, out string reason)
     {
         location = Point.Empty;
         reason = "";
@@ -104,23 +108,55 @@ internal sealed partial class BarForm
             InvalidateTaskbarRowSample();
             _taskbarRowKey = key;
         }
-        var elapsed = Environment.TickCount64 - _taskbarRowSample.ReadAt;
-        var pollInterval = _taskbarRowSample.Occupied is null ? LayoutUnavailablePollMs : LayoutPollMs;
-        if (!_taskbarRowProbePending && Environment.TickCount64 >= _taskbarRowProbeAfter
-            && (_taskbarRowSample.ReadAt == 0 || elapsed >= pollInterval))
+        var now = Environment.TickCount64;
+        var observed = _taskbarRowSample;
+        var elapsed = now - observed.ReadAt;
+        if (!_taskbarRowProbePending && now >= _taskbarRowProbeAfter
+            && (_taskbarRowStability.AwaitingLayout || now >= _taskbarRowPollAfter))
         {
             StartTaskbarRowProbe(key);
         }
-        var occupied = elapsed < LayoutMaximumAgeMs ? _taskbarRowSample.Occupied : null;
-        if (TaskbarPlacement.TryGetRowLocation(track, size, anchor, occupied, out location)) return true;
-        reason = occupied is null ? "layout-unavailable" : "no-clear-space";
+        var occupied = elapsed < LayoutMaximumAgeMs ? observed.Occupied : null;
+        var alreadyInRow = EmbeddedInTaskbar && _embedParent == track.TaskbarWindow;
+        var awaitingLayout = _taskbarRowStability.AwaitingLayout;
+        var extraClearance = Scale(RowBreathingRoom);
+        // Only enter the brief stale-layout grace period from a seat with room for an
+        // ordinary button change. An exact fit is usable only while it is verified.
+        if (alreadyInRow && occupied is not null
+            && _taskbarRowStability.CanKeepCurrent(currentBounds.Size == size, now)
+            && TaskbarPlacement.CurrentRowLocationFits(track, size, currentBounds.Location, occupied,
+                awaitingLayout ? extraClearance : 0))
+        {
+            location = currentBounds.Location;
+            return true;
+        }
+
+        // An unconfirmed layout can keep the existing seat briefly, but cannot justify a move or
+        // an attachment. A missing reading or sustained event burst uses the full-size overlay.
+        if (awaitingLayout || occupied is null)
+        {
+            _taskbarRowStability.ResetReturn();
+            reason = "layout-unavailable";
+            return false;
+        }
+        var rowAnchor = alreadyInRow ? currentBounds.Location : anchor;
+        if (!TaskbarPlacement.TryGetRowLocation(track, size, rowAnchor, occupied, out location, extraClearance)
+            && !TaskbarPlacement.TryGetRowLocation(track, size, rowAnchor, occupied, out location))
+        {
+            _taskbarRowStability.ResetReturn();
+            reason = "no-clear-space";
+            return false;
+        }
+        if (alreadyInRow || _taskbarRowStability.CanReturn(new Rectangle(location, size), observed.ReadAt))
+            return true;
+        reason = "waiting-for-space";
         return false;
     }
 
     private void StartTaskbarRowProbe((nint Window, Rectangle Row, Rectangle Tray) key)
     {
         _taskbarRowProbePending = true;
-        var generation = _taskbarRowProbeGeneration;
+        var revision = _taskbarRowStability.LayoutRevision;
         var startedAt = Environment.TickCount64;
         _ = ReadTaskbarRowAsync();
 
@@ -137,11 +173,12 @@ internal sealed partial class BarForm
                 _taskbarRowProbePending = false;
             }
             if (IsDisposed || !IsHandleCreated || !_embedRequested || !_taskbarDocked) return;
-            if (generation == _taskbarRowProbeGeneration && key == _taskbarRowKey)
+            if (key == _taskbarRowKey && _taskbarRowStability.ConfirmLayout(revision))
             {
                 var now = Environment.TickCount64;
-                _taskbarRowSample = now - startedAt < LayoutMaximumAgeMs && occupied is not null
-                    ? (occupied, startedAt) : (null, now);
+                if (now - startedAt >= LayoutMaximumAgeMs) occupied = null;
+                _taskbarRowSample = (occupied, startedAt);
+                _taskbarRowPollAfter = occupied is null ? now + LayoutUnavailablePollMs : startedAt + LayoutPollMs;
             }
             SyncTaskbarPlacement();
         }
@@ -168,9 +205,11 @@ internal sealed partial class BarForm
             || !_embedRequested || !_taskbarDocked || IsDisposed || !IsHandleCreated
             || window == 0 || _watchedTaskbar == 0
             || (window != _watchedTaskbar && !TaskbarEmbedding.IsDescendant(_watchedTaskbar, window))) return;
-        // In-flight reads from before this event cannot put the bar back in the row.
-        InvalidateTaskbarRowSample();
-        _taskbarRowProbeAfter = Environment.TickCount64 + ShellSettleIntervalMs;
+        // Coalesce changes without immediately moving a confirmed, already embedded seat.
+        // An in-flight result from before the event cannot validate the new geometry.
+        var now = Environment.TickCount64;
+        _taskbarRowStability.OnLayoutChanged(now);
+        _taskbarRowProbeAfter = now + ShellSettleIntervalMs;
         if (Interlocked.Exchange(ref _taskbarSyncQueued, 1) != 0) return;
         try
         {
@@ -188,7 +227,8 @@ internal sealed partial class BarForm
     {
         _taskbarRowSample = default;
         _taskbarRowProbeAfter = 0;
-        _taskbarRowProbeGeneration++;
+        _taskbarRowPollAfter = 0;
+        _taskbarRowStability.ForgetLayout();
     }
 
     private void ResetTaskbarRowProbe()
@@ -282,6 +322,7 @@ internal sealed partial class BarForm
     {
         if (_embedParent == 0) return;
         _embedParent = 0;
+        _taskbarRowStability.ResetReturn();
         _embedTransition = true;
         try
         {
