@@ -316,6 +316,7 @@ if (args.Length == 1 && args[0] == "--taskbar-window-regressions")
 {
     System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
     TestDisplayTopologyIdentity();
+    TestTaskbarFullWidthPlacement();
     TestTaskbarEmbeddingWithFakeTaskbar();
     TestNativeWindowLifecycle();
     Console.WriteLine("PASS taskbar detach, drag z-order and session reconnect regressions");
@@ -556,6 +557,7 @@ var tests = new (string Name, Action Run)[]
     ("Retired delegation integration stays absent", TestRetiredDelegationIntegration),
     ("Taskbar compact AI Gateway balance", TestTaskbarCompactAiGatewayBalance),
     ("Taskbar monitor selection", TestTaskbarMonitorSelection),
+    ("Taskbar full-width placement avoids shell controls", TestTaskbarFullWidthPlacement),
     ("Taskbar Mini collapse anchor", TestTaskbarMiniCollapseAnchor),
     ("Taskbar Mini popover placement", TestTaskbarMiniPopoverPlacement),
     ("Taskbar embed attach, detach and parent loss", TestTaskbarEmbeddingWithFakeTaskbar),
@@ -12558,6 +12560,47 @@ static void TestTaskbarCompactAiGatewayBalance()
         renderDpi: 96,
         activeProviders: new HashSet<ProviderKind> { ProviderKind.AiGateway });
     Equal(true, collapsedForm.ClientSize.Width <= GlassDockLayout.Width, "collapsed AI Gateway keeps the bounded dock width");
+}
+
+static void TestTaskbarFullWidthPlacement()
+{
+    // Same 4K/200% geometry as a bottom taskbar, including the entire button group.
+    var row = new Rectangle(0, 2064, 3840, 96);
+    var size = new Size(642, 88);
+    var track = new TaskbarPlacement.PlacementTrack("example", new Rectangle(0, 0, 3840, 2160),
+        true, true, 6, 2680, row.Y + 4) { TaskbarBounds = row };
+    var tray = new Rectangle(3328, row.Y, 512, row.Height);
+    var apps = new Rectangle(1083, row.Y, 1674, row.Height);
+    var anchor = new Point(2250, row.Y);
+    Check(TaskbarPlacement.TryGetRowLocation(track, size, anchor, [tray, apps], out var inRow),
+        "moves the whole bar to the left gap when the right gap is too small");
+    var bar = new Rectangle(inRow, size);
+    Check(row.Contains(bar) && !bar.IntersectsWith(apps) && !bar.IntersectsWith(tray),
+        "the full bar fits without blocking native buttons");
+    Equal(435, inRow.X, "nearest legal leading edge includes a gap from the first button");
+
+    var crowded = new Rectangle(542, row.Y, 2500, row.Height);
+    Check(!TaskbarPlacement.TryGetRowLocation(track, size, anchor, [crowded, tray], out _),
+        "no gap is large enough; do not cover controls or shrink the bar");
+    Check(!TaskbarPlacement.TryGetRowLocation(track, size, anchor, null, out _),
+        "a missing snapshot never grants an in-row position");
+    Check(!TaskbarPlacement.TryGetRowLocation(track, new Size(642, 100), anchor, [apps, tray], out _),
+        "a smaller taskbar cannot clip a taller bar");
+    Check(TaskbarPlacement.TryGetAdjacentLocation(track, size, anchor, out var adjacent),
+        "crowded taskbar falls back to the work area");
+    Equal(new Point(anchor.X, 1970), adjacent, "the complete bar sits just above the taskbar");
+
+    var left = track with
+    {
+        Horizontal = false,
+        ScreenBounds = new Rectangle(-1920, 0, 1920, 1080),
+        TaskbarBounds = new Rectangle(-1920, 0, 48, 1080),
+    };
+    Check(TaskbarPlacement.TryGetAdjacentLocation(left, new Size(321, 44), new Point(-1920, 240), out adjacent),
+        "a left-side bar on a negative-coordinate screen also fits beside its taskbar");
+    Equal(new Point(-1866, 240), adjacent, "left-side taskbar fallback stays to its right");
+    Check(!TaskbarPlacement.TryGetAdjacentLocation(left, new Size(1921, 44), Point.Empty, out _),
+        "a bar wider than its screen is never partially shown over it");
 }
 
 static void TestTaskbarEmbeddingWithFakeTaskbar()

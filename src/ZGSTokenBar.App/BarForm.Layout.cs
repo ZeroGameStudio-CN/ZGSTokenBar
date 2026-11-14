@@ -164,7 +164,7 @@ internal sealed partial class BarForm
                 Size,
                 anchor,
                 preference.PreferredMonitorName,
-                out var location,
+                out _,
                 out var relativePosition,
                 out var resolvedMonitor))
         {
@@ -172,12 +172,13 @@ internal sealed partial class BarForm
         }
 
         _resolvedTaskbarMonitor = resolvedMonitor;
-        if (!TaskbarPlacement.ShowAt(Handle, location, Size)) Location = location;
         if (commitPlacement
             && _placementCoordinator.CommitDocked(resolvedMonitor, relativePosition, Size) is { } dockedCommit)
         {
             PlacementCommitted?.Invoke(this, dockedCommit);
         }
+        if (!_hiddenToTray && IsHandleCreated && TaskbarPlacement.TryGetTrack(Size, resolvedMonitor, out var track))
+            ApplyDockedTarget(track, Size, track.Constrain(anchor));
     }
 
     private void ApplySnapshotLayout(bool updatePlacement = true)
@@ -200,7 +201,10 @@ internal sealed partial class BarForm
         _visibleTaskbarAreas = SelectVisibleTaskbarAreas(_taskbarContentAreas);
         var miniLogicalWidth = CurrentGlassPlan().Width;
         var previousClientSize = ClientSize;
-        using (PerfTrace.Measure("layout.client-size")) ClientSize = new Size(Scale(miniLogicalWidth), Scale(TaskbarMiniLayoutMath.Height));
+        var newSize = new Size(Scale(miniLogicalWidth), Scale(TaskbarMiniLayoutMath.Height));
+        if (EmbeddedInTaskbar && (newSize.Width > previousClientSize.Width || newSize.Height > previousClientSize.Height))
+            Hide(); // Expand only after checking a safe target for the new size.
+        using (PerfTrace.Measure("layout.client-size")) ClientSize = newSize;
         var sizeChanged = ClientSize != previousClientSize;
         if (sizeChanged) _glassFrameSize = Size.Empty;
         using (PerfTrace.Measure("layout.region")) UpdateWindowRegion();

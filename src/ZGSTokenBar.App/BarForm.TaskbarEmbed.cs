@@ -1,20 +1,27 @@
 namespace ZGSTokenBar.App;
 
 /// <summary>
-/// Optional "embed in taskbar" mode. While docked on the primary taskbar the bar becomes a child
-/// of Shell_TrayWnd, positioned with the same track/relative position as the overlay. Anything
-/// unexpected (setting off, undocked, secondary monitor, Explorer hung, DPI-awareness mismatch,
-/// SetParent refused, Explorer restarted, Remote Desktop session) drops back to the top-level
-/// topmost overlay, which is also the default.
+/// Optional placement inside a verified gap of the primary taskbar. With no verified fit,
+/// the full-size bar stays on the desktop side of the taskbar.
 /// </summary>
 internal sealed partial class BarForm
 {
     private const int WmDestroy = 0x0002;
     private const int EmbedHungTicksBeforeFallback = 2;
+    private const int LayoutPollMs = 2000;
+    private const int LayoutUnavailablePollMs = 4000;
+    private const int LayoutMaximumAgeMs = 3500;
     private static readonly TimeSpan EmbedRetryAfterFailure = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan EmbedRetryAfterHang = TimeSpan.FromMinutes(2);
-    private readonly System.Windows.Forms.Timer _embedWatchdog = new() { Interval = 2000 };
+    private readonly System.Windows.Forms.Timer _embedWatchdog = new() { Interval = 1000 };
+    private readonly WinEventDelegate _taskbarRowChangedHandler;
     private TaskbarCreatedListener? _taskbarCreatedListener;
+    private nint _taskbarRowHook, _watchedTaskbar;
+    private bool _taskbarRowProbePending;
+    private long _taskbarRowProbeGeneration;
+    private long _taskbarRowProbeAfter;
+    private (nint Window, Rectangle Row, Rectangle Tray)? _taskbarRowKey;
+    private (Rectangle[]? Occupied, long ReadAt) _taskbarRowSample;
     private bool _embedRequested;
     private bool _embedTransition;
     private nint _embedParent;
@@ -66,12 +73,132 @@ internal sealed partial class BarForm
         {
             _embedWatchdog.Stop();
             DetachFromTaskbar("off");
+            ResetTaskbarRowProbe();
             TaskbarEmbedStatus = "off";
             if (_taskbarDocked) SyncTaskbarPlacement();
         }
     }
 
     private bool _embedWatchdogWired;
+
+    private bool TryGetSafeRowLocation(
+        TaskbarPlacement.PlacementTrack track, Size size, Point anchor, out Point location, out string reason)
+    {
+        location = Point.Empty;
+        reason = "";
+        if (!_embedRequested) return false;
+        if (RemoteSession()) reason = "remote-session";
+        else if (!track.Primary) reason = "secondary-monitor";
+        else if (!track.Horizontal || track.TrayBounds.IsEmpty || !track.ScreenBounds.Contains(track.TaskbarBounds))
+            reason = "layout-unavailable";
+        if (reason.Length != 0)
+        {
+            if (_watchedTaskbar != 0) ResetTaskbarRowProbe();
+            return false;
+        }
+
+        WatchTaskbarRow(track.TaskbarWindow);
+        var key = (track.TaskbarWindow, track.TaskbarBounds, track.TrayBounds);
+        if (_taskbarRowKey != key)
+        {
+            InvalidateTaskbarRowSample();
+            _taskbarRowKey = key;
+        }
+        var elapsed = Environment.TickCount64 - _taskbarRowSample.ReadAt;
+        var pollInterval = _taskbarRowSample.Occupied is null ? LayoutUnavailablePollMs : LayoutPollMs;
+        if (!_taskbarRowProbePending && Environment.TickCount64 >= _taskbarRowProbeAfter
+            && (_taskbarRowSample.ReadAt == 0 || elapsed >= pollInterval))
+        {
+            StartTaskbarRowProbe(key);
+        }
+        var occupied = elapsed < LayoutMaximumAgeMs ? _taskbarRowSample.Occupied : null;
+        if (TaskbarPlacement.TryGetRowLocation(track, size, anchor, occupied, out location)) return true;
+        reason = occupied is null ? "layout-unavailable" : "no-clear-space";
+        return false;
+    }
+
+    private void StartTaskbarRowProbe((nint Window, Rectangle Row, Rectangle Tray) key)
+    {
+        _taskbarRowProbePending = true;
+        var generation = _taskbarRowProbeGeneration;
+        var startedAt = Environment.TickCount64;
+        _ = ReadTaskbarRowAsync();
+
+        async Task ReadTaskbarRowAsync()
+        {
+            Rectangle[]? occupied = null;
+            try
+            {
+                occupied = await Task.Run(() => TaskbarRowOccupancy.Read(key.Window, key.Row, key.Tray));
+            }
+            catch (System.Runtime.InteropServices.ExternalException) { }
+            finally
+            {
+                _taskbarRowProbePending = false;
+            }
+            if (IsDisposed || !IsHandleCreated || !_embedRequested || !_taskbarDocked) return;
+            if (generation == _taskbarRowProbeGeneration && key == _taskbarRowKey)
+            {
+                var now = Environment.TickCount64;
+                _taskbarRowSample = now - startedAt < LayoutMaximumAgeMs && occupied is not null
+                    ? (occupied, startedAt) : (null, now);
+            }
+            SyncTaskbarPlacement();
+        }
+    }
+
+    private void WatchTaskbarRow(nint taskbar)
+    {
+        if (taskbar == _watchedTaskbar) return;
+        ResetTaskbarRowProbe();
+        _watchedTaskbar = taskbar;
+        if (TaskbarEmbedding.WindowThread(taskbar, out var processId) != 0)
+        {
+            // The accessibility event range includes children appearing, disappearing, moving,
+            // and changed contents. Only the shell taskbar's own window tree can invalidate it.
+            _taskbarRowHook = SetWinEventHook(0x8000, 0x800B, 0, _taskbarRowChangedHandler,
+                processId, 0, WinEventOutOfContext | WinEventSkipOwnProcess);
+        }
+    }
+
+    private void OnTaskbarRowChanged(nint hook, uint type, nint window, int objectId, int childId, uint thread, uint time)
+    {
+        // Do not react to focus, hover names, or our own layered window updates.
+        if (hook != _taskbarRowHook || type is not (0x8000 or 0x8001 or 0x8002 or 0x8003 or 0x8004 or 0x800B)
+            || !_embedRequested || !_taskbarDocked || IsDisposed || !IsHandleCreated
+            || window == 0 || _watchedTaskbar == 0
+            || (window != _watchedTaskbar && !TaskbarEmbedding.IsDescendant(_watchedTaskbar, window))) return;
+        // In-flight reads from before this event cannot put the bar back in the row.
+        InvalidateTaskbarRowSample();
+        _taskbarRowProbeAfter = Environment.TickCount64 + ShellSettleIntervalMs;
+        if (Interlocked.Exchange(ref _taskbarSyncQueued, 1) != 0) return;
+        try
+        {
+            BeginInvoke((Action)(() =>
+            {
+                Interlocked.Exchange(ref _taskbarSyncQueued, 0);
+                SyncTaskbarPlacement();
+                RestartShellSettleTimer();
+            }));
+        }
+        catch (InvalidOperationException) { Interlocked.Exchange(ref _taskbarSyncQueued, 0); }
+    }
+
+    private void InvalidateTaskbarRowSample()
+    {
+        _taskbarRowSample = default;
+        _taskbarRowProbeAfter = 0;
+        _taskbarRowProbeGeneration++;
+    }
+
+    private void ResetTaskbarRowProbe()
+    {
+        if (_taskbarRowHook != 0) _ = UnhookWinEvent(_taskbarRowHook);
+        _taskbarRowHook = 0;
+        _watchedTaskbar = 0;
+        _taskbarRowKey = null;
+        InvalidateTaskbarRowSample();
+    }
 
     /// <summary>
     /// Re-parenting and the style swap can drop a layered window's last frame; forget the
@@ -90,7 +217,7 @@ internal sealed partial class BarForm
     private void EnsureTaskbarEmbedding(string? resolvedMonitor)
     {
         if (_embedTransition) return;
-        if (!_embedRequested || !_taskbarDocked || _taskbarDragging || !IsHandleCreated || IsDisposed)
+        if (!_embedRequested || !_taskbarDocked || (_taskbarDragging && _taskbarDragMoved) || !IsHandleCreated || IsDisposed)
         {
             if (_embedParent != 0) DetachFromTaskbar(_embedRequested ? "undocked" : "off");
             return;
@@ -119,12 +246,14 @@ internal sealed partial class BarForm
             TaskbarEmbedStatus = tray == 0 ? "fallback:taskbar-missing" : "fallback:secondary-monitor";
             return;
         }
-        if (DateTime.UtcNow < _embedRetryAfter) return;
+        if (_taskbarDragging || DateTime.UtcNow < _embedRetryAfter) return;
         (long Style, long ExStyle)? original;
         string failure;
         _embedTransition = true;
         try
         {
+            // Put the child at its checked coordinates before showing it in the new parent.
+            if (Visible) Hide();
             original = TaskbarEmbedding.Attach(Handle, tray, out failure);
             if (original is not null)
             {
@@ -218,7 +347,7 @@ internal sealed partial class BarForm
                 return;
             }
             _embedHungTicks = 0;
-            TaskbarEmbedding.RaiseChild(Handle);
+            SyncTaskbarPlacement();
             if (GlassLayered && _glassFrameSize != ClientSize) RepushLayeredFrame();
             return;
         }
@@ -238,6 +367,7 @@ internal sealed partial class BarForm
     private void OnTaskbarRecreated()
     {
         TaskbarPlacement.InvalidateCache();
+        ResetTaskbarRowProbe();
         _embedRetryAfter = DateTime.UtcNow + TimeSpan.FromSeconds(1);
         if (EmbeddedInTaskbar || _embedHandleLost) RequestTopologyRefresh(false);
     }
@@ -257,6 +387,7 @@ internal sealed partial class BarForm
         _embedTransition = true;
         _embedWatchdog.Stop();
         _embedWatchdog.Dispose();
+        ResetTaskbarRowProbe();
         _taskbarCreatedListener?.DestroyHandle();
         _taskbarCreatedListener = null;
         if (_embedParent != 0 && IsHandleCreated && _embedOriginalStyle is { } original)

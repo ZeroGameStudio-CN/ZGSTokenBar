@@ -219,6 +219,7 @@ internal sealed partial class BarForm : Form
 
         ApplySnapshotLayout();
         if (!_renderOnly) RestorePosition(settings);
+        _taskbarRowChangedHandler = OnTaskbarRowChanged;
         ApplyTaskbarEmbedSetting(settings.EmbedInTaskbar);
     }
 
@@ -596,11 +597,9 @@ internal sealed partial class BarForm : Form
         _embedHealthTimer?.Stop();
         if (IsDisposed || !IsHandleCreated || _hiddenToTray) return;
         var reason = _embedHealthTimer?.Tag as string ?? "";
-        if (_taskbarDocked && !Visible && !TaskbarPlacement.ShouldHideForFullscreen()) Show();
         if (_embedRequested && _taskbarDocked && !_taskbarDragging)
         {
-            if (_embedParent == 0 || TaskbarEmbedding.ParentOf(Handle) != _embedParent) SyncTaskbarPlacement();
-            else TaskbarEmbedding.RaiseChild(Handle);
+            SyncTaskbarPlacement();
         }
         if (GlassLayered) RepushLayeredFrame();
         PerfTrace.Note($"embed.health {reason} visible={Visible} embedded={EmbeddedInTaskbar} status={TaskbarEmbedStatus}");

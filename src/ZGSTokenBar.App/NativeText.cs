@@ -69,8 +69,8 @@ internal sealed class NativeText
     public string AnimationsTitle => T("动画效果", "Animation effects");
     public string EmbedTaskbarTitle => T("嵌入任务栏（实验）", "Embed in taskbar (experimental)");
     public string EmbedTaskbarHint => T(
-        "吸附在主任务栏时把 Bar 放进任务栏内部；失败、资源管理器无响应或重启时自动回到悬浮模式",
-        "While docked on the primary taskbar, host the Bar inside it; falls back to the overlay if Explorer refuses, hangs or restarts");
+        "主任务栏有足够空位时同排显示；空间不足或无法确认时，整条 Bar 移到任务栏旁边。",
+        "Show the full Bar in a clear gap on the primary taskbar, or beside it when space cannot be verified.");
     public string AllowClaudeRefresh => T(
         "Claude OAuth 过期时允许刷新",
         "Allow Claude OAuth refresh when expired");

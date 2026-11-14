@@ -21,7 +21,6 @@ internal static class TaskbarEmbedding
     private const uint WmNull = 0x0000;
     private const uint SmtoAbortIfHung = 0x0002;
     private const uint SmtoErrorOnExit = 0x0020;
-    private const uint SwpNoSize = 0x0001;
     private const uint SwpNoZOrder = 0x0004;
     private const uint SwpNoActivate = 0x0010;
     private const uint SwpFrameChanged = 0x0020;
@@ -46,6 +45,10 @@ internal static class TaskbarEmbedding
     internal static bool IsHung(nint window) => window != 0 && IsWindow(window) && IsHungAppWindow(window);
 
     internal static bool IsAlive(nint window) => window != 0 && IsWindow(window);
+
+    internal static uint WindowThread(nint window, out uint processId) => GetWindowThreadProcessId(window, out processId);
+
+    internal static bool IsDescendant(nint parent, nint window) => IsChildWindow(parent, window);
 
     internal static bool SameDpiAwareness(nint first, nint second)
     {
@@ -142,13 +145,6 @@ internal static class TaskbarEmbedding
             SwpNoActivate | (keepZOrder ? SwpNoZOrder : 0));
     }
 
-    /// <summary>Re-asserts top z-order among the taskbar's children without moving or resizing.</summary>
-    internal static void RaiseChild(nint window)
-    {
-        if (!IsChild(window)) return;
-        _ = SetWindowPos(window, Top, 0, 0, 0, 0, SwpNoActivate | SwpNoSize | 0x0002);
-    }
-
     /// <summary>The topmost window under a screen point (passive hit-test, no input is sent).</summary>
     internal static nint WindowAt(Point screenPoint) => WindowFromPoint(new NativePoint { X = screenPoint.X, Y = screenPoint.Y });
 
@@ -179,6 +175,12 @@ internal static class TaskbarEmbedding
 
     [DllImport("user32.dll")]
     private static extern bool IsWindow(nint window);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(nint window, out uint processId);
+
+    [DllImport("user32.dll", EntryPoint = "IsChild")]
+    private static extern bool IsChildWindow(nint parent, nint window);
 
     [DllImport("user32.dll")]
     private static extern bool IsHungAppWindow(nint window);
