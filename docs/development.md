@@ -107,6 +107,36 @@ the entry, retain that external rejection separately; a script cannot override i
 Run `node --test scripts/task-cleanup.test.mjs` for isolated unattended and refusal
 cases. These fixtures never use production settings or data roots.
 
+## Linked worktree build outputs
+
+`scripts/cleanup-worktree-builds.ps1` is the Windows PowerShell 7 entry for
+separately authorized, reproducible build files left in an inactive linked
+worktree. The caller must first establish task closure, absence of active use,
+and which exact files have no retention requirement. A manifest does not
+grant authority. Worktrees, branches, source, settings, user data and unlisted
+files are never targets.
+
+Store `worktree-builds.json` under `release/task-cleanup/<task-id>/`. It has
+`schemaVersion` 1, `taskId`, absolute `worktree`, exact `expectedHead` and
+`expectedBranch`, non-empty `closureEvidence` and `authorizationRef`, and a
+`files` array of objects containing worktree-relative `path`, `bytes` and
+lowercase SHA-256 `sha256`. List at most 2,000 files and 512 MiB total. Only
+Git-ignored, recognized build files beneath `src` or `tests` project `bin` or
+`obj` directories are eligible. The entry refuses linked paths, open files,
+dirty or locked worktrees, changed source identities and changed plans.
+
+Preview and apply use the same entry:
+
+```powershell
+pwsh -NoProfile -NonInteractive -File scripts/cleanup-worktree-builds.ps1 -Manifest <absolute-manifest-path>
+pwsh -NoProfile -NonInteractive -File scripts/cleanup-worktree-builds.ps1 -Manifest <absolute-manifest-path> -Apply -ExpectedPlanHash <preview-plan-hash>
+```
+
+Apply rechecks file identities, removes only listed files and removes directories
+only if empty. Results are written beside the manifest; inspect any refusal or
+partial result before further action. Verify with
+`node --test scripts/worktree-builds-cleanup.test.mjs`.
+
 ## Acceptance
 
 The optional `zgstokenbar.monitor.router` module is a client of the separately
