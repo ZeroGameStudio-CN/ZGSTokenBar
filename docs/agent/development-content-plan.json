@@ -24,6 +24,17 @@
       "entrance": "Preview and apply explicitly listed ignored build files in a linked worktree.",
       "resourcePath": "scripts/cleanup-worktree-builds.ps1",
       "nextAction": "Use after independently confirming task closure, exact scope and absence of active use."
+    },
+    {
+      "id": "windows11-taskbar-slot",
+      "title": "Windows 11 XAML taskbar slot trial",
+      "stage": "Previewable",
+      "availability": "InternalOnly",
+      "targetReleaseId": "",
+      "responsibleChat": "01a1d923-fe60-7b52-a50f-531e1d174c2c",
+      "entrance": "Standalone XAML Island fixture and default-off Windhawk test slot",
+      "resourcePath": "experiments/taskbar-slot/README.md",
+      "nextAction": "Verify the reserved column, crowded app buttons and rollback in an authorized Explorer trial before connecting live TokenBar data."
     }
   ]
 }
