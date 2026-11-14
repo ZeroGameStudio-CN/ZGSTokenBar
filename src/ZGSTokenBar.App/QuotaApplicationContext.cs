@@ -131,6 +131,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         {
             if (pluginId == MiniAreaIds.Intake && IntakeEnabled) ShowIntakeObserver();
         };
+        _bar.PluginPopoverRequested += IntakePopoverRequested;
         _bar.PlacementCommitted += (_, commit) => SavePlacement(commit);
         _bar.SystemUsageDetailsRequested += (_, _) =>
         {

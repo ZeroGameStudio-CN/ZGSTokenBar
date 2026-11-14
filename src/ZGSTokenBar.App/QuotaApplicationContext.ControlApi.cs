@@ -273,6 +273,10 @@ internal sealed partial class QuotaApplicationContext
                 SettingsFontsMatchLayout = _settingsDialog?.FontsMatchLayout,
                 RouterVisible = _routerModule.Visible,
                 IntakeVisible = _intakeObserver is { Visible: true, IsDisposed: false },
+                IntakePinned = _intakeObserver is { Visible: true, IsDisposed: false, Pinned: true },
+                IntakePanelBounds = _intakeObserver is { Visible: true, IsDisposed: false } panel
+                    ? new UiBounds(panel.Left, panel.Top, panel.Width, panel.Height) : null,
+                VisibleCodexAccountCount = _bar.Visible ? _bar.VisibleCodexAccountCount : 0,
                 IntakeMiniBounds = _bar.Visible && _bar.HasIntakeCard && _bar.MiniPluginBounds(MiniAreaIds.Intake) is { } intakeBounds
                     ? new((int)intakeBounds.X, (int)intakeBounds.Y, (int)intakeBounds.Width, (int)intakeBounds.Height) : null,
                 IntakeProjectCount = _intakeObserver is { Visible: true, IsDisposed: false } intake
@@ -342,7 +346,7 @@ internal sealed partial class QuotaApplicationContext
         new(InvokeOnUiAsync(() =>
         {
             if (visible) ShowIntakeObserver();
-            else _intakeObserver?.Close();
+            else _bar.HidePluginPopover(MiniAreaIds.Intake);
             return true;
         }, cancellationToken));
 

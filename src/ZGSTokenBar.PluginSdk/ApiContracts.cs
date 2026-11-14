@@ -121,6 +121,9 @@ public sealed record WindowInspection(
     public bool? SettingsFontsMatchLayout { get; init; }
     public bool RouterVisible { get; init; }
     public bool IntakeVisible { get; init; }
+    public bool IntakePinned { get; init; }
+    public UiBounds? IntakePanelBounds { get; init; }
+    public int VisibleCodexAccountCount { get; init; }
     public UiBounds? IntakeMiniBounds { get; init; }
     public int IntakeProjectCount { get; init; }
     public int IntakeWorkItemCount { get; init; }

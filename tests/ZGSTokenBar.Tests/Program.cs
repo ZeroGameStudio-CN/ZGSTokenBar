@@ -136,6 +136,13 @@ if (args.Length is 1 or 2 && args[0] == "--intake-observer")
     return 0;
 }
 
+if (args.Length == 1 && args[0] == "--interactive-quota")
+{
+    InteractiveQuotaTests.Run();
+    Console.WriteLine("PASS registered interactive accounts, identity deduplication and live quota");
+    return 0;
+}
+
 if (args.Length == 1 && args[0] == "--quota-pace-review")
 {
     TestQuotaPaceEstimate();
@@ -495,6 +502,7 @@ var tests = new (string Name, Action Run)[]
     ("Cockpit Codex active instance mapping", TestCockpitCodexInstanceActivity),
     ("Cockpit Codex account directory", TestCockpitCodexAccountDirectory),
     ("Codex active auth registry reconciliation", TestCodexActiveAuthRegistryReconciliation),
+    ("Registered interactive Codex homes", InteractiveQuotaTests.Run),
     ("Codex profile lifetime counter", TestCodexProfileLifetimeCounter),
     ("Current Codex and Cockpit account merge", TestCockpitProCodexAccountMerge),
     ("Failed active Codex account remains visible", TestFailedActiveCodexAccountRemainsVisible),

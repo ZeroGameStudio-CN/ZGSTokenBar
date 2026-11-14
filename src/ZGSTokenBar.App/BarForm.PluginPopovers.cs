@@ -38,7 +38,6 @@ internal sealed partial class BarForm
         if (toggle && pinned && _popoverPinned && _pluginPopover?.Visible == true && _pluginPopoverId == pluginId)
         { HidePluginPopover(); return true; }
         if (!pinned && _popoverPinned) return true;
-        if (pinned && pluginId == MiniAreaIds.Intake) return false; // The click opens its separate window.
         if (_pluginPopover?.Visible != true || _pluginPopoverId != pluginId) HidePopovers();
         var request = new PluginPopoverRequest(pluginId, anchor, pinned, _scale, _backgroundTheme);
         if (!pinned && pluginId == MiniAreaIds.Intake)

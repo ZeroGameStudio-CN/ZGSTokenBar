@@ -13,14 +13,19 @@ internal sealed partial class QuotaApplicationContext
     {
         if (_quitting) return;
         if (!IntakeEnabled) throw new HostCommandException("plugin_disabled", "Work intake module is disabled.");
-        if (_intakeObserver is { IsDisposed: false } opened)
+        _bar.OpenPluginPopover(MiniAreaIds.Intake, pinned: true);
+    }
+
+    private void IntakePopoverRequested(object? sender, PluginPopoverRequest request)
+    {
+        if (request.PluginId != MiniAreaIds.Intake || !request.Pinned || !IntakeEnabled || _quitting) return;
+        if (_intakeObserver is null || _intakeObserver.IsDisposed)
         {
-            if (opened.WindowState == FormWindowState.Minimized) opened.WindowState = FormWindowState.Normal;
-            opened.Activate();
-            return;
+            _intakeObserver = new(_text.IsChinese);
+            _intakeObserver.PinChanged += (_, pinned) => _bar.PinPluginPopover(pinned);
+            _intakeObserver.CloseRequested += (_, _) => _bar.HidePluginPopover(MiniAreaIds.Intake);
         }
-        _intakeObserver = new(_text.IsChinese);
-        _intakeObserver.Show();
-        _intakeObserver.Activate();
+        _intakeObserver.ShowFor(_bar, request.Anchor, request.Pinned, request.Scale, request.Theme);
+        request.Popup = _intakeObserver;
     }
 }

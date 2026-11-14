@@ -8,7 +8,7 @@ using ZGSTokenBar.Plugin.Router;
 namespace ZGSTokenBar.App;
 
 /// <summary>Native presentation only. All execution, fairness and release decisions belong to Router.</summary>
-internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
+internal sealed class RouterMonitorForm : MonitorPanelForm
 {
     private readonly RouterMonitorClient _client;
     private readonly CancellationTokenSource _stop = new();
@@ -20,8 +20,8 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     private readonly Label _freshness = Label("连接中", 350);
     private readonly Label _overviewStats = Label("", 340);
     private readonly MonitorBrandMark _brand = new() { Width = 110, Height = 30, Margin = Padding.Empty };
-    private float _appliedScale = -1;
-    private QuotaBackgroundTheme? _appliedTheme;
+
+
     private readonly RouterStatusBadge _headline = new() { Text = "读取中", Margin = Padding.Empty };
     private readonly Label _metrics = Label("", 420);
     private readonly Label _task = Label("", 760);
@@ -45,17 +45,17 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     private readonly Button _pin;
     private readonly ToolTip _tips = new() { InitialDelay = 450, ReshowDelay = 150, AutoPopDelay = 12000 };
     private RouterVisualPalette _palette = new(Color.FromArgb(9, 11, 15));
-    private bool _pinned, _modal;
-    private PopoverTailSide _tailSide = PopoverTailSide.Bottom;
-    private float _tailOffset, _popoverScale = 1;
-    private static readonly Size PreferredBodySize = new(760, 796);
-    private Size _bodySize = PreferredBodySize;
-    private readonly Dictionary<Control, (string Family, float Pixels, FontStyle Style)> _logicalFonts = [];
-    private readonly Dictionary<(string Family, float Pixels, FontStyle Style), Font> _scaledFonts = [];
+
+
+
+
+
+
+
     private RouterSnapshot? _snapshot;
     private bool _refreshing, _controlling, _available, _disposed;
     private int _queueOffset, _historyOffset, _generation, _historyGeneration, _queuePageSize = 3, _historyPageSize = 5, _queueTotal, _historyTotal;
-    private bool _filtersVisible;
+    private bool _modal, _filtersVisible;
     private DateTimeOffset _historyReadAt;
     private readonly RouterHistoryBuffer _historyBuffer = new();
     private CancellationTokenSource? _historyRequest, _queueRequest;
@@ -64,17 +64,17 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     private int _historyLoadOffset = -1, _queueGeneration;
     private bool _queueLoading, _applyingQueue, _hasHistoryCounts;
     private int _completedCount, _failedCount;
-    private Size _appliedWindowSize;
-    private PopoverTailSide _appliedTailSide = PopoverTailSide.Bottom;
-    private int _appliedTailOffset = -1;
+
+
+
     private string _historySignature = "";
     private string? _project;
     internal RouterSnapshot? Snapshot => _snapshot;
     internal string FreshnessText => _freshness.Text;
-    internal bool Pinned => _pinned;
-    public bool InteractionOpen => _modal || _controlling || _currentMenu.Visible || _projectMenu.Visible || _query.Focused || _kind.DroppedDown || _outcome.DroppedDown || _day.DroppedDown;
-    public event EventHandler<bool>? PinChanged;
-    public event EventHandler? CloseRequested;
+
+    public override bool InteractionOpen => _modal || _controlling || _currentMenu.Visible || _projectMenu.Visible || _query.Focused || _kind.DroppedDown || _outcome.DroppedDown || _day.DroppedDown;
+
+
 
     internal RouterMonitorForm(RouterMonitorClient? client = null, bool observe = true)
     {
@@ -93,29 +93,17 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         TopMost = true;
         DoubleBuffered = true;
 
-        _root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), ColumnCount = 1, RowCount = 5 };
-        _root.ColumnStyles.Add(new(SizeType.Percent, 100));
-        foreach (var style in new[] { new RowStyle(SizeType.Absolute, 64), new RowStyle(SizeType.Absolute, 110),
-            new RowStyle(SizeType.Percent, 50), new RowStyle(SizeType.Percent, 50), new RowStyle(SizeType.Absolute, 24) }) _root.RowStyles.Add(style);
+        _root = CreatePanelLayout();
         Controls.Add(_root);
         _projects.AccessibleName = "工程切换"; _freshness.Width = 140;
         _kind.Width = _outcome.Width = 92; _day.Width = 112; _query.Width = 160;
         _kind.AccessibleName = "任务类型"; _outcome.AccessibleName = "结果"; _day.AccessibleName = "日期"; _query.AccessibleName = "搜索任务或对话";
-        _pin = IconButton(RouterButtonIcon.Pin, "固定弹层", () => { PinChanged?.Invoke(this, !_pinned); return Task.CompletedTask; });
+        _pin = IconButton(RouterButtonIcon.Pin, "固定弹层", () => { RequestPinChange(!_pinned); return Task.CompletedTask; });
         var brand = _brand;
         _overviewStats.Margin = new Padding(8, 0, 0, 0);
         var header = Header(Flow(brand, _overviewStats), Flow(_freshness, IconButton(RouterButtonIcon.Refresh, "刷新", async () => { await RefreshViewAsync(); await HistoryAsync(forceRefresh: true); }), _pin,
-            IconButton(RouterButtonIcon.Close, "收起弹层", () => { CloseRequested?.Invoke(this, EventArgs.Empty); return Task.CompletedTask; })), 240);
-        var navigation = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 1, RowCount = 2 };
-        navigation.ColumnStyles.Add(new(SizeType.Percent, 100));
-        navigation.RowStyles.Add(new(SizeType.Absolute, 30)); navigation.RowStyles.Add(new(SizeType.Percent, 100));
-        navigation.Controls.Add(header, 0, 0);
-        var projectSurface = new RouterSurface { Dock = DockStyle.Fill, Input = true, Padding = new Padding(8, 2, 8, 2), Margin = new Padding(0, 0, 0, 4), AccessibleName = "项目切换区" };
-        var projectRow = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 2, RowCount = 1 };
-        projectRow.ColumnStyles.Add(new(SizeType.Absolute, 44)); projectRow.ColumnStyles.Add(new(SizeType.Percent, 100));
-        var projectLabel = Label("项目", 40); projectLabel.Dock = DockStyle.Fill;
-        projectRow.Controls.Add(projectLabel, 0, 0); projectRow.Controls.Add(_projects, 1, 0);
-        projectSurface.Controls.Add(projectRow); navigation.Controls.Add(projectSurface, 0, 1);
+            IconButton(RouterButtonIcon.Close, "收起弹层", () => { RequestClose(); return Task.CompletedTask; })), 240);
+        var navigation = CreateNavigation(header, _projects, "项目");
         _root.Controls.Add(navigation, 0, 0);
         SetLogicalFont(_headline, Font.FontFamily.Name, 10.5f, FontStyle.Bold);
         SetLogicalFont(_task, Font.FontFamily.Name, 12, FontStyle.Bold);
@@ -207,36 +195,17 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         ResumeLayout(true);
     }
 
-    protected override bool ShowWithoutActivation => !_pinned;
-    protected override CreateParams CreateParams
+    public override void SetPinned(bool pinned)
     {
-        get { var value = base.CreateParams; value.ExStyle |= 0x80; if (!_pinned) value.ExStyle |= 0x08000000; return value; }
-    }
-    public void SetPinned(bool pinned)
-    {
-        var changed = _pinned != pinned; _pinned = pinned;
+        base.SetPinned(pinned);
         ((RouterButton)_pin).Selected = pinned;
         _pin.AccessibleName = pinned ? "取消固定" : "固定弹层";
         _tips.SetToolTip(_pin, pinned ? "取消固定" : "固定后可操作队列与历史");
         if (string.IsNullOrEmpty(_notice.Text) || _notice.Text is "悬停预览 · 点击模块固定后可操作" or "已固定 · Esc 或点击外部收起")
             _notice.Text = pinned ? "已固定 · Esc 或点击外部收起" : "悬停预览 · 点击模块固定后可操作";
-        // Toggle WS_EX_NOACTIVATE in place: recreating the handle rebuilt every child control.
-        if (changed && IsHandleCreated)
-        {
-            var style = GetWindowLongPtr(Handle, GwlExStyle).ToInt64();
-            style = pinned ? style & ~NoActivateExStyle : style | NoActivateExStyle;
-            SetWindowLongPtr(Handle, GwlExStyle, new IntPtr(style));
-        }
         UpdateControls();
         if (pinned && Visible) Activate();
     }
-    private const int GwlExStyle = -20;
-    private const long NoActivateExStyle = 0x08000000;
-    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
-    private static extern IntPtr GetWindowLongPtr(IntPtr window, int index);
-    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
-    private static extern IntPtr SetWindowLongPtr(IntPtr window, int index, IntPtr value);
-
     /// <summary>Click time of the pending open, for the click-to-paint / click-to-data trace.</summary>
     private long _openStamp;
     private bool _openDataPending;
@@ -248,35 +217,6 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     /// Idle-time warm-up: scale, fonts, palette, every native child handle and one layout pass,
     /// so a click only positions and shows the already-built window.
     /// </summary>
-    internal void Prewarm(float scale, QuotaBackgroundTheme theme)
-    {
-        if (IsDisposed || Visible) return;
-        using var trace = PerfTrace.Measure("router.panel.prewarm");
-        SetPinned(true);
-        var nextScale = Math.Max(1, scale);
-        SuspendLayout();
-        if (Math.Abs(nextScale - _popoverScale) > .001) Scale(new SizeF(nextScale / _popoverScale, nextScale / _popoverScale));
-        _popoverScale = nextScale;
-        _bodySize = new Size((int)(PreferredBodySize.Width * nextScale), (int)(PreferredBodySize.Height * nextScale));
-        var tail = (int)(8 * nextScale);
-        _tailSide = PopoverTailSide.Bottom;
-        _tailOffset = _bodySize.Width / 2f;
-        var windowSize = new Size(_bodySize.Width, _bodySize.Height + tail);
-        Padding = new Padding(2, 2, 2, 2 + tail);
-        ClientSize = windowSize;
-        using (var path = SurfacePath()) { var old = Region; Region = new Region(path); old?.Dispose(); }
-        _appliedWindowSize = windowSize;
-        _appliedTailSide = _tailSide;
-        _appliedTailOffset = (int)Math.Round(_tailOffset);
-        ResumeLayout(false);
-        _ = Handle;
-        foreach (var control in Children(this)) _ = control.Handle;
-        ApplyLogicalFonts();
-        ApplyPalette(theme);
-        _appliedScale = _popoverScale; _appliedTheme = theme;
-        PerformLayout();
-    }
-
     internal Task WarmInBackgroundAsync()
     {
         if (Visible || _refreshing || _controlling || IsDisposed) return Task.CompletedTask;
@@ -285,118 +225,9 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         return RefreshViewAsync();
     }
 
-    internal void ShowFor(BarForm owner, Rectangle anchor, bool pinned, float scale, QuotaBackgroundTheme theme)
-    {
-        ConfigureFor(anchor, pinned, scale, theme, Screen.FromRectangle(anchor).WorkingArea);
-        var firstShow = !IsHandleCreated;
-        if (!Visible) this.ShowPopover(BarForm.PopoverOwnerFor(owner));
-        // Creating the native window can rescale fonts after ConfigureFor ran; only then re-apply.
-        if (firstShow)
-        {
-            ApplyLogicalFonts();
-            ApplyPalette(theme);
-        }
-        if (pinned) Activate();
-    }
-    internal void ConfigureFor(Rectangle anchor, bool pinned, float scale, QuotaBackgroundTheme theme, Rectangle area)
-    {
-        SetPinned(pinned);
-        var nextScale = Math.Max(1, scale);
-        if (Math.Abs(nextScale - _popoverScale) > .001)
-        {
-            SuspendLayout();
-            Scale(new SizeF(nextScale / _popoverScale, nextScale / _popoverScale));
-            ResumeLayout(true);
-        }
-        _popoverScale = nextScale;
-        // Fonts and palette walk every child control; skip it when nothing changed since the last show.
-        // ...unless native DPI handling rewrote the fonts while the panel was hidden (same scale).
-        if (Math.Abs(_appliedScale - _popoverScale) > .001 || !Equals(_appliedTheme, theme) || FontsDrifted())
-        {
-            ApplyLogicalFonts();
-            ApplyPalette(theme);
-            _appliedScale = _popoverScale;
-            _appliedTheme = theme;
-        }
-        _bodySize = new(Math.Min((int)(PreferredBodySize.Width * _popoverScale), area.Width - (int)(16 * _popoverScale)),
-            Math.Min((int)(PreferredBodySize.Height * _popoverScale), area.Height - (int)(28 * _popoverScale)));
-        var tail = (int)(8 * _popoverScale);
-        var placement = TaskbarMiniPopoverMath.Place(anchor, _bodySize, tail, (int)(3 * _popoverScale), area);
-        _tailSide = placement.TailSide; _tailOffset = placement.TailOffset;
-        if (_appliedWindowSize != placement.WindowSize || _appliedTailSide != _tailSide)
-        {
-            SuspendLayout();
-            Padding = new Padding(2 + (_tailSide == PopoverTailSide.Left ? tail : 0), 2 + (_tailSide == PopoverTailSide.Top ? tail : 0),
-                2 + (_tailSide == PopoverTailSide.Right ? tail : 0), 2 + (_tailSide == PopoverTailSide.Bottom ? tail : 0));
-            ClientSize = placement.WindowSize;
-            ResumeLayout(true);
-            _appliedWindowSize = placement.WindowSize;
-            _appliedTailSide = _tailSide;
-        }
-        Location = placement.Location;
-        var tailOffsetRounded = (int)Math.Round(_tailOffset);
-        if (_appliedTailOffset != tailOffsetRounded || Region is null)
-        {
-            using var path = SurfacePath();
-            var old = Region;
-            Region = new Region(path);
-            old?.Dispose();
-            _appliedTailOffset = tailOffsetRounded;
-        }
-    }
-    private void SetLogicalFont(Control control, string family, float pixels, FontStyle style = FontStyle.Regular)
-    {
-        _logicalFonts[control] = (family, pixels, style);
-        control.Font = (Font)ScaledFont((family, pixels, style)).Clone();
-    }
-    private Font ScaledFont((string Family, float Pixels, FontStyle Style) logical)
-    {
-        var key = (logical.Family, logical.Pixels * _popoverScale, logical.Style);
-        if (!_scaledFonts.TryGetValue(key, out var font))
-        { font = new Font(key.Family, key.Item2, key.Style, GraphicsUnit.Pixel); _scaledFonts[key] = font; }
-        return font;
-    }
-    /// <summary>Cheap check (no font allocation): does the form's font still match its logical size?</summary>
-    private bool FontsDrifted() =>
-        _logicalFonts.TryGetValue(this, out var logical)
-        && (!IsFontUsable(Font) || Math.Abs(Font.Size - logical.Pixels * _popoverScale) > .1);
-
-    private static bool IsFontUsable(Font font)
-    {
-        try { _ = font.Height; return true; }
-        catch (ArgumentException) { return false; }
-    }
-
-    private void ApplyLogicalFonts()
-    {
-        SuspendLayout();
-        // Include project chips created after construction, without retaining disposed chips.
-        // Give each control its own Font clone so WinForms' WM_DPICHANGED_BEFOREPARENT scaling
-        // on one child never disposes the Font still bound to sibling ComboBoxes.
-        foreach (var control in new[] { this }.Concat(Children(this)))
-        {
-            var expected = ScaledFont(_logicalFonts.GetValueOrDefault(control, _logicalFonts[this]));
-            if (!IsFontUsable(control.Font)) control.Font = Control.DefaultFont;
-            if (!control.Font.Equals(expected)) control.Font = (Font)expected.Clone();
-        }
-        ResumeLayout(true);
-    }
-    private GraphicsPath SurfacePath()
-    {
-        var tail = 8 * _popoverScale;
-        var body = TaskbarPopoverMath.BodyBounds(_tailSide, _bodySize.Width, _bodySize.Height, tail);
-        var path = new GraphicsPath { FillMode = FillMode.Winding };
-        var d = UiTokens.RadiusPanel * 2 * _popoverScale;
-        path.AddArc(body.Left, body.Top, d, d, 180, 90); path.AddArc(body.Right - d, body.Top, d, d, 270, 90);
-        path.AddArc(body.Right - d, body.Bottom - d, d, d, 0, 90); path.AddArc(body.Left, body.Bottom - d, d, d, 90, 90); path.CloseFigure();
-        path.AddPolygon(TaskbarPopoverMath.TailPoints(_tailSide, body, _tailOffset, tail));
-        return path;
-    }
     protected override void OnPaint(PaintEventArgs e)
     {
-        base.OnPaint(e); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        using var path = SurfacePath(); using var border = new Pen(UiTokens.Hairline);
-        e.Graphics.DrawPath(border, path);
+        base.OnPaint(e);
         if (_openStamp != 0)
         {
             var stamp = _openStamp; _openStamp = 0;
@@ -418,9 +249,9 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
         grid.PageFromWheel(e.Delta);
         if (e is HandledMouseEventArgs handled) handled.Handled = true;
     }
-    private static IEnumerable<Control> Children(Control parent) => parent.Controls.Cast<Control>().SelectMany(child => new[] { child }.Concat(Children(child)));
 
-    private void ApplyPalette(QuotaBackgroundTheme theme)
+
+    protected override void ApplyPalette(QuotaBackgroundTheme theme)
     {
         // One graphite surface for every hover/panel (UiTokens.CardSurface), whatever the bar theme.
         _palette = new(UiTokens.CardSurface); BackColor = _palette.Background;
@@ -609,7 +440,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     private async Task SelectProjectAsync(string key)
     {
         if (_controlling || key == _project) return;
-        if (!_pinned) PinChanged?.Invoke(this, true);
+        if (!_pinned) RequestPinChange(true);
         _project = key; _generation++; _queueOffset = _historyOffset = 0; ResetHistory(); _queueRequest?.Cancel();
         _snapshot = null; _available = false; _hasHistoryCounts = false; _completedCount = 0; _failedCount = 0; _headline.Text = "读取中"; _task.Text = ""; _detail.Text = ""; _source.Text = ""; _metrics.Text = "";
         UpdateOverviewStats();
@@ -928,12 +759,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     private static Label Label(string text, int width) => new() { Text = text, Width = width, Height = 31, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft };
     private static FlowLayoutPanel Flow(params Control[] children) { var flow = new FlowLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, WrapContents = false, AutoScroll = false }; flow.Controls.AddRange(children); return flow; }
     private static RouterSurface Section(string title) => RouterSurface.Section(title);
-    private static TableLayoutPanel Header(Control left, Control right, int rightWidth)
-    {
-        var header = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 2, RowCount = 1 };
-        header.ColumnStyles.Add(new(SizeType.Percent, 100)); header.ColumnStyles.Add(new(SizeType.Absolute, rightWidth));
-        header.Controls.Add(left, 0, 0); header.Controls.Add(right, 1, 0); return header;
-    }
+    private static TableLayoutPanel Header(Control left, Control right, int rightWidth) => CreateHeader(left, right, rightWidth);
     private static ToolStripMenuItem MenuItem(string text, Func<Task> action)
     { var item = new ToolStripMenuItem(text); item.Click += async (_, _) => await action(); return item; }
     private int PageRows(RouterGrid grid) => Math.Clamp((grid.ClientSize.Height - grid.ColumnHeadersHeight - 2) /
@@ -969,7 +795,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
             _tips.Dispose();
             _currentMenu.Dispose();
             _projectMenu.Dispose();
-            foreach (var font in _scaledFonts.Values) font.Dispose();
+
         }
         base.Dispose(disposing);
     }

@@ -213,7 +213,10 @@ read-only local performance probe runs with the same command and
 and cached native page rendering without execution controls or production settings.
 
 The **Work intake** inbox icon sits beside Router in the Mini. Left-click it
-to open a separate read-only window. Its switch in Settings → Modules is
+to pin the same anchored panel host used by Router, with shared screen/DPI
+geometry, header, project row, current-item section and equally sized tables.
+Pin, close, outside click and Escape use the same popover lifecycle.
+Its switch in Settings → Modules is
 independent of Router. The two monitors share the same icon slot, highlight,
 and preview layout. Disabled monitors leave no empty slot. Hovering shows a
 preview without making any requests.
@@ -231,8 +234,20 @@ web origin (no path, query, or fragment). The original conversation link is
 available only when the card supplies a structured conversation ID.
 `ZGSTokenBar.Cli intake show|hide --json` controls presentation only;
 `window inspect --json` reports the icon bounds in Mini logical coordinates,
-panel visibility and aggregate row counts. Run the
+panel visibility, pin state, native bounds and aggregate row counts. Run the
 isolated fixture with `--intake-observer [capture-directory]` on the test executable.
+
+Codex quota uses the registered interactive homes from
+`%LOCALAPPDATA%/ZGS/codex-home-bridge/instances.json` when available, reads each
+home's current authentication locally, and deduplicates by account identity.
+It does not infer these accounts from an old launcher's saved process IDs.
+Each registered account keeps its own quota response and sample time. While
+Codex is active these accounts refresh at most once per minute, coalescing
+with a recent normal refresh. Other providers retain their configured cadence.
+Without an interactive registry the existing local/Cockpit route remains.
+The isolated `--interactive-quota` test covers duplicate homes and stale
+launcher bindings. `window inspect` reports the number of Codex accounts
+actually painted on the bar.
 
 All acceptance is non-interactive and CLI-only. Do not use desktop automation, injected pointer/keyboard input, or user-performed GUI interaction as required evidence.
 

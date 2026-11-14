@@ -1,221 +1,100 @@
 using System.Diagnostics;
+using ZGSTokenBar.Core;
 
 namespace ZGSTokenBar.App;
 
-internal sealed class IntakeObserverForm : Form
+internal sealed class IntakeObserverForm : MonitorPanelForm
 {
     private readonly IntakeObserverClient _client;
     private readonly bool _zh;
-    private readonly RouterCombo _projects = new() { Width = 195 };
-    private readonly TextBox _reference = new() { Width = 140, MaxLength = 36, BorderStyle = BorderStyle.FixedSingle };
+    private readonly FlowLayoutPanel _projects = Flow();
+    private readonly ContextMenuStrip _projectMenu = new() { ShowImageMargin = false };
+    private IReadOnlyList<IntakeProject> _projectCatalog = [];
+    private string? _projectKey;
+    private string _projectSignature = "";
+    private readonly TextBox _reference = new() { Width = 180, MaxLength = 36, BorderStyle = BorderStyle.None };
     private readonly RouterButton _search = new() { Kind = RouterButtonKind.Primary };
-    private readonly RouterButton _refresh = new();
-    private readonly RouterButton _open = new();
-    private readonly RouterButton _copy = new();
-    private readonly RouterButton _thread = new();
-    private readonly RouterButton _diagnose = new();
-    private readonly CheckBox _blocked = new() { AutoSize = true, Margin = new Padding(8, 6, 5, 0), UseCompatibleTextRendering = true };
-    private readonly Label _status = new() { Dock = DockStyle.Fill, AutoEllipsis = true, UseCompatibleTextRendering = true };
-    private readonly Label _detail = new() { Dock = DockStyle.Fill, AutoEllipsis = true, UseCompatibleTextRendering = true };
-    private readonly DataGridView _recent = Grid();
-    private readonly DataGridView _timeline = Grid();
-    private readonly System.Windows.Forms.Timer _timer = new() { Interval = 30_000 };
+    private readonly RouterButton _refresh = new() { Icon = RouterButtonIcon.Refresh };
+    private readonly RouterButton _pin = new() { Icon = RouterButtonIcon.Pin };
+    private readonly RouterButton _close = new() { Icon = RouterButtonIcon.Close };
+    private readonly RouterButton _open = new(), _copy = new(), _thread = new(), _diagnose = new();
+    private readonly CheckBox _blocked = new() { AutoSize = true, Margin = new(8, 4, 5, 0), UseCompatibleTextRendering = true };
+    private readonly Label _status = Label(), _detail = Label(), _freshness = Label(), _projectSummary = Label();
+    private readonly RouterGrid _recent = Grid(), _timeline = Grid();
+    private readonly System.Windows.Forms.Timer _timer = new() { Interval = 10_000 };
+    private readonly ToolTip _tips = new();
     private CancellationTokenSource? _request;
     private IntakeAccess? _access;
     private IntakeItem? _item;
     private DateTimeOffset? _observed;
-    private bool _filling;
-    private bool _fresh;
-    private bool _detailFresh;
+    private bool _fresh, _detailFresh;
     private readonly bool _observeOnShow;
-    private readonly Dictionary<int, Font> _panelFonts = [];
+    private readonly TableLayoutPanel _root;
     internal (int Projects, int Recent, int Timeline, bool ItemLoaded, string Status) Observation =>
-        (_projects.Items.Count, _recent.RowCount, _timeline.RowCount, _detailFresh, _status.Text);
-
+        (_projectCatalog.Count, _recent.RowCount, _timeline.RowCount, _detailFresh, _status.Text);
+    public override bool InteractionOpen => _projectMenu.Visible || _reference.Focused;
     internal IntakeObserverForm(bool chinese, IntakeObserverClient? client = null, bool observeOnShow = true)
     {
         _zh = chinese;
         _client = client ?? new();
         _observeOnShow = observeOnShow;
-        Text = T("自动分拣 · 只读", "Work intake · Read only");
-        StartPosition = FormStartPosition.CenterScreen;
-        // Keep the logical dimensions paired with Router's pixel fonts and
-        // rescale the in-client layout explicitly on this window's DPI.
-        AutoScaleMode = AutoScaleMode.None;
-        ClientSize = new(755, 575);
-        MinimumSize = new(640, 500);
-        ShowInTaskbar = false;
-        ShowIcon = false;
-        BackColor = UiTokens.CardSurface;
-        ForeColor = UiTokens.Text;
-        var palette = new RouterVisualPalette(BackColor);
-        foreach (var button in new[] { _search, _refresh, _open, _copy, _thread, _diagnose }) button.Palette = palette;
-        _projects.Palette = palette;
+        Text = T("自动分拣", "Work intake");
+        SuspendLayout();
+        _root = CreatePanelLayout();
+        Controls.Add(_root);
+        var brand = new MonitorBrandMark(Text, intake: true) { Width = 140, Height = 30, Margin = Padding.Empty };
+        _projectSummary.Text = T("只读", "Read only"); _projectSummary.Width = 200;
+        _freshness.Width = 140;
+        var header = CreateHeader(Flow(brand, _projectSummary), Flow(_freshness, _refresh, _pin, _close), 240);
+        _root.Controls.Add(CreateNavigation(header, _projects, T("项目", "Project")), 0, 0);
 
-        _projects.AccessibleName = T("项目", "Project");
         _reference.AccessibleName = T("工单号", "Work item number");
         _reference.PlaceholderText = T("输入工单号", "Work item number");
-        _reference.BackColor = palette.Input;
-        _reference.ForeColor = UiTokens.Text;
-        _refresh.Text = T("刷新", "Refresh");
-        _refresh.AccessibleName = _refresh.Text;
+        _refresh.AccessibleName = T("刷新", "Refresh");
+        _pin.AccessibleName = T("固定弹层", "Pin");
+        _close.AccessibleName = T("收起弹层", "Close");
         _search.Text = T("查工单", "Find");
-        _search.AccessibleName = _search.Text;
         _blocked.Text = T("仅阻塞", "Blocked only");
         _open.Text = T("打开 ZOS", "Open in ZOS");
         _copy.Text = T("复制卡号", "Copy number");
         _thread.Text = T("打开原对话", "Open conversation");
         _diagnose.Text = T("诊断", "Diagnostics");
-        _status.ForeColor = UiTokens.Muted;
-        _detail.ForeColor = UiTokens.Text;
+        foreach (var button in new[] { _refresh, _pin, _close })
+            _tips.SetToolTip(button, button.AccessibleName);
 
-        var head = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5, RowCount = 1, Margin = Padding.Empty };
-        head.ColumnStyles.Add(new(SizeType.Absolute, 200));
-        head.ColumnStyles.Add(new(SizeType.Absolute, 105));
-        head.ColumnStyles.Add(new(SizeType.Absolute, 76));
-        head.ColumnStyles.Add(new(SizeType.Percent, 100));
-        head.ColumnStyles.Add(new(SizeType.Absolute, 90));
-        head.RowStyles.Add(new(SizeType.Percent, 100));
-        foreach (var button in new[] { _refresh, _search })
-        {
-            button.AutoSize = false;
-            button.Dock = DockStyle.Fill;
-        }
-        _projects.Dock = DockStyle.Fill;
-        _reference.Anchor = AnchorStyles.Left | AnchorStyles.Right;
-        head.Controls.Add(_projects, 0, 0);
-        head.Controls.Add(_blocked, 1, 0);
-        head.Controls.Add(_refresh, 2, 0);
-        head.Controls.Add(_reference, 3, 0);
-        head.Controls.Add(_search, 4, 0);
-        var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Margin = Padding.Empty };
-        actions.Controls.AddRange([_open, _copy, _thread, _diagnose]);
-        AddColumn(_recent, T("工单", "Item"), 104);
-        AddColumn(_recent, T("标题", "Title"), 0);
-        AddColumn(_recent, T("当前状态", "State"), 106);
-        AddColumn(_recent, T("更新", "Updated"), 110);
-        AddColumn(_timeline, T("时间", "Time"), 112);
-        AddColumn(_timeline, T("记录", "Event"), 0);
+        var search = new RouterSurface { Input = true, Width = 180, Height = 26, Padding = new(8, 5, 8, 3) };
+        _reference.Dock = DockStyle.Fill; search.Controls.Add(_reference);
+        var heading = Label(T("当前工单", "Current item")); heading.Width = 110;
+        SetLogicalFont(heading, "Segoe UI", UiTokens.FontBody, FontStyle.Bold);
+        var current = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 1, RowCount = 3 };
+        current.ColumnStyles.Add(new(SizeType.Percent, 100));
+        foreach (var height in new[] { 28, 28, 32 }) current.RowStyles.Add(new(SizeType.Absolute, height));
+        current.Controls.Add(CreateHeader(heading, Flow(search, _search), 268), 0, 0);
+        current.Controls.Add(_detail, 0, 1);
+        current.Controls.Add(Flow(_open, _copy, _thread, _diagnose), 0, 2);
+        var currentSection = RouterSurface.Section(T("当前工单", "Current item")); currentSection.Controls.Add(current);
+        _root.Controls.Add(currentSection, 0, 1);
+
+        AddColumn(_recent, T("工单", "Item"), 104); AddColumn(_recent, T("标题", "Title"), 0);
+        AddColumn(_recent, T("当前状态", "State"), 106); AddColumn(_recent, T("更新", "Updated"), 110);
+        AddColumn(_timeline, T("时间", "Time"), 112); AddColumn(_timeline, T("记录", "Event"), 0);
         AddColumn(_timeline, T("结果", "Result"), 114);
         _recent.AccessibleName = T("近期工单", "Recent work items");
-        _timeline.AccessibleName = T("工单时间线和诊断", "Work item timeline and diagnostics");
-
-        var brand = new MonitorBrandMark(T("自动分拣", "Work intake"), intake: true)
-            { Dock = DockStyle.Fill, Margin = Padding.Empty };
-        var historyStatus = new Label { Text = T("只读", "Read only"), Dock = DockStyle.Fill,
-            ForeColor = UiTokens.Muted, TextAlign = ContentAlignment.MiddleRight, Margin = Padding.Empty,
-            UseCompatibleTextRendering = true };
-        var header = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
-        header.ColumnStyles.Add(new(SizeType.Percent, 70));
-        header.ColumnStyles.Add(new(SizeType.Percent, 30));
-        header.Controls.Add(brand, 0, 0);
-        header.Controls.Add(historyStatus, 1, 0);
-
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Padding = new(12) };
-        layout.RowStyles.Add(new(SizeType.Absolute, 34));
-        layout.RowStyles.Add(new(SizeType.Absolute, 42));
-        layout.RowStyles.Add(new(SizeType.Percent, 50));
-        layout.RowStyles.Add(new(SizeType.Percent, 50));
-        var filters = new RouterSurface { Dock = DockStyle.Fill, Palette = palette, Input = true, BackColor = palette.Input,
-            Name = "intake-filters", AccessibleName = T("工单筛选", "Work item filters") };
-        filters.Controls.Add(head);
-        var recent = Section(_recent.AccessibleName, _status, _recent);
-        var timeline = Section(_timeline.AccessibleName, _detail, _timeline, actions);
-        layout.Controls.Add(header, 0, 0);
-        layout.Controls.Add(filters, 0, 1);
-        layout.Controls.Add(recent.Surface, 0, 2);
-        layout.Controls.Add(timeline.Surface, 0, 3);
-        Controls.Add(layout);
-
-        (RouterSurface Surface, TableLayoutPanel Content) Section(string name, Control status, Control grid,
-            Control? toolbar = null)
-        {
-            var surface = RouterSurface.Section(name);
-            surface.Palette = palette;
-            var content = new TableLayoutPanel
-            {
-                Dock = DockStyle.Fill, ColumnCount = 1, RowCount = toolbar is null ? 2 : 3,
-                Margin = Padding.Empty, BackColor = palette.Surface,
-            };
-            content.RowStyles.Add(new(SizeType.Absolute, 25));
-            content.Controls.Add(status, 0, 0);
-            if (toolbar is not null)
-            {
-                content.RowStyles.Add(new(SizeType.Absolute, 32));
-                content.Controls.Add(toolbar, 0, 1);
-            }
-            content.RowStyles.Add(new(SizeType.Percent, 100));
-            content.Controls.Add(grid, 0, content.RowCount - 1);
-            surface.Controls.Add(content);
-            return (surface, content);
-        }
-
-        void ScaleLayout(int dpi, bool setWindowSize)
-        {
-            var scale = dpi / 96f;
-            int Span(int value) => (int)Math.Round(value * scale);
-            SuspendLayout();
-            layout.SuspendLayout();
-            if (!_panelFonts.TryGetValue(dpi, out var font))
-                _panelFonts.Add(dpi, font = new Font("Segoe UI", RouterVisualGeometry.LogicalFontPixels * scale, FontStyle.Regular, GraphicsUnit.Pixel));
-            Font = font;
-            layout.Padding = new(Span(12));
-            layout.RowStyles[0].Height = Span(34);
-            layout.RowStyles[1].Height = Span(42);
-            filters.Margin = new(0, 0, 0, Span(6));
-            filters.Padding = new(Span(6), Span(3), Span(6), 0);
-            head.ColumnStyles[0].Width = Span(200);
-            head.ColumnStyles[1].Width = Span(105);
-            head.ColumnStyles[2].Width = Span(76);
-            head.ColumnStyles[4].Width = Span(90);
-            foreach (var control in new Control[] { _projects, _refresh, _reference, _search })
-                control.Margin = new(Span(3), 0, Span(3), Span(2));
-            _blocked.Margin = new(Span(8), Span(6), Span(5), 0);
-            foreach (var section in new[] { recent, timeline })
-            {
-                section.Surface.Margin = new(0, 0, 0, Span(8));
-                section.Surface.Padding = new(Span(10), Span(6), Span(10), Span(8));
-                section.Content.RowStyles[0].Height = Span(25);
-            }
-            timeline.Content.RowStyles[1].Height = Span(32);
-            foreach (var view in new[] { _recent, _timeline })
-            {
-                view.RowTemplate.Height = Span(26);
-                view.ColumnHeadersHeight = Span(30);
-                foreach (DataGridViewRow row in view.Rows) row.Height = Span(26);
-            }
-            foreach (var (view, index, width) in new[] { (_recent, 0, 120), (_recent, 2, 110), (_recent, 3, 118),
-                         (_timeline, 0, 118), (_timeline, 2, 125) })
-                view.Columns[index].Width = Span(width);
-            if (setWindowSize)
-            {
-                var area = Screen.FromControl(this).WorkingArea;
-                MinimumSize = new(Math.Min(Span(638), area.Width), Math.Min(Span(468), area.Height));
-                ClientSize = new(Math.Min(Span(755), Math.Max(Span(580), area.Width - Span(18))),
-                    Math.Min(Span(575), Math.Max(Span(405), area.Height - Span(55))));
-            }
-            layout.ResumeLayout();
-            ResumeLayout();
-        }
-        ScaleLayout(DeviceDpi, false);
-        Load += (_, _) => ScaleLayout(DeviceDpi, true);
-        DpiChanged += (_, e) => ScaleLayout(e.DeviceDpiNew, false);
+        _timeline.AccessibleName = T("工单时间线和诊断", "Timeline and diagnostics");
+        _root.Controls.Add(TableSection(_recent.AccessibleName, _recent, Flow(_blocked)), 0, 2);
+        _root.Controls.Add(TableSection(T("历史", "History"), _timeline, Flow()), 0, 3);
+        _root.Controls.Add(_status, 0, 4);
 
         _detail.Text = T("选择一张工单后查看时间线", "Select a work item to view its timeline");
         _status.Text = T("连接 ZOS…", "Connecting to ZOS…");
         _refresh.Click += async (_, _) => await RefreshVisibleAsync();
-        _projects.SelectedIndexChanged += async (_, _) =>
-        {
-            if (_filling) return;
-            ClearItem();
-            await LoadRecentAsync();
-        };
+        _pin.Click += (_, _) => RequestPinChange(!_pinned);
+        _close.Click += (_, _) => RequestClose();
         _blocked.CheckedChanged += async (_, _) => await LoadRecentAsync();
         _reference.KeyDown += async (_, e) =>
         {
             if (e.KeyCode != Keys.Enter) return;
-            e.SuppressKeyPress = true;
-            await FindAsync();
+            e.SuppressKeyPress = true; await FindAsync();
         };
         _search.Click += async (_, _) => await FindAsync();
         _recent.CellDoubleClick += async (_, e) =>
@@ -226,41 +105,137 @@ internal sealed class IntakeObserverForm : Form
         _recent.KeyDown += async (_, e) =>
         {
             if (e.KeyCode != Keys.Enter || !_fresh || _recent.CurrentRow?.Tag is not IntakeItem row) return;
-            e.SuppressKeyPress = true;
-            await LoadItemAsync(row.Id.ToString("D"));
+            e.SuppressKeyPress = true; await LoadItemAsync(row.Id.ToString("D"));
         };
         _open.Click += (_, _) => OpenItem();
         _copy.Click += (_, _) =>
         {
-            try
-            {
-                if (_detailFresh && _item is { Number.Length: > 0 } value) Clipboard.SetText(value.Number);
-            }
-            catch (System.Runtime.InteropServices.ExternalException)
-            { _status.Text = T("剪贴板暂不可用", "Clipboard unavailable"); }
+            try { if (_detailFresh && _item is { Number.Length: > 0 } value) Clipboard.SetText(value.Number); }
+            catch (System.Runtime.InteropServices.ExternalException) { _status.Text = T("剪贴板暂不可用", "Clipboard unavailable"); }
         };
         _thread.Click += (_, _) =>
         {
-            if (_detailFresh && _item?.Thread is { } id)
-                OpenLink(new Uri("codex://threads/" + id.ToString("D")));
+            if (_detailFresh && _item?.Thread is { } id) OpenLink(new Uri("codex://threads/" + id.ToString("D")));
         };
         _diagnose.Click += async (_, _) => await LoadDiagnosticsAsync();
         _timer.Tick += async (_, _) =>
         {
-            if (!Visible || WindowState == FormWindowState.Minimized || _request is not null
-                || _projects.DroppedDown || _reference.Focused) return;
+            if (!Visible || _request is not null || InteractionOpen) return;
             await RefreshVisibleAsync();
         };
-        Shown += async (_, _) =>
+        VisibleChanged += (_, _) =>
         {
+            if (!Visible) { _timer.Stop(); _request?.Cancel(); return; }
             if (!_observeOnShow) return;
             _timer.Start();
-            await LoadRecentAsync();
+            BeginInvoke(new Action(async () => { if (Visible && !IsDisposed) await RefreshVisibleAsync(); }));
         };
-        FormClosed += (_, _) => { _timer.Stop(); _request?.Cancel(); };
         UpdateButtons();
+        ApplyPalette(QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
+        ResumeLayout(true);
     }
 
+    private Control TableSection(string title, RouterGrid grid, Control actions)
+    {
+        var heading = Label(title); heading.Width = 220;
+        SetLogicalFont(heading, "Segoe UI", UiTokens.FontBody, FontStyle.Bold);
+        var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Margin = Padding.Empty };
+        body.ColumnStyles.Add(new(SizeType.Percent, 100));
+        body.RowStyles.Add(new(SizeType.Absolute, 30)); body.RowStyles.Add(new(SizeType.Percent, 100));
+        var pager = new MonitorTablePager(grid);
+        actions.Dock = DockStyle.None; actions.AutoSize = true;
+        body.Controls.Add(CreateHeader(heading, Flow(new[] { actions }.Concat(pager.Buttons).ToArray()), 300), 0, 0);
+        body.Controls.Add(grid, 0, 1);
+        var section = RouterSurface.Section(title); section.Controls.Add(body); return section;
+    }
+    private static FlowLayoutPanel Flow(params Control[] controls)
+    {
+        var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, WrapContents = false, AutoScroll = false };
+        panel.Controls.AddRange(controls); return panel;
+    }
+    private static Label Label(string text = "") => new() { Text = text, Dock = DockStyle.Fill, AutoEllipsis = true,
+        UseCompatibleTextRendering = true, TextAlign = ContentAlignment.MiddleLeft, Margin = Padding.Empty, Height = 26 };
+    public override void SetPinned(bool pinned)
+    {
+        base.SetPinned(pinned);
+        _pin.Selected = pinned;
+        _pin.AccessibleName = pinned ? T("取消固定", "Unpin") : T("固定弹层", "Pin");
+    }
+    private void ApplyProjects()
+    {
+        if (_projectMenu.Visible) return;
+        var signature = _projectKey + "\n" + string.Join("\n", _projectCatalog.Select(project => project.Key + "\0" + project.Title));
+        if (_projectSignature == signature) return;
+        _projectSignature = signature;
+        foreach (Control child in _projects.Controls.Cast<Control>().ToArray()) child.Dispose();
+        _projects.Controls.Clear();
+        var shown = _projectCatalog.Take(3).ToList();
+        if (_projectCatalog.FirstOrDefault(project => project.Key == _projectKey) is { } selected && !shown.Contains(selected))
+        { shown.RemoveAt(shown.Count - 1); shown.Add(selected); }
+        foreach (var project in shown)
+        {
+            var button = new RouterButton { Text = project.Title, Selected = project.Key == _projectKey,
+                AccessibleName = T("切换项目 ", "Select project ") + project.Title, Font = (Font)Font.Clone(),
+                AutoSize = false, Height = (int)(26 * _popoverScale), Width = Math.Min((int)(200 * _popoverScale),
+                    TextRenderer.MeasureText(project.Title, Font).Width + (int)(20 * _popoverScale)),
+                Palette = new(UiTokens.CardSurface) };
+            button.Click += async (_, _) =>
+            {
+                if (_projectKey == project.Key) return;
+                _projectKey = project.Key; ClearItem(); await LoadRecentAsync();
+            };
+            _projects.Controls.Add(button);
+        }
+        foreach (var item in _projectMenu.Items.Cast<ToolStripItem>().ToArray()) item.Dispose();
+        _projectMenu.Items.Clear();
+        foreach (var project in _projectCatalog.Except(shown))
+        {
+            var item = new ToolStripMenuItem(project.Title);
+            item.Click += async (_, _) => { _projectKey = project.Key; ClearItem(); await LoadRecentAsync(); };
+            _projectMenu.Items.Add(item);
+        }
+        if (_projectMenu.Items.Count > 0)
+        {
+            var more = new RouterButton { Text = T("更多", "More"), Font = (Font)Font.Clone() };
+            more.Click += (_, _) => _projectMenu.Show(more, new Point(0, more.Height));
+            _projects.Controls.Add(more);
+        }
+        _projectSummary.Text = T("只读", "Read only") + " · " + _projectCatalog.Count;
+    }
+
+    protected override void ApplyPalette(QuotaBackgroundTheme theme)
+    {
+        var palette = new RouterVisualPalette(UiTokens.CardSurface);
+        foreach (var control in Children(this))
+        {
+            var parentSurface = control.Parent;
+            while (parentSurface is not null && parentSurface is not RouterSurface) parentSurface = parentSurface.Parent;
+            var background = parentSurface is RouterSurface { Input: true } ? palette.Input
+                : parentSurface is RouterSurface ? palette.Surface : palette.Background;
+            switch (control)
+            {
+                case RouterSurface surface: surface.Palette = palette; surface.BackColor = surface.Input ? palette.Input : palette.Surface; break;
+                case RouterButton button: button.Palette = palette; break;
+                case DataGridView grid:
+                    grid.BackgroundColor = palette.Background; grid.GridColor = palette.Border;
+                    grid.ColumnHeadersDefaultCellStyle.BackColor = grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = palette.Surface;
+                    grid.ColumnHeadersDefaultCellStyle.ForeColor = grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = palette.Muted;
+                    grid.ColumnHeadersDefaultCellStyle.Padding = new((int)(4 * _popoverScale), (int)(6 * _popoverScale),
+                        (int)(4 * _popoverScale), (int)(6 * _popoverScale));
+                    grid.ColumnHeadersHeight = (int)(30 * _popoverScale); grid.RowTemplate.Height = (int)(26 * _popoverScale);
+                    foreach (DataGridViewRow row in grid.Rows) row.Height = grid.RowTemplate.Height;
+                    grid.DefaultCellStyle.BackColor = palette.Background; grid.DefaultCellStyle.SelectionBackColor = UiTokens.Mix(palette.Background, palette.Accent, .11f);
+                    grid.DefaultCellStyle.Padding = new((int)(8 * _popoverScale), (int)(4 * _popoverScale), (int)(8 * _popoverScale), (int)(4 * _popoverScale));
+                    break;
+                case Label label: label.BackColor = background; label.ForeColor = label == _detail ? palette.Text : palette.Muted; break;
+                case CheckBox check: check.BackColor = background; check.ForeColor = palette.Text; break;
+                case Panel panel: panel.BackColor = background; break;
+                case TextBox text: text.BackColor = palette.Input; text.ForeColor = palette.Text; break;
+            }
+        }
+        _projectMenu.Renderer = new DarkContextMenuRenderer(palette.Surface, palette.Input, palette.Border, palette.Text, palette.Muted);
+        _projectMenu.Font = Font;
+    }
     private Task RefreshVisibleAsync() => _item is { } item
         ? LoadItemAsync(item.Id.ToString("D")) : LoadRecentAsync();
 
@@ -277,7 +252,7 @@ internal sealed class IntakeObserverForm : Form
 
     internal async Task LoadRecentAsync()
     {
-        var preferred = (_projects.SelectedItem as IntakeProject)?.Key;
+        var preferred = _projectKey;
         await ReadAsync(async token =>
         {
             var access = await RefreshAccessAsync(token);
@@ -363,16 +338,9 @@ internal sealed class IntakeObserverForm : Form
         token.ThrowIfCancellationRequested();
         if (_access is not null && !_access.SameSession(access)) ClearSensitive();
         _access = access;
-        var previous = (_projects.SelectedItem as IntakeProject)?.Key;
-        if (_projects.Items.Cast<IntakeProject>().SequenceEqual(access.Projects)) return access;
-        _filling = true;
-        try
-        {
-            _projects.Items.Clear();
-            _projects.Items.AddRange(access.Projects.Cast<object>().ToArray());
-            _projects.SelectedItem = access.Projects.FirstOrDefault(row => row.Key == previous) ?? access.Projects.FirstOrDefault();
-        }
-        finally { _filling = false; }
+        _projectCatalog = access.Projects;
+        if (!_projectCatalog.Any(project => project.Key == _projectKey)) _projectKey = _projectCatalog.FirstOrDefault()?.Key;
+        ApplyProjects();
         return access;
     }
 
@@ -422,15 +390,15 @@ internal sealed class IntakeObserverForm : Form
     private void Observe(string message)
     {
         _observed = DateTimeOffset.Now;
+        _freshness.Text = T("更新于 ", "Updated ") + _observed.Value.ToString("HH:mm:ss");
         _status.Text = message + "  ·  " + At(_observed);
     }
 
     private void ClearSensitive()
     {
         _recent.Rows.Clear();
-        _filling = true;
-        try { _projects.Items.Clear(); }
-        finally { _filling = false; }
+        _projectMenu.Close();
+        _projectCatalog = []; _projectKey = null; ApplyProjects();
         _access = null;
         _observed = null;
         ClearItem();
@@ -501,10 +469,10 @@ internal sealed class IntakeObserverForm : Form
     private string T(string zh, string en) => _zh ? zh : en;
     private static string At(DateTimeOffset? value) => value?.ToLocalTime().ToString("MM-dd HH:mm") ?? "—";
 
-    private static DataGridView Grid()
+    private static RouterGrid Grid()
     {
         var palette = new RouterVisualPalette(UiTokens.CardSurface);
-        var view = new DataGridView
+        var view = new RouterGrid
         {
             Dock = DockStyle.Fill, BackgroundColor = palette.Surface, GridColor = palette.Border,
             BorderStyle = BorderStyle.None, CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal,
@@ -514,6 +482,7 @@ internal sealed class IntakeObserverForm : Form
             SelectionMode = DataGridViewSelectionMode.FullRowSelect, EnableHeadersVisualStyles = false,
             AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None,
             ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing,
+            ScrollBars = ScrollBars.None,
         };
         view.ColumnHeadersDefaultCellStyle.BackColor = view.ColumnHeadersDefaultCellStyle.SelectionBackColor = palette.Surface;
         view.ColumnHeadersDefaultCellStyle.ForeColor = view.ColumnHeadersDefaultCellStyle.SelectionForeColor = palette.Muted;
@@ -528,18 +497,13 @@ internal sealed class IntakeObserverForm : Form
     private static void AddColumn(DataGridView grid, string title, int width) => grid.Columns.Add(new DataGridViewTextBoxColumn
     {
         HeaderText = title, ReadOnly = true, SortMode = DataGridViewColumnSortMode.NotSortable,
-        Width = Math.Max(width, 30), AutoSizeMode = width == 0
-            ? DataGridViewAutoSizeColumnMode.Fill : DataGridViewAutoSizeColumnMode.None,
+        MinimumWidth = 40, FillWeight = width == 0 ? 340 : width,
+        AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
     });
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { _request?.Cancel(); _timer.Dispose(); }
+        if (disposing) { _request?.Cancel(); _timer.Dispose(); _tips.Dispose(); _projectMenu.Dispose(); }
         base.Dispose(disposing);
-        if (disposing)
-        {
-            foreach (var font in _panelFonts.Values) font.Dispose();
-            _panelFonts.Clear();
-        }
     }
 }

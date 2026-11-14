@@ -117,7 +117,10 @@ internal sealed partial class QuotaApplicationContext
             cards.Add(new PluginMiniCardView(MiniAreaIds.Intake, _text.IntakeObserver,
                 ZGSTokenBar.Plugin.Intake.IntakeObserverPlugin.Launcher, new Dictionary<string, string>()));
         else
+        {
+            _bar.HidePluginPopover(MiniAreaIds.Intake);
             _intakeObserver?.Close();
+        }
         _bar.SetPluginMiniCards(cards);
     }
 

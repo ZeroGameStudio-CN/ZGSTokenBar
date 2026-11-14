@@ -27,6 +27,7 @@ internal static class IntakeObserverTests
     {
         MiniEntry(captures);
         HoverHandoff(captures);
+        PanelParity();
         var denied = false;
         var switched = false;
         var reads = new List<string>();
@@ -83,14 +84,12 @@ internal static class IntakeObserverTests
         if (captures is not null)
         {
             Directory.CreateDirectory(captures);
+            var area = System.Windows.Forms.Screen.PrimaryScreen!.WorkingArea;
+            form.ConfigureFor(new Rectangle(area.Right - 300, area.Bottom - 1, 52, 1), true,
+                System.Windows.Forms.Screen.PrimaryScreen!.Bounds.Width > 2500 ? 2 : 1,
+                QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), area);
             form.Show();
             System.Windows.Forms.Application.DoEvents();
-            var filters = form.Controls.Find("intake-filters", searchAllChildren: true).Single();
-            var row = filters.Controls.OfType<System.Windows.Forms.TableLayoutPanel>().Single();
-            var controls = Enumerable.Range(0, row.ColumnCount).Select(column => row.GetControlFromPosition(column, 0)!).ToArray();
-            Check(controls.All(control => control.Width > 0 && row.ClientRectangle.Contains(control.Bounds))
-                && controls.Zip(controls.Skip(1)).All(pair => pair.First.Right <= pair.Second.Left),
-                "Project, filters and search fit without overlap at the window's DPI");
         }
         RunOnUi(form.LoadRecentAsync());
         Check(form.Observation is { Projects: 2, Recent: 1, ItemLoaded: false },
@@ -104,6 +103,13 @@ internal static class IntakeObserverTests
         {
             form.PerformLayout();
             System.Windows.Forms.Application.DoEvents();
+            var labels = Controls(form).OfType<System.Windows.Forms.Label>().Select(label =>
+                new { label.Text, label.Bounds, label.Visible, Parent = label.Parent?.GetType().Name,
+                    Font = label.Font.Size, ParentSize = label.Parent?.ClientSize });
+            Check(Controls(form).OfType<System.Windows.Forms.Label>().Where(label =>
+                label.Text is "当前工单" or "近期工单" or "历史" or "项目").All(label =>
+                    label.Parent!.ClientRectangle.Contains(label.Bounds)), "Section headings fit inside their shared header rows");
+            File.WriteAllText(Path.Combine(captures, "panel-label-layout.json"), JsonSerializer.Serialize(labels));
             using var bitmap = new Bitmap(form.ClientSize.Width, form.ClientSize.Height);
             using var graphics = Graphics.FromImage(bitmap);
             var target = graphics.GetHdc();
@@ -123,6 +129,9 @@ internal static class IntakeObserverTests
             "No write requests");
     }
 
+    private static IEnumerable<System.Windows.Forms.Control> Controls(System.Windows.Forms.Control parent) =>
+        parent.Controls.Cast<System.Windows.Forms.Control>().SelectMany(control => new[] { control }.Concat(Controls(control)));
+
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool PrintWindow(nint window, nint target, uint flags);
@@ -137,6 +146,30 @@ internal static class IntakeObserverTests
         }
         Check(operation.IsCompleted, "The isolated read must complete on the UI thread");
         operation.GetAwaiter().GetResult();
+    }
+
+    private static void PanelParity()
+    {
+        using var intake = new IntakeObserverForm(true, observeOnShow: false);
+        using var router = new RouterMonitorForm(observe: false);
+        var theme = QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette);
+        foreach (var scale in new[] { 1f, 1.5f, 2f })
+        foreach (var area in new[] { new Rectangle(0, 0, 3840, 2072), new Rectangle(0, 0, 1920, 1040) })
+        {
+            var anchor = new Rectangle(area.Right - 450, area.Bottom, 52, 52);
+            intake.ConfigureFor(anchor, true, scale, theme, area);
+            router.ConfigureFor(anchor, true, scale, theme, area);
+            Check(intake.Bounds == router.Bounds && area.Contains(intake.Bounds),
+                "Both click panels use exactly the same anchored size and short-screen placement");
+            Check(intake.FormBorderStyle == System.Windows.Forms.FormBorderStyle.None && !intake.ShowInTaskbar
+                && intake.TopMost && intake.Pinned, "Work intake uses the Router panel host");
+            var first = intake.Controls.OfType<System.Windows.Forms.TableLayoutPanel>().Single();
+            var second = router.Controls.OfType<System.Windows.Forms.TableLayoutPanel>().Single();
+            Check(first.RowCount == second.RowCount && first.RowStyles.Cast<System.Windows.Forms.RowStyle>()
+                .Zip(second.RowStyles.Cast<System.Windows.Forms.RowStyle>()).All(rows =>
+                    rows.First.SizeType == rows.Second.SizeType && Math.Abs(rows.First.Height - rows.Second.Height) < 1),
+                "Navigation, current item, tables and footer use one layout at every DPI");
+        }
     }
 
     private static void MiniEntry(string? captures)
@@ -207,6 +240,7 @@ internal static class IntakeObserverTests
         { StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000), ShowInTaskbar = false };
         using var routerHover = new RouterHoverCardForm();
         using var routerPanel = new System.Windows.Forms.Form { ShowInTaskbar = false, Location = new(-30000, -30000) };
+        using var intakePanel = new IntakeObserverForm(true, observeOnShow: false);
         var router = new PluginMiniCardView(RouterPlugin.Id, "Router", RouterModuleTests.Card("idle", 0),
             new Dictionary<string, string>());
         var intake = new PluginMiniCardView(IntakeObserverPlugin.Id, "自动分拣", IntakeObserverPlugin.Launcher,
@@ -216,6 +250,13 @@ internal static class IntakeObserverTests
         bar.PluginActivated += (_, id) => activated.Add(id);
         bar.PluginPopoverRequested += (_, request) =>
         {
+            if (request.PluginId == IntakeObserverPlugin.Id)
+            {
+                Check(request.Pinned, "The hover does not create the full work intake panel");
+                intakePanel.ShowFor(bar, request.Anchor, true, request.Scale, request.Theme);
+                request.Popup = intakePanel;
+                return;
+            }
             Check(request.PluginId == RouterPlugin.Id, "The intake hint does not invoke a plugin or open its panel");
             requests++;
             if (request.Pinned)
@@ -262,8 +303,8 @@ internal static class IntakeObserverTests
         Check(bar.VisiblePluginPopoverId is null && !routerHover.Visible, "Changing icons dismisses the old hover before opening the next");
         bar.ShowHoveredPopover(intakeScreen);
         bar.ActivateMiniTarget(intakePoint);
-        Check(bar.VisiblePluginPopoverId is null && activated.SequenceEqual([IntakeObserverPlugin.Id]),
-            "Click dismisses the hint and opens only the independent intake panel");
+        Check(bar.VisiblePluginPopoverId == IntakeObserverPlugin.Id && intakePanel.Visible && activated.Count == 0,
+            "Click pins the intake panel through the same host as Router");
 
         bar.ActivateMiniTarget(routerPoint);
         bar.TrackMiniHover(intakePoint);
@@ -271,7 +312,7 @@ internal static class IntakeObserverTests
         Check(routerPanel.Visible && bar.VisiblePluginPopoverId == RouterPlugin.Id && requests == 2,
             "Hover does not replace a pinned Router panel");
         bar.ActivateMiniTarget(intakePoint);
-        Check(!routerPanel.Visible && activated.Count == 2, "An explicit intake click switches panels");
+        Check(!routerPanel.Visible && intakePanel.Visible && activated.Count == 0, "An explicit intake click switches panels");
 
         bar.TrackMiniHover(intakePoint);
         bar.ShowHoveredPopover(intakeScreen);

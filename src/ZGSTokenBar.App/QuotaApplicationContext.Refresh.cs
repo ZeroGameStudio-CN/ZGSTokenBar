@@ -14,7 +14,7 @@ namespace ZGSTokenBar.App;
 /// <summary>Refresh scheduling: the quota refresh loop, its interval, provider activity and pace estimates.</summary>
 internal sealed partial class QuotaApplicationContext
 {
-    private async Task RefreshAsync(bool userInitiated = false, bool forceProviderRefresh = false)
+    private async Task RefreshAsync(bool userInitiated = false, bool forceProviderRefresh = false, bool codexOnly = false)
     {
         if (!await _refreshGate.WaitAsync(0)) return;
         try
@@ -33,14 +33,17 @@ internal sealed partial class QuotaApplicationContext
             // busy UI thread also stalls Explorer's input for the shared queue.
             var settings = _settings;
             var previousSnapshot = _snapshot;
-            var activeProviders = _activeProviders;
+            var activeProviders = codexOnly
+                ? _activeProviders.Where(provider => provider == ProviderKind.Codex).ToHashSet()
+                : _activeProviders;
+            if (codexOnly && activeProviders.Count == 0) return;
             var activeCandidate = await Task.Run(
                 () => _coordinator.RefreshAsync(
                     settings,
                     previousSnapshot,
                     _shutdown.Token,
                     allowClaudeOAuthRefresh: userInitiated,
-                    forceProviderRefresh: userInitiated || forceProviderRefresh,
+                    forceProviderRefresh: userInitiated || forceProviderRefresh || codexOnly,
                     activeProviders: activeProviders),
                 _shutdown.Token);
             if (_shutdown.IsCancellationRequested || _bar.IsDisposed) return;
@@ -48,7 +51,7 @@ internal sealed partial class QuotaApplicationContext
             var candidate = MergeActiveProviderResults(
                 _snapshot,
                 activeCandidate,
-                _activeProviders,
+                activeProviders,
                 observedAt);
             var stabilization = _snapshotStabilizer.Apply(_snapshot, candidate, observedAt);
             var next = stabilization.Snapshot;
@@ -143,6 +146,18 @@ internal sealed partial class QuotaApplicationContext
                 QuotaRefreshSource,
                 () => TimeSpan.FromMinutes(Math.Clamp(_settings.RefreshMinutes, 1, 60)),
                 async () => { await RefreshAsync().ConfigureAwait(true); return true; });
+            _refreshScheduler.Add("codex-interactive-quota",
+                () => TimeSpan.FromMinutes(1),
+                async () =>
+                {
+                    var latest = _snapshot.Cards.Where(card => card.Provider == ProviderKind.Codex && !card.IsService)
+                        .Select(card => card.CapturedAt).Where(at => at is not null).Max();
+                    if (_activeProviders.Contains(ProviderKind.Codex)
+                        && CodexQuotaService.HasRegisteredInteractiveHomes()
+                        && (latest is null || DateTimeOffset.UtcNow - latest >= TimeSpan.FromSeconds(45)))
+                        await RefreshAsync(codexOnly: true).ConfigureAwait(true);
+                    return true;
+                });
         }
         else if (minutes != _appliedRefreshMinutes)
         {

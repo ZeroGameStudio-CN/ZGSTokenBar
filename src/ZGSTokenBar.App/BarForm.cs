@@ -388,7 +388,8 @@ internal sealed partial class BarForm : Form
         if (layoutChanged)
         {
             if (_hoverPluginTarget is not null) UpdatePluginHoverTarget(null);
-            if (!_popoverPinned) HidePluginPopover();
+            if (!_popoverPinned || _pluginPopoverId is { } activeId
+                && ordered.All(card => card.PluginId != activeId)) HidePluginPopover();
         }
         else RefreshPluginHintContent();
         ApplySnapshotLayout(updatePlacement: layoutChanged);
@@ -397,6 +398,8 @@ internal sealed partial class BarForm : Form
 
     internal MiniCardContribution? RouterCard => _pluginMiniCards.FirstOrDefault(card => card.PluginId == MiniAreaIds.Router)?.Card;
     internal bool HasIntakeCard => _pluginMiniCards.Any(card => card.PluginId == MiniAreaIds.Intake);
+    internal int VisibleCodexAccountCount => _cardBounds.Where(item => item.Card.Provider == ProviderKind.Codex)
+        .Select(item => item.Card.Key).Distinct(StringComparer.Ordinal).Count();
     internal bool IsChinese => _text.IsChinese;
     internal float UiScale => _scale;
     internal QuotaBackgroundTheme UiTheme => _backgroundTheme;

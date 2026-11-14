@@ -17,31 +17,44 @@ public sealed class CodexQuotaService
     private const string DefaultClientId = "app_EMoamEEZ73f0CkXaXp7hrann";
     private readonly HttpClient _httpClient;
     private readonly string _cockpitHome;
+    private readonly string? _interactiveRegistryPath;
 
     public CodexQuotaService(HttpClient httpClient)
-        : this(httpClient, DefaultCockpitHome())
+        : this(httpClient, DefaultCockpitHome(), InteractiveCodexHomes.RegistryPath)
     {
     }
 
-    internal CodexQuotaService(HttpClient httpClient, string cockpitHome)
+    internal CodexQuotaService(HttpClient httpClient, string cockpitHome, string? interactiveRegistryPath = null)
     {
         _httpClient = httpClient;
         _cockpitHome = cockpitHome;
+        _interactiveRegistryPath = interactiveRegistryPath;
     }
 
     public static bool HasLocalCredentials()
     {
         if (ReadCredentials().Count > 0) return true;
+        if (ReadInteractiveCredentials(InteractiveCodexHomes.RegistryPath).Count > 0) return true;
         return CockpitCodexQuotaReader.Read(DefaultCockpitHome(), DateTimeOffset.UtcNow)
             .Any(account => account.Active && !string.IsNullOrWhiteSpace(account.AccessToken));
     }
+
+    public static bool HasRegisteredInteractiveHomes() =>
+        InteractiveCodexHomes.Read(InteractiveCodexHomes.RegistryPath).Count > 0;
 
     public async Task<ProviderResult> FetchAsync(CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
         var nativeCredentials = ReadCredentials();
+        var interactiveCredentials = ReadInteractiveCredentials(_interactiveRegistryPath);
         var activeCockpitAccountIds = CockpitCodexInstanceActivity.ReadActiveAccountIds(_cockpitHome);
-        if (activeCockpitAccountIds is { Count: > 0 })
+        if (interactiveCredentials.Count > 0)
+        {
+            // Keep both identity and refresh path bound to the registered home's current account.
+            // A generic "active" key must not carry another account's cached quota after a switch.
+            nativeCredentials = interactiveCredentials;
+        }
+        else if (activeCockpitAccountIds is { Count: > 0 })
         {
             nativeCredentials = nativeCredentials
                 .Where(credential => credential.AccountId is { Length: > 0 } accountId
@@ -124,7 +137,9 @@ public sealed class CodexQuotaService
                 account.CapturedAt))
             .ToArray();
         var accounts = liveAccounts.Concat(cachedAccounts).ToArray();
-        var visibleCandidates = accounts.Where(account => account.Credential.Active).ToArray();
+        var visibleCandidates = accounts.Where(account => account.Credential.Active
+            && (interactiveCredentials.Count == 0
+                || interactiveCredentials.Any(interactive => SameIdentity(account.Credential, interactive)))).ToArray();
         var visibleAccounts = DistinctVisibleAccounts(visibleCandidates);
         var quotaCards = visibleAccounts
             .Select((account, visibleIndex) => ToCard(account, visibleAccounts.Length, visibleIndex))
@@ -538,6 +553,27 @@ public sealed class CodexQuotaService
         {
             return null;
         }
+    }
+
+    private static IReadOnlyList<CodexCredential> ReadInteractiveCredentials(string? registryPath)
+    {
+        var credentials = new List<CodexCredential>();
+        foreach (var home in InteractiveCodexHomes.Read(registryPath))
+        {
+            var path = Path.Combine(home, "auth.json");
+            try
+            {
+                var auth = new FileInfo(path);
+                if (!auth.Exists || auth.Length is <= 0 or > MaximumRegistryBytes) continue;
+                var credential = ReadCredential(path, "home:" + home, "Codex", null, null, null, true);
+                if (credential is null || string.IsNullOrWhiteSpace(credential.AccountId)) continue;
+                // The account identity survives profile relocation and duplicate registered homes.
+                credential = credential with { Key = "interactive:" + credential.AccountId };
+                if (!credentials.Any(existing => SameIdentity(existing, credential))) credentials.Add(credential);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+        }
+        return credentials;
     }
 
     private static IReadOnlyList<CodexCredential> ReadCredentials()
