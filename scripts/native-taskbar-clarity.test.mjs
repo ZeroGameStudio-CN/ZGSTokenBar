@@ -154,7 +154,8 @@ test('Codex accounts share one Mini area and the dock keeps the Mini height cont
   assert.match(barForm, /TaskbarMiniAreaContent\.ForCards\(MiniAreaIds\.Codex, codex\)/);
   assert.match(barForm, /SetCodexAccounts\([\s\S]*?_codexAccounts = accounts\.ToArray\(\);[\s\S]*?ApplySnapshotLayout\(\)/);
   assert.match(modelsSource, /record CodexAccountQuota\([\s\S]*?public string\? CardKey \{ get; init; \}/);
-  assert.match(applyLayout, /ClientSize = new Size\([\s\S]*?TaskbarMiniLayoutMath\.Height\)/);
+  assert.match(applyLayout, /var newSize = new Size\([^\n]*TaskbarMiniLayoutMath\.Height\)/);
+  assert.match(applyLayout, /ClientSize = newSize/);
 });
 
 test('quota popover keeps the pace forecast without the redundant budget row', () => {

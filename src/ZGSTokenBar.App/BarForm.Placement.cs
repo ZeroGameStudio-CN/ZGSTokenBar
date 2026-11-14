@@ -10,14 +10,20 @@ internal sealed partial class BarForm
 {
     private const int WmWtsSessionChange = 0x02B1;
     private bool _sessionNotificationsRegistered;
+    private bool _placingTaskbar;
 
     public void SyncTaskbarPlacement()
     {
-        if (!_taskbarDocked && _embedParent != 0) DetachFromTaskbar("undocked");
+        if (!_taskbarDocked)
+        {
+            if (_embedParent != 0) DetachFromTaskbar("undocked");
+            if (_watchedTaskbar != 0) ResetTaskbarRowProbe();
+        }
         if (_hiddenToTray
             || !_taskbarDocked
-            || _taskbarDragging
+            || (_taskbarDragging && _taskbarDragMoved)
             || _embedTransition
+            || _placingTaskbar
             || IsDisposed
             || !IsHandleCreated)
         {
@@ -29,14 +35,6 @@ internal sealed partial class BarForm
             return;
         }
         using var probe = PerfTrace.Measure("placement.probe");
-        if (!EmbeddedInTaskbar && TaskbarPlacement.ShouldHideForFullscreen(PreferredTaskbarMonitor()))
-        {
-            _taskbarPlacementMisses = 0;
-            _taskbarPlacementEstablished = false;
-            HidePopovers();
-            if (Visible) Hide();
-            return;
-        }
         var topology = _placementCoordinator.ActiveTopology ?? _pendingTopology;
         if (topology is null) return;
         var profile = _placementCoordinator.ActiveProfile
@@ -46,52 +44,84 @@ internal sealed partial class BarForm
         var placementSize = WindowState == FormWindowState.Normal ? Size : RestoreBounds.Size;
         if (placementSize.Width <= 0 || placementSize.Height <= 0) placementSize = Size;
         var preference = _placementCoordinator.DockedPreference(topology, profile);
-        var placementPosition = preference.RelativePosition;
-        if (TaskbarPlacement.TryGetTarget(
-                placementSize,
-                placementPosition,
-                preference.PreferredMonitorName,
-                out var location,
-                out var resolvedMonitor))
+        if (TaskbarPlacement.TryGetTrack(placementSize, preference.PreferredMonitorName, out var track))
         {
-            var resolvedPosition = _placementCoordinator.PositionForResolvedMonitor(
-                topology,
-                profile,
-                resolvedMonitor,
-                placementPosition);
-            if (resolvedMonitor is { } monitor
-                && resolvedPosition != placementPosition
-                && TaskbarPlacement.TryGetTarget(
-                    placementSize,
-                    resolvedPosition,
-                    monitor,
-                    out var savedLocation,
-                    out _))
-            {
-                location = savedLocation;
-            }
+            var position = _placementCoordinator.PositionForResolvedMonitor(
+                topology, profile, track.MonitorName, preference.RelativePosition);
             _taskbarPlacementMisses = 0;
             _taskbarPlacementEstablished = true;
-            _resolvedTaskbarMonitor = resolvedMonitor;
-            if (WindowState != FormWindowState.Normal) WindowState = FormWindowState.Normal;
-            if (!Visible) Show();
-            var wasEmbedded = EmbeddedInTaskbar;
-            using (PerfTrace.Measure("placement.embed")) EnsureTaskbarEmbedding(resolvedMonitor);
-            using (PerfTrace.Measure("placement.show-at"))
-                if (!TaskbarPlacement.ShowAt(Handle, location, placementSize) && !EmbeddedInTaskbar) Location = location;
-            if (EmbeddedInTaskbar && !wasEmbedded) RepushLayeredFrame();
-            using (PerfTrace.Measure("placement.reposition-popovers")) RepositionPopovers();
+            _resolvedTaskbarMonitor = track.MonitorName;
+            ApplyDockedTarget(track, placementSize, track.LocationAt(position));
             return;
         }
 
-        if (_taskbarPlacementEstablished
+        if (_taskbarPlacementEstablished && !EmbeddedInTaskbar
             && ++_taskbarPlacementMisses < TaskbarPlacementMissThreshold)
         {
             return;
         }
         _taskbarPlacementEstablished = false;
+        if (EmbeddedInTaskbar) DetachFromTaskbar("taskbar-missing");
         HidePopovers();
         if (Visible) Hide();
+    }
+
+    private void ApplyDockedTarget(TaskbarPlacement.PlacementTrack track, Size placementSize, Point anchor)
+    {
+        _placingTaskbar = true;
+        try
+        {
+            var oldBounds = ScreenBounds;
+            var wasEmbedded = EmbeddedInTaskbar;
+            var rowCandidate = TryGetSafeRowLocation(track, placementSize, anchor, out var location, out var reason);
+            var inRow = false;
+            if (rowCandidate)
+            {
+                using (PerfTrace.Measure("placement.embed")) EnsureTaskbarEmbedding(track.MonitorName);
+                inRow = EmbeddedInTaskbar;
+            }
+            else
+            {
+                if (EmbeddedInTaskbar) DetachFromTaskbar(reason);
+                if (_embedRequested && !string.IsNullOrEmpty(reason)) TaskbarEmbedStatus = "fallback:" + reason;
+            }
+
+            if (!inRow && TaskbarPlacement.ShouldHideForFullscreen(track.MonitorName))
+            {
+                if (Visible) Hide();
+                return;
+            }
+            if (!inRow && !TaskbarPlacement.TryGetAdjacentLocation(track, placementSize, anchor, out location))
+            {
+                if (_embedRequested) TaskbarEmbedStatus = "fallback:screen-too-small";
+                if (Visible) Hide();
+                return;
+            }
+
+            if (WindowState != FormWindowState.Normal) WindowState = FormWindowState.Normal;
+            var wasVisible = Visible;
+            using (PerfTrace.Measure("placement.show-at"))
+            {
+                if (!TaskbarPlacement.ShowAt(Handle, location, placementSize))
+                {
+                    // ShowAt could fail while Explorer is rebuilding its taskbar. Do not leave a
+                    // child on the old coordinates, or show an overlay in the icon row.
+                    if (EmbeddedInTaskbar) DetachFromTaskbar("placement-failed");
+                    if (!TaskbarPlacement.TryGetAdjacentLocation(track, placementSize, anchor, out location)
+                        || !TaskbarPlacement.ShowAt(Handle, location, placementSize))
+                    {
+                        if (Visible) Hide();
+                        return;
+                    }
+                }
+            }
+            // Showing before moving can leave a one-frame overlap while Explorer lays out its icons.
+            if (!wasVisible) Show();
+            if (EmbeddedInTaskbar && !wasEmbedded && wasVisible) RepushLayeredFrame();
+            if (oldBounds != ScreenBounds || wasEmbedded != EmbeddedInTaskbar)
+                using (PerfTrace.Measure("placement.reposition-popovers")) RepositionPopovers();
+        }
+        finally { _placingTaskbar = false; }
     }
 
     public void ClampToVisibleScreen()
@@ -114,7 +144,8 @@ internal sealed partial class BarForm
     public void RestoreFromTray()
     {
         _hiddenToTray = false;
-        if (!Visible) Show();
+        if (_taskbarDocked) SyncTaskbarPlacement();
+        else if (!Visible) Show();
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -168,6 +199,7 @@ internal sealed partial class BarForm
         _topologyRefreshPending = false;
         _topologyMayHaveChangedPending = false;
         _pendingTopology = null;
+        ResetTaskbarRowProbe();
         InvalidateTopologyCapture(handleActive: false);
         base.OnHandleDestroyed(e);
     }
@@ -212,6 +244,7 @@ internal sealed partial class BarForm
         _topologyRefreshPending = true;
         _topologyMayHaveChangedPending |= topologyMayHaveChanged;
         _pendingTopology = null;
+        InvalidateTaskbarRowSample();
         if (_taskbarDragging) _deferredTopologyDuringDrag = null;
         TaskbarPlacement.InvalidateCache();
         CaptureTopologyCandidate();
@@ -484,7 +517,7 @@ internal sealed partial class BarForm
                 currentScreen,
                 preferredMonitor,
                 out var dockedLocation,
-                out var relativePosition,
+                out _,
                 out var resolvedMonitor))
         {
             _taskbarDocked = true;
@@ -568,7 +601,7 @@ internal sealed partial class BarForm
                     Size,
                     _taskbarDragCurrentLocation,
                     _resolvedTaskbarMonitor,
-                    out var location,
+                    out _,
                     out var relativePosition,
                     out var resolvedMonitor))
             {
@@ -576,7 +609,6 @@ internal sealed partial class BarForm
                 return;
             }
             _resolvedTaskbarMonitor = resolvedMonitor;
-            if (!TaskbarPlacement.ShowAt(Handle, location, Size)) Location = location;
             var commit = _placementCoordinator.CommitDocked(resolvedMonitor, relativePosition, Size);
             if (commit is not null)
             {
@@ -584,7 +616,7 @@ internal sealed partial class BarForm
                 CompleteTaskbarDrag(deferredTopology, restorePlacement: false);
             }
             else CompleteTaskbarDrag(deferredTopology, restorePlacement: true);
-            if (_embedRequested && _embedParent == 0 && _taskbarDocked && IsHandleCreated && Visible) SyncTaskbarPlacement();
+            SyncTaskbarPlacement();
             ScheduleEmbedHealthCheck("drag");
             return;
         }

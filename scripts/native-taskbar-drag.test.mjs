@@ -42,7 +42,7 @@ test('taskbar Mini separates desired placement from resolved fallback', () => {
   assert.match(syncBody, /_taskbarDragging/);
   assert.match(syncBody, /_placementCoordinator\.DockedPreference\(topology, profile\)/);
   assert.match(syncBody, /_placementCoordinator\.PositionForResolvedMonitor/);
-  assert.match(syncBody, /_resolvedTaskbarMonitor = resolvedMonitor/);
+  assert.match(syncBody, /_resolvedTaskbarMonitor = track\.MonitorName/);
   assert.doesNotMatch(syncBody, /ActiveProfile\s*=/);
 
   assert.match(barForm, /_taskbarDragStartScreen = Cursor\.Position/);
@@ -106,7 +106,7 @@ test('taskbar drag range excludes the notification area and clamps both orientat
 test('taskbar drag enumerates secondary taskbars and selects a persisted monitor', () => {
   assert.match(placement, /Shell_SecondaryTrayWnd/);
   assert.match(placement, /EnumWindows\(callback, 0\)/);
-  assert.match(placement, /var hasTray = tray != 0 && GetWindowRect\(tray, out trayBounds\)/);
+  assert.match(placement, /var trayBounds = NotificationAreaBounds\(window\)/);
   assert.match(placement, /: taskbarMaximum/);
   assert.match(placement, /_cachedTracks/);
   assert.match(placement, /CanReuseCachedTracks\(/);

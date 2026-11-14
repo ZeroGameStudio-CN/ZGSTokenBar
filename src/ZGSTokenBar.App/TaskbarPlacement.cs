@@ -25,22 +25,15 @@ internal static class TaskbarPlacement
         "ControlCenterWindow",
     };
 
-    public static bool TryGetTarget(Size windowSize, double? relativePosition, out Point location)
-        => TryGetTarget(windowSize, relativePosition, null, out location, out _);
-
-    public static bool TryGetTarget(
-        Size windowSize,
-        double? relativePosition,
-        string? preferredMonitor,
-        out Point location,
-        out string? resolvedMonitor)
+    public static bool TryGetTrack(Size windowSize, string? preferredMonitor, out PlacementTrack track)
     {
-        location = Point.Empty;
-        resolvedMonitor = null;
+        track = default;
         if (!TryGetTracks(windowSize, preferredMonitor, out var tracks)) return false;
-        var track = SelectTrack(tracks, preferredMonitor, null);
-        resolvedMonitor = track.MonitorName;
-        location = track.LocationAt(relativePosition ?? 1);
+        track = SelectTrack(tracks, preferredMonitor, null);
+        if (TrackGeometryMatches(track)) return true;
+        InvalidateCache();
+        if (!TryGetTracks(windowSize, preferredMonitor, out tracks)) return false;
+        track = SelectTrack(tracks, preferredMonitor, null);
         return true;
     }
 
@@ -88,12 +81,74 @@ internal static class TaskbarPlacement
         if (!TryGetTracks(windowSize, null, out var tracks)) return false;
 
         var candidate = SelectDockTrack(tracks, cursorPosition, preferredMonitor);
-        if (candidate is not { } dockTrack) return false;
+        if (candidate is not { } dockTrack
+            || !TryGetAdjacentLocation(dockTrack, windowSize, dockTrack.Constrain(requestedLocation), out location))
+            return false;
 
         resolvedMonitor = dockTrack.MonitorName;
-        location = dockTrack.Constrain(requestedLocation);
         relativePosition = dockTrack.RelativePosition(location);
         return true;
+    }
+
+    /// <summary>Finds the closest full-width space without splitting the bar or covering a Shell target.</summary>
+    internal static bool TryGetRowLocation(
+        PlacementTrack track, Size size, Point anchor, IReadOnlyList<Rectangle>? occupied, out Point location)
+    {
+        location = Point.Empty;
+        if (!track.Horizontal || occupied is not { Count: > 0 } || size.Width <= 0 || size.Height <= 0)
+            return false;
+        var row = Rectangle.Intersect(track.TaskbarBounds, track.ScreenBounds);
+        if (row.Width < size.Width + 2 * Gap || row.Height < size.Height) return false;
+
+        var bestDistance = int.MaxValue;
+        var bestX = 0;
+        var left = row.Left + Gap;
+        foreach (var obstacle in occupied.OrderBy(bounds => bounds.Left))
+        {
+            if (!row.IntersectsWith(obstacle)) continue;
+            ConsiderGap(left, obstacle.Left - Gap);
+            left = Math.Max(left, obstacle.Right + Gap);
+        }
+        ConsiderGap(left, row.Right - Gap);
+        if (bestDistance == int.MaxValue) return false;
+        location = new Point(bestX, row.Top + (row.Height - size.Height) / 2);
+        return true;
+
+        void ConsiderGap(int start, int end)
+        {
+            if (end - start < size.Width) return;
+            var x = Math.Clamp(anchor.X, start, end - size.Width);
+            var distance = Math.Abs(x - anchor.X);
+            if (distance >= bestDistance) return;
+            bestX = x;
+            bestDistance = distance;
+        }
+    }
+
+    /// <summary>Uses the desktop side of the taskbar, preserving the current size and monitor.</summary>
+    internal static bool TryGetAdjacentLocation(PlacementTrack track, Size size, Point anchor, out Point location)
+    {
+        location = Point.Empty;
+        var screen = track.ScreenBounds;
+        var row = track.TaskbarBounds;
+        if (size.Width <= 0 || size.Height <= 0 || row.Width <= 0 || row.Height <= 0
+            || size.Width > screen.Width || size.Height > screen.Height) return false;
+
+        if (track.Horizontal)
+        {
+            var top = row.Top - screen.Top < screen.Bottom - row.Bottom;
+            var y = top ? Math.Max(row.Bottom, screen.Top + row.Height) + Gap
+                : Math.Min(row.Top, screen.Bottom - row.Height) - Gap - size.Height;
+            location = new Point(Math.Clamp(anchor.X, screen.Left, screen.Right - size.Width), y);
+        }
+        else
+        {
+            var left = row.Left - screen.Left < screen.Right - row.Right;
+            var x = left ? Math.Max(row.Right, screen.Left + row.Width) + Gap
+                : Math.Min(row.Left, screen.Right - row.Width) - Gap - size.Width;
+            location = new Point(x, Math.Clamp(anchor.Y, screen.Top, screen.Bottom - size.Height));
+        }
+        return screen.Contains(new Rectangle(location, size));
     }
 
     internal static PlacementTrack? SelectDockTrack(
@@ -213,9 +268,8 @@ internal static class TaskbarPlacement
                 return true;
             }
 
-            var tray = FindWindowEx(window, 0, "TrayNotifyWnd", null);
-            var trayBounds = default(NativeRect);
-            var hasTray = tray != 0 && GetWindowRect(tray, out trayBounds);
+            var trayBounds = NotificationAreaBounds(window);
+            var hasTray = !trayBounds.IsEmpty;
 
             var screen = Screen.FromRectangle(taskbarBounds.Rectangle);
             if (discovered.Any(track => string.Equals(
@@ -243,6 +297,8 @@ internal static class TaskbarPlacement
                     taskbarBounds.Top + (taskbarBounds.Height - windowSize.Height) / 2)
                 {
                     TaskbarBounds = taskbarBounds.Rectangle,
+                    TaskbarWindow = window,
+                    TrayBounds = trayBounds,
                 });
             }
             else
@@ -262,6 +318,8 @@ internal static class TaskbarPlacement
                     taskbarBounds.Left + (taskbarBounds.Width - windowSize.Width) / 2)
                 {
                     TaskbarBounds = taskbarBounds.Rectangle,
+                    TaskbarWindow = window,
+                    TrayBounds = trayBounds,
                 });
             }
 
@@ -280,6 +338,19 @@ internal static class TaskbarPlacement
         }
         return tracks.Length > 0;
     }
+
+    private static Rectangle NotificationAreaBounds(nint taskbar)
+    {
+        var tray = FindWindowEx(taskbar, 0, "TrayNotifyWnd", null);
+        return tray != 0 && GetWindowRect(tray, out var bounds) && bounds.Width > 0 && bounds.Height > 0
+            ? bounds.Rectangle
+            : Rectangle.Empty;
+    }
+
+    private static bool TrackGeometryMatches(PlacementTrack track) =>
+        IsWindowVisible(track.TaskbarWindow)
+        && GetWindowRect(track.TaskbarWindow, out var bounds) && bounds.Rectangle == track.TaskbarBounds
+        && NotificationAreaBounds(track.TaskbarWindow) == track.TrayBounds;
 
     private static string WindowClass(nint window)
     {
@@ -462,6 +533,8 @@ internal static class TaskbarPlacement
         int Fixed)
     {
         public Rectangle TaskbarBounds { get; init; }
+        public nint TaskbarWindow { get; init; }
+        public Rectangle TrayBounds { get; init; }
 
         public Point LocationAt(double relativePosition)
         {
