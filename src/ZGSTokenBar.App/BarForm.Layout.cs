@@ -273,7 +273,7 @@ internal sealed partial class BarForm
     {
         var normalized = _miniAreaLayouts.TryGetValue(areaId, out var layout)
             ? layout.Normalized(areaId)
-            : new MiniAreaLayout(Collapsed: areaId is MiniAreaIds.Router or MiniAreaIds.LiveMetrics
+            : new MiniAreaLayout(Collapsed: areaId is MiniAreaIds.Router or MiniAreaIds.Intake or MiniAreaIds.LiveMetrics
                 || ProviderCatalog.StartsCollapsed(areaId));
         return normalized;
     }
@@ -327,6 +327,7 @@ internal sealed partial class BarForm
             .Select(area => area.AreaId)
             .ToHashSet(StringComparer.Ordinal);
         visibleIds.Add(MiniAreaIds.SystemMetrics);
+        visibleIds.Add(MiniAreaIds.Intake);
         foreach (var providerId in ProviderCatalog.PersistentMiniIds) visibleIds.Add(providerId);
         // The dock window no longer sizes itself from this set. GlassDockLayout.Width
         // stays fixed while these areas remain available to the existing directory.

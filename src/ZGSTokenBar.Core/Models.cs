@@ -675,6 +675,7 @@ public static class CodexDisplayFormatting
 public static class MiniAreaIds
 {
     public const string Router = "zgstokenbar.monitor.router";
+    public const string Intake = "zgstokenbar.monitor.intake";
     public const string Claude = "zgstokenbar.provider.claude";
     public const string Codex = "zgstokenbar.provider.codex";
     public const string AiGateway = "zgstokenbar.provider.ai-gateway";

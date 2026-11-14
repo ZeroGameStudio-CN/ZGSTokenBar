@@ -10567,7 +10567,7 @@ static void TestPluginHostCatalog()
     var plugins = GeneratedBuiltinPluginRegistry.Create();
     try
     {
-        Equal(5, plugins.Count, "typed built-in plugins registered");
+        Equal(6, plugins.Count, "typed built-in plugins registered");
         Equal(0, PluginValidation.ValidateCatalog(
             plugins.Select(plugin => plugin.Manifest).ToArray()).Count,
             "built-in catalog validates");

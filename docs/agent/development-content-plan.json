@@ -20,7 +20,7 @@
       "stage": "Previewable",
       "availability": "InternalOnly",
       "targetReleaseId": "",
-      "entrance": "TokenBar tray menu → Work intake",
+      "entrance": "Click the Work intake inbox icon beside Router in the Mini; switch it independently in Settings.",
       "resourcePath": "src/ZGSTokenBar.App/IntakeObserverForm.cs",
       "nextAction": "Review the local panel; add dispatch evidence only when the workflow publishes it through the existing diagnostic service."
     },

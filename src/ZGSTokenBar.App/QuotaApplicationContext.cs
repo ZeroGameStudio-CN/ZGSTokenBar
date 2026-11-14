@@ -41,7 +41,6 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
     private readonly ToolStripMenuItem _refreshMenuItem;
     private readonly ToolStripMenuItem _updateMenuItem;
     private readonly ToolStripMenuItem _settingsMenuItem;
-    private readonly ToolStripMenuItem _intakeMenuItem;
     private readonly ToolStripMenuItem _quitMenuItem;
     private readonly QuotaMilestoneTracker _milestoneTracker;
     private readonly System.Windows.Forms.Timer _clockTimer;
@@ -128,6 +127,10 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _bar.SettingsRequested += (_, _) => OpenSettings();
         _bar.ProbeSettingsSaveRequested += (_, layoutChange) => ProbeSettingsSave(layoutChange);
         _bar.OverviewRequested += (_, _) => _otherToolsModule.ShowOverview();
+        _bar.PluginActivated += (_, pluginId) =>
+        {
+            if (pluginId == MiniAreaIds.Intake && IntakeEnabled) ShowIntakeObserver();
+        };
         _bar.PlacementCommitted += (_, commit) => SavePlacement(commit);
         _bar.SystemUsageDetailsRequested += (_, _) =>
         {
@@ -201,8 +204,6 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         menu.Items.Add(_updateMenuItem);
         _settingsMenuItem = new ToolStripMenuItem(_text.Settings, null, (_, _) => OpenSettings());
         menu.Items.Add(_settingsMenuItem);
-        _intakeMenuItem = new ToolStripMenuItem(_text.IntakeObserver, null, (_, _) => ShowIntakeObserver());
-        menu.Items.Add(_intakeMenuItem);
         menu.Items.Add(new ToolStripSeparator());
         _quitMenuItem = new ToolStripMenuItem(_text.Quit, null, (_, _) => Quit());
         menu.Items.Add(_quitMenuItem);
@@ -346,6 +347,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _confirmationTimer.Stop();
         _settingsDialog?.Dispose();
         _settingsDialog = null;
+        _intakeObserver?.Close();
         if (!_bar.IsDisposed) _bar.Hide();
         try
         {

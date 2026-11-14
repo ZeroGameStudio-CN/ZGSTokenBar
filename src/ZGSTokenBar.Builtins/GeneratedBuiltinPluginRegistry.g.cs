@@ -2,6 +2,7 @@
 using ZGSTokenBar.PluginSdk;
 using ZGSTokenBar.Plugin.SystemMetrics;
 using ZGSTokenBar.Plugin.Router;
+using ZGSTokenBar.Plugin.Intake;
 using ZGSTokenBar.Plugin.Claude;
 using ZGSTokenBar.Plugin.Codex;
 using ZGSTokenBar.Plugin.CodexLocal;
@@ -14,6 +15,7 @@ public static class GeneratedBuiltinPluginRegistry
     [
         new SystemMetricsPlugin(),
         new RouterPlugin(),
+        new IntakeObserverPlugin(),
         new ClaudePlugin(),
         new CodexPlugin(),
         new CodexLocalPlugin(),

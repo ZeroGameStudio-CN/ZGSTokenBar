@@ -18,7 +18,7 @@ Usage providers go through one transport that only allows HTTPS requests to a fi
 
 Disabled Providers make no Provider requests. The public build contains no organization-private endpoints, credentials, deployment topology, or machine-specific paths.
 
-The optional Work intake window starts only on demand. It invokes the current
+The Work intake icon starts no data collection. The optional window opens on demand and invokes the current
 user's managed Zero OS CLI without a shell, using fixed work item reads and one
 authorized diagnostic query. TokenBar does not read or copy its session file.
 The window keeps bounded, projected fields in memory and does not return

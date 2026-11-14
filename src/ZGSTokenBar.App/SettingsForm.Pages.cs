@@ -69,7 +69,7 @@ internal sealed partial class SettingsForm
         {
             providers.Add(new ToggleSettingRow(
                 _externalPluginToggles[plugin.Manifest.Id],
-                plugin.Manifest.DisplayName ?? plugin.Manifest.Id,
+                PluginTitle(plugin.Manifest),
                 PluginDescription(plugin.Manifest),
                 _theme,
                 _scale));

@@ -143,8 +143,12 @@ internal sealed partial class SettingsForm
         return copy;
     }
 
-    private string PluginDescription(PluginManifest manifest) =>
-        string.Equals(_original.Locale, "zh-CN", StringComparison.OrdinalIgnoreCase)
+    private string PluginTitle(PluginManifest manifest) => manifest.Id == MiniAreaIds.Intake
+        ? _text.IntakeObserver : manifest.DisplayName ?? manifest.Id;
+
+    private string PluginDescription(PluginManifest manifest) => manifest.Id == MiniAreaIds.Intake
+        ? _text.IntakeObserverHint
+        : string.Equals(_original.Locale, "zh-CN", StringComparison.OrdinalIgnoreCase)
             ? $"本地插件 · {manifest.Id} · v{manifest.Version}"
             : $"Local plugin · {manifest.Id} · v{manifest.Version}";
 

@@ -41,7 +41,7 @@ internal sealed class RouterModule : IDisposable
     private async Task<bool> RefreshMonitorAsync()
     {
         if (_disposed || _shutdown.IsCancellationRequested) return true;
-        if (!_enabled()) { _bar.HidePluginPopover(); _window?.Close(); return true; }
+        if (!_enabled()) { _bar.HidePluginPopover(RouterPlugin.Id); _window?.Close(); return true; }
         try
         {
             await _host.RefreshPluginAsync(RouterPlugin.Id, "monitor", _shutdown);
@@ -89,7 +89,7 @@ internal sealed class RouterModule : IDisposable
 
     public void SetVisible(bool visible)
     {
-        if (!visible) { _bar.HidePluginPopover(); return; }
+        if (!visible) { _bar.HidePluginPopover(RouterPlugin.Id); return; }
         if (!_enabled()) throw new HostCommandException("plugin_disabled", "Router module is disabled.");
         _bar.OpenPluginPopover(RouterPlugin.Id, pinned: true);
     }

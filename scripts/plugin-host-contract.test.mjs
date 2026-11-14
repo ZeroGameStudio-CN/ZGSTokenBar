@@ -22,10 +22,11 @@ test('plugin host has generated built-ins and no reflection loading', () => {
     .filter(entry => entry.isDirectory())
     .map(entry => 'src/Plugins/' + entry.name + '/plugin-manifest.v1.json')
     .filter(path => fs.existsSync(path));
-  assert.equal(manifests.length, 5);
+  assert.equal(manifests.length, 6);
   const ids = manifests.map(path => JSON.parse(read(path)).id).sort();
   assert.deepEqual(ids, [
     'zgstokenbar.metrics.system',
+    'zgstokenbar.monitor.intake',
     'zgstokenbar.monitor.router',
     'zgstokenbar.provider.claude',
     'zgstokenbar.provider.codex',

@@ -42,6 +42,8 @@ internal sealed partial class BarForm
     {
         if (target == HoverTarget.Plugin && _hoverPluginTarget is { } plugin)
         {
+            if (plugin.Card.PluginId == MiniAreaIds.Intake)
+                return (plugin.Card.Title, _text.IntakeObserverHint);
             var lines = plugin.Card.Card.Summary
                 .Take(6)
                 .Select(item =>

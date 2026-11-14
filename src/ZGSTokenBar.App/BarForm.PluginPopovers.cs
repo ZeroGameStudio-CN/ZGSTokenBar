@@ -65,6 +65,11 @@ internal sealed partial class BarForm
         _popoverLeaveStarted = null;
     }
 
+    internal void HidePluginPopover(string pluginId)
+    {
+        if (_pluginPopoverId == pluginId) HidePluginPopover();
+    }
+
     private void MonitorPluginPopover()
     {
         if (_pluginPopover is not { Visible: true } popup) return;

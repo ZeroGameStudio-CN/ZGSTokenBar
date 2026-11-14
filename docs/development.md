@@ -212,8 +212,10 @@ read-only local performance probe runs with the same command and
 `--router-history-benchmark <temporary-output-directory>`; it measures live reads
 and cached native page rendering without execution controls or production settings.
 
-The **Work intake** tray entry is a separate read-only window. It uses the
-current user's managed Zero OS CLI and its existing session. The project list
+The **Work intake** inbox icon sits beside Router in the Mini. Left-click it
+to open a separate read-only window. Its switch in Settings → Modules is
+independent of Router. Hovering or leaving the icon visible makes no requests.
+The window uses the current user's managed Zero OS CLI and its existing session. The project list
 comes from work item read access; access to a project does not imply that
 automatic dispatch is enabled there. Select a recent item or enter its number
 to view the original status and transition history. Diagnostics are requested
@@ -226,7 +228,8 @@ For the optional **Open in ZOS** link, set
 web origin (no path, query, or fragment). The original conversation link is
 available only when the card supplies a structured conversation ID.
 `ZGSTokenBar.Cli intake show|hide --json` controls presentation only;
-`window inspect --json` reports visibility and aggregate row counts. Run the
+`window inspect --json` reports the icon bounds in Mini logical coordinates,
+panel visibility and aggregate row counts. Run the
 isolated fixture with `--intake-observer [capture-directory]` on the test executable.
 
 All acceptance is non-interactive and CLI-only. Do not use desktop automation, injected pointer/keyboard input, or user-performed GUI interaction as required evidence.

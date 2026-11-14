@@ -57,6 +57,8 @@ internal sealed record GlassDockScene(
     /// it throws; returning true marks the fault handled so one bad ring never blanks the dock.
     /// </summary>
     public Func<string, Exception?, bool>? ItemPainted { get; init; }
+    public bool ShowIntake { get; init; }
+    public bool IntakeHovered { get; init; }
 }
 
 internal static class GlassDockPainter
@@ -109,7 +111,7 @@ internal static class GlassDockPainter
             itemIndex++;
         }
 
-        var systemLeft = GlassDockLayout.SystemLeftFor(scene.Width);
+        var systemLeft = GlassDockLayout.SystemLeftFor(scene.Width, scene.ShowIntake);
         var dividerX = systemLeft - GlassDockLayout.DividerGap / 2f;
         using (var divider = new LinearGradientBrush(
                    new RectangleF(dividerX, 8, 1, GlassDockLayout.Height - 16),
@@ -121,7 +123,7 @@ internal static class GlassDockPainter
             graphics.FillRectangle(divider, dividerX - .5f, 8, 1f, GlassDockLayout.Height - 16);
         }
 
-        var routerBounds = GlassDockLayout.RouterBoundsFor(scene.Width);
+        var routerBounds = GlassDockLayout.RouterBoundsFor(scene.Width, scene.ShowIntake);
         if (scene.RouterHovered) DrawHover(graphics, RectangleF.Inflate(routerBounds, 3, 3), scene.Light);
         if (scene.Router is { } router)
         {
@@ -132,12 +134,35 @@ internal static class GlassDockPainter
             RouterCardRenderer.Draw(graphics, routerBounds, router, badgeFont, collapsed: true, queueChip: chip);
         }
 
+        if (scene.ShowIntake)
+        {
+            var bounds = GlassDockLayout.IntakeBoundsFor(scene.Width);
+            if (scene.IntakeHovered) DrawHover(graphics, RectangleF.Inflate(bounds, 3, 3), scene.Light);
+            DrawIntakeGlyph(graphics, bounds, scene.Light);
+        }
+
         var barsBounds = GlassDockLayout.BarsBoundsFor(scene.Width);
         if (scene.SystemHovered) DrawHover(graphics, RectangleF.Inflate(barsBounds, 4, 3), scene.Light);
         DrawMetrics(graphics, barsBounds, scene);
         var rateBounds = GlassDockLayout.RateBoundsFor(scene.Width);
         if (scene.RateHovered) DrawHover(graphics, RectangleF.Inflate(rateBounds, 3, 3), scene.Light);
         DrawRate(graphics, rateBounds, scene);
+    }
+
+    private static void DrawIntakeGlyph(Graphics graphics, RectangleF bounds, bool light)
+    {
+        var x = bounds.Left + bounds.Width / 2f;
+        var y = bounds.Top + bounds.Height / 2f;
+        using var pen = new Pen(light ? UiPalette.Slate700 : UiTokens.Info, 1.45f)
+        { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+        // An inbox with an incoming arrow; distinct from Router's branching mark.
+        graphics.DrawLines(pen,
+        [
+            new PointF(x - 7.5f, y - 1.5f), new PointF(x - 8.5f, y + 1f), new PointF(x - 8.5f, y + 7f),
+            new PointF(x + 8.5f, y + 7f), new PointF(x + 8.5f, y + 1f), new PointF(x + 7.5f, y - 1.5f),
+        ]);
+        graphics.DrawLine(pen, x, y - 8f, x, y + 2f);
+        graphics.DrawLines(pen, [new PointF(x - 3.6f, y - 1.6f), new PointF(x, y + 2f), new PointF(x + 3.6f, y - 1.6f)]);
     }
 
     /// <summary>Space kept under the card for its soft drop shadow (logical px).</summary>

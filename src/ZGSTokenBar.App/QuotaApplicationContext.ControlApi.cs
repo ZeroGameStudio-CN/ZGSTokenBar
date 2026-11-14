@@ -273,6 +273,8 @@ internal sealed partial class QuotaApplicationContext
                 SettingsFontsMatchLayout = _settingsDialog?.FontsMatchLayout,
                 RouterVisible = _routerModule.Visible,
                 IntakeVisible = _intakeObserver is { Visible: true, IsDisposed: false },
+                IntakeMiniBounds = _bar.Visible && _bar.HasIntakeCard && _bar.MiniPluginBounds(MiniAreaIds.Intake) is { } intakeBounds
+                    ? new((int)intakeBounds.X, (int)intakeBounds.Y, (int)intakeBounds.Width, (int)intakeBounds.Height) : null,
                 IntakeProjectCount = _intakeObserver is { Visible: true, IsDisposed: false } intake
                     ? intake.Observation.Projects : 0,
                 IntakeWorkItemCount = _intakeObserver is { Visible: true, IsDisposed: false } items

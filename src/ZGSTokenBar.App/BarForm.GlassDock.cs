@@ -96,7 +96,7 @@ internal sealed partial class BarForm
 
         foreach (var view in _pluginMiniCards)
         {
-            if (view.PluginId is MiniAreaIds.Router or MiniAreaIds.SystemMetrics or MiniAreaIds.LiveMetrics) continue;
+            if (view.PluginId is MiniAreaIds.Router or MiniAreaIds.Intake or MiniAreaIds.SystemMetrics or MiniAreaIds.LiveMetrics) continue;
             if (items.Any(item => string.Equals(item.Ring.ProviderId, view.PluginId, StringComparison.Ordinal))) continue;
             var summary = view.Card.Summary.FirstOrDefault();
             if (summary is null) continue;
@@ -248,10 +248,10 @@ internal sealed partial class BarForm
     {
         var items = BuildGlassItems().Where(item => !_hiddenDockItems.Contains(item.Id)).ToArray();
         var rings = items.Select(item => item.Ring).ToArray();
-        var plan = GlassDockLayout.Plan(rings, _glassMaxRings);
+        var plan = GlassDockLayout.Plan(rings, _glassMaxRings, HasIntakeCard);
         if (_glassExpanded)
         {
-            if (plan.OverflowCount > 0) plan = GlassDockLayout.PlanExpanded(rings, _glassMaxRings);
+            if (plan.OverflowCount > 0) plan = GlassDockLayout.PlanExpanded(rings, _glassMaxRings, HasIntakeCard);
             else _glassExpanded = false;
         }
         var byRing = new Dictionary<GlassDockRing, GlassItem>(ReferenceEqualityComparer.Instance);
@@ -303,8 +303,10 @@ internal sealed partial class BarForm
         }
 
         var router = _pluginMiniCards.FirstOrDefault(card => card.PluginId == MiniAreaIds.Router);
-        var routerBounds = GlassDockLayout.RouterBoundsFor(width);
+        var intake = _pluginMiniCards.FirstOrDefault(card => card.PluginId == MiniAreaIds.Intake);
+        var routerBounds = GlassDockLayout.RouterBoundsFor(width, intake is not null);
         if (router is not null) _taskbarPluginBounds.Add((routerBounds, router));
+        if (intake is not null) _taskbarPluginBounds.Add((GlassDockLayout.IntakeBoundsFor(width), intake));
         var bars = GlassDockLayout.BarsBoundsFor(width);
         _systemUsageBounds = _showSystemMetrics ? RectangleF.Inflate(bars, 4, 3) : RectangleF.Empty;
         var rate = GlassDockLayout.RateBoundsFor(width);
@@ -329,6 +331,8 @@ internal sealed partial class BarForm
             _hoverSystemUsage && _systemAnchorIsLive)
         {
             ItemPainted = GlassItemPainted,
+            ShowIntake = intake is not null,
+            IntakeHovered = intake is not null && _hoverPluginTarget?.Card.PluginId == MiniAreaIds.Intake,
         };
         _glassFailedThisPaint.Clear();
         GlassDockPainter.Draw(graphics, scene, _badgeFont);
@@ -405,7 +409,7 @@ internal sealed partial class BarForm
             if (LayeredWindow.Update(Handle, bitmap, _resetLayeredStyle)) _resetLayeredStyle = false;
             else _glassFrameSize = Size.Empty;
         if (PerfTrace.Enabled)
-            PerfTrace.Note($"glass.bounds chip={Rectangle.Round(ScaleRect(_glassChipBounds))} router={Rectangle.Round(ScaleRect(GlassDockLayout.RouterBoundsFor(CurrentGlassPlan().Width)))} client={ClientSize}");
+            PerfTrace.Note($"glass.bounds chip={Rectangle.Round(ScaleRect(_glassChipBounds))} router={Rectangle.Round(ScaleRect(GlassDockLayout.RouterBoundsFor(CurrentGlassPlan().Width, HasIntakeCard)))} client={ClientSize}");
     }
 
     private RectangleF ScaleRect(RectangleF logical) =>

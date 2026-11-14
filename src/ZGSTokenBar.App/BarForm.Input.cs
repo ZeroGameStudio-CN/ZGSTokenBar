@@ -51,7 +51,11 @@ internal sealed partial class BarForm
             pluginTarget?.Card.Card.Id,
             StringComparison.Ordinal);
         _hoverPluginTarget = pluginTarget;
-        if (pluginChanged && _hintPopover?.Visible == true) HideHintPopover();
+        if (pluginChanged)
+        {
+            if (_hintPopover?.Visible == true) HideHintPopover();
+            Invalidate();
+        }
         var quotaTarget = codexAccountTarget is null
             && pluginTarget is null && !systemUsageTarget
             ? TaskbarQuotaTargetAt(logical)
@@ -164,7 +168,12 @@ internal sealed partial class BarForm
         base.OnMouseClick(e);
         if (e.Button != MouseButtons.Left) return;
         if (_taskbarDragMoved || DateTime.UtcNow <= _suppressClickUntil) return;
-        var logical = ToLogical(e.Location);
+        ActivateMiniTarget(ToLogical(e.Location));
+    }
+
+    // The mouse path and the isolated native fixture use the same hit map.
+    internal void ActivateMiniTarget(PointF logical)
+    {
         if (!_glassChipBounds.IsEmpty && _glassChipBounds.Contains(logical))
         {
             SetGlassExpanded(!_glassExpanded, notify: true);
@@ -190,6 +199,10 @@ internal sealed partial class BarForm
         }
         HidePopovers();
     }
+
+    internal RectangleF? MiniPluginBounds(string pluginId) =>
+        _taskbarPluginBounds.FirstOrDefault(target => target.Card.PluginId == pluginId) is
+            { Card: not null } target ? target.Bounds : null;
 
     private MiniQuotaTarget? TaskbarQuotaTargetAt(PointF point) =>
         _taskbarWindowBounds.FirstOrDefault(target => target.Bounds.Contains(point));

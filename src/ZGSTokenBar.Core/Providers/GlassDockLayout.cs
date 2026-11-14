@@ -65,6 +65,7 @@ public static class GlassDockLayout
     public const int ChipGap = 4;
     public const int DividerGap = 13;
     public const int RouterSize = 26;
+    public const int IntakeSize = 26;
     public const int ModuleGap = 7;
     public const int MetricsWidth = 54;
     public const int MetricsRows = 4;
@@ -79,17 +80,26 @@ public static class GlassDockLayout
         PadLeft + Math.Max(0, items) * ItemWidth + Math.Max(0, items - 1) * RingGap
         + (chip ? ChipGap + ChipWidth : 0) + DividerGap + SystemWidth + PadRight;
 
-    public static int SystemLeftFor(int width) => width - PadRight - SystemWidth;
+    public static int SystemLeftFor(int width, bool showIntake = false) =>
+        width - PadRight - SystemWidth - IntakeSpace(showIntake);
 
     public static int SystemLeft => SystemLeftFor(Width);
 
-    public static Rectangle RouterBoundsFor(int width) => new(
-        SystemLeftFor(width),
+    public static Rectangle RouterBoundsFor(int width, bool showIntake = false) => new(
+        SystemLeftFor(width, showIntake),
         (Height - RouterSize) / 2,
         RouterSize,
         RouterSize);
 
     public static Rectangle RouterBounds => RouterBoundsFor(Width);
+
+    public static Rectangle IntakeBoundsFor(int width) => new(
+        RouterBoundsFor(width, showIntake: true).Right + ModuleGap,
+        (Height - IntakeSize) / 2,
+        IntakeSize,
+        IntakeSize);
+
+    private static int IntakeSpace(bool visible) => visible ? IntakeSize + ModuleGap : 0;
 
     /// <summary>CPU / RAM / I/O / GPU rows, matching the four metrics of the classic system card.</summary>
     public static Rectangle BarsBoundsFor(int width) => new(
@@ -162,7 +172,8 @@ public static class GlassDockLayout
         return Math.Max(1, count);
     }
 
-    public static GlassDockPlan Plan(IReadOnlyList<GlassDockRing> rings, int maxVisible = MaxVisibleRings)
+    public static GlassDockPlan Plan(IReadOnlyList<GlassDockRing> rings, int maxVisible = MaxVisibleRings,
+        bool showIntake = false)
     {
         var limit = VisibleCapacity(maxVisible);
         var ordered = Order(rings);
@@ -174,7 +185,7 @@ public static class GlassDockLayout
             visible,
             hidden.Length,
             urgent,
-            WidthFor(visible.Length, hidden.Length > 0),
+            WidthFor(visible.Length, hidden.Length > 0) + IntakeSpace(showIntake),
             Height,
             Slots(visible.Length, hidden.Length > 0));
     }
@@ -183,11 +194,12 @@ public static class GlassDockLayout
     /// Plan that shows every ring while the overflow is expanded: the collapsed rings keep their
     /// positions, the overflow rings follow, and the collapse chip sits at the far right end.
     /// </summary>
-    public static GlassDockPlan PlanExpanded(IReadOnlyList<GlassDockRing> rings, int maxVisible = MaxVisibleRings)
+    public static GlassDockPlan PlanExpanded(IReadOnlyList<GlassDockRing> rings, int maxVisible = MaxVisibleRings,
+        bool showIntake = false)
     {
         var ordered = Order(rings);
         var slots = ExpandedSlots(ordered.Length, out var width);
-        return new GlassDockPlan(ordered, 0, false, width, Height, slots);
+        return new GlassDockPlan(ordered, 0, false, width + IntakeSpace(showIntake), Height, slots);
     }
 
     /// <summary>Width of the expanded pill for <paramref name="items"/> rings (collapse chip included).</summary>

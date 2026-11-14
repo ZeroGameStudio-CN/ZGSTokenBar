@@ -113,6 +113,11 @@ internal sealed partial class QuotaApplicationContext
         cards.AddRange(_otherToolsModule.Cards(
             _settings.Locale == "zh-CN",
             id => _settings.IsPluginEnabled(id, true)));
+        if (IntakeEnabled)
+            cards.Add(new PluginMiniCardView(MiniAreaIds.Intake, _text.IntakeObserver,
+                ZGSTokenBar.Plugin.Intake.IntakeObserverPlugin.Launcher, new Dictionary<string, string>()));
+        else
+            _intakeObserver?.Close();
         _bar.SetPluginMiniCards(cards);
     }
 
@@ -187,7 +192,8 @@ internal sealed partial class QuotaApplicationContext
         new(InvokeOnUiAsync(
             () =>
             {
-                var previous = _settings.IsPluginEnabled(pluginId);
+                var previous = _settings.IsPluginEnabled(pluginId,
+                    _pluginHost.DescribePlugin(pluginId)?.Manifest.DefaultEnabled == true);
                 _settings.SetPluginEnabled(pluginId, enabled);
                 if (!TrySaveSettings(_settings))
                 {

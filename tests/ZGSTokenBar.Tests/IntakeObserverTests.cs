@@ -1,6 +1,9 @@
 using System.Drawing;
 using System.Text.Json;
 using ZGSTokenBar.App;
+using ZGSTokenBar.Core;
+using ZGSTokenBar.Plugin.Intake;
+using ZGSTokenBar.Plugin.Router;
 
 internal static class IntakeObserverTests
 {
@@ -21,6 +24,7 @@ internal static class IntakeObserverTests
 
     internal static void Run(string? captures = null)
     {
+        MiniEntry(captures);
         var denied = false;
         var switched = false;
         var reads = new List<string>();
@@ -105,6 +109,59 @@ internal static class IntakeObserverTests
             "Authorization changes clear the previous account's contents");
         Check(reads.All(read => read is "whoami" or "get" or "list" or "history" or "plugin"),
             "No write requests");
+    }
+
+    private static void MiniEntry(string? captures)
+    {
+        var plugin = new IntakeObserverPlugin();
+        Check(plugin.Manifest.DefaultEnabled && !plugin.Manifest.Required && plugin.Manifest.Requires.Count == 0,
+            "Work intake is independently enabled and optional");
+        using var bar = new BarForm(new AppSettings(), QuotaSnapshot.Empty(DateTimeOffset.UtcNow),
+            renderOnly: true, renderDpi: 192);
+        var router = new PluginMiniCardView(RouterPlugin.Id, "Router", RouterModuleTests.Card("idle", 0),
+            new Dictionary<string, string>());
+        var intake = new PluginMiniCardView(plugin.Manifest.Id, "自动分拣", IntakeObserverPlugin.Launcher,
+            new Dictionary<string, string>());
+        var clicks = new List<string>();
+        bar.PluginActivated += (_, id) => clicks.Add(id);
+
+        bar.SetPluginMiniCards([router]);
+        var plainWidth = bar.ClientSize.Width;
+        Paint();
+        var routerBefore = bar.MiniPluginBounds(RouterPlugin.Id);
+        Check(routerBefore is not null && bar.MiniPluginBounds(plugin.Manifest.Id) is null,
+            "No intake hit area when switched off");
+
+        bar.SetPluginMiniCards([router, intake]);
+        Paint(captures);
+        var current = bar.MiniPluginBounds(plugin.Manifest.Id) ?? throw new InvalidOperationException("Intake slot is missing");
+        Check(bar.ClientSize.Width - plainWidth == (GlassDockLayout.IntakeSize + GlassDockLayout.ModuleGap) * 2
+              && bar.MiniPluginBounds(RouterPlugin.Id) == routerBefore
+              && current.Left == routerBefore!.Value.Right + GlassDockLayout.ModuleGap,
+            "Enabling intake leaves Router in place and gives intake a separate slot");
+        bar.ActivateMiniTarget(Center(current));
+        Check(clicks.SequenceEqual([plugin.Manifest.Id]), "The intake hit opens only the intake target");
+
+        bar.SetPluginMiniCards([intake]);
+        Paint();
+        Check(bar.MiniPluginBounds(RouterPlugin.Id) is null && bar.MiniPluginBounds(plugin.Manifest.Id) == current,
+            "Turning Router off does not remove the intake launcher");
+        bar.SetPluginMiniCards([router]);
+        Paint();
+        Check(bar.ClientSize.Width == plainWidth && bar.MiniPluginBounds(RouterPlugin.Id) == routerBefore
+              && bar.MiniPluginBounds(plugin.Manifest.Id) is null,
+            "Turning intake off restores the original bar layout");
+
+        void Paint(string? directory = null)
+        {
+            using var image = new Bitmap(bar.ClientSize.Width, bar.ClientSize.Height);
+            bar.DrawToBitmap(image, new Rectangle(Point.Empty, image.Size));
+            if (directory is null) return;
+            Directory.CreateDirectory(directory);
+            image.Save(Path.Combine(directory, "mini-intake-beside-router.png"));
+        }
+
+        static PointF Center(RectangleF bounds) => new(bounds.Left + bounds.Width / 2, bounds.Top + bounds.Height / 2);
     }
 
     private static JsonElement Json(string value)

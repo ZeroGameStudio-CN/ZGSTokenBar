@@ -232,7 +232,7 @@ internal sealed partial class SettingsForm : Form
                      .ThenBy(plugin => plugin.Manifest.Id, StringComparer.Ordinal))
         {
             var toggle = CreateToggle(
-                plugin.Manifest.DisplayName ?? plugin.Manifest.Id,
+                PluginTitle(plugin.Manifest),
                 PluginDescription(plugin.Manifest),
                 plugin.Enabled);
             toggle.Enabled = !plugin.Manifest.Required;

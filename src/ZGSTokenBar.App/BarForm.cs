@@ -391,6 +391,7 @@ internal sealed partial class BarForm : Form
     }
 
     internal MiniCardContribution? RouterCard => _pluginMiniCards.FirstOrDefault(card => card.PluginId == MiniAreaIds.Router)?.Card;
+    internal bool HasIntakeCard => _pluginMiniCards.Any(card => card.PluginId == MiniAreaIds.Intake);
     internal bool IsChinese => _text.IsChinese;
     internal float UiScale => _scale;
     internal QuotaBackgroundTheme UiTheme => _backgroundTheme;
