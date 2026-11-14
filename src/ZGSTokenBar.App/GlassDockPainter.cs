@@ -57,7 +57,6 @@ internal sealed record GlassDockScene(
     /// it throws; returning true marks the fault handled so one bad ring never blanks the dock.
     /// </summary>
     public Func<string, Exception?, bool>? ItemPainted { get; init; }
-    public bool ShowIntake { get; init; }
     public bool IntakeHovered { get; init; }
 }
 
@@ -111,7 +110,7 @@ internal static class GlassDockPainter
             itemIndex++;
         }
 
-        var systemLeft = GlassDockLayout.SystemLeftFor(scene.Width, scene.ShowIntake);
+        var systemLeft = GlassDockLayout.SystemLeftFor(scene.Width, !scene.Plan.IntakeBounds.IsEmpty, !scene.Plan.RouterBounds.IsEmpty);
         var dividerX = systemLeft - GlassDockLayout.DividerGap / 2f;
         using (var divider = new LinearGradientBrush(
                    new RectangleF(dividerX, 8, 1, GlassDockLayout.Height - 16),
@@ -123,10 +122,10 @@ internal static class GlassDockPainter
             graphics.FillRectangle(divider, dividerX - .5f, 8, 1f, GlassDockLayout.Height - 16);
         }
 
-        var routerBounds = GlassDockLayout.RouterBoundsFor(scene.Width, scene.ShowIntake);
-        if (scene.RouterHovered) DrawHover(graphics, RectangleF.Inflate(routerBounds, 3, 3), scene.Light);
-        if (scene.Router is { } router)
+        if (scene.Router is { } router && !scene.Plan.RouterBounds.IsEmpty)
         {
+            var routerBounds = scene.Plan.RouterBounds;
+            DrawMonitorHover(graphics, routerBounds, scene.RouterHovered, scene.Light);
             // The queue count is the same chip as the ring %: same size, and in the corner layout the
             // same baseline as the ring chips, on the Router icon's lower-left.
             var corner = scene.RingStyle == GlassRingStyle.IconPercentBelow && scene.PercentPosition == GlassPercentPosition.BottomLeft;
@@ -134,11 +133,11 @@ internal static class GlassDockPainter
             RouterCardRenderer.Draw(graphics, routerBounds, router, badgeFont, collapsed: true, queueChip: chip);
         }
 
-        if (scene.ShowIntake)
+        if (!scene.Plan.IntakeBounds.IsEmpty)
         {
-            var bounds = GlassDockLayout.IntakeBoundsFor(scene.Width);
-            if (scene.IntakeHovered) DrawHover(graphics, RectangleF.Inflate(bounds, 3, 3), scene.Light);
-            DrawIntakeGlyph(graphics, bounds, scene.Light);
+            var bounds = scene.Plan.IntakeBounds;
+            DrawMonitorHover(graphics, bounds, scene.IntakeHovered, scene.Light);
+            MonitorGlyph.DrawIntake(graphics, MonitorGlyph.Centered(bounds), scene.Light);
         }
 
         var barsBounds = GlassDockLayout.BarsBoundsFor(scene.Width);
@@ -149,20 +148,9 @@ internal static class GlassDockPainter
         DrawRate(graphics, rateBounds, scene);
     }
 
-    private static void DrawIntakeGlyph(Graphics graphics, RectangleF bounds, bool light)
+    private static void DrawMonitorHover(Graphics graphics, RectangleF bounds, bool hovered, bool light)
     {
-        var x = bounds.Left + bounds.Width / 2f;
-        var y = bounds.Top + bounds.Height / 2f;
-        using var pen = new Pen(light ? UiPalette.Slate700 : UiTokens.Info, 1.45f)
-        { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
-        // An inbox with an incoming arrow; distinct from Router's branching mark.
-        graphics.DrawLines(pen,
-        [
-            new PointF(x - 7.5f, y - 1.5f), new PointF(x - 8.5f, y + 1f), new PointF(x - 8.5f, y + 7f),
-            new PointF(x + 8.5f, y + 7f), new PointF(x + 8.5f, y + 1f), new PointF(x + 7.5f, y - 1.5f),
-        ]);
-        graphics.DrawLine(pen, x, y - 8f, x, y + 2f);
-        graphics.DrawLines(pen, [new PointF(x - 3.6f, y - 1.6f), new PointF(x, y + 2f), new PointF(x + 3.6f, y - 1.6f)]);
+        if (hovered) DrawHover(graphics, RectangleF.Inflate(bounds, 3, 3), light);
     }
 
     /// <summary>Space kept under the card for its soft drop shadow (logical px).</summary>

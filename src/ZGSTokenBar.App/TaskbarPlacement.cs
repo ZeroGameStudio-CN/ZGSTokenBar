@@ -139,6 +139,12 @@ internal static class TaskbarPlacement
         return true;
     }
 
+    // A top-level window must not stay in the desktop work area when the Shell retracts its row.
+    internal static bool HasReservedRow(PlacementTrack track, Rectangle workingArea) =>
+        track.Horizontal && track.ScreenBounds.Contains(track.TaskbarBounds)
+        && workingArea.Width > 0 && workingArea.Height > 0
+        && !track.TaskbarBounds.IntersectsWith(workingArea);
+
     /// <summary>Uses the desktop side of the taskbar, preserving the current size and monitor.</summary>
     internal static bool TryGetAdjacentLocation(PlacementTrack track, Size size, Point anchor, out Point location)
     {

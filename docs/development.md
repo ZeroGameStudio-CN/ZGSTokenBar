@@ -214,8 +214,9 @@ and cached native page rendering without execution controls or production settin
 
 The **Work intake** inbox icon sits beside Router in the Mini. Left-click it
 to open a separate read-only window. Its switch in Settings → Modules is
-independent of Router. Hover shows a label; moving to another icon switches the
-hint, and leaving the icon and hint dismisses it. Hover makes no requests.
+independent of Router. The two monitors share the same icon slot, highlight,
+and preview layout. Disabled monitors leave no empty slot. Hovering shows a
+preview without making any requests.
 The window uses the current user's managed Zero OS CLI and its existing session. The project list
 comes from work item read access; access to a project does not imply that
 automatic dispatch is enabled there. Select a recent item or enter its number
@@ -268,7 +269,10 @@ A missing or crowded layout uses an adjacent overlay (`fallback:layout-unavailab
 or `fallback:no-clear-space`) without shrinking the bar. A verified position stays
 put while it fits. When returning from beside the taskbar, the same gap must
 be verified again after two seconds (`fallback:waiting-for-space` while waiting).
-Placement does not modify the Shell layout; when the experimental setting is off,
+On Remote Desktop, the same verified gap uses a top-level window instead of
+reparenting into Explorer (`overlay:remote-session`, `embeddedInTaskbar: false`).
+It yields when the taskbar does not reserve the row or is behind a fullscreen
+window. Placement does not modify the Shell layout. When the setting is off,
 docking uses the adjacent overlay.
 It also reports `recentConversationCount` and
 `latestTurnOutputTokensPerSecond`. The latter is output tokens divided by the

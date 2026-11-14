@@ -8,33 +8,24 @@ namespace ZGSTokenBar.App;
 /// bar already holds, so hovering never builds the full monitor panel or touches the network/disk.
 /// Clicking the Router still opens (pins) the full panel.
 /// </summary>
-internal sealed class RouterHoverCardForm : UiCardPopoverForm
+internal sealed class RouterHoverCardForm : MonitorHoverCardForm
 {
-    private new const float Width = 248;
-    private const float Pad = UiTokens.Space4;
-    private const float HeaderHeight = 44;
     private const float RowHeight = 20;
-    private const float FooterHeight = 22;
 
-    private readonly Font _titleFont = new("Segoe UI", UiTokens.FontTitle, FontStyle.Bold, GraphicsUnit.Pixel);
     private readonly Font _bodyFont = new("Segoe UI", UiTokens.FontBody, FontStyle.Regular, GraphicsUnit.Pixel);
     private readonly Font _strongFont = new("Segoe UI Semibold", UiTokens.FontBody, FontStyle.Regular, GraphicsUnit.Pixel);
-    private readonly Font _captionFont = new("Segoe UI", UiTokens.FontCaption, FontStyle.Regular, GraphicsUnit.Pixel);
     private readonly Font _pillFont = new("Segoe UI", 9f, FontStyle.Bold, GraphicsUnit.Pixel);
     private RouterHoverModel _model = RouterHoverModel.Empty(true);
     private bool _chinese = true;
 
     public RouterHoverCardForm() : base("Router") { }
 
-    protected override SizeF LogicalBodySize => new(Width, HeaderHeight + _model.Rows.Count * RowHeight + UiTokens.Space3 + FooterHeight);
+    protected override SizeF LogicalBodySize => new(CardWidth, HeaderHeight + _model.Rows.Count * RowHeight + UiTokens.Space3 + FooterHeight);
 
     internal void ShowFor(BarForm owner, Rectangle anchorScreen, MiniCardContribution? card, bool chinese, float scale)
     {
         _chinese = chinese;
-        var model = RouterHoverModel.From(card, chinese);
-        var resized = model.Rows.Count != _model.Rows.Count;
-        _model = model;
-        if (Visible && !resized) { Invalidate(); return; }
+        _model = RouterHoverModel.From(card, chinese);
         ShowAt(owner, anchorScreen, scale);
     }
 
@@ -49,21 +40,13 @@ internal sealed class RouterHoverCardForm : UiCardPopoverForm
     {
         var left = body.X + Pad;
         var right = body.Right - Pad;
-        using var strong = new SolidBrush(UiTokens.TextStrong);
-        using var text = new SolidBrush(UiTokens.Text);
         using var muted = new SolidBrush(UiTokens.Muted);
 
-        // Header: mark, title + subtitle, state pill.
-        var markBounds = new RectangleF(left, body.Y + 10, 24, 24);
-        using (var tile = new SolidBrush(Color.White.WithAlpha(10)))
-            UiPaint.FillRounded(graphics, tile, RectangleF.Inflate(markBounds, 2, 2), UiTokens.RadiusControl);
-        RouterCardRenderer.DrawRouterGlyph(graphics, RectangleF.Inflate(markBounds, -3, -3), _model.State, _model.StateColor);
-        var pillWidth = graphics.MeasureString(_model.StateText, _pillFont, PointF.Empty, StringFormat.GenericTypographic).Width + 22;
+        var pillWidth = Math.Min(88, graphics.MeasureString(_model.StateText, _pillFont, PointF.Empty, StringFormat.GenericTypographic).Width + 22);
         var pill = new RectangleF(right - pillWidth, body.Y + 13, pillWidth, 18);
+        DrawHeader(graphics, body, "Router", _model.Subtitle,
+            (g, icon) => RouterCardRenderer.DrawRouterGlyph(g, icon, _model.State, _model.StateColor), pill.X - 4);
         DrawPill(graphics, pill, _model.StateText, _model.StateColor);
-        var titleLeft = markBounds.Right + UiTokens.Space3 + 2;
-        UiPaint.Text(graphics, "Router", _titleFont, strong, new RectangleF(titleLeft, body.Y + 9, pill.X - titleLeft - 4, 16), StringAlignment.Near);
-        UiPaint.Text(graphics, _model.Subtitle, _captionFont, muted, new RectangleF(titleLeft, body.Y + 25, pill.X - titleLeft - 4, 13), StringAlignment.Near);
         UiPaint.Divider(graphics, left, right, body.Y + HeaderHeight - .5f, UiTokens.Hairline);
 
         var y = body.Y + HeaderHeight + UiTokens.Space2;
@@ -77,10 +60,7 @@ internal sealed class RouterHoverCardForm : UiCardPopoverForm
             y += RowHeight;
         }
 
-        var footerTop = body.Bottom - FooterHeight;
-        UiPaint.Divider(graphics, left, right, footerTop + .5f, UiTokens.Hairline);
-        UiPaint.Text(graphics, _chinese ? "点击打开 Router 面板" : "Click to open the Router panel", _captionFont, muted,
-            new RectangleF(left, footerTop + 4, right - left, 14), StringAlignment.Near);
+        DrawFooter(graphics, body, _chinese ? "点击打开 Router 面板" : "Click to open the Router panel");
     }
 
     /// <summary>UiKit pill (same tint/dot as <see cref="UiPaint.Pill"/>) drawn in logical units.</summary>
@@ -97,10 +77,8 @@ internal sealed class RouterHoverCardForm : UiCardPopoverForm
     {
         if (disposing)
         {
-            _titleFont.Dispose();
             _bodyFont.Dispose();
             _strongFont.Dispose();
-            _captionFont.Dispose();
             _pillFont.Dispose();
         }
         base.Dispose(disposing);

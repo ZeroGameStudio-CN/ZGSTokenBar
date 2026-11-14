@@ -202,8 +202,13 @@ internal sealed partial class BarForm
         var miniLogicalWidth = CurrentGlassPlan().Width;
         var previousClientSize = ClientSize;
         var newSize = new Size(Scale(miniLogicalWidth), Scale(TaskbarMiniLayoutMath.Height));
-        if (EmbeddedInTaskbar && (newSize.Width > previousClientSize.Width || newSize.Height > previousClientSize.Height))
-            Hide(); // Expand only after checking a safe target for the new size.
+        if ((EmbeddedInTaskbar || _taskbarRowOverlayFor != 0)
+            && (newSize.Width > previousClientSize.Width || newSize.Height > previousClientSize.Height))
+        {
+            // The old seat does not justify an in-row expansion during a layout recheck.
+            if (_taskbarRowOverlayFor != 0) _taskbarRowOverlayFor = 0;
+            Hide();
+        }
         using (PerfTrace.Measure("layout.client-size")) ClientSize = newSize;
         var sizeChanged = ClientSize != previousClientSize;
         if (sizeChanged) _glassFrameSize = Size.Empty;

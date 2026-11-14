@@ -16,10 +16,8 @@ internal static class RouterCardRenderer
         var saved = graphics.Save();
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
         var iconArea = collapsed ? bounds : new RectangleF(bounds.X, bounds.Y, 34, bounds.Height);
-        var size = Math.Min(19, bounds.Height - 10);
-        // Collapsed (taskbar dock): the icon never moves with the queue count, so the slot is
-        // pixel-stable across idle/running/queued states.
-        var icon = new RectangleF(iconArea.X + (iconArea.Width - size) / 2 - (!collapsed && queued > 0 ? 3 : 0), bounds.Y + (bounds.Height - size) / 2, size, size);
+        var icon = MonitorGlyph.Centered(iconArea);
+        if (!collapsed && queued > 0) icon.X -= 3;
         DrawRouterGlyph(graphics, icon, state, color);
         if (queued > 0)
         {

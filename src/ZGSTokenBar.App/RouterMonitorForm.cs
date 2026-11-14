@@ -19,7 +19,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     private string _projectMenuRevision = "";
     private readonly Label _freshness = Label("连接中", 350);
     private readonly Label _overviewStats = Label("", 340);
-    private readonly RouterBrandMark _brand = new() { Width = 110, Height = 30, Margin = Padding.Empty };
+    private readonly MonitorBrandMark _brand = new() { Width = 110, Height = 30, Margin = Padding.Empty };
     private float _appliedScale = -1;
     private QuotaBackgroundTheme? _appliedTheme;
     private readonly RouterStatusBadge _headline = new() { Text = "读取中", Margin = Padding.Empty };
@@ -927,8 +927,7 @@ internal sealed class RouterMonitorForm : Form, IPluginPopoverContent
     private static ComboBox Combo(int width) => new RouterCombo { Width = width };
     private static Label Label(string text, int width) => new() { Text = text, Width = width, Height = 31, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft };
     private static FlowLayoutPanel Flow(params Control[] children) { var flow = new FlowLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, WrapContents = false, AutoScroll = false }; flow.Controls.AddRange(children); return flow; }
-    private static RouterSurface Section(string title) => new()
-    { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 10), Padding = new Padding(10, 6, 10, 8), EmphasizedBorder = true, AccessibleName = title, AccessibleRole = AccessibleRole.Grouping };
+    private static RouterSurface Section(string title) => RouterSurface.Section(title);
     private static TableLayoutPanel Header(Control left, Control right, int rightWidth)
     {
         var header = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 2, RowCount = 1 };

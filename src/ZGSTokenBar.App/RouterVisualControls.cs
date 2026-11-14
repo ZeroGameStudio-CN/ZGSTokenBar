@@ -124,15 +124,17 @@ internal sealed class RouterStatusBadge : Control
     }
 }
 
-/// <summary>Panel header mark: the Router glyph on a tile plus the "Router" title, as on the hover card.</summary>
-internal sealed class RouterBrandMark : Control
+/// <summary>Monitor panel header: the same icon tile and title as the hover preview.</summary>
+internal sealed class MonitorBrandMark : Control
 {
+    private readonly bool _intake;
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     internal string State { get; set; } = "idle";
-    internal RouterBrandMark()
+    internal MonitorBrandMark(string title = "Router", bool intake = false)
     {
+        _intake = intake;
         SetStyle(ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.SupportsTransparentBackColor, true);
-        AccessibleName = "Router";
+        Text = AccessibleName = title;
     }
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -143,10 +145,12 @@ internal sealed class RouterBrandMark : Control
         var tile = new RectangleF(1 * s, (Height - 24 * s) / 2, 24 * s, 24 * s);
         using (var fill = new SolidBrush(Color.White.WithAlpha(10))) UiPaint.FillRounded(g, fill, tile, UiTokens.RadiusControl * s);
         var tone = State is "cleanup" ? "warning" : State is "attention" ? "failed" : State is "idle" or "offline" or "unknown" ? "idle" : State;
-        RouterCardRenderer.DrawRouterGlyph(g, RectangleF.Inflate(tile, -4 * s, -4 * s), State, UiTokens.State(tone));
+        var icon = RectangleF.Inflate(tile, -3 * s, -3 * s);
+        if (_intake) MonitorGlyph.DrawIntake(g, icon);
+        else RouterCardRenderer.DrawRouterGlyph(g, icon, State, UiTokens.State(tone));
         using var title = new Font("Segoe UI", UiTokens.FontTitle * s, FontStyle.Bold, GraphicsUnit.Pixel);
         using var brush = new SolidBrush(UiTokens.TextStrong);
-        UiPaint.Text(g, "Router", title, brush, new RectangleF(tile.Right + 8 * s, 0, Width - tile.Right - 8 * s, Height), StringAlignment.Near);
+        UiPaint.Text(g, Text, title, brush, new RectangleF(tile.Right + 8 * s, 0, Width - tile.Right - 8 * s, Height), StringAlignment.Near);
     }
 }
 
@@ -159,6 +163,11 @@ internal sealed class RouterSurface : Panel
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     internal bool EmphasizedBorder { get; set; }
     internal RouterSurface() { DoubleBuffered = true; }
+    internal static RouterSurface Section(string title) => new()
+    {
+        Dock = DockStyle.Fill, Margin = new(0, 0, 0, 10), Padding = new(10, 6, 10, 8),
+        EmphasizedBorder = true, AccessibleName = title, AccessibleRole = AccessibleRole.Grouping,
+    };
     protected override void OnPaintBackground(PaintEventArgs e)
     {
         e.Graphics.Clear(Parent?.BackColor ?? Palette.Background);

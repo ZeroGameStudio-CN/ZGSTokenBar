@@ -14,9 +14,9 @@ internal sealed class IntakeObserverForm : Form
     private readonly RouterButton _copy = new();
     private readonly RouterButton _thread = new();
     private readonly RouterButton _diagnose = new();
-    private readonly CheckBox _blocked = new() { AutoSize = true, Margin = new Padding(8, 6, 5, 0) };
-    private readonly Label _status = new() { Dock = DockStyle.Fill, AutoEllipsis = true };
-    private readonly Label _detail = new() { Dock = DockStyle.Fill, AutoEllipsis = true };
+    private readonly CheckBox _blocked = new() { AutoSize = true, Margin = new Padding(8, 6, 5, 0), UseCompatibleTextRendering = true };
+    private readonly Label _status = new() { Dock = DockStyle.Fill, AutoEllipsis = true, UseCompatibleTextRendering = true };
+    private readonly Label _detail = new() { Dock = DockStyle.Fill, AutoEllipsis = true, UseCompatibleTextRendering = true };
     private readonly DataGridView _recent = Grid();
     private readonly DataGridView _timeline = Grid();
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 30_000 };
@@ -28,7 +28,7 @@ internal sealed class IntakeObserverForm : Form
     private bool _fresh;
     private bool _detailFresh;
     private readonly bool _observeOnShow;
-    private Font? _panelFont;
+    private readonly Dictionary<int, Font> _panelFonts = [];
     internal (int Projects, int Recent, int Timeline, bool ItemLoaded, string Status) Observation =>
         (_projects.Items.Count, _recent.RowCount, _timeline.RowCount, _detailFresh, _status.Text);
 
@@ -45,16 +45,22 @@ internal sealed class IntakeObserverForm : Form
         ClientSize = new(755, 575);
         MinimumSize = new(640, 500);
         ShowInTaskbar = false;
-        BackColor = UiTokens.WindowContent;
+        ShowIcon = false;
+        BackColor = UiTokens.CardSurface;
         ForeColor = UiTokens.Text;
+        var palette = new RouterVisualPalette(BackColor);
+        foreach (var button in new[] { _search, _refresh, _open, _copy, _thread, _diagnose }) button.Palette = palette;
+        _projects.Palette = palette;
 
         _projects.AccessibleName = T("项目", "Project");
         _reference.AccessibleName = T("工单号", "Work item number");
         _reference.PlaceholderText = T("输入工单号", "Work item number");
-        _reference.BackColor = UiTokens.WindowSurface;
+        _reference.BackColor = palette.Input;
         _reference.ForeColor = UiTokens.Text;
         _refresh.Text = T("刷新", "Refresh");
+        _refresh.AccessibleName = _refresh.Text;
         _search.Text = T("查工单", "Find");
+        _search.AccessibleName = _search.Text;
         _blocked.Text = T("仅阻塞", "Blocked only");
         _open.Text = T("打开 ZOS", "Open in ZOS");
         _copy.Text = T("复制卡号", "Copy number");
@@ -64,13 +70,19 @@ internal sealed class IntakeObserverForm : Form
         _detail.ForeColor = UiTokens.Text;
 
         var head = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5, RowCount = 1, Margin = Padding.Empty };
-        head.ColumnStyles.Add(new(SizeType.Percent, 55));
-        head.ColumnStyles.Add(new(SizeType.AutoSize));
-        head.ColumnStyles.Add(new(SizeType.AutoSize));
-        head.ColumnStyles.Add(new(SizeType.Percent, 45));
-        head.ColumnStyles.Add(new(SizeType.AutoSize));
+        head.ColumnStyles.Add(new(SizeType.Absolute, 200));
+        head.ColumnStyles.Add(new(SizeType.Absolute, 105));
+        head.ColumnStyles.Add(new(SizeType.Absolute, 76));
+        head.ColumnStyles.Add(new(SizeType.Percent, 100));
+        head.ColumnStyles.Add(new(SizeType.Absolute, 90));
+        head.RowStyles.Add(new(SizeType.Percent, 100));
+        foreach (var button in new[] { _refresh, _search })
+        {
+            button.AutoSize = false;
+            button.Dock = DockStyle.Fill;
+        }
         _projects.Dock = DockStyle.Fill;
-        _reference.Dock = DockStyle.Fill;
+        _reference.Anchor = AnchorStyles.Left | AnchorStyles.Right;
         head.Controls.Add(_projects, 0, 0);
         head.Controls.Add(_blocked, 1, 0);
         head.Controls.Add(_refresh, 2, 0);
@@ -88,35 +100,84 @@ internal sealed class IntakeObserverForm : Form
         _recent.AccessibleName = T("近期工单", "Recent work items");
         _timeline.AccessibleName = T("工单时间线和诊断", "Work item timeline and diagnostics");
 
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6, Padding = new(14) };
-        layout.RowStyles.Add(new(SizeType.Absolute, 38));
-        layout.RowStyles.Add(new(SizeType.Absolute, 24));
+        var brand = new MonitorBrandMark(T("自动分拣", "Work intake"), intake: true)
+            { Dock = DockStyle.Fill, Margin = Padding.Empty };
+        var historyStatus = new Label { Text = T("只读", "Read only"), Dock = DockStyle.Fill,
+            ForeColor = UiTokens.Muted, TextAlign = ContentAlignment.MiddleRight, Margin = Padding.Empty,
+            UseCompatibleTextRendering = true };
+        var header = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
+        header.ColumnStyles.Add(new(SizeType.Percent, 70));
+        header.ColumnStyles.Add(new(SizeType.Percent, 30));
+        header.Controls.Add(brand, 0, 0);
+        header.Controls.Add(historyStatus, 1, 0);
+
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Padding = new(12) };
+        layout.RowStyles.Add(new(SizeType.Absolute, 34));
+        layout.RowStyles.Add(new(SizeType.Absolute, 42));
         layout.RowStyles.Add(new(SizeType.Percent, 50));
-        layout.RowStyles.Add(new(SizeType.Absolute, 27));
-        layout.RowStyles.Add(new(SizeType.Absolute, 37));
         layout.RowStyles.Add(new(SizeType.Percent, 50));
-        layout.Controls.Add(head, 0, 0);
-        layout.Controls.Add(_status, 0, 1);
-        layout.Controls.Add(_recent, 0, 2);
-        layout.Controls.Add(_detail, 0, 3);
-        layout.Controls.Add(actions, 0, 4);
-        layout.Controls.Add(_timeline, 0, 5);
+        var filters = new RouterSurface { Dock = DockStyle.Fill, Palette = palette, Input = true, BackColor = palette.Input,
+            Name = "intake-filters", AccessibleName = T("工单筛选", "Work item filters") };
+        filters.Controls.Add(head);
+        var recent = Section(_recent.AccessibleName, _status, _recent);
+        var timeline = Section(_timeline.AccessibleName, _detail, _timeline, actions);
+        layout.Controls.Add(header, 0, 0);
+        layout.Controls.Add(filters, 0, 1);
+        layout.Controls.Add(recent.Surface, 0, 2);
+        layout.Controls.Add(timeline.Surface, 0, 3);
         Controls.Add(layout);
+
+        (RouterSurface Surface, TableLayoutPanel Content) Section(string name, Control status, Control grid,
+            Control? toolbar = null)
+        {
+            var surface = RouterSurface.Section(name);
+            surface.Palette = palette;
+            var content = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill, ColumnCount = 1, RowCount = toolbar is null ? 2 : 3,
+                Margin = Padding.Empty, BackColor = palette.Surface,
+            };
+            content.RowStyles.Add(new(SizeType.Absolute, 25));
+            content.Controls.Add(status, 0, 0);
+            if (toolbar is not null)
+            {
+                content.RowStyles.Add(new(SizeType.Absolute, 32));
+                content.Controls.Add(toolbar, 0, 1);
+            }
+            content.RowStyles.Add(new(SizeType.Percent, 100));
+            content.Controls.Add(grid, 0, content.RowCount - 1);
+            surface.Controls.Add(content);
+            return (surface, content);
+        }
+
         void ScaleLayout(int dpi, bool setWindowSize)
         {
             var scale = dpi / 96f;
             int Span(int value) => (int)Math.Round(value * scale);
             SuspendLayout();
             layout.SuspendLayout();
-            var old = _panelFont;
-            _panelFont = new Font("Segoe UI", Span(13), FontStyle.Regular, GraphicsUnit.Pixel);
-            Font = _panelFont;
-            old?.Dispose();
-            layout.Padding = new(Span(14));
-            layout.RowStyles[0].Height = Span(36);
-            layout.RowStyles[1].Height = Span(25);
-            layout.RowStyles[3].Height = Span(29);
-            layout.RowStyles[4].Height = Span(34);
+            if (!_panelFonts.TryGetValue(dpi, out var font))
+                _panelFonts.Add(dpi, font = new Font("Segoe UI", RouterVisualGeometry.LogicalFontPixels * scale, FontStyle.Regular, GraphicsUnit.Pixel));
+            Font = font;
+            layout.Padding = new(Span(12));
+            layout.RowStyles[0].Height = Span(34);
+            layout.RowStyles[1].Height = Span(42);
+            filters.Margin = new(0, 0, 0, Span(6));
+            filters.Padding = new(Span(6), Span(3), Span(6), 0);
+            head.ColumnStyles[0].Width = Span(200);
+            head.ColumnStyles[1].Width = Span(105);
+            head.ColumnStyles[2].Width = Span(76);
+            head.ColumnStyles[4].Width = Span(90);
+            foreach (var control in new Control[] { _projects, _refresh, _reference, _search })
+                control.Margin = new(Span(3), 0, Span(3), Span(2));
+            _blocked.Margin = new(Span(8), Span(6), Span(5), 0);
+            foreach (var section in new[] { recent, timeline })
+            {
+                section.Surface.Margin = new(0, 0, 0, Span(8));
+                section.Surface.Padding = new(Span(10), Span(6), Span(10), Span(8));
+                section.Content.RowStyles[0].Height = Span(25);
+            }
+            timeline.Content.RowStyles[1].Height = Span(32);
             foreach (var view in new[] { _recent, _timeline })
             {
                 view.RowTemplate.Height = Span(26);
@@ -442,20 +503,24 @@ internal sealed class IntakeObserverForm : Form
 
     private static DataGridView Grid()
     {
+        var palette = new RouterVisualPalette(UiTokens.CardSurface);
         var view = new DataGridView
         {
-            Dock = DockStyle.Fill, BackgroundColor = UiTokens.WindowSurface, GridColor = UiTokens.WindowBorder,
-            BorderStyle = BorderStyle.FixedSingle, ReadOnly = true, MultiSelect = false, RowHeadersVisible = false,
+            Dock = DockStyle.Fill, BackgroundColor = palette.Surface, GridColor = palette.Border,
+            BorderStyle = BorderStyle.None, CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal,
+            ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None,
+            ReadOnly = true, MultiSelect = false, RowHeadersVisible = false,
             AllowUserToAddRows = false, AllowUserToDeleteRows = false, AllowUserToResizeRows = false,
             SelectionMode = DataGridViewSelectionMode.FullRowSelect, EnableHeadersVisualStyles = false,
             AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None,
             ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing,
         };
-        view.ColumnHeadersDefaultCellStyle.BackColor = UiTokens.WindowFooter;
-        view.ColumnHeadersDefaultCellStyle.ForeColor = UiTokens.TextSecondary;
-        view.DefaultCellStyle.BackColor = UiTokens.WindowSurface;
+        view.ColumnHeadersDefaultCellStyle.BackColor = view.ColumnHeadersDefaultCellStyle.SelectionBackColor = palette.Surface;
+        view.ColumnHeadersDefaultCellStyle.ForeColor = view.ColumnHeadersDefaultCellStyle.SelectionForeColor = palette.Muted;
+        view.ColumnHeadersDefaultCellStyle.Padding = view.DefaultCellStyle.Padding = new Padding(4);
+        view.DefaultCellStyle.BackColor = palette.Surface;
         view.DefaultCellStyle.ForeColor = UiTokens.Text;
-        view.DefaultCellStyle.SelectionBackColor = UiTokens.Mix(UiTokens.WindowSurface, UiTokens.Accent, .20f);
+        view.DefaultCellStyle.SelectionBackColor = UiTokens.Mix(palette.Surface, palette.Accent, .20f);
         view.DefaultCellStyle.SelectionForeColor = UiTokens.TextStrong;
         return view;
     }
@@ -471,6 +536,10 @@ internal sealed class IntakeObserverForm : Form
     {
         if (disposing) { _request?.Cancel(); _timer.Dispose(); }
         base.Dispose(disposing);
-        if (disposing) { _panelFont?.Dispose(); _panelFont = null; }
+        if (disposing)
+        {
+            foreach (var font in _panelFonts.Values) font.Dispose();
+            _panelFonts.Clear();
+        }
     }
 }

@@ -19,6 +19,7 @@ internal sealed partial class BarForm
         if (!_taskbarDocked)
         {
             _adjacentTaskbarTrack = null;
+            _taskbarRowOverlayFor = 0;
             if (_embedParent != 0) DetachFromTaskbar("undocked");
             if (_watchedTaskbar != 0) ResetTaskbarRowProbe();
         }
@@ -58,13 +59,15 @@ internal sealed partial class BarForm
             return;
         }
 
-        if (_taskbarPlacementEstablished && !EmbeddedInTaskbar
+        if (_taskbarPlacementEstablished && !EmbeddedInTaskbar && _taskbarRowOverlayFor == 0
             && ++_taskbarPlacementMisses < TaskbarPlacementMissThreshold)
         {
             return;
         }
         _taskbarPlacementEstablished = false;
         _adjacentTaskbarTrack = null;
+        if (_taskbarRowOverlayFor != 0) TaskbarEmbedStatus = "fallback:taskbar-missing";
+        _taskbarRowOverlayFor = 0;
         if (EmbeddedInTaskbar) DetachFromTaskbar("taskbar-missing");
         HidePopovers();
         if (Visible) Hide();
@@ -78,27 +81,33 @@ internal sealed partial class BarForm
         {
             var oldBounds = ScreenBounds;
             var wasEmbedded = EmbeddedInTaskbar;
-            var rowCandidate = TryGetSafeRowLocation(track, placementSize, anchor, oldBounds, out var location, out var reason);
-            var inRow = false;
-            if (rowCandidate)
+            var wasInRow = wasEmbedded || _taskbarRowOverlayFor != 0;
+            var remote = _embedRequested && RemoteSession();
+            if (remote && wasEmbedded) DetachFromTaskbar("remote-session");
+            var rowCandidate = TryGetSafeRowLocation(track, placementSize, anchor, oldBounds, remote, out var location, out var reason);
+            var rowOverlay = rowCandidate && remote;
+            if (rowCandidate && !rowOverlay)
             {
                 using (PerfTrace.Measure("placement.embed")) EnsureTaskbarEmbedding(track.MonitorName);
-                inRow = EmbeddedInTaskbar;
             }
-            else
+            else if (!rowCandidate)
             {
                 if (EmbeddedInTaskbar) DetachFromTaskbar(reason);
                 if (_embedRequested && !string.IsNullOrEmpty(reason)) TaskbarEmbedStatus = "fallback:" + reason;
             }
 
-            if (!inRow && TaskbarPlacement.ShouldHideForFullscreen(track.MonitorName))
+            var inRow = rowOverlay || EmbeddedInTaskbar;
+            _taskbarRowOverlayFor = 0;
+            if (!EmbeddedInTaskbar && TaskbarPlacement.ShouldHideForFullscreen(track.MonitorName))
             {
+                _taskbarRowStability.ResetReturn();
+                if (rowOverlay) TaskbarEmbedStatus = "fallback:fullscreen";
                 if (Visible) Hide();
                 return;
             }
             // Cross the taskbar edge without jumping sideways, and keep that anchor through
             // subsequent refreshes instead of snapping back to the saved preference.
-            var adjacentAnchor = preserveAdjacentPosition && wasEmbedded ? oldBounds.Location :
+            var adjacentAnchor = preserveAdjacentPosition && wasInRow ? oldBounds.Location :
                 preserveAdjacentPosition && _adjacentTaskbarTrack == track && _adjacentTaskbarAnchor == anchor
                     ? oldBounds.Location : anchor;
             if (!inRow && !TaskbarPlacement.TryGetAdjacentLocation(track, placementSize, adjacentAnchor, out location))
@@ -117,6 +126,7 @@ internal sealed partial class BarForm
                     // ShowAt could fail while Explorer is rebuilding its taskbar. Do not leave a
                     // child on the old coordinates, or show an overlay in the icon row.
                     if (EmbeddedInTaskbar) DetachFromTaskbar("placement-failed");
+                    else if (rowOverlay) TaskbarEmbedStatus = "fallback:placement-failed";
                     if (!TaskbarPlacement.TryGetAdjacentLocation(track, placementSize, adjacentAnchor, out location)
                         || !TaskbarPlacement.ShowAt(Handle, location, placementSize))
                     {
@@ -128,6 +138,11 @@ internal sealed partial class BarForm
             }
             // Showing before moving can leave a one-frame overlap while Explorer lays out its icons.
             if (!wasVisible) Show();
+            if (inRow && rowOverlay)
+            {
+                _taskbarRowOverlayFor = track.TaskbarWindow;
+                TaskbarEmbedStatus = "overlay:remote-session";
+            }
             _adjacentTaskbarTrack = inRow ? null : track;
             _adjacentTaskbarAnchor = anchor;
             if (EmbeddedInTaskbar && !wasEmbedded && wasVisible) RepushLayeredFrame();
@@ -150,6 +165,7 @@ internal sealed partial class BarForm
     public void HideToTray()
     {
         _hiddenToTray = true;
+        _taskbarRowOverlayFor = 0;
         HidePopovers();
         if (Visible) Hide();
     }
@@ -166,6 +182,7 @@ internal sealed partial class BarForm
         // A recreated handle is always a fresh top-level window.
         _embedParent = 0;
         _embedOriginalStyle = null;
+        _taskbarRowOverlayFor = 0;
         base.OnHandleCreated(e);
         _glassFrameSize = Size.Empty;
         if (!_renderOnly)
@@ -423,6 +440,7 @@ internal sealed partial class BarForm
         else
         {
             _adjacentTaskbarTrack = null;
+            _taskbarRowOverlayFor = 0;
             MoveToFloatingPosition(topology, activation.Profile);
             if (!Visible && !_hiddenToTray) Show();
         }
@@ -518,6 +536,7 @@ internal sealed partial class BarForm
             ClearHoverStateForTaskbarDrag();
             TaskbarPlacement.InvalidateCache();
             _taskbarDragMoved = true;
+            _taskbarRowOverlayFor = 0;
             _lastDragClickAt = DateTime.MinValue;
         }
 
@@ -691,6 +710,7 @@ internal sealed partial class BarForm
             // Reconnecting with the same resolution need not send WM_DISPLAYCHANGE. Rebuild
             // session-scoped placement and the layered frame even when the monitor names match.
             _embedRetryAfter = DateTime.MinValue;
+            _taskbarRowOverlayFor = 0;
             if (_taskbarDragging) _topologyChangedDuringDrag = true;
             if (RemoteSession() && _embedParent != 0) DetachFromTaskbar("remote-session");
             HidePopovers();

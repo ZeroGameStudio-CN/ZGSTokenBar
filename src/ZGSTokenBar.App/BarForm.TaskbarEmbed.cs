@@ -28,6 +28,7 @@ internal sealed partial class BarForm
     private bool _embedRequested;
     private bool _embedTransition;
     private nint _embedParent;
+    private nint _taskbarRowOverlayFor;
     private (long Style, long ExStyle)? _embedOriginalStyle;
     private bool _embedHandleLost;
     private bool _embedClosing;
@@ -76,6 +77,7 @@ internal sealed partial class BarForm
         {
             _embedWatchdog.Stop();
             DetachFromTaskbar("off");
+            _taskbarRowOverlayFor = 0;
             ResetTaskbarRowProbe();
             TaskbarEmbedStatus = "off";
             if (_taskbarDocked) SyncTaskbarPlacement();
@@ -85,16 +87,17 @@ internal sealed partial class BarForm
     private bool _embedWatchdogWired;
 
     private bool TryGetSafeRowLocation(
-        TaskbarPlacement.PlacementTrack track, Size size, Point anchor, Rectangle currentBounds,
+        TaskbarPlacement.PlacementTrack track, Size size, Point anchor, Rectangle currentBounds, bool rowOverlay,
         out Point location, out string reason)
     {
         location = Point.Empty;
         reason = "";
         if (!_embedRequested) return false;
-        if (RemoteSession()) reason = "remote-session";
-        else if (!track.Primary) reason = "secondary-monitor";
+        if (!track.Primary) reason = "secondary-monitor";
         else if (!track.Horizontal || track.TrayBounds.IsEmpty || !track.ScreenBounds.Contains(track.TaskbarBounds))
             reason = "layout-unavailable";
+        else if (rowOverlay && !TaskbarPlacement.HasReservedRow(track, Screen.FromHandle(track.TaskbarWindow).WorkingArea))
+            reason = "unreserved-row";
         if (reason.Length != 0)
         {
             if (_watchedTaskbar != 0) ResetTaskbarRowProbe();
@@ -117,7 +120,9 @@ internal sealed partial class BarForm
             StartTaskbarRowProbe(key);
         }
         var occupied = elapsed < LayoutMaximumAgeMs ? observed.Occupied : null;
-        var alreadyInRow = EmbeddedInTaskbar && _embedParent == track.TaskbarWindow;
+        var alreadyInRow = rowOverlay
+            ? _taskbarRowOverlayFor == track.TaskbarWindow
+            : EmbeddedInTaskbar && _embedParent == track.TaskbarWindow;
         var awaitingLayout = _taskbarRowStability.AwaitingLayout;
         var extraClearance = Scale(RowBreathingRoom);
         // Only enter the brief stale-layout grace period from a seat with room for an
@@ -264,9 +269,8 @@ internal sealed partial class BarForm
         }
         if (RemoteSession())
         {
-            // Over Remote Desktop the bar's layered child window is never composited into
-            // Explorer's taskbar (the window exists, is visible and on top, yet the remote frame
-            // shows only the taskbar), so a remote session always uses the top-level overlay.
+            // A remote compositor can omit Explorer's layered child. The caller keeps
+            // the bar top-level in that session, even when it can use a gap in the row.
             if (_embedParent != 0) DetachFromTaskbar("remote-session");
             TaskbarEmbedStatus = "fallback:remote-session";
             return;
@@ -392,8 +396,7 @@ internal sealed partial class BarForm
             if (GlassLayered && _glassFrameSize != ClientSize) RepushLayeredFrame();
             return;
         }
-        if (_taskbarDocked && !_hiddenToTray && DateTime.UtcNow >= _embedRetryAfter
-            && (TaskbarEmbedStatus != "fallback:remote-session" || !RemoteSession()))
+        if (_taskbarDocked && !_hiddenToTray && (RemoteSession() || DateTime.UtcNow >= _embedRetryAfter))
         {
             SyncTaskbarPlacement();
         }
@@ -410,7 +413,7 @@ internal sealed partial class BarForm
         TaskbarPlacement.InvalidateCache();
         ResetTaskbarRowProbe();
         _embedRetryAfter = DateTime.UtcNow + TimeSpan.FromSeconds(1);
-        if (EmbeddedInTaskbar || _embedHandleLost) RequestTopologyRefresh(false);
+        if (EmbeddedInTaskbar || _taskbarRowOverlayFor != 0 || _embedHandleLost) RequestTopologyRefresh(false);
     }
 
     /// <summary>Flags an Explorer-initiated destroy of the embedded window (not our own close).</summary>

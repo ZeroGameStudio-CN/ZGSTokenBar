@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using ZGSTokenBar.App;
 using ZGSTokenBar.Core;
@@ -83,33 +84,59 @@ internal static class IntakeObserverTests
         {
             Directory.CreateDirectory(captures);
             form.Show();
+            System.Windows.Forms.Application.DoEvents();
+            var filters = form.Controls.Find("intake-filters", searchAllChildren: true).Single();
+            var row = filters.Controls.OfType<System.Windows.Forms.TableLayoutPanel>().Single();
+            var controls = Enumerable.Range(0, row.ColumnCount).Select(column => row.GetControlFromPosition(column, 0)!).ToArray();
+            Check(controls.All(control => control.Width > 0 && row.ClientRectangle.Contains(control.Bounds))
+                && controls.Zip(controls.Skip(1)).All(pair => pair.First.Right <= pair.Second.Left),
+                "Project, filters and search fit without overlap at the window's DPI");
         }
-        form.LoadRecentAsync().GetAwaiter().GetResult();
+        RunOnUi(form.LoadRecentAsync());
         Check(form.Observation is { Projects: 2, Recent: 1, ItemLoaded: false },
             "Projects use read permissions and cross-project rows do not appear");
-        form.LoadItemAsync("ZOS-27").GetAwaiter().GetResult();
+        RunOnUi(form.LoadItemAsync("ZOS-27"));
         Check(form.Observation is { Timeline: 4, ItemLoaded: true }, "Current state, verified recovery, and two transitions");
-        form.LoadDiagnosticsAsync().GetAwaiter().GetResult();
+        RunOnUi(form.LoadDiagnosticsAsync());
         Check(form.Observation.Timeline == 5 && form.Observation.Status.Contains("部分记录"),
             "Only the selected item's diagnostic rows appear and partial is visible");
         if (captures is not null)
         {
             form.PerformLayout();
             System.Windows.Forms.Application.DoEvents();
-            using var bitmap = new Bitmap(form.Width, form.Height);
-            form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+            using var bitmap = new Bitmap(form.ClientSize.Width, form.ClientSize.Height);
+            using var graphics = Graphics.FromImage(bitmap);
+            var target = graphics.GetHdc();
+            try { Check(PrintWindow(form.Handle, target, 1), "The fixture's client window renders"); }
+            finally { graphics.ReleaseHdc(target); }
             bitmap.Save(Path.Combine(captures, "work-intake-preview.png"));
         }
         denied = true;
-        form.LoadDiagnosticsAsync().GetAwaiter().GetResult();
+        RunOnUi(form.LoadDiagnosticsAsync());
         Check(form.Observation is { Timeline: 4, ItemLoaded: true } && form.Observation.Status.Contains("无诊断权限"),
             "Diagnostic denial does not discard authorized business history");
         switched = true;
-        form.LoadRecentAsync().GetAwaiter().GetResult();
+        RunOnUi(form.LoadRecentAsync());
         Check(form.Observation is { Projects: 0, Recent: 0, Timeline: 0, ItemLoaded: false },
             "Authorization changes clear the previous account's contents");
         Check(reads.All(read => read is "whoami" or "get" or "list" or "history" or "plugin"),
             "No write requests");
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool PrintWindow(nint window, nint target, uint flags);
+
+    private static void RunOnUi(Task operation)
+    {
+        var end = Environment.TickCount64 + 5_000;
+        while (!operation.IsCompleted && Environment.TickCount64 < end)
+        {
+            System.Windows.Forms.Application.DoEvents();
+            Thread.Sleep(5);
+        }
+        Check(operation.IsCompleted, "The isolated read must complete on the UI thread");
+        operation.GetAwaiter().GetResult();
     }
 
     private static void MiniEntry(string? captures)
@@ -136,17 +163,25 @@ internal static class IntakeObserverTests
         bar.SetPluginMiniCards([router, intake]);
         Paint(captures);
         var current = bar.MiniPluginBounds(plugin.Manifest.Id) ?? throw new InvalidOperationException("Intake slot is missing");
-        Check(bar.ClientSize.Width - plainWidth == (GlassDockLayout.IntakeSize + GlassDockLayout.ModuleGap) * 2
+        var moduleWidth = (GlassDockLayout.MonitorSize + GlassDockLayout.ModuleGap) * 2;
+        Check(bar.ClientSize.Width - plainWidth == moduleWidth
               && bar.MiniPluginBounds(RouterPlugin.Id) == routerBefore
+              && current.Size == routerBefore!.Value.Size && current.Top == routerBefore.Value.Top
               && current.Left == routerBefore!.Value.Right + GlassDockLayout.ModuleGap,
-            "Enabling intake leaves Router in place and gives intake a separate slot");
+            "The two adjacent icons share the same size and baseline without shifting Router");
         bar.ActivateMiniTarget(Center(current));
         Check(clicks.SequenceEqual([plugin.Manifest.Id]), "The intake hit opens only the intake target");
 
         bar.SetPluginMiniCards([intake]);
         Paint();
-        Check(bar.MiniPluginBounds(RouterPlugin.Id) is null && bar.MiniPluginBounds(plugin.Manifest.Id) == current,
-            "Turning Router off does not remove the intake launcher");
+        Check(bar.ClientSize.Width == plainWidth && bar.MiniPluginBounds(RouterPlugin.Id) is null
+              && bar.MiniPluginBounds(plugin.Manifest.Id) == routerBefore,
+            "Intake alone uses the first slot; no empty Router slot remains");
+        bar.SetPluginMiniCards([]);
+        Paint();
+        Check(bar.ClientSize.Width == plainWidth - moduleWidth
+              && bar.MiniPluginBounds(plugin.Manifest.Id) is null,
+            "Each disabled module releases its full slot");
         bar.SetPluginMiniCards([router]);
         Paint();
         Check(bar.ClientSize.Width == plainWidth && bar.MiniPluginBounds(RouterPlugin.Id) == routerBefore
@@ -248,11 +283,15 @@ internal static class IntakeObserverTests
         if (captures is not null)
         {
             Directory.CreateDirectory(captures);
-            using var hint = new TaskbarHintPopoverForm();
+            using var hint = new IntakeHoverCardForm();
+            using var routerPreview = new RouterHoverCardForm();
             var text = NativeText.For("zh-CN");
-            using var bitmap = hint.RenderForTest(text.IntakeObserver, text.IntakeObserverHint,
-                QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), 192);
+            using var bitmap = hint.RenderForTest(text, 192);
+            using var routerBitmap = routerPreview.RenderForTest(router.Card, chinese: true, dpi: 192);
+            Check(bitmap.Width == routerBitmap.Width && bitmap.Height < routerBitmap.Height,
+                "Previews share a width while growing only for their own content");
             bitmap.Save(Path.Combine(captures, "intake-hover-192.png"));
+            routerBitmap.Save(Path.Combine(captures, "router-hover-192.png"));
         }
 
         static Point Center(RectangleF bounds) =>

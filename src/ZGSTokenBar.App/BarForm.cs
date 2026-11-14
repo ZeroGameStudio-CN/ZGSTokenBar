@@ -637,6 +637,7 @@ internal sealed partial class BarForm : Form
             _quotaPopover?.Dispose();
             _codexAccountsPopover?.Dispose();
             _hintPopover?.Dispose();
+            _intakeHover?.Dispose();
             _systemUsagePopover?.Dispose();
             _glassMenu?.Dispose();
             foreach (var icon in _glassIcons.Values) icon?.Dispose();

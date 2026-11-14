@@ -31,6 +31,8 @@ internal sealed class NativeText
     public string Modules => T("模块", "Modules");
     public string IntakeObserver => T("自动分拣", "Work intake");
     public string IntakeObserverHint => T("点击查看工单和分拣记录（只读）", "Click to view work items and intake records (read only)");
+    public string IntakePreviewSubtitle => T("工单与分拣记录 · 只读", "Work items and intake records · Read only");
+    public string IntakePreviewAction => T("点击打开自动分拣面板", "Click to open the work intake panel");
     public string SystemMetricsModuleHint => T(
         "显示 CPU、内存、磁盘与 GPU 占用；关闭后停止采样。",
         "Show CPU, memory, disk, and GPU usage; sampling stops while disabled.");
@@ -71,8 +73,8 @@ internal sealed class NativeText
     public string AnimationsTitle => T("动画效果", "Animation effects");
     public string EmbedTaskbarTitle => T("任务栏同排显示（实验）", "Show in taskbar row (experimental)");
     public string EmbedTaskbarHint => T(
-        "空位稳定后同排显示；空间不足时，整条 Bar 移到任务栏旁边，保留完整宽度。",
-        "Show the full Bar in a stable gap on the primary taskbar. When space runs out, move the entire Bar beside it.");
+        "本机和远程桌面都在主任务栏的空位稳定后同排显示；放不下时自动移到旁边。",
+        "Use a stable gap in the primary taskbar on the desktop and over Remote Desktop. Move the full Bar beside it when it does not fit.");
     public string AllowClaudeRefresh => T(
         "Claude OAuth 过期时允许刷新",
         "Allow Claude OAuth refresh when expired");

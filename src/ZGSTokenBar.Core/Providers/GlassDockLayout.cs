@@ -32,7 +32,11 @@ public sealed record GlassDockPlan(
     bool OverflowUrgent,
     int Width,
     int Height,
-    IReadOnlyList<GlassDockSlot> Slots);
+    IReadOnlyList<GlassDockSlot> Slots)
+{
+    public Rectangle RouterBounds { get; init; }
+    public Rectangle IntakeBounds { get; init; }
+}
 
 public sealed record GlassDockAccountLine(
     string Label,
@@ -64,13 +68,13 @@ public static class GlassDockLayout
     public const int ChipWidth = 24;
     public const int ChipGap = 4;
     public const int DividerGap = 13;
-    public const int RouterSize = 26;
-    public const int IntakeSize = 26;
+    public const int MonitorSize = 26;
     public const int ModuleGap = 7;
     public const int MetricsWidth = 54;
     public const int MetricsRows = 4;
     public const int RateWidth = 36;
-    public const int SystemWidth = RouterSize + ModuleGap + MetricsWidth + ModuleGap + RateWidth;
+    private const int MetricsClusterWidth = MetricsWidth + ModuleGap + RateWidth;
+    public const int SystemWidth = MonitorSize + ModuleGap + MetricsClusterWidth;
     public const int FlyoutWidth = 316;
     public const int Width = PadLeft + MaxVisibleRings * ItemWidth + (MaxVisibleRings - 1) * RingGap
         + ChipGap + ChipWidth + DividerGap + SystemWidth + PadRight;
@@ -80,30 +84,19 @@ public static class GlassDockLayout
         PadLeft + Math.Max(0, items) * ItemWidth + Math.Max(0, items - 1) * RingGap
         + (chip ? ChipGap + ChipWidth : 0) + DividerGap + SystemWidth + PadRight;
 
-    public static int SystemLeftFor(int width, bool showIntake = false) =>
-        width - PadRight - SystemWidth - IntakeSpace(showIntake);
+    public static int SystemLeftFor(int width, bool showIntake = false, bool showRouter = true) =>
+        width - PadRight - MetricsClusterWidth - MonitorSpace(showIntake) - MonitorSpace(showRouter);
 
     public static int SystemLeft => SystemLeftFor(Width);
 
-    public static Rectangle RouterBoundsFor(int width, bool showIntake = false) => new(
-        SystemLeftFor(width, showIntake),
-        (Height - RouterSize) / 2,
-        RouterSize,
-        RouterSize);
+    public static Rectangle RouterBounds => MonitorBounds(SystemLeft);
 
-    public static Rectangle RouterBounds => RouterBoundsFor(Width);
-
-    public static Rectangle IntakeBoundsFor(int width) => new(
-        RouterBoundsFor(width, showIntake: true).Right + ModuleGap,
-        (Height - IntakeSize) / 2,
-        IntakeSize,
-        IntakeSize);
-
-    private static int IntakeSpace(bool visible) => visible ? IntakeSize + ModuleGap : 0;
+    private static Rectangle MonitorBounds(int left) => new(left, (Height - MonitorSize) / 2, MonitorSize, MonitorSize);
+    private static int MonitorSpace(bool visible) => visible ? MonitorSize + ModuleGap : 0;
 
     /// <summary>CPU / RAM / I/O / GPU rows, matching the four metrics of the classic system card.</summary>
     public static Rectangle BarsBoundsFor(int width) => new(
-        SystemLeftFor(width) + RouterSize + ModuleGap,
+        width - PadRight - MetricsClusterWidth,
         (Height - 32) / 2,
         MetricsWidth,
         32);
@@ -173,7 +166,7 @@ public static class GlassDockLayout
     }
 
     public static GlassDockPlan Plan(IReadOnlyList<GlassDockRing> rings, int maxVisible = MaxVisibleRings,
-        bool showIntake = false)
+        bool showIntake = false, bool showRouter = true)
     {
         var limit = VisibleCapacity(maxVisible);
         var ordered = Order(rings);
@@ -181,13 +174,13 @@ public static class GlassDockLayout
         var visible = ordered.Take(count).ToArray();
         var hidden = ordered.Skip(count).ToArray();
         var urgent = hidden.Any(ring => ring.RemainingPercent is < 20);
-        return new GlassDockPlan(
+        return WithMonitors(new GlassDockPlan(
             visible,
             hidden.Length,
             urgent,
-            WidthFor(visible.Length, hidden.Length > 0) + IntakeSpace(showIntake),
+            WidthFor(visible.Length, hidden.Length > 0),
             Height,
-            Slots(visible.Length, hidden.Length > 0));
+            Slots(visible.Length, hidden.Length > 0)), showIntake, showRouter);
     }
 
     /// <summary>
@@ -195,11 +188,23 @@ public static class GlassDockLayout
     /// positions, the overflow rings follow, and the collapse chip sits at the far right end.
     /// </summary>
     public static GlassDockPlan PlanExpanded(IReadOnlyList<GlassDockRing> rings, int maxVisible = MaxVisibleRings,
-        bool showIntake = false)
+        bool showIntake = false, bool showRouter = true)
     {
         var ordered = Order(rings);
         var slots = ExpandedSlots(ordered.Length, out var width);
-        return new GlassDockPlan(ordered, 0, false, width + IntakeSpace(showIntake), Height, slots);
+        return WithMonitors(new GlassDockPlan(ordered, 0, false, width, Height, slots), showIntake, showRouter);
+    }
+
+    private static GlassDockPlan WithMonitors(GlassDockPlan plan, bool showIntake, bool showRouter)
+    {
+        var width = plan.Width - MonitorSpace(true) + MonitorSpace(showRouter) + MonitorSpace(showIntake);
+        var left = SystemLeftFor(width, showIntake, showRouter);
+        return plan with
+        {
+            Width = width,
+            RouterBounds = showRouter ? MonitorBounds(left) : Rectangle.Empty,
+            IntakeBounds = showIntake ? MonitorBounds(left + MonitorSpace(showRouter)) : Rectangle.Empty,
+        };
     }
 
     /// <summary>Width of the expanded pill for <paramref name="items"/> rings (collapse chip included).</summary>

@@ -21,6 +21,7 @@ internal sealed class PluginPopoverRequest(string pluginId, Rectangle anchor, bo
 internal sealed partial class BarForm
 {
     private Form? _pluginPopover;
+    private IntakeHoverCardForm? _intakeHover;
     private string? _pluginPopoverId;
     private Rectangle _pluginPopoverAnchor;
     public event EventHandler<PluginPopoverRequest>? PluginPopoverRequested;
@@ -42,7 +43,9 @@ internal sealed partial class BarForm
         var request = new PluginPopoverRequest(pluginId, anchor, pinned, _scale, _backgroundTheme);
         if (!pinned && pluginId == MiniAreaIds.Intake)
         {
-            ShowPluginHint(request);
+            _intakeHover ??= new IntakeHoverCardForm();
+            _intakeHover.ShowFor(this, anchor, _text, _scale);
+            request.Popup = _intakeHover;
         }
         else
         {

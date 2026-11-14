@@ -7830,7 +7830,7 @@ static void RenderRouterGlyphCaptures(string outputDirectory)
 {
     (string State, long Queued)[] states = [("unknown", 0), ("unknown", 2), ("waiting", 0), ("attention", 0), ("running", 0), ("running", 1), ("idle", 0), ("offline", 0)];
     const int scale = 4;
-    var cell = GlassDockLayout.RouterSize;
+    var cell = GlassDockLayout.MonitorSize;
     using var bitmap = new Bitmap(states.Length * (cell + 6) * scale, (cell + 6) * scale);
     using var graphics = Graphics.FromImage(bitmap);
     graphics.Clear(Color.FromArgb(32, 33, 40));
@@ -12580,6 +12580,10 @@ static void TestTaskbarFullWidthPlacement()
     var size = new Size(642, 88);
     var track = new TaskbarPlacement.PlacementTrack("example", new Rectangle(0, 0, 3840, 2160),
         true, true, 6, 2680, row.Y + 4) { TaskbarBounds = row };
+    Check(TaskbarPlacement.HasReservedRow(track, new Rectangle(0, 0, 3840, row.Top)),
+        "a visible primary taskbar reserves an independent overlay's row");
+    Check(!TaskbarPlacement.HasReservedRow(track, track.ScreenBounds),
+        "auto-hide must not leave an independent overlay in the desktop working area");
     var tray = new Rectangle(3328, row.Y, 512, row.Height);
     var apps = new Rectangle(1083, row.Y, 1674, row.Height);
     var anchor = new Point(2250, row.Y);
