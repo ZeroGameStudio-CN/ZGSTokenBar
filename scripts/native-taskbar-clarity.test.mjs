@@ -283,7 +283,7 @@ test('Cockpit API services are displayed as informational cards without network 
 });
 
 test('open Codex account popover follows refreshed snapshot data', () => {
-  assert.match(barForm, /RefreshQuotaPopover\(\);\s+RefreshCodexAccountsPopover\(\);\s+RefreshHintPopover\(\);/);
+  assert.match(barForm, /RefreshQuotaPopover\(\);\s+RefreshCodexAccountsPopover\(\);\s+RefreshPluginHintContent\(\);/);
   assert.match(barForm, /private void RefreshCodexAccountsPopover\(\)[\s\S]*?_codexAccountsPopover\?\.Visible != true[\s\S]*?ShowCodexAccountsPopover\(target\)/);
   assert.match(barForm, /SetCodexAccounts\(IReadOnlyList<CodexAccountInfo> accounts\)[\s\S]*?_codexAccounts = accounts\.ToArray\(\);[\s\S]*?RefreshCodexAccountsPopover\(\);/);
 });

@@ -25,6 +25,7 @@ internal static class IntakeObserverTests
     internal static void Run(string? captures = null)
     {
         MiniEntry(captures);
+        HoverHandoff(captures);
         var denied = false;
         var switched = false;
         var reads = new List<string>();
@@ -162,6 +163,100 @@ internal static class IntakeObserverTests
         }
 
         static PointF Center(RectangleF bounds) => new(bounds.Left + bounds.Width / 2, bounds.Top + bounds.Height / 2);
+    }
+
+    private static void HoverHandoff(string? captures)
+    {
+        using var bar = new BarForm(new AppSettings { EnableAnimations = false, Locale = "zh-CN" },
+            QuotaSnapshot.Empty(DateTimeOffset.UtcNow), renderOnly: true, renderDpi: 192)
+        { StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000), ShowInTaskbar = false };
+        using var routerHover = new RouterHoverCardForm();
+        using var routerPanel = new System.Windows.Forms.Form { ShowInTaskbar = false, Location = new(-30000, -30000) };
+        var router = new PluginMiniCardView(RouterPlugin.Id, "Router", RouterModuleTests.Card("idle", 0),
+            new Dictionary<string, string>());
+        var intake = new PluginMiniCardView(IntakeObserverPlugin.Id, "自动分拣", IntakeObserverPlugin.Launcher,
+            new Dictionary<string, string>());
+        var requests = 0;
+        var activated = new List<string>();
+        bar.PluginActivated += (_, id) => activated.Add(id);
+        bar.PluginPopoverRequested += (_, request) =>
+        {
+            Check(request.PluginId == RouterPlugin.Id, "The intake hint does not invoke a plugin or open its panel");
+            requests++;
+            if (request.Pinned)
+            {
+                if (!routerPanel.Visible) routerPanel.Show(bar);
+                request.Popup = routerPanel;
+                return;
+            }
+            routerHover.ShowFor(bar, request.Anchor, router.Card, true, request.Scale);
+            request.Popup = routerHover;
+        };
+        bar.SetPluginMiniCards([router, intake]);
+        bar.Show();
+        using var image = new Bitmap(bar.ClientSize.Width, bar.ClientSize.Height);
+        bar.DrawToBitmap(image, new Rectangle(Point.Empty, image.Size));
+        var routerBounds = bar.MiniPluginBounds(RouterPlugin.Id)!.Value;
+        var intakeBounds = bar.MiniPluginBounds(IntakeObserverPlugin.Id)!.Value;
+        var routerPoint = Center(routerBounds);
+        var intakePoint = Center(intakeBounds);
+        var routerScreen = Center(bar.QuotaTargetScreenBounds(routerBounds));
+        var intakeScreen = Center(bar.QuotaTargetScreenBounds(intakeBounds));
+        var outside = new Point(10000, 10000);
+        var now = DateTime.UtcNow;
+
+        bar.TrackMiniHover(routerPoint);
+        bar.TrackMiniHover(intakePoint);
+        bar.ShowHoveredPopover(routerScreen);
+        Check(bar.VisiblePluginPopoverId is null && requests == 0, "A pending hover cannot open at the previous icon");
+        bar.ShowHoveredPopover(intakeScreen);
+        Check(bar.VisiblePluginPopoverId == IntakeObserverPlugin.Id && activated.Count == 0,
+            "Intake shows its own hint without activation");
+        bar.TrackMiniHover(new PointF(-1, -1));
+        bar.MonitorPluginPopover(outside, false, false, now);
+        bar.SetSnapshot(QuotaSnapshot.Empty(DateTimeOffset.UtcNow));
+        bar.MonitorPluginPopover(outside, false, false, now.AddMilliseconds(149));
+        Check(bar.VisiblePluginPopoverId == IntakeObserverPlugin.Id, "Moving through the gap keeps the brief leave grace");
+        bar.MonitorPluginPopover(outside, false, false, now.AddMilliseconds(150));
+        Check(bar.VisiblePluginPopoverId is null, "Refreshing the bar does not prolong a departing intake hint");
+
+        bar.TrackMiniHover(routerPoint);
+        bar.ShowHoveredPopover(routerScreen);
+        Check(bar.VisiblePluginPopoverId == RouterPlugin.Id && requests == 1, "Router uses its own hover card");
+        bar.TrackMiniHover(intakePoint);
+        Check(bar.VisiblePluginPopoverId is null && !routerHover.Visible, "Changing icons dismisses the old hover before opening the next");
+        bar.ShowHoveredPopover(intakeScreen);
+        bar.ActivateMiniTarget(intakePoint);
+        Check(bar.VisiblePluginPopoverId is null && activated.SequenceEqual([IntakeObserverPlugin.Id]),
+            "Click dismisses the hint and opens only the independent intake panel");
+
+        bar.ActivateMiniTarget(routerPoint);
+        bar.TrackMiniHover(intakePoint);
+        bar.ShowHoveredPopover(intakeScreen);
+        Check(routerPanel.Visible && bar.VisiblePluginPopoverId == RouterPlugin.Id && requests == 2,
+            "Hover does not replace a pinned Router panel");
+        bar.ActivateMiniTarget(intakePoint);
+        Check(!routerPanel.Visible && activated.Count == 2, "An explicit intake click switches panels");
+
+        bar.TrackMiniHover(intakePoint);
+        bar.ShowHoveredPopover(intakeScreen);
+        bar.SetPluginMiniCards([router]);
+        bar.ShowHoveredPopover(intakeScreen);
+        Check(bar.VisiblePluginPopoverId is null, "Disabling intake clears its visible and pending hover");
+        bar.Close();
+
+        if (captures is not null)
+        {
+            Directory.CreateDirectory(captures);
+            using var hint = new TaskbarHintPopoverForm();
+            var text = NativeText.For("zh-CN");
+            using var bitmap = hint.RenderForTest(text.IntakeObserver, text.IntakeObserverHint,
+                QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), 192);
+            bitmap.Save(Path.Combine(captures, "intake-hover-192.png"));
+        }
+
+        static Point Center(RectangleF bounds) =>
+            new((int)(bounds.Left + bounds.Width / 2), (int)(bounds.Top + bounds.Height / 2));
     }
 
     private static JsonElement Json(string value)

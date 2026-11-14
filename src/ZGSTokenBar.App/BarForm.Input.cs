@@ -17,7 +17,11 @@ internal sealed partial class BarForm
             return;
         }
 
-        var logical = ToLogical(e.Location);
+        TrackMiniHover(ToLogical(e.Location));
+    }
+
+    internal void TrackMiniHover(PointF logical)
+    {
         {
             var onChip = !_glassChipBounds.IsEmpty && _glassChipBounds.Contains(logical);
             if (onChip != _glassChipHovered)
@@ -30,8 +34,7 @@ internal sealed partial class BarForm
                 UpdateSystemUsageHover(false);
                 UpdateCodexAccountsHover(null);
                 UpdateQuotaHover(null);
-                _hoverPluginTarget = null;
-                UpdateHintHover(HoverTarget.None);
+                UpdatePluginHoverTarget(null);
                 _hoverTarget = HoverTarget.None;
                 Cursor = Cursors.Hand;
                 return;
@@ -46,16 +49,7 @@ internal sealed partial class BarForm
             && !systemUsageTarget
             ? TaskbarPluginTargetAt(logical)
             : null;
-        var pluginChanged = !string.Equals(
-            _hoverPluginTarget?.Card.Card.Id,
-            pluginTarget?.Card.Card.Id,
-            StringComparison.Ordinal);
-        _hoverPluginTarget = pluginTarget;
-        if (pluginChanged)
-        {
-            if (_hintPopover?.Visible == true) HideHintPopover();
-            Invalidate();
-        }
+        UpdatePluginHoverTarget(pluginTarget);
         var quotaTarget = codexAccountTarget is null
             && pluginTarget is null && !systemUsageTarget
             ? TaskbarQuotaTargetAt(logical)
@@ -90,8 +84,7 @@ internal sealed partial class BarForm
         UpdateSystemUsageHover(false);
         UpdateCodexAccountsHover(null);
         UpdateQuotaHover(null);
-        _hoverPluginTarget = null;
-        UpdateHintHover(HoverTarget.None);
+        UpdatePluginHoverTarget(null);
         _hoverTarget = HoverTarget.None;
         Cursor = Cursors.Default;
         _glassChipHovered = false;
@@ -109,8 +102,10 @@ internal sealed partial class BarForm
             return;
         }
         var logical = ToLogical(e.Location);
-        // The overflow chip is a button: pressing it never starts a bar drag.
-        if (_glassChipBounds.Contains(logical)) return;
+        _popoverHoverTimer.Stop();
+        // These buttons keep their click path separate from dragging and opening Settings.
+        if (_glassChipBounds.Contains(logical) || TaskbarPluginTargetAt(logical)?.Card.PluginId == MiniAreaIds.Intake)
+            return;
 
         var now = DateTime.UtcNow;
         var doubleClick = now - _lastDragClickAt <= TimeSpan.FromMilliseconds(SystemInformation.DoubleClickTime)

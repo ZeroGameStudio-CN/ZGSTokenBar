@@ -126,7 +126,6 @@ internal sealed partial class BarForm : Form
     private MiniQuotaTarget? _hoverQuotaTarget;
     private (RectangleF Bounds, QuotaCard Card)? _hoverCodexAccountTarget;
     private (RectangleF Bounds, PluginMiniCardView Card)? _hoverPluginTarget;
-    private HoverTarget _hoverHintTarget;
     private bool _hoverSystemUsage;
     private string? _popoverTargetId;
     private QuotaPopoverForm? _quotaPopover;
@@ -194,7 +193,7 @@ internal sealed partial class BarForm : Form
         _glassExpanded = settings.GlassDockExpanded;
         _animationsEnabled = settings.EnableAnimations && SystemInformation.IsMenuAnimationEnabled;
         _animationTimer.Tick += (_, _) => AdvanceAnimation();
-        _popoverHoverTimer.Tick += (_, _) => ShowHoveredPopover();
+        _popoverHoverTimer.Tick += (_, _) => ShowHoveredPopover(Cursor.Position);
         _popoverStateTimer.Tick += (_, _) => MonitorPopover();
         _shellSettleTimer.Tick += (_, _) =>
         {
@@ -256,7 +255,7 @@ internal sealed partial class BarForm : Form
     public bool HasOpenHoverOrPopover =>
         _hoverTarget != HoverTarget.None || _hoverSystemUsage
         || _quotaPopover?.Visible == true || _codexAccountsPopover?.Visible == true
-        || _hintPopover?.Visible == true || _systemUsagePopover?.Visible == true
+        || _systemUsagePopover?.Visible == true
         || _pluginPopover?.Visible == true;
     internal void SetGlassExpandedForAcceptance(bool expanded) => SetGlassExpanded(expanded);
 
@@ -297,7 +296,7 @@ internal sealed partial class BarForm : Form
         ApplySnapshotLayout();
         RefreshQuotaPopover();
         RefreshCodexAccountsPopover();
-        RefreshHintPopover();
+        RefreshPluginHintContent();
         Invalidate();
     }
 
@@ -386,6 +385,12 @@ internal sealed partial class BarForm : Form
             }
         }
         _pluginMiniCards = ordered;
+        if (layoutChanged)
+        {
+            if (_hoverPluginTarget is not null) UpdatePluginHoverTarget(null);
+            if (!_popoverPinned) HidePluginPopover();
+        }
+        else RefreshPluginHintContent();
         ApplySnapshotLayout(updatePlacement: layoutChanged);
         Invalidate();
     }
@@ -509,7 +514,6 @@ internal sealed partial class BarForm : Form
             _refreshRotation = 0;
             if (!_snapshotAnimating) _animationTimer.Stop();
         }
-        RefreshHintPopover();
         Invalidate();
     }
 
@@ -569,7 +573,6 @@ internal sealed partial class BarForm : Form
             if (!Visible && !_hiddenToTray) Show();
         }
         if (activation?.MigrationCommit is { } migration) PlacementCommitted?.Invoke(this, migration);
-        RefreshHintPopover();
         Invalidate();
         ScheduleEmbedHealthCheck("settings");
     }

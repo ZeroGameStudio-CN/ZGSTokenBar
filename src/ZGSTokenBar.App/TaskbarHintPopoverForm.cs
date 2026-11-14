@@ -19,12 +19,12 @@ internal sealed class TaskbarHintPopoverForm : Form
     private const int NoActivateStyle = 0x08000000;
     private const int WmMouseActivate = 0x0021;
     private const int MouseActivateNoActivate = 3;
-    private const int ExitDurationMs = 90;
+    private const int WmNcHitTest = 0x0084;
+    private const int HitTransparent = -1;
 
     private readonly Font _titleFont = new("Segoe UI", 10.5f, FontStyle.Bold, GraphicsUnit.Pixel);
     private readonly Font _detailFont = new("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Pixel);
     private readonly System.Windows.Forms.Timer _entranceTimer = new() { Interval = 16 };
-    private readonly System.Windows.Forms.Timer _exitTimer = new() { Interval = 16 };
     private string _title = string.Empty;
     private string[] _detailLines = [];
     private QuotaBackgroundTheme _backgroundTheme = QuotaBackgroundPalette.Resolve(
@@ -37,16 +37,10 @@ internal sealed class TaskbarHintPopoverForm : Form
     private DateTime _entranceStarted;
     private Point _entranceLocation;
     private Point _restingLocation;
-    private DateTime _exitStarted;
-    private Point _exitStartLocation;
-    private Point _exitLocation;
-    private double _exitStartOpacity = 1;
-    private bool _animateMotion;
 
     public TaskbarHintPopoverForm()
     {
         _entranceTimer.Tick += (_, _) => AdvanceEntrance();
-        _exitTimer.Tick += (_, _) => AdvanceExit();
         AutoScaleMode = AutoScaleMode.None;
         BackColor = UiTokens.CardSurface;
         FormBorderStyle = FormBorderStyle.None;
@@ -94,8 +88,6 @@ internal sealed class TaskbarHintPopoverForm : Form
         bool animateMotion)
     {
         var wasVisible = Visible;
-        _exitTimer.Stop();
-        _animateMotion = animateMotion;
         _title = title;
         _detailLines = Lines(detail);
         _scale = Math.Max(1, scale);
@@ -164,27 +156,24 @@ internal sealed class TaskbarHintPopoverForm : Form
         return bitmap;
     }
 
+    internal void UpdateContent(string title, string detail)
+    {
+        var lines = Lines(detail);
+        if (_title == title && _detailLines.SequenceEqual(lines)) return;
+        _title = title;
+        _detailLines = lines;
+        // A data refresh must not move the window, cancel its entrance, or
+        // restart the pointer leave grace. Text remains bounded by the card.
+        Invalidate();
+    }
+
     internal static int LogicalBodyHeightFor(string detail) => BodyHeight(detail);
 
-    public void HidePopover()
+    public void HideImmediately()
     {
         _entranceTimer.Stop();
-        if (!Visible) return;
-        if (!_animateMotion)
-        {
-            Opacity = 1;
-            Hide();
-            return;
-        }
-
-        _exitStartLocation = Location;
-        _exitLocation = TaskbarPopoverMath.OffsetFromAnchor(
-            Location,
-            _tailSide,
-            Math.Max(1, Scale(2)));
-        _exitStartOpacity = Opacity;
-        _exitStarted = DateTime.UtcNow;
-        _exitTimer.Start();
+        Hide();
+        Opacity = 1;
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -209,6 +198,11 @@ internal sealed class TaskbarHintPopoverForm : Form
 
     protected override void WndProc(ref Message message)
     {
+        if (message.Msg == WmNcHitTest)
+        {
+            message.Result = HitTransparent;
+            return;
+        }
         if (message.Msg == WmMouseActivate)
         {
             message.Result = MouseActivateNoActivate;
@@ -255,19 +249,6 @@ internal sealed class TaskbarHintPopoverForm : Form
         _entranceTimer.Stop();
         Opacity = 1;
         if (!TaskbarPlacement.ShowAt(Handle, _restingLocation, ClientSize)) Location = _restingLocation;
-    }
-
-    private void AdvanceExit()
-    {
-        var progress = Math.Clamp((DateTime.UtcNow - _exitStarted).TotalMilliseconds / ExitDurationMs, 0, 1);
-        var eased = TaskbarPopoverMath.ExitEase(progress);
-        var location = TaskbarPopoverMath.Interpolate(_exitStartLocation, _exitLocation, eased);
-        Opacity = TaskbarPopoverMath.FadeOut(_exitStartOpacity, eased);
-        if (!TaskbarPlacement.ShowAt(Handle, location, ClientSize)) Location = location;
-        if (progress < 1) return;
-        _exitTimer.Stop();
-        Opacity = 1;
-        Hide();
     }
 
     private static int BodyHeight(string detail) =>
@@ -349,8 +330,6 @@ internal sealed class TaskbarHintPopoverForm : Form
         {
             _entranceTimer.Stop();
             _entranceTimer.Dispose();
-            _exitTimer.Stop();
-            _exitTimer.Dispose();
             _titleFont.Dispose();
             _detailFont.Dispose();
         }

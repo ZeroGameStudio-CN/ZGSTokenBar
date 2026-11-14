@@ -54,7 +54,7 @@ test('glass ring targets remain the quota hover and pin targets', () => {
   const resolveTarget = boundedSlice(
     barForm,
     'private MiniQuotaTarget? ResolveQuotaTarget(',
-    'private Rectangle QuotaTargetScreenBounds(');
+    'Rectangle QuotaTargetScreenBounds(');
   assert.match(resolveTarget, /_taskbarWindowBounds\.FirstOrDefault\(target => string\.Equals\(target\.Id, id, StringComparison\.Ordinal\)\)/);
   assert.match(barForm, /private void MonitorQuotaPopover\(\)[\s\S]*?ResolveQuotaTarget\(_popoverTargetId\)/);
   assert.match(barForm, /private void RefreshQuotaPopover\(\)[\s\S]*?ResolveQuotaTarget\(_popoverTargetId\)/);

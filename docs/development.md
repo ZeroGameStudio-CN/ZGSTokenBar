@@ -214,7 +214,8 @@ and cached native page rendering without execution controls or production settin
 
 The **Work intake** inbox icon sits beside Router in the Mini. Left-click it
 to open a separate read-only window. Its switch in Settings → Modules is
-independent of Router. Hovering or leaving the icon visible makes no requests.
+independent of Router. Hover shows a label; moving to another icon switches the
+hint, and leaving the icon and hint dismisses it. Hover makes no requests.
 The window uses the current user's managed Zero OS CLI and its existing session. The project list
 comes from work item read access; access to a project does not imply that
 automatic dispatch is enabled there. Select a recent item or enter its number
