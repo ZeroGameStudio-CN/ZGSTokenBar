@@ -92,7 +92,8 @@ internal static class TaskbarPlacement
 
     /// <summary>Finds the closest full-width space without splitting the bar or covering a Shell target.</summary>
     internal static bool TryGetRowLocation(
-        PlacementTrack track, Size size, Point anchor, IReadOnlyList<Rectangle>? occupied, out Point location)
+        PlacementTrack track, Size size, Point anchor, IReadOnlyList<Rectangle>? occupied, out Point location,
+        int extraClearance = 0)
     {
         location = Point.Empty;
         if (!track.Horizontal || occupied is not { Count: > 0 } || size.Width <= 0 || size.Height <= 0)
@@ -106,8 +107,8 @@ internal static class TaskbarPlacement
         foreach (var obstacle in occupied.OrderBy(bounds => bounds.Left))
         {
             if (!row.IntersectsWith(obstacle)) continue;
-            ConsiderGap(left, obstacle.Left - Gap);
-            left = Math.Max(left, obstacle.Right + Gap);
+            ConsiderGap(left, obstacle.Left - Gap - extraClearance);
+            left = Math.Max(left, obstacle.Right + Gap + extraClearance);
         }
         ConsiderGap(left, row.Right - Gap);
         if (bestDistance == int.MaxValue) return false;
@@ -123,6 +124,19 @@ internal static class TaskbarPlacement
             bestX = x;
             bestDistance = distance;
         }
+    }
+
+    internal static bool CurrentRowLocationFits(
+        PlacementTrack track, Size size, Point current, IReadOnlyList<Rectangle> occupied, int extraClearance = 0)
+    {
+        var row = Rectangle.Intersect(track.TaskbarBounds, track.ScreenBounds);
+        var bounds = new Rectangle(current, size);
+        if (!track.Horizontal || size.Width <= 0 || size.Height <= 0 || !row.Contains(bounds)
+            || bounds.Left < row.Left + Gap || bounds.Right > row.Right - Gap) return false;
+        bounds.Inflate(Gap + extraClearance, 0);
+        foreach (var obstacle in occupied)
+            if (bounds.IntersectsWith(obstacle)) return false;
+        return true;
     }
 
     /// <summary>Uses the desktop side of the taskbar, preserving the current size and monitor.</summary>

@@ -244,8 +244,11 @@ executable checks full-width fit and fallback, detach coordinates, stale-parent
 recovery, drag z-order and same-resolution session reconnects. Experimental
 embedding reads the primary taskbar's button bounds on a background worker.
 A missing or crowded layout uses an adjacent overlay (`fallback:layout-unavailable`
-or `fallback:no-clear-space`) without shrinking the bar. Placement does not modify
-the Shell layout; when the experimental setting is off, docking uses the adjacent overlay.
+or `fallback:no-clear-space`) without shrinking the bar. A verified position stays
+put while it fits. When returning from beside the taskbar, the same gap must
+be verified again after two seconds (`fallback:waiting-for-space` while waiting).
+Placement does not modify the Shell layout; when the experimental setting is off,
+docking uses the adjacent overlay.
 It also reports `recentConversationCount` and
 `latestTurnOutputTokensPerSecond`. The latter is output tokens divided by the
 entire turn's wall time, including tools and waiting, not server decode throughput.
