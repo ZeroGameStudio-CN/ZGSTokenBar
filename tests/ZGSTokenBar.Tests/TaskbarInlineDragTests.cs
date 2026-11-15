@@ -60,6 +60,35 @@ internal static class TaskbarInlineDragTests
             Check(TaskbarPlacement.SelectDockTrack([track], cursor with { Y = row.Top - 33 * scale },
                 null, 32 * scale) is null, "A deliberate outward pull leaves the scaled capture zone");
 
+            // Re-enter while the button is still held. This uses the real native
+            // top-level window without sending pointer input to the desktop.
+            TaskbarEmbedding.Detach(bar.Handle, original!.Value);
+            Set("_embedParent", (nint)0); Set("_embedOriginalStyle", null);
+            Set("_taskbarRowOverlayFor", (nint)0); Set("_taskbarDocked", false);
+            Set("_taskbarDragging", true); Set("_taskbarDragMoved", true);
+            var floating = new Point(start.X, row.Top - 120 * scale);
+            Check(TaskbarPlacement.MoveAt(bar.Handle, floating, bar.Size), "Fixture leaves the row");
+            var destination = new Point(safeLeft + (safeRight - safeLeft) / 2, track.Fixed);
+            Check(!bar.TryMoveDragInRow(track, destination), "Background placement cannot bypass deliberate-entry admission");
+            Set("_taskbarRowSample", (new Rectangle[] { apps, tray }, Environment.TickCount64 - 4000));
+            Check(!bar.TryMoveDragInRow(track, destination, allowEntry: true),
+                "A stale snapshot cannot admit a held drag into native controls");
+            Set("_taskbarRowSample", (new Rectangle[] { row }, Environment.TickCount64));
+            Check(!bar.TryMoveDragInRow(track, destination, allowEntry: true),
+                "A crowded row never admits the whole bar");
+            Set("_taskbarRowSample", (new Rectangle[] { apps, tray }, Environment.TickCount64));
+            Check(bar.TryMoveDragInRow(track, destination, allowEntry: true)
+                && bar.ScreenBounds.Location == destination && bar.Visible,
+                "A fresh clear gap places the held drag in the row before mouse-up");
+            Check(!bar.EmbeddedInTaskbar && bar.TaskbarEmbedStatus.StartsWith("overlay:"),
+                "The held preview retains capture on its top-level window");
+            Set("_taskbarDragging", false); Set("_taskbarDragMoved", false);
+            object?[] arguments = [track, bar.Size, destination, bar.ScreenBounds, false, null, null, false, false];
+            var accepted = (bool)typeof(BarForm).GetMethod("TryGetSafeRowLocation",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(bar, arguments)!;
+            Check(accepted && (Point)arguments[5]! == destination,
+                "Release keeps the verified preview coordinates instead of returning to the adjacent overlay");
+
             void Set(string name, object? value) =>
                 typeof(BarForm).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(bar, value);
         }

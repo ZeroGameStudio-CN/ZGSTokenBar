@@ -17,6 +17,15 @@ internal sealed partial class BarForm
 
     public void SyncTaskbarPlacement()
     {
+        if (_taskbarDragging && _taskbarDragMoved)
+        {
+            // A completed layout probe or the watchdog also advances a held drag:
+            // entering a clear row must not require another mouse-move or mouse-up.
+            if (_embedTransition || _placingTaskbar || IsDisposed || !IsHandleCreated || _hiddenToTray) return;
+            if ((Control.MouseButtons & MouseButtons.Left) != 0) MoveTaskbarDrag(Cursor.Position);
+            else FinishTaskbarDrag();
+            return;
+        }
         if (!_taskbarDocked)
         {
             _adjacentTaskbarTrack = null;
@@ -26,7 +35,6 @@ internal sealed partial class BarForm
         }
         if (_hiddenToTray
             || !_taskbarDocked
-            || (_taskbarDragging && _taskbarDragMoved)
             || _embedTransition
             || _placingTaskbar
             || IsDisposed
@@ -534,6 +542,11 @@ internal sealed partial class BarForm
         }
 
         var currentScreen = Cursor.Position;
+        MoveTaskbarDrag(currentScreen);
+    }
+
+    private void MoveTaskbarDrag(Point currentScreen)
+    {
         var deltaX = currentScreen.X - _taskbarDragStartScreen.X;
         var deltaY = currentScreen.Y - _taskbarDragStartScreen.Y;
         if (!_taskbarDragMoved)
@@ -557,7 +570,7 @@ internal sealed partial class BarForm
             _taskbarDragStartLocation.Y + deltaY);
         var preferredMonitor = PreferredTaskbarMonitor();
         if (TaskbarPlacement.TryGetDragTrack(Size, currentScreen, preferredMonitor, out var inlineTrack, Scale(32))
-            && TryMoveDragInRow(inlineTrack, requested)) return;
+            && TryMoveDragInRow(inlineTrack, requested, allowEntry: true)) return;
 
         // Leave the taskbar only after inline movement is no longer possible.
         if (_embedParent != 0) DetachFromTaskbar("dragging");
@@ -575,24 +588,40 @@ internal sealed partial class BarForm
             _resolvedTaskbarMonitor = resolvedMonitor;
             _taskbarDragCurrentLocation = dockedLocation;
             if (!TaskbarPlacement.MoveAt(Handle, dockedLocation, Size)) Location = dockedLocation;
+            if (!Visible && !_hiddenToTray) Show();
             return;
         }
 
         _taskbarDocked = false;
         _taskbarDragCurrentLocation = requested;
         if (!TaskbarPlacement.MoveAt(Handle, requested, Size)) Location = requested;
+        if (!Visible && !_hiddenToTray) Show();
     }
 
-    internal bool TryMoveDragInRow(TaskbarPlacement.PlacementTrack track, Point requested)
+    internal bool TryMoveDragInRow(TaskbarPlacement.PlacementTrack track, Point requested, bool allowEntry = false)
     {
-        var rowOverlay = !EmbeddedInTaskbar;
-        if (!_embedRequested || !IsHandleCreated || IsDisposed
-            || (rowOverlay ? _taskbarRowOverlayFor : _embedParent) != track.TaskbarWindow) return false;
-        if (!TryGetSafeRowLocation(track, Size, requested, ScreenBounds, rowOverlay,
-            out var location, out _, followAnchor: true)) return false;
-        if (!TaskbarPlacement.MoveAt(Handle, location, Size)) return false;
+        if (!_embedRequested || !IsHandleCreated || IsDisposed) return false;
+        var alreadyInRow = EmbeddedInTaskbar && _embedParent == track.TaskbarWindow
+            || _taskbarRowOverlayFor == track.TaskbarWindow;
+        var intentionalEntry = allowEntry && _taskbarDragging && _taskbarDragMoved;
+        if (!alreadyInRow && !intentionalEntry) return false;
         _taskbarDocked = true;
         _resolvedTaskbarMonitor = track.MonitorName;
+        if (intentionalEntry) ApplyTaskbarDpi(TaskbarEmbedding.DpiOf(track.TaskbarWindow));
+        var rowOverlay = !EmbeddedInTaskbar || _embedParent != track.TaskbarWindow;
+        if (rowOverlay && TaskbarPlacement.ShouldHideForFullscreen(track.MonitorName)) return false;
+        if (!TryGetSafeRowLocation(track, Size, requested, ScreenBounds, rowOverlay,
+            out var location, out _, followAnchor: true, intentionalEntry: intentionalEntry)) return false;
+        if (rowOverlay && EmbeddedInTaskbar) DetachFromTaskbar("drag-target");
+        if (!TaskbarPlacement.MoveAt(Handle, location, Size)) return false;
+        // Keep capture on a top-level row preview while held; commit the native
+        // parent swap in place on release, without moving back above the row.
+        if (rowOverlay)
+        {
+            _taskbarRowOverlayFor = track.TaskbarWindow;
+            TaskbarEmbedStatus = RemoteSession() ? "overlay:remote-session" : "overlay:drag-preview";
+        }
+        if (!Visible && !_hiddenToTray) Show();
         _taskbarDragCurrentLocation = location;
         return true;
     }

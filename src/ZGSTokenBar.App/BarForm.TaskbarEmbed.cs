@@ -88,7 +88,7 @@ internal sealed partial class BarForm
 
     private bool TryGetSafeRowLocation(
         TaskbarPlacement.PlacementTrack track, Size size, Point anchor, Rectangle currentBounds, bool rowOverlay,
-        out Point location, out string reason, bool followAnchor = false)
+        out Point location, out string reason, bool followAnchor = false, bool intentionalEntry = false)
     {
         location = Point.Empty;
         reason = "";
@@ -120,9 +120,8 @@ internal sealed partial class BarForm
             StartTaskbarRowProbe(key);
         }
         var occupied = elapsed < LayoutMaximumAgeMs ? observed.Occupied : null;
-        var alreadyInRow = rowOverlay
-            ? _taskbarRowOverlayFor == track.TaskbarWindow
-            : EmbeddedInTaskbar && _embedParent == track.TaskbarWindow;
+        var alreadyInRow = _taskbarRowOverlayFor == track.TaskbarWindow
+            || EmbeddedInTaskbar && _embedParent == track.TaskbarWindow;
         var awaitingLayout = _taskbarRowStability.AwaitingLayout;
         var extraClearance = Scale(RowBreathingRoom);
         // Only enter the brief stale-layout grace period from a seat with room for an
@@ -153,7 +152,8 @@ internal sealed partial class BarForm
             reason = "no-clear-space";
             return false;
         }
-        if (alreadyInRow || _taskbarRowStability.CanReturn(new Rectangle(location, size), observed.ReadAt))
+        if (alreadyInRow || intentionalEntry
+            || _taskbarRowStability.CanReturn(new Rectangle(location, size), observed.ReadAt))
             return true;
         reason = "waiting-for-space";
         return false;
