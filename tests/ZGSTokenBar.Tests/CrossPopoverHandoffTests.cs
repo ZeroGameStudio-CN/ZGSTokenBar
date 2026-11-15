@@ -91,6 +91,22 @@ internal static class CrossPopoverHandoffTests
             VerifyLeave(bar, accounts, Center(accounts.Bounds), () => Invoke(bar, "RefreshCodexAccountsPopover"));
             VerifyExitIsStable(accounts, () => accounts.HidePopover(), animate);
 
+            Invoke(bar, "UpdateCodexAccountsHover", (quotaBounds, card));
+            Invoke(bar, "ShowCodexAccountsPopover", (quotaBounds, card));
+            var sibling = card with { Key = "sibling" };
+            Invoke(bar, "UpdateCodexAccountsHover", (quotaBounds, sibling));
+            Check(!accounts.Visible || accounts.IsClosing, "Changing accounts retires the old shown account before its leave timer runs");
+            bar.MonitorPopover(new(20000, 20000), false, false, DateTime.UtcNow.AddMilliseconds(151));
+            bar.ShowHoveredPopover(quotaScreen);
+            Check(accounts.Visible && !accounts.IsClosing &&
+                Get<(RectangleF Bounds, QuotaCard Card)?>(bar, "_codexPopoverTarget")?.Card.Key == sibling.Key,
+                "The outgoing account cannot clear the incoming account's pending hover");
+
+            Invoke(bar, "UpdateSystemUsageHover", true);
+            Invoke(bar, "UpdateCodexAccountsHover", new object?[] { null }!);
+            Invoke(bar, "UpdateQuotaHover", new object?[] { null }!);
+            Check(Get<System.Windows.Forms.Timer>(bar, "_popoverHoverTimer").Enabled,
+                "Clearing the previous account target cannot cancel the system hover armed earlier in the same mouse message");
             Invoke(bar, "ShowSystemUsagePopover", false);
             var system = Get<SystemUsagePopoverForm>(bar, "_systemUsagePopover");
             bar.TrackMiniHover(nextPoint);

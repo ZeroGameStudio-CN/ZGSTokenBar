@@ -74,6 +74,7 @@ internal sealed partial class BarForm
         _hoverSystemUsage = hovered;
         if (!hovered) return;
         HideQuotaPopover();
+        HideCodexAccountsPopover();
         _hoverSystemUsage = true;
         SystemUsageDetailsRequested?.Invoke(this, EventArgs.Empty);
         _popoverHoverTimer.Start();
@@ -106,6 +107,8 @@ internal sealed partial class BarForm
 
         HideSystemUsagePopover();
         if (_quotaPopover?.Visible == true) HideQuotaPopover();
+        if (_codexPopoverTarget is { } shown && shown.Card.Key != nextKey) HideCodexAccountsPopover();
+        _hoverCodexAccountTarget = target;
         _popoverHoverTimer.Start();
     }
 
