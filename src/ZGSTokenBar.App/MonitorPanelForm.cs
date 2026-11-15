@@ -117,7 +117,7 @@ internal abstract class MonitorPanelForm : Form, IPluginPopoverContent
     {
         if (IsDisposed || Visible) return;
         using var trace = PerfTrace.Measure("router.panel.prewarm");
-        SetPinned(true);
+        SetPinned(false);
         var nextScale = Math.Max(1, scale);
         SuspendLayout();
         if (Math.Abs(nextScale - _popoverScale) > .001) Scale(new SizeF(nextScale / _popoverScale, nextScale / _popoverScale));

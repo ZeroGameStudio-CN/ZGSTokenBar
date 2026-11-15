@@ -57,6 +57,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
     private readonly RouterModule _routerModule;
     private readonly OtherToolsModule _otherToolsModule;
     private IntakeObserverForm? _intakeObserver;
+    private readonly System.Windows.Forms.Timer _intakeWarmup = new() { Interval = 900 };
     private readonly ZgsNamedPipeServer _apiServer;
     private readonly ZgsTokenBarHost.Subscription _pluginSubscription;
     private readonly Task _pluginEventTask;
@@ -279,6 +280,12 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _routerModule = new(_bar, _pluginHost,
             () => _settings.IsPluginEnabled(ZGSTokenBar.Plugin.Router.RouterPlugin.Id, false), _shutdown.Token,
             _refreshScheduler);
+        _intakeWarmup.Tick += (_, _) =>
+        {
+            _intakeWarmup.Stop();
+            if (!_quitting && IntakeEnabled) EnsureIntakeObserver().Prewarm(_bar.UiScale, _bar.UiTheme);
+        };
+        _intakeWarmup.Start();
         _apiServer.Start();
         _pluginEventTask = WatchPluginEventsAsync();
 
@@ -346,6 +353,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _updateTimer.Stop();
         _clockTimer.Stop();
         _confirmationTimer.Stop();
+        _intakeWarmup.Stop();
         _settingsDialog?.Dispose();
         _settingsDialog = null;
         _intakeObserver?.Close();
@@ -396,6 +404,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
             _updateTimer.Dispose();
             _clockTimer.Dispose();
             _confirmationTimer.Dispose();
+            _intakeWarmup.Dispose();
             _activationWait.Unregister(null);
             _settingsDialog?.Dispose();
             _intakeObserver?.Dispose();

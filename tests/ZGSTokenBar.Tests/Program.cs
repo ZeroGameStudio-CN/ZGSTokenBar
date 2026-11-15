@@ -136,6 +136,13 @@ if (args.Length is 1 or 2 && args[0] == "--intake-observer")
     return 0;
 }
 
+if (args.Length is 1 or 2 && args[0] == "--dock-overflow")
+{
+    GlassDockOverflowTests.Run(args.Length == 2 ? args[1] : null);
+    Console.WriteLine("PASS zero-usage account overflow, expansion, attention and native hit layout");
+    return 0;
+}
+
 if (args.Length is 1 or 2 && args[0] == "--interactive-quota")
 {
     InteractiveQuotaTests.Run(args.Length == 2 ? args[1] : null);
@@ -593,6 +600,7 @@ var tests = new (string Name, Action Run)[]
     ("Taskbar Mini popover placement", TestTaskbarMiniPopoverPlacement),
     ("Taskbar embed attach, detach and parent loss", TestTaskbarEmbeddingWithFakeTaskbar),
     ("Glass dock rate and router slots are layout-stable", TestGlassDockStableSlots),
+    ("Glass dock preserves unused accounts in overflow", () => GlassDockOverflowTests.Run()),
     ("Grok plan comes from the settings cache, never the sign-in type", TestGrokPlanFromSettingsCache),
     ("Expired Grok CLI session is renewed with its refresh token", TestGrokExpiredSessionIsRenewed),
     ("Popovers never get a cyclic or self owner", TestPopoverOwnerNeverCyclic),
@@ -1059,7 +1067,7 @@ static void TestAiGatewayPluginPackage(string packagePath, string sha256)
         var proxy = manager.LoadProcessPlugins(credentialBroker).OfType<ProcessPluginProxy>().Single();
         try
         {
-            Equal("1.2.3", proxy.Manifest.Version, "package advertises the hardened local-discovery version");
+            Equal("1.2.4", proxy.Manifest.Version, "package advertises the patched-runtime local-discovery version");
             Equal("DeepSeek Harness", proxy.Manifest.DisplayName, "package advertises the Harness provider name");
             Equal(2, proxy.Manifest.Capabilities.Count, "package declares balance and local-discovery capabilities");
             Equal(true, proxy.Manifest.Capabilities.Contains("balance"), "package declares generic balance data");

@@ -28,7 +28,9 @@ internal static class IntakeObserverTests
         MiniEntry(captures);
         HoverHandoff(captures);
         PanelParity();
+        PrewarmedPanel();
         RefreshSelectedAndRecent();
+        RefreshKeepsKeyboardSelection();
         var denied = false;
         var switched = false;
         var reads = new List<string>();
@@ -212,6 +214,101 @@ internal static class IntakeObserverTests
         RunOnUi(form.RefreshVisibleAsync());
         Check(form.Observation is { Projects: 0, Recent: 0, Timeline: 0, ItemLoaded: false },
             "Revoked access clears both refreshed surfaces and their selection");
+    }
+
+    private static void RefreshKeepsKeyboardSelection()
+    {
+        var order = Enumerable.Range(1, 16).ToArray();
+        var gets = new List<Guid>();
+        Guid Id(int index) => Guid.Parse($"00000000-0000-4000-8000-{index:000000000000}");
+        var client = new IntakeObserverClient((args, _) =>
+        {
+            if (args[0] == "whoami")
+                return Task.FromResult(Json("""{"subject":"fixture","authorization_revision":"same","projects":[],"project_access":[{"project_key":"LAB","capabilities":["work_item.read"]}]}"""));
+            if (args[0] == "list")
+                return Task.FromResult(Json(JsonSerializer.Serialize(new { items = order.Select(index => new {
+                    work_item_id = Id(index), work_item_number = $"LAB-{index}", project_key = "LAB",
+                    title = $"item {index}", status = "rework" }) })));
+            if (args[0] == "get")
+            {
+                var id = Guid.Parse(args[1]); gets.Add(id);
+                return Task.FromResult(Json(JsonSerializer.Serialize(new { item = new {
+                    work_item_id = id, work_item_number = "LAB-1", project_key = "LAB", title = "selected", status = "rework" } })));
+            }
+            if (args[0] == "history") return Task.FromResult(Json("""{"transitions":[]}"""));
+            throw new InvalidOperationException("Unexpected fixture request");
+        });
+        using var form = new IntakeObserverForm(true, client, observeOnShow: false) { Opacity = 0 };
+        form.ConfigureFor(new(400, 1000, 48, 44), true, 1,
+            QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), new(0, 0, 1280, 1032));
+        form.Show(); RunOnUi(form.LoadRecentAsync());
+        System.Windows.Forms.Application.DoEvents();
+        var grid = Controls(form).OfType<RouterGrid>().Single(table => table.Columns.Count == 4);
+        SelectFirst();
+        var original = grid.Rows[0];
+        (order[0], order[1]) = (order[1], order[0]);
+        RunOnUi(form.RefreshVisibleAsync()); System.Windows.Forms.Application.DoEvents();
+        Check(grid.SelectedRows.Count == 1 && ((IntakeItem)grid.SelectedRows[0].Tag!).Id == Id(1)
+            && grid.CurrentRow?.Tag is IntakeItem { Id: var current } && current == Id(1)
+            && grid.CurrentCell?.ColumnIndex == 1 && ReferenceEquals(original, grid.Rows[0]),
+            "A reordered item retains the same highlight, keyboard target and column without replacing row objects");
+        Enter();
+        Check(gets.Count == 1 && gets[0] == Id(1), "Enter opens the highlighted item after a refresh reorders it");
+
+        order = order.Where(index => index != 16).ToArray();
+        RunOnUi(form.RefreshVisibleAsync()); System.Windows.Forms.Application.DoEvents();
+        Check(grid.CurrentRow?.Tag is IntakeItem { Id: var retained } && retained == Id(1),
+            "Deferred pagination after a count change retains the selected item's keyboard target");
+        order = order.Where(index => index != 1).ToArray();
+        RunOnUi(form.RefreshVisibleAsync()); System.Windows.Forms.Application.DoEvents();
+        var beforeEnter = gets.Count;
+        Check(grid.CurrentCell is null && grid.SelectedRows.Count == 0,
+            $"Removing the selected item clears focus: row={grid.CurrentRow?.Index}, selected={grid.SelectedRows.Count}");
+        Enter();
+        Check(gets.Count == beforeEnter, "Enter cannot open an unselected replacement after the selected item disappears");
+
+        SelectFirst();
+        order = order.Reverse().ToArray();
+        RunOnUi(form.RefreshVisibleAsync()); System.Windows.Forms.Application.DoEvents();
+        beforeEnter = gets.Count;
+        Check(grid.CurrentCell is null && grid.SelectedRows.Count == 0,
+            "Moving the selected item off the current page clears its keyboard focus");
+        Enter();
+        Check(gets.Count == beforeEnter,
+            "An item moved off the current page cannot leave an unrelated keyboard target behind");
+
+        void SelectFirst()
+        {
+            grid.ClearSelection();
+            grid.CurrentCell = grid.Rows[0].Cells[1];
+            grid.Rows[0].Selected = true;
+        }
+        void Enter() => typeof(System.Windows.Forms.Control).GetMethod("OnKeyDown",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(grid, [new System.Windows.Forms.KeyEventArgs(System.Windows.Forms.Keys.Enter)]);
+    }
+
+    private static void PrewarmedPanel()
+    {
+        var reads = 0;
+        using var form = new IntakeObserverForm(true, new IntakeObserverClient((_, _) =>
+        {
+            reads++;
+            throw new InvalidOperationException("Hidden prewarming must not read business data");
+        }), observeOnShow: false) { Opacity = 0 };
+        var theme = QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette);
+        form.Prewarm(2, theme);
+        var handle = form.Handle;
+        Check(!form.Visible && !form.Pinned && Controls(form).All(control => control.IsHandleCreated) && reads == 0,
+            "Prewarming creates the native hover controls without showing, pinning or reading business data");
+        for (var iteration = 0; iteration < 3; iteration++)
+        {
+            form.ConfigureFor(new(400, 2072, 52, 52), false, 2, theme, new(0, 0, 3840, 2072));
+            form.Show(); System.Windows.Forms.Application.DoEvents();
+            Check(form.Handle == handle && !form.Pinned && reads == 0,
+                "Repeated full hover reuses the prepared native window without a hidden read");
+            form.Hide();
+        }
     }
 
     private static void PanelParity()

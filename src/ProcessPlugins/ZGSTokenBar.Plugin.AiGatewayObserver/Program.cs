@@ -7,7 +7,7 @@ namespace ZGSTokenBar.Plugin.AiGatewayObserver;
 internal static class PluginIdentity
 {
     public const string Id = "zgstokenbar.provider.ai-gateway";
-    public const string Version = "1.2.3";
+    public const string Version = "1.2.4";
 }
 
 internal sealed class AiGatewayObserverPlugin : IDisposable

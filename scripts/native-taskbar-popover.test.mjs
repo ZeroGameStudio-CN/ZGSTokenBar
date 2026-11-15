@@ -30,7 +30,7 @@ const boundedSlice = (source, startMarker, endMarker) => {
 
 test('taskbar Mini discovers real quota capsules and previews after a deliberate hover', () => {
   assert.match(barForm, /_taskbarWindowBounds/);
-  assert.match(barForm, /_popoverHoverTimer = new\(\) \{ Interval = 350 \}/);
+  assert.match(barForm, /_popoverHoverTimer = new\(\) \{ Interval = 200 \}/);
   assert.match(barForm, /ShowQuotaPopover\(target, pinned: false\)/);
   assert.match(barForm, /string\.Equals\(_popoverTargetId, nextId, StringComparison\.Ordinal\)/);
   assert.match(barForm, /_hoverQuotaTarget = null;\s+_popoverTargetId = null/);

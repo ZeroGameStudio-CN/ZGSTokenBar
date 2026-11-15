@@ -48,8 +48,11 @@ internal sealed class MonitorTablePager
         {
             var size = Capacity;
             _offset = Math.Min(_offset, Math.Max(0, (_grid.RowCount - 1) / size * size));
+            var current = _grid.CurrentCell;
             _grid.CurrentCell = null;
             for (var i = 0; i < _grid.RowCount; i++) _grid.Rows[i].Visible = i >= _offset && i < _offset + size;
+            if (current?.OwningRow is { Visible: true } && current.DataGridView == _grid)
+                _grid.CurrentCell = current;
             var scale = RouterVisualGeometry.Scale(_grid);
             _page.Width = (int)(64 * scale); _page.Height = (int)(26 * scale);
             _previous.Enabled = _offset > 0; _next.Enabled = _offset + size < _grid.RowCount;

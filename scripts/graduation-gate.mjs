@@ -34,7 +34,8 @@ function removeArtifacts() {
 const commands = [
   ['node', ['scripts/graduation-static-checks.mjs']],
   ['node', ['scripts/generate-builtin-plugin-registry.mjs', '--check']],
-  ['node', ['--test', ...testFiles]],
+  // The cleanup fixtures start many native git/pwsh processes; serialize files to avoid launch contention.
+  ['node', ['--test', '--test-concurrency=1', ...testFiles]],
   ['dotnet', [
     'run',
     '--project', 'tests/ZGSTokenBar.ProviderTests/ZGSTokenBar.ProviderTests.csproj',

@@ -80,6 +80,9 @@ internal sealed partial class BarForm
                 _ => card.Key,
             };
             var title = card.Provider == ProviderKind.Codex ? "Codex" : card.DisplayLabel;
+            var needsAttention = remaining is < 20 || remaining is null && balance is null
+                || card.Balance?.TotalBalance is <= 0
+                || _snapshot.Health.Any(health => health.Provider == card.Provider && !health.Connected);
             var ring = new GlassDockRing(
                 providerId,
                 title,
@@ -91,6 +94,8 @@ internal sealed partial class BarForm
                 string.IsNullOrWhiteSpace(card.Accent) ? "#10a37f" : card.Accent)
             {
                 ExpectedRemaining = RingPace(remaining, window),
+                Warn = needsAttention,
+                OverflowOnly = !needsAttention && (window?.UsedPercent is <= 0 || !card.Active),
             };
             var name = multi ? GlassAccountName(card, ordinal) : card.DisplayLabel;
             items.Add(new GlassItem("card:" + card.Key, ring, name, ProviderLogo(card.Provider), card, window, null));
@@ -121,6 +126,8 @@ internal sealed partial class BarForm
                 // Antigravity group running low); the ring's chip shows it.
                 Warn = remaining is not null && ProviderWarning(view.PluginId),
                 ExpectedRemaining = RingPace(remaining, quota?.Window),
+                OverflowOnly = remaining is >= 100 && !ProviderWarning(view.PluginId)
+                    && (quota is null || !quota.Value.Card.Windows.Any(window => window.UsedPercent is > 0)),
             };
             items.Add(quota is { } scoped
                 ? new GlassItem(view.PluginId, ring, view.Title, icon, scoped.Card, scoped.Window, null, icon)

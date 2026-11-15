@@ -16,6 +16,9 @@ public sealed record GlassDockRing(
     /// (Antigravity). Kept in the model; the ring itself does not draw it.</summary>
     public bool Warn { get; init; }
 
+    /// <summary>A known unused account stays reachable through +N without taking a collapsed slot.</summary>
+    public bool OverflowOnly { get; init; }
+
     /// <summary>
     /// Where remaining would be under even use of the ring's window (100 − elapsed share), drawn
     /// as a thin pace tick on the ring; null without a reset time and duration, or after the reset.
@@ -170,10 +173,10 @@ public static class GlassDockLayout
     {
         var limit = VisibleCapacity(maxVisible);
         var ordered = Order(rings);
-        var count = Math.Min(limit, ordered.Length);
+        var count = Math.Min(limit, ordered.Count(ring => !ring.OverflowOnly));
         var visible = ordered.Take(count).ToArray();
         var hidden = ordered.Skip(count).ToArray();
-        var urgent = hidden.Any(ring => ring.RemainingPercent is < 20);
+        var urgent = hidden.Any(ring => ring.Warn || ring.RemainingPercent is < 20);
         return WithMonitors(new GlassDockPlan(
             visible,
             hidden.Length,
@@ -224,7 +227,7 @@ public static class GlassDockLayout
             x += ItemWidth + RingGap;
         }
 
-        x += ChipGap - RingGap;
+        x += ChipGap - (count > 0 ? RingGap : 0);
         slots.Add(new GlassDockSlot(new Rectangle(x, (Height - 22) / 2, ChipWidth, 22), true));
         x += ChipWidth;
         width = x + DividerGap + SystemWidth + PadRight;
@@ -232,7 +235,8 @@ public static class GlassDockLayout
     }
 
     private static GlassDockRing[] Order(IReadOnlyList<GlassDockRing> rings) => rings
-        .OrderBy(ring => ring.RemainingPercent ?? double.PositiveInfinity)
+        .OrderBy(ring => ring.OverflowOnly)
+        .ThenBy(ring => ring.RemainingPercent ?? double.PositiveInfinity)
         .ThenBy(ring => ring.Title, StringComparer.Ordinal)
         .ThenBy(ring => ring.AccountNumber)
         .ThenBy(ring => ring.AccountLabel, StringComparer.Ordinal)
@@ -251,7 +255,7 @@ public static class GlassDockLayout
 
         if (overflow)
         {
-            x += ChipGap - RingGap;
+            x += ChipGap - (visibleCount > 0 ? RingGap : 0);
             slots.Add(new GlassDockSlot(new Rectangle(x, (Height - 22) / 2, ChipWidth, 22), true));
         }
 

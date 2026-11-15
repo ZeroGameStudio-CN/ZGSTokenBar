@@ -336,14 +336,16 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
 
     private static void SetGridRows(DataGridView grid, IReadOnlyList<(object?[] Values, object? Tag)> rows)
     {
-        var selected = grid.CurrentRow?.Tag is IntakeItem item ? item.Id : (Guid?)null;
+        var selected = grid.SelectedRows.Cast<DataGridViewRow>().Select(row => row.Tag).OfType<IntakeItem>().FirstOrDefault()?.Id;
+        var selectedColumn = grid.CurrentCell?.ColumnIndex ?? 0;
         grid.SuspendLayout();
         try
         {
+            grid.CurrentCell = null;
             // Preserve row objects and page offsets on ordinary refreshes.
             for (var index = 0; index < rows.Count; index++)
             {
-                if (index >= grid.RowCount) grid.Rows.Add(rows[index].Values);
+                if (index >= grid.RowCount) grid.Rows.Add();
                 var row = grid.Rows[index];
                 for (var column = 0; column < rows[index].Values.Length; column++)
                     if (!Equals(row.Cells[column].Value, rows[index].Values[column]))
@@ -351,11 +353,16 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
                 row.Tag = rows[index].Tag;
             }
             while (grid.RowCount > rows.Count) grid.Rows.RemoveAt(grid.RowCount - 1);
+            grid.CurrentCell = null;
             grid.ClearSelection();
             if (selected is { } id)
             {
                 var row = grid.Rows.Cast<DataGridViewRow>().FirstOrDefault(row => row.Tag is IntakeItem entry && entry.Id == id);
-                if (row is { Visible: true }) row.Selected = true;
+                if (row is { Visible: true })
+                {
+                    grid.CurrentCell = row.Cells[selectedColumn];
+                    row.Selected = true;
+                }
             }
         }
         finally { grid.ResumeLayout(true); }

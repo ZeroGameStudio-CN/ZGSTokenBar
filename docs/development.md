@@ -5,7 +5,7 @@ Default agent closeout and standing local-update authorization are defined in [A
 ## Requirements
 
 - Windows 10 or 11
-- .NET 10 SDK
+- .NET SDK 10.0.115 (runtime 10.0.15), pinned without roll-forward
 - Node.js 24 or newer, used only as the lightweight test/task runner
 - A terminal environment for the CLI-only acceptance workflow
 
@@ -61,7 +61,7 @@ unavailable and long-name cases at 96, 144 and 192 DPI.
 
 `npm run verify` is the graduation gate: static and Node contracts, .NET contracts, single-file App and NativeAOT CLI publication, isolated process-plugin acceptance, deterministic captures, and whitespace validation.
 
-`scripts/build-ai-gateway-observer-plugin.ps1` builds the independently verifiable DeepSeek Harness package. The portable build embeds that exact package so a normal application start can idempotently install the missing bundled version before local-only Provider discovery runs. No runtime package or pricing download is required.
+`scripts/build-ai-gateway-observer-plugin.ps1` builds the independently verifiable DeepSeek Harness package. The portable build embeds that exact package so a normal application start can idempotently install the missing bundled version before local-only Provider discovery runs. Version 1.2.4 carries the .NET 10.0.15 runtime rebuild; advancing its package version preserves immutable installed packages and allows the bundled update. No runtime package or pricing download is required.
 
 ## Task cleanup
 
@@ -229,9 +229,21 @@ to view the original status and transition history. Diagnostics are requested
 only for the selected item and keep the server's authorization and evidence
 limits. An empty diagnosis does not establish dispatch, failure, or inactivity.
 Visible refresh updates both the recent-item list and selected-item details,
-keeping the current item and page. Rows are updated in place; changed access
+keeping the current item and page. A selected item's keyboard focus follows its
+identity when rows reorder; a removed or off-page selection clears the focus.
+Rows are updated in place; changed access
 clears both surfaces before another read. Closing the window stops reads.
 The client stores no work item data on disk.
+
+Mini hovers share a 200 ms dwell delay. Both full monitor panels prepare their
+native controls shortly after startup, while hidden; intake prewarming performs
+no business reads. Opening and pinning reuse that same prepared window.
+
+The collapsed ring row keeps reporting accounts with usage, exhausted quotas,
+and accounts needing attention visible. Known zero-usage or inactive healthy
+accounts remain counted in +N and appear on explicit expansion, even below the
+normal ring limit. Signed-out modules still belong in Settings. This uses the
+reported quota window, never the momentary generation rate; manual hiding wins.
 
 For the optional **Open in ZOS** link, set
 `ZGSTOKENBAR_WORKFLOW_WEB_ORIGIN` in the app's environment to the intended HTTPS

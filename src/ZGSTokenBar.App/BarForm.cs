@@ -52,7 +52,7 @@ internal sealed partial class BarForm : Form
     private readonly Image _deepSeekLogo = LoadEmbeddedImage("ZGSTokenBar.App.Assets.deepseek-whale-icon.png");
     private readonly Image _resetClockIcon = LoadEmbeddedImage("ZGSTokenBar.App.Assets.fluent-clock-20-regular.png");
     private readonly System.Windows.Forms.Timer _animationTimer = new() { Interval = 16 };
-    private readonly System.Windows.Forms.Timer _popoverHoverTimer = new() { Interval = 350 };
+    private readonly System.Windows.Forms.Timer _popoverHoverTimer = new() { Interval = 200 };
     private readonly System.Windows.Forms.Timer _popoverStateTimer = new() { Interval = 50 };
     private readonly System.Windows.Forms.Timer _shellSettleTimer = new() { Interval = ShellSettleIntervalMs };
     private readonly WinEventDelegate _foregroundChangedHandler;
