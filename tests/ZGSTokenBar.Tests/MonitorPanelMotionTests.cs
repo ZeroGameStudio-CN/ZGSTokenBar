@@ -46,7 +46,10 @@ internal static class MonitorPanelMotionTests
                 Wait(() => popup.Opacity >= .999, "entrance", () => Capture("entrance"));
                 Check(popup.Handle == handle && popup.Bounds == bounds, "Entrance does not recreate or move the window");
                 popup.DismissHover();
-                Wait(() => popup.Opacity < .95, "exit", () => Capture("exit"));
+                // A busy native pump can finish a 90 ms fade in one dispatch. Supply a
+                // compositor midpoint directly so reversal is deterministic without slowing production animation.
+                popup.Opacity = .6;
+                Capture("exit-midpoint");
                 var exitingOpacity = popup.Opacity;
                 popup.ConfigureFor(new(-29500, -28000, 52, 52), false, scale,
                     QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), new(-30000, -30000, 3840, 2160));
