@@ -13,6 +13,7 @@ internal sealed partial class BarForm
     private bool _placingTaskbar;
     private TaskbarPlacement.PlacementTrack? _adjacentTaskbarTrack;
     private Point _adjacentTaskbarAnchor;
+    private int? _dockedRenderDpi;
 
     public void SyncTaskbarPlacement()
     {
@@ -50,6 +51,17 @@ internal sealed partial class BarForm
         var preference = _placementCoordinator.DockedPreference(topology, profile);
         if (TaskbarPlacement.TryGetTrack(placementSize, preference.PreferredMonitorName, out var track))
         {
+            // A remote/display reconnect can leave WinForms' DeviceDpi at the old value.
+            // The taskbar hosting this dock is the current authority for its visual scale.
+            if (ApplyTaskbarDpi(TaskbarEmbedding.DpiOf(track.TaskbarWindow)))
+            {
+                placementSize = Size;
+                if (!TaskbarPlacement.TryGetTrack(placementSize, preference.PreferredMonitorName, out track))
+                {
+                    if (Visible) Hide();
+                    return;
+                }
+            }
             var position = _placementCoordinator.PositionForResolvedMonitor(
                 topology, profile, track.MonitorName, preference.RelativePosition);
             _taskbarPlacementMisses = 0;
@@ -744,7 +756,31 @@ internal sealed partial class BarForm
         UpdateWindowRegion();
     }
 
-    private int EffectiveDpi() => _renderDpi ?? DeviceDpi;
+    internal int RenderDpi => EffectiveDpi();
+
+    private int EffectiveDpi() => _renderDpi ?? (_taskbarDocked ? _dockedRenderDpi : null) ?? DeviceDpi;
+
+    /// <summary>Use one scale for dock geometry, pixels, hit targets and popover anchors.</summary>
+    internal bool ApplyTaskbarDpi(int dpi)
+    {
+        if (!_taskbarDocked || _renderDpi is not null || dpi < 96
+            || _dockedRenderDpi == dpi && Math.Abs(_scale - dpi / 96f) < .001f) return false;
+        _dockedRenderDpi = dpi;
+        HidePopovers();
+        if (Visible) Hide();
+        if (EmbeddedInTaskbar) DetachFromTaskbar("dpi-changed");
+        _taskbarRowOverlayFor = 0;
+        TaskbarPlacement.InvalidateCache();
+        InvalidateTaskbarRowSample();
+        _glassFrameSize = Size.Empty;
+        _resetLayeredStyle = true;
+        var placing = _placingTaskbar;
+        _placingTaskbar = true;
+        try { ApplySnapshotLayout(updatePlacement: false); }
+        finally { _placingTaskbar = placing; }
+        RepushLayeredFrame();
+        return true;
+    }
 
     private void UpdateWindowRegion()
     {

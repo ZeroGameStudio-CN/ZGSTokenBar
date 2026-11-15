@@ -333,9 +333,18 @@ if (args.Length == 1 && args[0] == "--taskbar-window-regressions")
     TestDisplayTopologyIdentity();
     TestTaskbarFullWidthPlacement();
     TestTaskbarRowStability();
+    TaskbarDpiReconnectTests.Run();
     TestTaskbarEmbeddingWithFakeTaskbar();
     TestNativeWindowLifecycle();
     Console.WriteLine("PASS taskbar detach, drag z-order and session reconnect regressions");
+    return 0;
+}
+
+if (args.Length is 1 or 2 && args[0] == "--taskbar-dpi-reconnect")
+{
+    System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
+    TaskbarDpiReconnectTests.Run(args.Length == 2 ? args[1] : null);
+    Console.WriteLine("PASS proportional taskbar DPI changes without restart or DPI notification");
     return 0;
 }
 
@@ -576,6 +585,7 @@ var tests = new (string Name, Action Run)[]
     ("Taskbar compact AI Gateway balance", TestTaskbarCompactAiGatewayBalance),
     ("Taskbar monitor selection", TestTaskbarMonitorSelection),
     ("Taskbar full-width placement avoids shell controls", TestTaskbarFullWidthPlacement),
+    ("Taskbar DPI rescale without a restart", () => TaskbarDpiReconnectTests.Run()),
     ("Taskbar keeps a clear seat and waits for a stable gap", TestTaskbarRowStability),
     ("Taskbar Mini collapse anchor", TestTaskbarMiniCollapseAnchor),
     ("Taskbar Mini popover placement", TestTaskbarMiniPopoverPlacement),

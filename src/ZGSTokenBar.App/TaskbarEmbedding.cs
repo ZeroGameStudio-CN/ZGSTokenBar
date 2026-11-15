@@ -47,6 +47,7 @@ internal static class TaskbarEmbedding
     internal static bool IsAlive(nint window) => window != 0 && IsWindow(window);
 
     internal static uint WindowThread(nint window, out uint processId) => GetWindowThreadProcessId(window, out processId);
+    internal static int DpiOf(nint window) => window == 0 ? 0 : (int)GetDpiForWindow(window);
 
     internal static bool IsDescendant(nint parent, nint window) => IsChildWindow(parent, window);
 
@@ -190,6 +191,9 @@ internal static class TaskbarEmbedding
 
     [DllImport("user32.dll")]
     private static extern nint GetWindowDpiAwarenessContext(nint window);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(nint window);
 
     [DllImport("user32.dll")]
     private static extern bool AreDpiAwarenessContextsEqual(nint first, nint second);

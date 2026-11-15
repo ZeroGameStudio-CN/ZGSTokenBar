@@ -276,7 +276,13 @@ total. Compare module IDs
 with the built DLLs instead of relying on a hash computed from a path after launch.
 It reports native screen bounds and topmost state, plus `visible`,
 `embeddedInTaskbar`, `taskbarEmbedStatus` and `remoteSession` for diagnosing taskbar
-occlusion and remote reconnects. `--taskbar-window-regressions` on the .NET test
+occlusion and remote reconnects. The reported DPI is the dock's actual render
+DPI. Docked placement reads the target taskbar's current native DPI on every
+placement check, including reconnects without a DPI message; pixels, size and
+hit targets rescale together before checking the available gap.
+`--taskbar-dpi-reconnect [capture-directory]` checks repeated 200% → 100% → 150%
+changes on the same window, without changing Windows settings.
+`--taskbar-window-regressions` on the .NET test
 executable checks full-width fit and fallback, detach coordinates, stale-parent
 recovery, drag z-order and same-resolution session reconnects. Experimental
 embedding reads the primary taskbar's button bounds on a background worker.

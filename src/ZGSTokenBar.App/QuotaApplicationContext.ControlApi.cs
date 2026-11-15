@@ -241,7 +241,7 @@ internal sealed partial class QuotaApplicationContext
                 _bar.IsHandleCreated && !_bar.IsDisposed,
                 ToUiBounds(_bar.ScreenBounds),
                 _bar.IsHandleCreated && TaskbarEmbedding.IsTopmost(_bar.Handle),
-                _bar.DeviceDpi)
+                _bar.RenderDpi)
             {
                 AppModuleId = typeof(QuotaApplicationContext).Module.ModuleVersionId.ToString(),
                 CoreModuleId = typeof(CodexTokenUsageReader).Module.ModuleVersionId.ToString(),
