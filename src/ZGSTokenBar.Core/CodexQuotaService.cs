@@ -934,6 +934,7 @@ public sealed class CodexQuotaService
             usage.Windows)
         {
             AccountHint = CodexAccountFormatting.MaskEmail(account.Credential.Email),
+            HasAccountIdentity = !string.IsNullOrWhiteSpace(account.Credential.AccountId),
             Credits = usage.Credits,
         };
         return account.CapturedAt is { } capturedAt
@@ -982,6 +983,7 @@ public sealed class CodexQuotaService
         ])
         {
             AccountHint = CodexAccountFormatting.MaskEmail(credential.Email),
+            HasAccountIdentity = !string.IsNullOrWhiteSpace(credential.AccountId),
         };
 
     private static ProviderResult Missing(string detail, ProviderHealthCode code) => new(

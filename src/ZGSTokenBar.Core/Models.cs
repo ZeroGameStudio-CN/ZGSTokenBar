@@ -190,6 +190,8 @@ public sealed record QuotaCard(
 {
     public DateTimeOffset? CapturedAt { get; init; }
     public string? AccountHint { get; init; }
+    /// <summary>An authenticated account is known even when its quota read is unavailable.</summary>
+    public bool HasAccountIdentity { get; init; }
     public bool IsService { get; init; }
     public int ServiceCount { get; init; }
     public string? ServiceDisplayName { get; init; }

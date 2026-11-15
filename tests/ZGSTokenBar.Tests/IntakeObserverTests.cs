@@ -28,6 +28,7 @@ internal static class IntakeObserverTests
         MiniEntry(captures);
         HoverHandoff(captures);
         PanelParity();
+        RefreshSelectedAndRecent();
         var denied = false;
         var switched = false;
         var reads = new List<string>();
@@ -146,6 +147,71 @@ internal static class IntakeObserverTests
         }
         Check(operation.IsCompleted, "The isolated read must complete on the UI thread");
         operation.GetAwaiter().GetResult();
+    }
+
+    private static void RefreshSelectedAndRecent()
+    {
+        var revision = 1;
+        var listReads = 0;
+        var getReads = 0;
+        var revoked = false;
+        var client = new IntakeObserverClient((args, _) =>
+        {
+            string body;
+            switch (args[0])
+            {
+                case "whoami":
+                    body = revoked
+                        ? """{"subject":"other","authorization_revision":"revoked","projects":[],"project_access":[]}"""
+                        : """{"subject":"fixture","authorization_revision":"same","projects":[{"project_key":"LAB","title":"Lab"}],"project_access":[{"project_key":"LAB","capabilities":["work_item.read"]}]}""";
+                    break;
+                case "list":
+                    listReads++;
+                    body = JsonSerializer.Serialize(new { items = Enumerable.Range(1, 16).Select(index => new {
+                        work_item_id = index == 1 ? ItemId : $"00000000-0000-4000-8000-{index:000000000000}",
+                        work_item_number = $"ZOS-{index}", project_key = "LAB", title = $"item {index} v{revision}",
+                        status = "rework", updated_at = 1794688800000L + revision }) });
+                    break;
+                case "get":
+                    getReads++;
+                    body = JsonSerializer.Serialize(new { item = new { work_item_id = ItemId, work_item_number = "ZOS-1",
+                        project_key = "LAB", title = $"selected v{revision}", status = "pending_acceptance",
+                        updated_at = 1794688800000L + revision } });
+                    break;
+                case "history": body = """{"transitions":[]}"""; break;
+                default: throw new InvalidOperationException("Unexpected fixture request");
+            }
+            return Task.FromResult(Json(body));
+        });
+        using var form = new IntakeObserverForm(true, client, observeOnShow: false) { Opacity = 0 };
+        form.ConfigureFor(new(400, 1000, 48, 44), true, 1,
+            QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), new(0, 0, 1280, 1032));
+        form.Show();
+        RunOnUi(form.LoadRecentAsync());
+        RunOnUi(form.LoadItemAsync(ItemId));
+        System.Windows.Forms.Application.DoEvents();
+        var grid = Controls(form).OfType<RouterGrid>().Single(table => table.Columns.Count == 4);
+        grid.PageFromWheel(-System.Windows.Forms.SystemInformation.MouseWheelScrollDelta);
+        System.Windows.Forms.Application.DoEvents();
+        var firstVisible = grid.Rows.Cast<System.Windows.Forms.DataGridViewRow>().First(row => row.Visible);
+        var visibleId = ((IntakeItem)firstVisible.Tag!).Id;
+        var rowObject = grid.Rows[0];
+        var beforeList = listReads; var beforeGet = getReads;
+        revision = 2;
+        RunOnUi(form.RefreshVisibleAsync());
+        System.Windows.Forms.Application.DoEvents();
+        Check(listReads == beforeList + 1 && getReads == beforeGet + 1 && form.Observation.ItemLoaded,
+            "One visible refresh reads both recent items and the selected item");
+        Check(grid.Rows[0].Cells[1].Value?.ToString() == "item 1 v2"
+            && Controls(form).OfType<System.Windows.Forms.Label>().Any(label => label.Text.Contains("selected v2")),
+            "Both table data and selected details advance to the new revision");
+        Check(ReferenceEquals(rowObject, grid.Rows[0])
+            && ((IntakeItem)grid.Rows.Cast<System.Windows.Forms.DataGridViewRow>().First(row => row.Visible).Tag!).Id == visibleId,
+            "Ordinary refresh preserves row objects and the visible page");
+        revoked = true;
+        RunOnUi(form.RefreshVisibleAsync());
+        Check(form.Observation is { Projects: 0, Recent: 0, Timeline: 0, ItemLoaded: false },
+            "Revoked access clears both refreshed surfaces and their selection");
     }
 
     private static void PanelParity()

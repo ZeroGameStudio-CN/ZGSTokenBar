@@ -8,6 +8,16 @@ internal static class TaskbarDpiReconnectTests
 {
     internal static void Run(string? captures = null)
     {
+        Check(BarForm.ResolveRenderDpi(null, false, 96, 96, 192) == 96,
+            "Floating keeps native 100% scale when WinForms still reports 200%");
+        Check(BarForm.ResolveRenderDpi(null, false, 192, 192, 96) == 192,
+            "Floating follows native 200% scale when WinForms still reports 100%");
+        Check(BarForm.ResolveRenderDpi(null, false, 96, 0, 192) == 96,
+            "A window without a native reading keeps its last calibrated scale");
+        Check(BarForm.ResolveRenderDpi(null, false, 96, 192, 96) == 192,
+            "A floating window can subsequently move to a different-DPI monitor");
+        Check(BarForm.ResolveRenderDpi(null, true, 192, 96, 96) == 192,
+            "An embedded dock follows its taskbar instead of its stale native window");
         var now = DateTimeOffset.UtcNow;
         var snapshot = new QuotaSnapshot(
             [new("codex.first", ProviderKind.Codex, "Codex · 1", "pro", "#10a37f", true,
@@ -15,6 +25,17 @@ internal static class TaskbarDpiReconnectTests
              new("codex.second", ProviderKind.Codex, "Codex · 2", "pro", "#10a37f", true,
                 [new("7d", 2, now.AddDays(4), TimeSpan.FromDays(7))])],
             [new(ProviderKind.Codex, true, "fixture", ProviderHealthCode.Current)], now);
+        using (var floating = new BarForm(new AppSettings { TaskbarDocked = true, EnableAnimations = false },
+            snapshot, renderOnly: true))
+        {
+            floating.ApplyTaskbarDpi(96);
+            var size = floating.Size;
+            typeof(BarForm).GetField("_taskbarDocked", System.Reflection.BindingFlags.Instance |
+                System.Reflection.BindingFlags.NonPublic)!.SetValue(floating, false);
+            floating.SetSnapshot(snapshot);
+            Check(floating.Size == size && floating.Height == 44 && floating.RenderDpi == 96,
+                "Undocking and refreshing retain the calibrated scale before the native handle is available");
+        }
         using var bar = new BarForm(new AppSettings { TaskbarDocked = true, EnableAnimations = false },
             snapshot, renderOnly: true, activeProviders: new HashSet<ProviderKind> { ProviderKind.Codex });
         bar.SetPluginMiniCards([

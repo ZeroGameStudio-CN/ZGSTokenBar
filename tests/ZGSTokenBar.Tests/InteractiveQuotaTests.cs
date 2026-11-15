@@ -1,11 +1,13 @@
 using System.Net;
+using System.Drawing;
 using System.Text;
 using System.Text.Json;
 using ZGSTokenBar.Core;
+using ZGSTokenBar.App;
 
 internal static class InteractiveQuotaTests
 {
-    internal static void Run()
+    internal static void Run(string? captures = null)
     {
         var root = Path.Combine(Path.GetTempPath(), "zgstokenbar-interactive-quota-" + Guid.NewGuid().ToString("N"));
         var previousHome = Environment.GetEnvironmentVariable("CODEX_HOME");
@@ -31,6 +33,37 @@ internal static class InteractiveQuotaTests
             Check(result.Cards.SelectMany(card => card.Windows).Select(window => window.UsedPercent)
                 .Order().SequenceEqual(new double?[] { 57, 100 }), "Live quota belongs to the authenticated account");
             Check(handler.UsageReads == 2, "Duplicate registered homes do not duplicate quota reads");
+            Check(result.Cards.All(card => card.HasAccountIdentity), "Live accounts retain explicit identity");
+            var previous = QuotaCoordinator.MergeResults([result], null, DateTimeOffset.UtcNow);
+            handler.FailSecond = true;
+            var partial = service.FetchAsync(default).GetAwaiter().GetResult();
+            var merged = QuotaCoordinator.MergeResults([partial], previous, DateTimeOffset.UtcNow);
+            Check(merged.Cards.Count == 2 && merged.Cards.Count(card => card.Windows.All(window => window.UsedPercent is null)) == 1,
+                "A partial quota failure retains both accounts and marks only the failed one unknown");
+            using (var bar = new BarForm(new AppSettings(), merged, renderOnly: true, renderDpi: 96,
+                activeProviders: new HashSet<ProviderKind> { ProviderKind.Codex }))
+            {
+                Paint("failed-account-ring-96.png");
+                var width = bar.Width;
+                Check(bar.VisibleCodexAccountCount == 2, "Both account rings remain painted during a quota failure");
+                handler.FailSecond = false;
+                var recovered = service.FetchAsync(default).GetAwaiter().GetResult();
+                bar.SetSnapshot(QuotaCoordinator.MergeResults([recovered], merged, DateTimeOffset.UtcNow));
+                Paint("recovered-account-ring-96.png");
+                Check(bar.VisibleCodexAccountCount == 2 && bar.Width == width,
+                    "Recovery reuses the same two ring slots without layout changes");
+
+                void Paint(string name)
+                {
+                    using var image = new Bitmap(bar.Width, bar.Height);
+                    bar.DrawToBitmap(image, new Rectangle(Point.Empty, image.Size));
+                    if (captures is not null)
+                    {
+                        Directory.CreateDirectory(captures);
+                        image.Save(Path.Combine(captures, name));
+                    }
+                }
+            }
             File.WriteAllText(registry, """{"instances":[{"codexHome":"relative-home"}]}""");
             Check(InteractiveCodexHomes.Read(registry).Count == 0, "Relative registry paths are never probed");
             File.WriteAllText(registry, "invalid");
@@ -54,6 +87,7 @@ internal static class InteractiveQuotaTests
     private sealed class Handler : HttpMessageHandler
     {
         internal int UsageReads;
+        internal bool FailSecond;
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
             Check(request.Method == HttpMethod.Get, "Quota observation cannot mutate authentication or usage");
@@ -62,6 +96,8 @@ internal static class InteractiveQuotaTests
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
             Interlocked.Increment(ref UsageReads);
             Check(request.Headers.Authorization?.Parameter == "fixture-" + account, "Header and credential identities agree");
+            if (FailSecond && account == "account-b")
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
             var body = JsonSerializer.Serialize(new { plan_type = "pro", rate_limit = new {
                 primary_window = new { used_percent = account == "account-a" ? 57 : 100,
                     limit_window_seconds = 604800, reset_at = DateTimeOffset.UtcNow.AddDays(3).ToUnixTimeSeconds() } } });

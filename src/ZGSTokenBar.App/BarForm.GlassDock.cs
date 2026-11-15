@@ -50,8 +50,8 @@ internal sealed partial class BarForm
         Image? Logo = null);
 
     /// <summary>
-    /// Builds one ring per provider account that currently reports usage. Accounts and plugins
-    /// without a remaining percentage or balance (signed out, failed, loading) stay off the bar.
+    /// Builds one ring per reporting account. A known active Codex account keeps an unknown
+    /// ring during a failed quota read; signed-out placeholders do not become phantom accounts.
     /// </summary>
     private IReadOnlyList<GlassItem> BuildGlassItems()
     {
@@ -67,7 +67,9 @@ internal sealed partial class BarForm
             var balance = card.Balance is { TotalBalance: { } amount } money
                 ? UsageFormatting.Money(money.Currency, amount)
                 : null;
-            if (remaining is null && balance is null) continue;
+            var knownCodexAccount = card.Provider == ProviderKind.Codex && !card.IsService
+                && card.Active && card.HasAccountIdentity;
+            if (remaining is null && balance is null && !knownCodexAccount) continue;
             window ??= card.Windows.FirstOrDefault();
             var multi = card.Provider == ProviderKind.Codex && !card.IsService && codexCount > 1;
             var ordinal = multi && int.TryParse(CodexAccountOrdinal(card), out var number) ? number : 0;

@@ -241,8 +241,22 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
         _projectMenu.Renderer = new DarkContextMenuRenderer(palette.Surface, palette.Input, palette.Border, palette.Text, palette.Muted);
         _projectMenu.Font = Font;
     }
-    private Task RefreshVisibleAsync() => _item is { } item
-        ? LoadItemAsync(item.Id.ToString("D")) : LoadRecentAsync();
+    internal Task RefreshVisibleAsync() => ReadAsync(async token =>
+    {
+        var access = await RefreshAccessAsync(token);
+        if (access.Projects.Count == 0) { NoReadableProjects(); return; }
+        // RefreshAccess may clear the selection after an identity or permission change.
+        var selected = _item;
+        var project = access.Projects.FirstOrDefault(row => row.Key == _projectKey) ?? access.Projects[0];
+        var rows = await _client.RecentAsync(project.Key, _blocked.Checked, token);
+        token.ThrowIfCancellationRequested();
+        ApplyRecentRows(rows);
+        var historyCapped = selected is not null && await ReadItemDataAsync(selected.Id.ToString("D"), access, token);
+        Observe(selected is null ? RecentMessage(rows.Count)
+            : historyCapped
+                ? T("列表与当前工单已更新 · 显示最近 60 条历史", "Recent items and selected item updated · Up to 60 recent history entries")
+                : T("列表与当前工单已更新；状态来自 ZOS", "Recent items and selected item updated from ZOS"));
+    });
 
     private async Task FindAsync()
     {
@@ -255,30 +269,33 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
         await LoadItemAsync(text);
     }
 
-    internal async Task LoadRecentAsync()
+    internal Task LoadRecentAsync() => ReadAsync(async token =>
     {
-        var preferred = _projectKey;
-        await ReadAsync(async token =>
-        {
-            var access = await RefreshAccessAsync(token);
-            if (access.Projects.Count == 0)
-            {
-                _recent.Rows.Clear();
-                _status.Text = T("当前账号没有可读工单项目", "This account has no readable work item projects");
-                return;
-            }
-            var project = access.Projects.FirstOrDefault(row => row.Key == preferred) ?? access.Projects[0];
-            var rows = await _client.RecentAsync(project.Key, _blocked.Checked, token);
-            token.ThrowIfCancellationRequested();
-            ClearItem();
-            _recent.Rows.Clear();
-            foreach (var row in rows)
-                _recent.Rows[_recent.Rows.Add(row.Number, row.Title, ItemState(row), At(row.UpdatedAt))].Tag = row;
-            _recent.ClearSelection();
-            _fresh = true;
-            Observe(rows.Count == 0 ? T("没有符合条件的工单", "No matching work items")
-                : T("近期工单 · 双击查看时间线", "Recent work items · Double-click for timeline"));
-        });
+        var access = await RefreshAccessAsync(token);
+        if (access.Projects.Count == 0) { NoReadableProjects(); return; }
+        var project = access.Projects.FirstOrDefault(row => row.Key == _projectKey) ?? access.Projects[0];
+        var rows = await _client.RecentAsync(project.Key, _blocked.Checked, token);
+        token.ThrowIfCancellationRequested();
+        ClearItem();
+        ApplyRecentRows(rows);
+        Observe(RecentMessage(rows.Count));
+    });
+
+    private void NoReadableProjects()
+    {
+        ClearSensitive();
+        _status.Text = T("当前账号没有可读工单项目", "This account has no readable work item projects");
+    }
+
+    private string RecentMessage(int count) => count == 0
+        ? T("没有符合条件的工单", "No matching work items")
+        : T("近期工单 · 双击查看时间线", "Recent work items · Double-click for timeline");
+
+    private void ApplyRecentRows(IReadOnlyList<IntakeItem> items)
+    {
+        SetGridRows(_recent, items.Select(row =>
+            (new object?[] { row.Number, row.Title, ItemState(row), At(row.UpdatedAt) }, (object?)row)).ToArray());
+        _fresh = true;
     }
 
     internal Task LoadItemAsync(string reference) => ReadAsync(async token =>
@@ -287,31 +304,62 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
             && !string.Equals(old.Number, reference, StringComparison.OrdinalIgnoreCase));
         if (referenceChanged) ClearItem();
         var access = await RefreshAccessAsync(token);
+        var historyCapped = await ReadItemDataAsync(reference, access, token);
+        Observe(historyCapped ? T("显示最近 60 条工单历史", "Showing up to 60 recent history entries")
+            : T("工单状态来自 ZOS；派发需另有回执", "Work item state is from ZOS; dispatch requires a receipt"));
+    });
+
+    private async Task<bool> ReadItemDataAsync(string reference, IntakeAccess access, CancellationToken token)
+    {
         var item = await _client.ItemAsync(reference, token);
         if (!access.Projects.Any(project => project.Key == item.Project)) throw new IntakeReadException("denied");
         var history = await _client.HistoryAsync(item.Id, token);
         token.ThrowIfCancellationRequested();
         var keepDiagnostics = _item?.Id == item.Id && _item.UpdatedAt == item.UpdatedAt;
+        var rows = new List<(object?[] Values, object? Tag)>
+        {
+            (new object?[] { At(item.UpdatedAt), T("原卡当前", "Current item"), ItemState(item) }, null),
+        };
+        if (item.EvidenceMode.Length > 0)
+            rows.Add((new object?[] { "—", T("原对话补交已记录", "Original conversation delivery recorded"), "" }, null));
+        foreach (var row in history)
+            rows.Add((new object?[] { At(row.Timestamp), Command(row.Command), State(row.Status) }, null));
+        if (keepDiagnostics)
+            rows.AddRange(_timeline.Rows.Cast<DataGridViewRow>().Where(row => row.Tag is true)
+                .Select(row => (row.Cells.Cast<DataGridViewCell>().Select(cell => cell.Value).ToArray(), (object?)true)));
         _item = item;
         _detail.Text = $"{item.Number} · {item.Project} · {item.Title}";
-        for (var i = _timeline.RowCount - 1; i >= 0; i--)
-            if (!keepDiagnostics || _timeline.Rows[i].Tag is not true) _timeline.Rows.RemoveAt(i);
-        _timeline.Rows.Insert(0, At(item.UpdatedAt), T("原卡当前", "Current item"), ItemState(item));
-        if (item.EvidenceMode.Length > 0)
-            _timeline.Rows.Insert(1, "—", T("原对话补交已记录", "Original conversation delivery recorded"), "");
-        for (var i = 0; i < history.Count; i++)
-        {
-            var row = history[i];
-            _timeline.Rows.Insert(i + (item.EvidenceMode.Length > 0 ? 2 : 1),
-                At(row.Timestamp), Command(row.Command), State(row.Status));
-        }
-        _timeline.ClearSelection();
+        SetGridRows(_timeline, rows);
         _detailFresh = true;
-        Observe(history.Count == IntakeObserverClient.HistoryLimit
-            ? T("显示最近 60 条工单历史", "Showing up to 60 recent history entries")
-            : T("工单状态来自 ZOS；派发需另有回执", "Work item state is from ZOS; dispatch requires a receipt"));
-    });
+        return history.Count == IntakeObserverClient.HistoryLimit;
+    }
 
+    private static void SetGridRows(DataGridView grid, IReadOnlyList<(object?[] Values, object? Tag)> rows)
+    {
+        var selected = grid.CurrentRow?.Tag is IntakeItem item ? item.Id : (Guid?)null;
+        grid.SuspendLayout();
+        try
+        {
+            // Preserve row objects and page offsets on ordinary refreshes.
+            for (var index = 0; index < rows.Count; index++)
+            {
+                if (index >= grid.RowCount) grid.Rows.Add(rows[index].Values);
+                var row = grid.Rows[index];
+                for (var column = 0; column < rows[index].Values.Length; column++)
+                    if (!Equals(row.Cells[column].Value, rows[index].Values[column]))
+                        row.Cells[column].Value = rows[index].Values[column];
+                row.Tag = rows[index].Tag;
+            }
+            while (grid.RowCount > rows.Count) grid.Rows.RemoveAt(grid.RowCount - 1);
+            grid.ClearSelection();
+            if (selected is { } id)
+            {
+                var row = grid.Rows.Cast<DataGridViewRow>().FirstOrDefault(row => row.Tag is IntakeItem entry && entry.Id == id);
+                if (row is { Visible: true }) row.Selected = true;
+            }
+        }
+        finally { grid.ResumeLayout(true); }
+    }
     internal Task LoadDiagnosticsAsync()
     {
         if (!_detailFresh || _item is not { } selected) return Task.CompletedTask;

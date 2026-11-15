@@ -228,7 +228,10 @@ automatic dispatch is enabled there. Select a recent item or enter its number
 to view the original status and transition history. Diagnostics are requested
 only for the selected item and keep the server's authorization and evidence
 limits. An empty diagnosis does not establish dispatch, failure, or inactivity.
-Closing the window stops reads. The client stores no work item data on disk.
+Visible refresh updates both the recent-item list and selected-item details,
+keeping the current item and page. Rows are updated in place; changed access
+clears both surfaces before another read. Closing the window stops reads.
+The client stores no work item data on disk.
 
 For the optional **Open in ZOS** link, set
 `ZGSTOKENBAR_WORKFLOW_WEB_ORIGIN` in the app's environment to the intended HTTPS
@@ -282,6 +285,8 @@ occlusion and remote reconnects. The reported DPI is the dock's actual render
 DPI. Docked placement reads the target taskbar's current native DPI on every
 placement check, including reconnects without a DPI message; pixels, size and
 hit targets rescale together before checking the available gap.
+Floating windows use their live native DPI, with the last calibrated scale as
+the fallback before handle creation, rather than reverting to WinForms' cached DPI.
 `--taskbar-dpi-reconnect [capture-directory]` checks repeated 200% → 100% → 150%
 changes on the same window, without changing Windows settings.
 `--taskbar-window-regressions` on the .NET test
@@ -486,6 +491,9 @@ dotnet run --project tests/ZGSTokenBar.Tests/ZGSTokenBar.Tests.csproj -c Release
 ## Live taskbar readouts
 
 The system area's CPU/RAM/disk/GPU tracks and resource/process hover are preserved.
+An active Codex account with verified identity keeps its ring when the quota
+read fails: unknown quota is shown as a grey dash, independently of the other
+account. Signed-out placeholders do not become additional account rings.
 The separate live-rates area defaults to collapsed and shows only summed output:
 the compact value above a `tok/s` caption in a stable 50-logical-pixel content slot.
 K/M/G use powers of 1000 for token rates; rate changes never resize the collapsed

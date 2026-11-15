@@ -215,6 +215,7 @@ internal sealed partial class BarForm
             }
         }
         UpdateDpiAndRegion();
+        ApplySnapshotLayout(updatePlacement: false);
         if (GlassLayered)
         {
             _ = WindowBackdrop.TryPrepareLayered(Handle);
@@ -453,6 +454,7 @@ internal sealed partial class BarForm
         {
             _adjacentTaskbarTrack = null;
             _taskbarRowOverlayFor = 0;
+            ApplySnapshotLayout(updatePlacement: false);
             MoveToFloatingPosition(topology, activation.Profile);
             if (!Visible && !_hiddenToTray) Show();
         }
@@ -776,7 +778,13 @@ internal sealed partial class BarForm
 
     internal int RenderDpi => EffectiveDpi();
 
-    private int EffectiveDpi() => _renderDpi ?? (_taskbarDocked ? _dockedRenderDpi : null) ?? DeviceDpi;
+    private int EffectiveDpi() => ResolveRenderDpi(_renderDpi, _taskbarDocked, _dockedRenderDpi,
+        IsHandleCreated ? TaskbarEmbedding.DpiOf(Handle) : 0, DeviceDpi);
+
+    internal static int ResolveRenderDpi(int? renderOverride, bool docked, int? dockedDpi,
+        int nativeWindowDpi, int frameworkDpi) =>
+        renderOverride ?? (docked ? dockedDpi : null)
+        ?? (nativeWindowDpi >= 96 ? nativeWindowDpi : dockedDpi ?? frameworkDpi);
 
     /// <summary>Use one scale for dock geometry, pixels, hit targets and popover anchors.</summary>
     internal bool ApplyTaskbarDpi(int dpi)
