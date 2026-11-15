@@ -7916,13 +7916,14 @@ static void RenderRateSessionsCapture(string outputDirectory)
     };
     var live = new LiveOutputRate(at, 112.1, 73.9, 38.2, 2, 1, 4, 0)
     {
+        RecordedAt = at,
         Conversations = turns.Where(turn => turn.LiveRate is not null).Select(turn => turn.LiveRate!).ToArray(),
     };
     var snapshot = new SystemUsageSnapshot(18, 32UL << 30, 32UL << 30, 64UL << 30, 12, "3D", 2, 16, at)
     {
         NetworkReceiveBytesPerSecond = 1.5 * 1024 * 1024, NetworkSendBytesPerSecond = 96 * 1024, NetworkInterfaces = 1,
         NetworkHistory = new(at.AddDays(-2), 32_000_000_000, 12_000_000_000, at, false),
-        LiveRate = live, ObservedOutputTokensPerSecond = 112.1, OutputRateCapturedAt = at, CumulativeTokens = 642_203_161_989,
+        LiveRate = live, ObservedOutputTokensPerSecond = live.RecordedTotal, OutputRateCapturedAt = at, CumulativeTokens = 642_203_161_989,
     };
     foreach (var (name, rows) in new (string Name, IReadOnlyList<CodexConversationTurn> Rows)[] { ("active", turns), ("empty", Array.Empty<CodexConversationTurn>()) })
     {

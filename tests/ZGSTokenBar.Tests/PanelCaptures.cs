@@ -169,7 +169,7 @@ internal static class PanelCaptures
         {
             NetworkReceiveBytesPerSecond = 12.5 * 1024 * 1024, NetworkSendBytesPerSecond = 128 * 1024, NetworkInterfaces = 1,
             NetworkHistory = new(at.AddDays(-13).AddHours(-1), 1_352_400_000_000, 1_539_300_000_000, at, false),
-            LiveRate = new LiveOutputRate(at, 53.2, 33.2, 20, 2, 1, 4, 0), ObservedOutputTokensPerSecond = 53.2, OutputRateCapturedAt = at,
+            LiveRate = new LiveOutputRate(at, 53.2, 33.2, 20, 2, 1, 4, 0) { RecordedAt = at }, ObservedOutputTokensPerSecond = 33.2, OutputRateCapturedAt = at,
             CumulativeTokens = 735_400_000_000,
             TopProcesses =
             [

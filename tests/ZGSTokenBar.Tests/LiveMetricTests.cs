@@ -12,36 +12,51 @@ internal static class LiveMetricTests
         CodexResponseSample Response(string id, int start, int end, long count) => new(id, "model", at.AddSeconds(start), at.AddSeconds(end), count);
         CodexLiveRateFeed Feed(CodexResponseSample[] rows, CodexLiveSession[]? sessions = null) => new(at, rows, sessions ?? [], 0);
         var summed = tracker.Observe(Feed([Response("a", -4, 0, 400), Response("b", -1, 0, 30)]), at);
-        Check(Math.Abs(summed.Measured - 110) < .001, "Concurrent response intervals sum by three-second overlap.");
-        Check(tracker.Observe(Feed([Response("old", -15, -10, 90000)]), at).Total == 0,
-            "Late historical discovery never becomes a polling-time burst.");
+        Check(Math.Abs(summed.Measured - 130) < .001, "Concurrent sessions sum their latest recorded response averages.");
+        Check(tracker.Observe(Feed([Response("old", -66, -61, 90000)]), at).RecordedTotal is null,
+            "Late historical discovery never becomes a current response rate.");
+        var realSample = new CodexResponseSample("real", "model", at.AddSeconds(-39.695), at, 952);
+        var realFeed = Feed([realSample]);
+        var realRate = tracker.Observe(realFeed, at);
+        Check(Math.Abs(realRate.RecordedTotal!.Value - 952 / 39.695) < .00001, "Recorded output is divided by its own response duration.");
+        foreach (var delay in new[] { 1, 3, 20, 59 })
+            Check(tracker.Observe(realFeed with { CapturedAt = at.AddSeconds(delay) }, at.AddSeconds(delay)).RecordedTotal == realRate.RecordedTotal,
+                "A known response average cannot decay simply because no new token event arrived.");
+        Check(tracker.Observe(realFeed with { CapturedAt = at.AddSeconds(61) }, at.AddSeconds(61)).RecordedTotal is null,
+            "An expired response is unavailable rather than a measured zero.");
+        var replacement = tracker.Observe(Feed([realSample, Response("real", -1, 0, 10)]), at);
+        Check(replacement.RecordedTotal == 10 && replacement.RecordedAt == at,
+            "A new response replaces the previous session sample rather than summing it twice.");
+        Check(tracker.Observe(Feed([Response("zero", -1, 0, 0)]), at).RecordedTotal == 0,
+            "A real recorded zero is distinct from a missing or expired response.");
         var active = new CodexLiveSession("a", "model", "generating", at.AddSeconds(-2), at);
         var estimated = tracker.Observe(Feed([Response("a", -7, -5, 200)], [active]), at);
         Check(Math.Abs(estimated.Estimated - 200d / 3) < .001 && estimated.HasEstimate,
             "Generating uses recent response-weighted speed and exposes the estimated share.");
-        Check(estimated.RecordedTotal == 0 && summed.RecordedTotal == summed.Measured,
+        Check(estimated.RecordedTotal == 100 && summed.RecordedTotal == summed.Measured,
             "The primary output readout never includes extrapolated tokens");
         var quiet = tracker.Observe(Feed([Response("a", -10, -8, 200)],
             [active with { LastActivity = at.AddSeconds(-6), InFlightStart = at.AddSeconds(-7) }]), at);
         Check(quiet.Estimated == 0, "A stale generation phase cannot extrapolate output for minutes without new log evidence");
         var switched = active with { Model = "new-model" };
         var missingModel = tracker.Observe(Feed([Response("a", -7, -5, 200)], [switched]), at);
-        Check(missingModel.Estimated == 0 && missingModel.Total is null && missingModel.Conversations.Count == 0,
-            "A model switch never borrows the previous model's speed or reports an unsupported zero.");
+        Check(missingModel.Estimated == 0 && missingModel.RecordedTotal == 100,
+            "A model switch preserves recorded output while never borrowing it as the new model's estimate.");
         var matchingModel = tracker.Observe(Feed(
             [Response("a", -7, -5, 200), Response("b", -7, -5, 300) with { Model = "new-model" }], [switched]), at);
         Check(matchingModel.Estimated == 100,
             "A new session/model may use recent samples from the same model in another session.");
-        Check(tracker.Observe(Feed([Response("b", -7, -5, 200)], [active with { Model = null }]), at).Total is null,
+        Check(tracker.Observe(Feed([Response("b", -65, -63, 200)], [active with { Model = null }]), at).Total is null,
             "An unknown model does not borrow arbitrary models' throughput.");
         var measuredAfterSwitch = tracker.Observe(Feed([Response("a", -3, -1, 200)], [switched]), at);
-        Check(Math.Abs(measuredAfterSwitch.Measured - 200d / 3) < .001 && measuredAfterSwitch.Estimated == 0,
+        Check(measuredAfterSwitch.Measured == 100 && measuredAfterSwitch.Estimated == 0,
             "Restricting estimates preserves real measured output across a model switch.");
-        Check(tracker.Observe(Feed([Response("a", -7, -5, 200)], [active with { Phase = "tools" }]), at).Total == 0,
-            "Tool time does not inherit generation estimates.");
+        var tools = tracker.Observe(Feed([Response("a", -7, -5, 200)], [active with { Phase = "tools" }]), at);
+        Check(tools.RecordedTotal == 100 && tools.Estimated == 0, "Tool time keeps the last recorded response without generation estimates.");
         var overlap = tracker.Observe(Feed([Response("a", -3, -1, 200)], [active with { InFlightStart = at.AddSeconds(-4) }]), at);
-        Check(Math.Abs(overlap.Total!.Value - 100) < .001, "Estimates begin after the last recorded response and cannot overlap it.");
-        Check(tracker.Observe(Feed([Response("fast", 0, 0, 30)]), at).Measured == 10,
+        Check(overlap.RecordedTotal == 100 && Math.Abs(overlap.Estimated - 100d / 3) < .001,
+            "Estimates begin after the last recorded response and stay excluded from its known average.");
+        Check(tracker.Observe(Feed([Response("fast", 0, 0, 30)]), at).Measured == 60,
             "Sub-500ms responses use a bounded interval rather than dividing by zero.");
         Check(tracker.Observe(Feed([]) with { CapturedAt = at.AddMinutes(-1) }, at).Total is null,
             "Expired feeds are unavailable.");
@@ -66,11 +81,14 @@ internal static class LiveMetricTests
         var snapshot = new SystemUsageSnapshot(1, 2, 3, 5, 1, null, 0, 4, at.AddMinutes(-1))
         { NetworkReceiveBytesPerSecond = 100, ObservedOutputTokensPerSecond = 30, OutputRateCapturedAt = at.AddMinutes(-1) };
         Check(snapshot.CurrentOutputRate is null && snapshot.CurrentNetworkReceive is null, "Stale display values expire.");
+        var estimateOnly = snapshot with { LiveRate = new(at, 20, 0, 20, 1, 0, 1, 0) { RecordedAt = null } };
+        Check(estimateOnly.CurrentLiveRate?.Estimated == 20 && estimateOnly.CurrentOutputRate is null,
+            "A missing recorded response cannot hide a fresh, separately labelled generation estimate.");
         var context = SynchronizationContext.Current;
         HoverSurfaces(snapshot with
         {
             TopProcesses = [new("worker", 1, 5, 1234, 0)],
-            LiveRate = new LiveOutputRate(at, 12, 10, 2, 1, 0, 1, 0),
+            LiveRate = new LiveOutputRate(at, 12, 10, 2, 1, 0, 1, 0) { RecordedAt = at },
             ObservedOutputTokensPerSecond = 12,
             OutputRateCapturedAt = at,
         });
@@ -92,7 +110,7 @@ internal static class LiveMetricTests
         popover.UpdateContent(new SystemUsagePopoverContent(snapshot, false), text);
         Check(!popover.LiveRatesContentForAcceptance, "CPU hover keeps the system surface mode.");
         Check(popover.MetricLabelsForAcceptance.Contains("CPU")
-            && !popover.MetricLabelsForAcceptance.Contains("已记录输出")
+            && !popover.MetricLabelsForAcceptance.Contains("响应均速合计")
             && popover.ProcessRowCountForAcceptance == 1,
             "CPU hover contains CPU metrics and process rows only.");
 
@@ -100,7 +118,7 @@ internal static class LiveMetricTests
         Check(popover.LiveRatesContentForAcceptance, "Rate hover switches to the live surface mode.");
         Check(popover.CurrentLogicalBodyHeight <= 540,
             "Rates, today's token curve and cumulative history fit in a single unscrolled page.");
-        Check(popover.MetricLabelsForAcceptance.Contains("已记录输出")
+        Check(popover.MetricLabelsForAcceptance.Contains("响应均速合计")
             && popover.MetricLabelsForAcceptance.Contains("本机接收")
             && !popover.MetricLabelsForAcceptance.Contains("CPU")
             && popover.ProcessRowCountForAcceptance == 0,
@@ -160,7 +178,7 @@ internal static class LiveMetricTests
             form.SetCodexTokenUsage(new CodexTokenUsageSummary(1000, 642203161989, 12, at));
             form.SetSystemUsage(new SystemUsageSnapshot(34, 32UL << 30, 32UL << 30, 64UL << 30, 12, "3D", 2, 16, at)
             { DiskActivePercent = 22, NetworkReceiveBytesPerSecond = 12.5 * 1024 * 1024, NetworkSendBytesPerSecond = 128 * 1024, NetworkInterfaces = 1, NetworkHistory = new(at.AddDays(-2), 32_000_000_000, 12_000_000_000, at, false) });
-            form.SetLiveOutputRate(new(at, 53.2, 33.2, 20, 2, 1, 4, 0));
+            form.SetLiveOutputRate(new(at, 53.2, 33.2, 20, 2, 1, 4, 0) { RecordedAt = at });
             Check(form.GetMiniAreaStates().Single(area => area.AreaId == MiniAreaIds.SystemMetrics) == original,
                 "Live readouts cannot change the CPU area's saved layout.");
             Check(form.GetMiniAreaStates().Count(area => area.AreaId == MiniAreaIds.LiveMetrics) == 1,
@@ -176,7 +194,7 @@ internal static class LiveMetricTests
             var expandedWidth = form.ClientSize.Width;
             foreach (var value in new double?[] { 0, 999.9, 1200, 1234567, null })
             {
-                form.SetLiveOutputRate(new(at, value, 0, value ?? 0, 0, 0, 4, 0));
+                form.SetLiveOutputRate(new(at, value, value ?? 0, 0, 0, 0, 4, 0) { RecordedAt = value is null ? null : at });
                 form.SetMiniAreaFromCommand(MiniAreaIds.LiveMetrics, true, null);
                 using var bitmap = new System.Drawing.Bitmap(form.ClientSize.Width, form.ClientSize.Height);
                 form.DrawToBitmap(bitmap, new System.Drawing.Rectangle(System.Drawing.Point.Empty, bitmap.Size));
@@ -184,7 +202,7 @@ internal static class LiveMetricTests
                 Check(form.ClientSize.Width <= expandedWidth, "Output magnitude cannot expand the collapsed slot.");
                 bitmap.Save(Path.Combine(directory, $"live-rates-narrow-{(value?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown")}-{dpi}dpi.png"), System.Drawing.Imaging.ImageFormat.Png);
             }
-            form.SetLiveOutputRate(new(at, 53.2, 33.2, 20, 2, 1, 4, 0));
+            form.SetLiveOutputRate(new(at, 53.2, 33.2, 20, 2, 1, 4, 0) { RecordedAt = at });
             foreach (var locale in new[] { "zh-CN", "en" })
             {
                 foreach (var isLive in new[] { true, false })
@@ -196,9 +214,9 @@ internal static class LiveMetricTests
                 }
                 var samples = new[]
                 {
-                    ("estimated", form.LiveMetrics with { LiveRate = new(at, 44.2, 0, 44.2, 2, 3, 12, 0), ObservedOutputTokensPerSecond = 44.2 }),
+                    ("estimated", form.LiveMetrics with { LiveRate = new(at, 44.2, 0, 44.2, 2, 3, 12, 0), ObservedOutputTokensPerSecond = null }),
                     ("unavailable", form.LiveMetrics with { LiveRate = null, ObservedOutputTokensPerSecond = null, NetworkReceiveBytesPerSecond = null, NetworkSendBytesPerSecond = null }),
-                    ("large", form.LiveMetrics with { LiveRate = new(at, 12345.6, 12000, 345.6, 48, 24, 72, 3), ObservedOutputTokensPerSecond = 12345.6 })
+                    ("large", form.LiveMetrics with { LiveRate = new(at, 12345.6, 12000, 345.6, 48, 24, 72, 3) { RecordedAt = at }, ObservedOutputTokensPerSecond = 12000 })
                 };
                 foreach (var (name, sample) in samples)
                 {
@@ -271,26 +289,26 @@ internal static class LiveMetricTests
         var usage = new CodexTokenUsageSummary(100, 100, 2, at)
         { RecentTurns = [Turn("a", "old"), Turn("a", "new"), Turn("b", "b")], LiveOutputRate = rate };
         var view = CodexConversationView.Create(usage, new(), at);
-        Check(rate.Total == 40 && view.Rows.Sum(row => row.LiveRate?.Total ?? 0) == rate.Total,
+        Check(rate.Total == 80 && view.Rows.Sum(row => row.LiveRate?.Total ?? 0) == rate.Total,
             "Total is the exact sum of conversation live values from one shared sample.");
         Check(view.Rows.Single(row => row.TurnId == "old").LiveRate is null
-            && view.Rows.Single(row => row.TurnId == "new").LiveRate?.Measured == 20,
+            && view.Rows.Single(row => row.TurnId == "new").LiveRate?.Measured == 30,
             "A dialogue window crossing a turn boundary is shown once on its latest row.");
         Check(view.Rows.Single(row => row.TurnId == "b").LiveRate?.Estimated == 20,
             "The per-conversation value exposes its estimated contribution.");
         Check(view.Rows.All(row => row.OutputTokensPerSecond == 10), "Adding live speed preserves whole-turn averages.");
-        Check(CodexConversationView.Create(usage, new(Search: "missing"), at).Rows.Count == 0 && usage.LiveOutputRate.Total == 40,
+        Check(CodexConversationView.Create(usage, new(Search: "missing"), at).Rows.Count == 0 && usage.LiveOutputRate.Total == 80,
             "Filtering does not change the global live sample or its sum.");
         Check(CodexConversationView.Create(usage, new(), at.AddSeconds(16)).Rows.All(row => row.LiveRate is null),
             "Expired per-conversation live values become unavailable with the global sample.");
         var stopped = new ObservedOutputRate().Observe(feed with
         { CapturedAt = at.AddSeconds(4), Sessions = feed.Sessions.Select(s => s with { Phase = "idle" }).ToArray() }, at.AddSeconds(4));
-        Check(stopped.Total == 0 && stopped.Conversations.All(row => row.Total == 0),
-            "Ended dialogues have zero live output after the common window, without discarding their average.");
+        Check(stopped.RecordedTotal == 60 && stopped.Conversations.All(row => row.Estimated == 0),
+            "Ended dialogues retain their explicitly recorded averages while in-flight estimates stop.");
         var sorted = CodexConversationView.Create(usage, new(SortColumn: 10), at).Rows;
         Check(sorted[^1].TurnId == "old", "Live sorting leaves unavailable historical values last.");
         var text = NativeText.For("zh-CN");
-        Check(text.CodexTurnLiveSpeed(view.Rows.Single(row => row.TurnId == "b")) == "0"
+        Check(text.CodexTurnLiveSpeed(view.Rows.Single(row => row.TurnId == "b")) == "30"
             && text.CodexTurnTooltip(view.Rows.Single(row => row.TurnId == "b")).Contains("估算 ≈20"),
             "Recorded row speed excludes its separately labelled estimate");
         Check(!System.Text.Json.JsonSerializer.Serialize(view.Rows[0]).Contains("LiveRate", StringComparison.OrdinalIgnoreCase),
@@ -335,7 +353,7 @@ internal static class LiveMetricTests
             var rate = new ObservedOutputRate().Observe(reader.LiveRateFeed, at);
             Check(turns.Count == 48 && rate.Sessions == 48 && rate.Generating == 32 && rate.Tools == 16,
                 "Every generating and tool-running conversation is included beyond twelve, without duplicate paths.");
-            Check(Math.Abs(rate.Measured - 960) < .001 && Math.Abs(rate.Estimated - 320) < .001 && rate.Total == 1280,
+            Check(Math.Abs(rate.Measured - 1440) < .001 && Math.Abs(rate.Estimated - 320) < .001 && rate.Total == 1760,
                 "Output from all 48 conversations contributes exactly once to the measured and estimated totals.");
             var scanned = reader.ScannedBytes;
             reader.Refresh(paths, at.AddMilliseconds(500));
@@ -346,7 +364,7 @@ internal static class LiveMetricTests
             var ledger = new CodexTokenUsageLedger(store, () => homes);
             var initial = ledger.Refresh(at)!;
             var initialRate = new ObservedOutputRate().Observe(initial.LiveRateFeed, at);
-            Check(initial.RecentTurns.Count == 48 && initialRate.Sessions == 48 && initialRate.Total == 1280,
+            Check(initial.RecentTurns.Count == 48 && initialRate.Sessions == 48 && initialRate.Total == 1760,
                 "Full refresh discovers all homes and old date folders and deduplicates copied sessions before summing.");
             var indexBefore = SHA256.HashData(File.ReadAllBytes(store.CodexTokenUsageIndexPath));
             paths.AddRange(Enumerable.Range(48, 24).Select(Session));
@@ -355,7 +373,7 @@ internal static class LiveMetricTests
             var view = CodexConversationView.Create(refreshed with { LiveOutputRate = live }, new(), at);
             Check(refreshed.RecentTurns.Count == 72 && live.Sessions == 72 && live.Generating == 48 && live.Tools == 24,
                 "Fast refresh discovers additional running conversations, including newly resumed old folders.");
-            Check(live.Total == 1920 && Math.Abs(view.Rows.Sum(row => row.LiveRate?.Total ?? 0) - live.Total.Value) < .001,
+            Check(live.Total == 2640 && Math.Abs(view.Rows.Sum(row => row.LiveRate?.Total ?? 0) - live.Total.Value) < .001,
                 "All 72 conversation rows and the bar share the same complete output sum.");
             Check(refreshed.LocalTokens == initial.LocalTokens
                 && indexBefore.SequenceEqual(SHA256.HashData(File.ReadAllBytes(store.CodexTokenUsageIndexPath)))
@@ -366,8 +384,8 @@ internal static class LiveMetricTests
             var ended = ledger.RefreshConversations(at.AddSeconds(5))!;
             var endedRate = new ObservedOutputRate().Observe(ended.LiveRateFeed, at.AddSeconds(5));
             Check(endedRate.Generating == 44 && endedRate.Tools == 22
-                && endedRate.Conversations.Where(row => Enumerable.Range(0, 6).Any(index => row.TurnId == $"turn-{index}")).All(row => row.Total == 0),
-                "Completed conversations leave concurrency and expire from the output window while other conversations remain counted.");
+                && endedRate.Conversations.Where(row => Enumerable.Range(0, 6).Any(index => row.TurnId == $"turn-{index}")).All(row => row.Measured == 30 && row.Estimated == 0),
+                "Completed conversations leave concurrency while their last response average stays explicitly historical.");
         }
         finally { Directory.Delete(root, recursive: true); }
     }

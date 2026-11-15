@@ -5,22 +5,28 @@ public sealed record CodexResponseSample(string SessionId, string? Model, DateTi
 public sealed record CodexLiveSession(string SessionId, string? Model, string Phase, DateTimeOffset? InFlightStart, DateTimeOffset LastActivity)
 { public string? TurnId { get; init; } }
 public sealed record ConversationOutputRate(string SessionId, string? TurnId, double Measured, double Estimated)
-{ public double Total => Measured + Estimated; }
+{
+    public double Total => Measured + Estimated;
+    public DateTimeOffset? RecordedAt { get; init; }
+    public bool HasRecordedResponse => RecordedAt is not null || Measured > 0;
+}
 public sealed record CodexLiveRateFeed(DateTimeOffset CapturedAt, IReadOnlyList<CodexResponseSample> Responses,
     IReadOnlyList<CodexLiveSession> Sessions, int Pending);
 public sealed record LiveOutputRate(DateTimeOffset CapturedAt, double? Total, double Measured, double Estimated,
     int Generating, int Tools, int Sessions, int Pending)
 {
     /// <summary>The primary UI readout excludes all model-based in-flight extrapolation.</summary>
-    public double? RecordedTotal => Total is null ? null : Measured;
+    public double? RecordedTotal => RecordedAt is null ? null : Measured;
+    public DateTimeOffset? RecordedAt { get; init; }
     public IReadOnlyList<ConversationOutputRate> Conversations { get; init; } = [];
     public bool HasEstimate => Estimated > 0;
     public double EstimatedShare => Total is > 0 ? Estimated / Total.Value : 0;
 }
 
-/// <summary>Response-interval overlap in a three-second window, with explicitly separate in-flight estimates.</summary>
+/// <summary>Latest recorded response averages per session, with separate in-flight estimates.</summary>
 public sealed class ObservedOutputRate
 {
+    public const int RecordedResponseMaxAgeSeconds = 60;
     public LiveOutputRate Observe(CodexLiveRateFeed? feed, DateTimeOffset now)
     {
         if (feed is null || now < feed.CapturedAt || now - feed.CapturedAt > TimeSpan.FromSeconds(15))
@@ -32,9 +38,13 @@ public sealed class ObservedOutputRate
             .OrderByDescending(r => r.End).ToArray();
         var sessions = feed.Sessions.GroupBy(s => s.SessionId).Select(g => g.OrderByDescending(s => s.LastActivity).First()).ToArray();
         var window = now.AddSeconds(-3);
-        // A dialogue's live window belongs to its latest turn row, including output just before a turn boundary.
-        var measured = responses.GroupBy(r => (r.SessionId, TurnId: sessions.FirstOrDefault(s => s.SessionId == r.SessionId)?.TurnId ?? r.TurnId)).ToDictionary(g => g.Key,
-            g => g.Sum(r => r.Output * Overlap(window, now, r.Start, r.End) / (r.End - r.Start).TotalSeconds) / 3);
+        // Reuse the recorded intervals without padding/dividing by the polling window.
+        // A value changes on the next response, not every second after its completion.
+        var recorded = responses.Where(r => now - r.End <= TimeSpan.FromSeconds(RecordedResponseMaxAgeSeconds))
+            .GroupBy(r => (r.SessionId, TurnId: sessions.FirstOrDefault(s => s.SessionId == r.SessionId)?.TurnId ?? r.TurnId))
+            .ToDictionary(g => g.Key, g => g.First());
+        var measured = recorded.ToDictionary(pair => pair.Key,
+            pair => pair.Value.Output / (pair.Value.End - pair.Value.Start).TotalSeconds);
         var estimated = new Dictionary<(string SessionId, string? TurnId), double>();
         var unavailable = new HashSet<(string SessionId, string? TurnId)>();
         var generating = sessions.Where(s => s.Phase == "generating" && s.LastActivity <= now
@@ -63,15 +73,16 @@ public sealed class ObservedOutputRate
             estimated[(session.SessionId, session.TurnId)] = speed * Overlap(window, now, start, now) / 3;
         }
         var rates = sessions.Select(s => (s.SessionId, s.TurnId))
-            .Concat(measured.Where(pair => pair.Value > 0).Select(pair => pair.Key)).Distinct()
-            .Where(key => !unavailable.Contains(key) || measured.GetValueOrDefault(key) > 0)
+            .Concat(measured.Keys).Distinct()
+            .Where(key => !unavailable.Contains(key) || measured.ContainsKey(key))
             .Select(key => new ConversationOutputRate(key.SessionId, key.TurnId,
-                measured.GetValueOrDefault(key), estimated.GetValueOrDefault(key))).ToArray();
-        var known = (sessions.Length > 0 || responses.Length > 0)
+                measured.GetValueOrDefault(key), estimated.GetValueOrDefault(key))
+                { RecordedAt = recorded.GetValueOrDefault(key)?.End }).ToArray();
+        var known = recorded.Count > 0 || (sessions.Length > 0 || responses.Length > 0)
             && !(unavailable.Count > 0 && rates.All(rate => rate.Total == 0));
         return new(now, known ? rates.Sum(r => r.Total) : null, rates.Sum(r => r.Measured), rates.Sum(r => r.Estimated), generating.Length,
             sessions.Count(s => s.Phase == "tools" && s.LastActivity <= now && now - s.LastActivity <= TimeSpan.FromSeconds(15)), sessions.Length, feed.Pending)
-            { Conversations = rates };
+            { Conversations = rates, RecordedAt = recorded.Values.Select(r => (DateTimeOffset?)r.End).Max() };
     }
     private static double Overlap(DateTimeOffset a, DateTimeOffset b, DateTimeOffset start, DateTimeOffset end) =>
         Math.Max(0, ((b < end ? b : end) - (a > start ? a : start)).TotalSeconds);

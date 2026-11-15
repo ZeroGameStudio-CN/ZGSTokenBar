@@ -135,12 +135,12 @@ internal sealed class SystemUsagePopoverForm : Form
         var snapshot = content.Snapshot;
         if (content.LiveRates)
         {
-            var live = snapshot.CurrentOutputRate is not null ? snapshot.LiveRate : null;
+            var live = snapshot.CurrentLiveRate;
             var zh = _text.IsChinese;
             _metrics =
             [
-                new(zh ? "已记录输出" : "Recorded output", null, snapshot.CurrentOutputRate is { } rate ? $"{rate:0.0} tok/s" : "—"),
-                new(zh ? "已记录" : "Recorded", null, live is null ? "—" : $"{live.Measured:0.#} tok/s"),
+                new(zh ? "响应均速合计" : "Response averages", null, snapshot.CurrentOutputRate is { } rate ? $"{rate:0.0} tok/s" : "—"),
+                new(zh ? "最近响应" : "Latest response", null, live?.RecordedAt?.ToLocalTime().ToString("HH:mm:ss") ?? "—"),
                 new(zh ? "生成中估算" : "In-flight estimate", null, live is null || live.Generating > 0 && live.Estimated == 0 ? "—" : $"≈{live.Estimated:0.#} tok/s"),
                 new(zh ? "本机接收" : "Device receive", null, NetworkUsageSampler.Compact(snapshot.CurrentNetworkReceive) + "/s"),
                 new(zh ? "本机发送" : "Device send", null, NetworkUsageSampler.Compact(snapshot.CurrentNetworkSend) + "/s")
@@ -514,7 +514,7 @@ internal sealed class SystemUsagePopoverForm : Form
         Brush muted)
     {
         var zh = _text.IsChinese;
-        var live = snapshot.CurrentOutputRate is not null ? snapshot.LiveRate : null;
+        var live = snapshot.CurrentLiveRate;
         using var recorded = new SolidBrush(RecordedAccent);
         using var estimated = new SolidBrush(EstimateAccent);
         using var receive = new SolidBrush(ReceiveAccent);
@@ -537,7 +537,7 @@ internal sealed class SystemUsagePopoverForm : Form
 
         Panel(38, 112);
         TextAt(_metrics[0].Label, _metricLabelFont, muted, 24, 49, 136, 13);
-        TextAt(zh ? "3 秒日志均速" : "3s log average", _subtitleFont, muted, 176, 49, 100, 13, StringAlignment.Far);
+        TextAt(zh ? "近1分钟 · 最近响应" : "Latest · 1 min", _subtitleFont, muted, 176, 49, 100, 13, StringAlignment.Far);
         TextAt(_metrics[0].Value, _liveValueFont, primary, 24, 67, 252, 29);
         var rail = At(24, 105, 252, 3);
         using var railBrush = new SolidBrush(UiPalette.Slate500.WithAlpha(48));
@@ -898,15 +898,15 @@ internal sealed class SystemUsagePopoverForm : Form
             string speed;
             Brush speedBrush;
             var speedFont = _tableValueFont;
-            if (live is not null)
+            if (live is { HasRecordedResponse: true })
             {
                 speed = $"{live.Measured.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)} tok/s";
                 speedBrush = accent;
             }
-            else if (turn.State == "running")
+            else if (live is not null || turn.State == "running")
             {
-                speed = zh ? "工具中" : "Tools";
-                speedBrush = toolBrush;
+                speed = zh ? "待记录" : "No sample";
+                speedBrush = muted;
                 speedFont = _subtitleFont;
             }
             else if (turn.OutputTokensPerSecond is { } avg && double.IsFinite(avg) && avg > 0)

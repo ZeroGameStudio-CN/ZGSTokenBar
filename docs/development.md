@@ -535,22 +535,24 @@ It reuses module ordering, resizing, pin/dismiss and anchor geometry;
 its hover has independent rate content without CPU/process rows. No extra system
 process collection runs for the rates hover.
 
-Rates now use per-response log timestamps, not a difference of turn counters
-between polls. Sum each response's token fraction overlapping the latest three
-seconds and divide by three. Intervals under 500 ms use a 500 ms floor; missing,
-future, reversed or over-fifteen-minute intervals are excluded. During generating
-phases, estimate only the uncovered interval after the last response, using the
-same session's latest three responses within ten minutes, then up to ten matching
-model responses within ten minutes as fallback. Both steps require the
-current configured model. A missing model or matching reference leaves the
-in-flight estimate unavailable; recorded response output is retained across
-model changes. Tool/idle phases receive
-no extrapolation. A generation estimate expires after five seconds without a
-new phase observation; phase counts require evidence within fifteen seconds.
-The bar, primary output readout and conversation speed cells show recorded
-response-window averages only. Estimates stay separately labelled with ≈ and
-never contribute to those primary values. These are response-window observations and estimates,
-not server decode speed or a guarantee that every client/request is captured.
+Rates reuse per-response log timestamps and output counters. Each session contributes
+only its latest recorded response within the last sixty seconds: output divided by
+that response's own elapsed time. The main value is their unrounded sum, unchanged
+between response records; it is not divided by a polling window or faded to zero.
+The hover shows the latest contributing response timestamp. Missing/expired samples
+are unavailable, including sessions with no recorded output; an actual recorded zero
+remains zero. Responses under 500 ms retain the existing 500 ms safety floor; missing,
+future, reversed or over-fifteen-minute intervals remain excluded. These are logged
+response averages including reasoning/request waits, not per-token server decode speed.
+
+In-flight estimates retain their separate three-second window and existing source:
+the same session's latest three matching-model responses within ten minutes, then
+up to ten matching-model responses within ten minutes as fallback. Only the uncovered
+interval after the last response is extrapolated. Missing model/reference data is
+unavailable; estimates expire after five seconds without new phase evidence, and
+phase counts require evidence within fifteen seconds. Tools/idle phases are never
+extrapolated. Estimates stay separately labelled with approx and never contribute
+to the primary value. A configured model change cannot change already recorded output.
 
 The existing incremental reader publishes a separate
 in-memory rate feed; it does not change durable token accounting/history. The
@@ -561,8 +563,8 @@ boundary. Older rows remain unavailable rather than repeating that contribution.
 Filtering and paging do not change the global total. Recorded/estimated shares
 remain separate. The distinct whole-turn
 average column and CSV whole-turn fields keep their original meaning; transient
-live values are not persisted or exported. Both live surfaces expire with the
-same 15-second sample limit. `window inspect` exposes `conversationLiveRateTotal`
+live values are not persisted or exported. Both surfaces require the same feed freshness within fifteen seconds and expire
+recorded response samples after sixty seconds. `window inspect` exposes `conversationLiveRateTotal`
 and `conversationLiveRateCount` for comparison with the bar's common sample.
 The existing one-second clock refreshes this feed under the existing non-overlap gate.
 Discovery includes every registered home's session date folders, including resumed
@@ -585,8 +587,8 @@ Network reads up, non-loopback/non-tunnel default-gateway adapter byte counters,
 not model/process traffic. Discovery is cached thirty seconds, invalidated on read
 failure; K/M/G use powers of 1024 per second. No packet interception or network
 configuration changes occur. Existing taskbar drag-to-snap/float placement and
-user settings remain intact. `window inspect --json` includes the three-second
-window, recorded/estimated rates, generating/tools counts and existing module and
+user settings remain intact. `window inspect --json` includes the sixty-second recorded-response age limit,
+separate three-second estimate window, recorded response timestamp, recorded/estimated rates, generating/tools counts and existing module and
 data identity checks.
 
 The rate hover's Totals block shows cumulative receive/send/combined bytes beside

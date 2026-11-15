@@ -253,9 +253,11 @@ internal sealed partial class QuotaApplicationContext
                 RemoteSession = SystemInformation.TerminalServerSession,
                 ObservedOutputTokensPerSecond = _bar.LiveMetrics.CurrentOutputRate,
                 OutputRateCapturedAt = _bar.LiveMetrics.OutputRateCapturedAt,
+                RecordedResponseAt = _bar.LiveMetrics.CurrentLiveRate?.RecordedAt,
                 MeasuredOutputTokensPerSecond = _bar.LiveMetrics.LiveRate?.Measured,
                 EstimatedOutputTokensPerSecond = _bar.LiveMetrics.LiveRate?.Estimated,
-                OutputRateWindowSeconds = 3,
+                OutputRateWindowSeconds = ObservedOutputRate.RecordedResponseMaxAgeSeconds,
+                EstimatedOutputRateWindowSeconds = 3,
                 GeneratingSessionCount = _bar.LiveMetrics.LiveRate?.Generating ?? 0,
                 ToolsSessionCount = _bar.LiveMetrics.LiveRate?.Tools ?? 0,
                 NetworkReceiveBytesPerSecond = _bar.LiveMetrics.CurrentNetworkReceive,
@@ -293,7 +295,7 @@ internal sealed partial class QuotaApplicationContext
                 LatestTurnOutputTokensPerSecond = _cachedCodexTokenUsage?.RecentTurns.FirstOrDefault()?.OutputTokensPerSecond,
                 ConversationLiveRateTotal = _bar.LiveMetrics.CurrentOutputRate is null ? null
                     : CodexConversationDisplay.Select(_cachedCodexTokenUsage).Sum(turn => turn.LiveRate?.Measured ?? 0),
-                ConversationLiveRateCount = CodexConversationDisplay.Select(_cachedCodexTokenUsage).Count(turn => turn.LiveRate is not null),
+                ConversationLiveRateCount = CodexConversationDisplay.Select(_cachedCodexTokenUsage).Count(turn => turn.LiveRate is { HasRecordedResponse: true }),
                 ObservedCodexInstanceNumbers = CodexConversationDisplay.Select(_cachedCodexTokenUsage?.RecentTurns ?? [],
                     _bar.LiveMetrics.LiveRate, DateTimeOffset.UtcNow, _snapshot).Select(turn => turn.InstanceNumber)
                     .Where(number => number > 0).Distinct().Order().ToArray(),
