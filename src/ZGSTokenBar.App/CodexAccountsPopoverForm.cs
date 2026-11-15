@@ -186,10 +186,12 @@ internal sealed class CodexAccountsPopoverForm : Form
         return bitmap;
     }
 
+    internal bool IsClosing => _exitTimer.Enabled;
+
     public void HidePopover()
     {
         _entranceTimer.Stop();
-        if (!Visible) return;
+        if (!Visible || IsClosing) return;
         if (!_animateMotion)
         {
             Opacity = 1;

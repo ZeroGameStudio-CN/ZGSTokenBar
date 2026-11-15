@@ -151,6 +151,14 @@ if (args.Length is 1 or 2 && args[0] == "--monitor-hover-motion")
     return 0;
 }
 
+if (args.Length == 1 && args[0] == "--cross-hover")
+{
+    System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
+    CrossPopoverHandoffTests.Run();
+    Console.WriteLine("PASS native Codex/monitor cross-type hover handoff and pinned ownership");
+    return 0;
+}
+
 if (args.Length is 1 or 2 && args[0] == "--interactive-quota")
 {
     InteractiveQuotaTests.Run(args.Length == 2 ? args[1] : null);
@@ -610,6 +618,7 @@ var tests = new (string Name, Action Run)[]
     ("Glass dock rate and router slots are layout-stable", TestGlassDockStableSlots),
     ("Glass dock preserves unused accounts in overflow", () => GlassDockOverflowTests.Run()),
     ("Full monitor hover transitions preserve native lifecycle", () => MonitorPanelMotionTests.Run()),
+    ("Cross-type hover handoffs preserve one active owner", CrossPopoverHandoffTests.Run),
     ("Grok plan comes from the settings cache, never the sign-in type", TestGrokPlanFromSettingsCache),
     ("Expired Grok CLI session is renewed with its refresh token", TestGrokExpiredSessionIsRenewed),
     ("Popovers never get a cyclic or self owner", TestPopoverOwnerNeverCyclic),

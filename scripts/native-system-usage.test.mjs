@@ -48,7 +48,7 @@ test('taskbar Mini exposes system usage as one independently resizable and sorta
 test('system usage follows the existing delayed hover and temporary pin lifecycle', () => {
   assert.match(bar, /ShowSystemUsagePopover\(pinned: false\)/);
   assert.match(bar, /TogglePinnedSystemUsagePopover/);
-  assert.match(bar, /private void MonitorSystemUsagePopover[\s\S]*?outsideClick[\s\S]*?escapePressed/);
+  assert.match(bar, /MonitorSimplePopover\(_systemUsagePopover,[\s\S]*?HideSystemUsagePopover, cursor, mouseDown, escapeDown, now\)/);
   assert.match(popover, /ShowWithoutActivation => true/);
   assert.match(popover, /ToolWindowStyle \| NoActivateStyle/);
   assert.match(popover, /TaskbarMiniPopoverMath\.Place/);

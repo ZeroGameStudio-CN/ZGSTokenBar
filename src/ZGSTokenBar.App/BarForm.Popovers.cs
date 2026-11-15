@@ -9,6 +9,8 @@ namespace ZGSTokenBar.App;
 /// <summary>Popover management: hover hints and the quota, Codex accounts and system-usage popovers.</summary>
 internal sealed partial class BarForm
 {
+    private (RectangleF Bounds, QuotaCard Card)? _codexPopoverTarget;
+
     private void UpdatePluginHoverTarget((RectangleF Bounds, PluginMiniCardView Card)? target)
     {
         var previous = _hoverPluginTarget?.Card.Card.Id;
@@ -36,9 +38,10 @@ internal sealed partial class BarForm
         if (target != HoverTarget.Plugin || _popoverPinned || _hoverPluginTarget is not { } hovered
             || _dismissedHoverPlugin == hovered.Card.PluginId
             || _pluginPopover?.Visible == true && _pluginPopoverId == hovered.Card.PluginId) return;
-        if (_hoverSystemUsage || _systemUsagePopover?.Visible == true) HideSystemUsagePopover();
-        if (_codexAccountsPopover?.Visible == true) HideCodexAccountsPopover();
-        if (_quotaPopover?.Visible == true) HideQuotaPopover();
+        // A fading window stays Visible. Retire it once, without cancelling the incoming dwell.
+        if (_hoverSystemUsage || _systemUsagePopover is { Visible: true, IsClosing: false }) HideSystemUsagePopover();
+        if (_codexAccountsPopover is { Visible: true, IsClosing: false }) HideCodexAccountsPopover();
+        if (_quotaPopover is { Visible: true, IsClosing: false }) HideQuotaPopover();
         _popoverHoverTimer.Start();
     }
 
@@ -96,7 +99,8 @@ internal sealed partial class BarForm
         Invalidate();
         if (target is null)
         {
-            HideCodexAccountsPopover();
+            // Keep the shown target while crossing the gap into the account list.
+            if (_codexPopoverTarget is not null) _popoverLeaveStarted ??= DateTime.UtcNow;
             return;
         }
 
@@ -172,44 +176,6 @@ internal sealed partial class BarForm
         if (needsDetails) SystemUsageDetailsRequested?.Invoke(this, EventArgs.Empty);
     }
 
-    private void MonitorSystemUsagePopover()
-    {
-        if (_systemUsagePopover?.Visible != true || !_hoverSystemUsage)
-        {
-            _popoverStateTimer.Stop();
-            return;
-        }
-
-        var cursor = Cursor.Position;
-        var anchor = QuotaTargetScreenBounds(SystemUsageAnchorBounds);
-        var mouseDown = Control.MouseButtons != MouseButtons.None;
-        var escapeDown = IsEscapeDown();
-        if (_popoverPinned)
-        {
-            var outsideClick = mouseDown
-                && !_popoverMouseWasDown
-                && !anchor.Contains(cursor)
-                && !_systemUsagePopover.Bounds.Contains(cursor);
-            var escapePressed = escapeDown && !_popoverEscapeWasDown;
-            _popoverMouseWasDown = mouseDown;
-            _popoverEscapeWasDown = escapeDown;
-            if (outsideClick || escapePressed) HideSystemUsagePopover();
-            return;
-        }
-
-        if (anchor.Contains(cursor) || _systemUsagePopover.Bounds.Contains(cursor))
-        {
-            _popoverLeaveStarted = null;
-            return;
-        }
-
-        _popoverLeaveStarted ??= DateTime.UtcNow;
-        if (DateTime.UtcNow - _popoverLeaveStarted >= TimeSpan.FromMilliseconds(150))
-        {
-            HideSystemUsagePopover();
-        }
-    }
-
     internal void ShowHoveredPopover(Point cursor)
     {
         _popoverHoverTimer.Stop();
@@ -266,6 +232,11 @@ internal sealed partial class BarForm
             _scale,
             _animationsEnabled,
             _snapshot.CodexAccounts);
+        _codexPopoverTarget = target;
+        _popoverLeaveStarted = null;
+        _popoverMouseWasDown = Control.MouseButtons != MouseButtons.None;
+        _popoverEscapeWasDown = IsEscapeDown();
+        _popoverStateTimer.Start();
         Invalidate();
     }
 
@@ -435,75 +406,83 @@ internal sealed partial class BarForm
         File.WriteAllText(Path.Combine(directory, "hover-done.txt"), string.Join(",", written));
     }
 
-    private void MonitorQuotaPopover()
+    private void MonitorSimplePopover(Form popup, Rectangle anchor, Action hide,
+        Point cursor, bool mouseDown, bool escapeDown, DateTime now)
     {
-        if (_quotaPopover?.Visible != true || _popoverTargetId is null)
+        var inside = anchor.Contains(cursor) || popup.Bounds.Contains(cursor);
+        var newClick = mouseDown && !_popoverMouseWasDown;
+        var newEscape = escapeDown && !_popoverEscapeWasDown;
+        _popoverMouseWasDown = mouseDown;
+        _popoverEscapeWasDown = escapeDown;
+        if (!_popoverPinned)
         {
-            _popoverStateTimer.Stop();
-            return;
+            if (inside) _popoverLeaveStarted = null;
+            else _popoverLeaveStarted ??= now;
         }
-
-        var cursor = Cursor.Position;
-        var anchor = ResolveQuotaTarget(_popoverTargetId) is { } target
-            ? QuotaTargetScreenBounds(target.Bounds)
-            : Rectangle.Empty;
-        var mouseDown = Control.MouseButtons != MouseButtons.None;
-        var escapeDown = IsEscapeDown();
-        if (_popoverPinned)
-        {
-            var outsideClick = mouseDown
-                && !_popoverMouseWasDown
-                && !anchor.Contains(cursor)
-                && !_quotaPopover.Bounds.Contains(cursor);
-            var escapePressed = escapeDown && !_popoverEscapeWasDown;
-            _popoverMouseWasDown = mouseDown;
-            _popoverEscapeWasDown = escapeDown;
-            if (outsideClick || escapePressed) HideQuotaPopover();
-            return;
-        }
-
-        if (anchor.Contains(cursor) || _quotaPopover.Bounds.Contains(cursor))
-        {
-            _popoverLeaveStarted = null;
-            return;
-        }
-
-        _popoverLeaveStarted ??= DateTime.UtcNow;
-        if (DateTime.UtcNow - _popoverLeaveStarted >= TimeSpan.FromMilliseconds(150)) HideQuotaPopover();
+        if (ShouldDismissPopover(_popoverPinned, inside, newClick, newEscape,
+            _popoverLeaveStarted is { } left ? now - left : null)) hide();
     }
 
-    private void MonitorPopover()
+    private void MonitorPopover() => MonitorPopover(Cursor.Position,
+        Control.MouseButtons != MouseButtons.None, IsEscapeDown(), DateTime.UtcNow);
+
+    internal void MonitorPopover(Point cursor, bool mouseDown, bool escapeDown, DateTime now)
     {
         if (_pluginPopover is { Visible: false } && _pluginPopoverId is not null) HidePluginPopover();
         if (_pluginPopover?.Visible == true)
         {
-            MonitorPluginPopover(Cursor.Position, Control.MouseButtons != MouseButtons.None, IsEscapeDown(), DateTime.UtcNow);
+            MonitorPluginPopover(cursor, mouseDown, escapeDown, now);
             return;
         }
-        if (_systemUsagePopover?.Visible == true && _hoverSystemUsage)
+        if (_systemUsagePopover is { Visible: true, IsClosing: false } && _hoverSystemUsage)
         {
-            MonitorSystemUsagePopover();
+            MonitorSimplePopover(_systemUsagePopover, QuotaTargetScreenBounds(SystemUsageAnchorBounds),
+                HideSystemUsagePopover, cursor, mouseDown, escapeDown, now);
             return;
         }
-        MonitorQuotaPopover();
+        if (_codexAccountsPopover is { Visible: true, IsClosing: false } && _codexPopoverTarget is { } account)
+        {
+            MonitorSimplePopover(_codexAccountsPopover, QuotaTargetScreenBounds(account.Bounds),
+                HideCodexAccountsPopover, cursor, mouseDown, escapeDown, now);
+            return;
+        }
+        if (_quotaPopover is { Visible: true, IsClosing: false } && _popoverTargetId is { } id)
+        {
+            var anchor = ResolveQuotaTarget(id) is { } quota ? QuotaTargetScreenBounds(quota.Bounds) : Rectangle.Empty;
+            MonitorSimplePopover(_quotaPopover, anchor, HideQuotaPopover, cursor, mouseDown, escapeDown, now);
+            return;
+        }
+        _popoverStateTimer.Stop();
     }
 
     private void RefreshQuotaPopover()
     {
-        if (_quotaPopover?.Visible != true || _popoverTargetId is null) return;
+        if (_quotaPopover is not { Visible: true, IsClosing: false } || _popoverTargetId is null) return;
         var target = ResolveQuotaTarget(_popoverTargetId);
         if (target is null)
         {
             HideQuotaPopover();
             return;
         }
+        var leaveStarted = _popoverLeaveStarted;
+        var mouseWasDown = _popoverMouseWasDown;
+        var escapeWasDown = _popoverEscapeWasDown;
         ShowQuotaPopover(target, _popoverPinned);
+        _popoverLeaveStarted = leaveStarted;
+        _popoverMouseWasDown = mouseWasDown;
+        _popoverEscapeWasDown = escapeWasDown;
     }
 
     private void RefreshCodexAccountsPopover()
     {
-        if (_codexAccountsPopover?.Visible != true || _hoverCodexAccountTarget is not { } target) return;
+        if (_codexAccountsPopover is not { Visible: true, IsClosing: false } || _codexPopoverTarget is not { } target) return;
+        var leaveStarted = _popoverLeaveStarted;
+        var mouseWasDown = _popoverMouseWasDown;
+        var escapeWasDown = _popoverEscapeWasDown;
         ShowCodexAccountsPopover(target);
+        _popoverLeaveStarted = leaveStarted;
+        _popoverMouseWasDown = mouseWasDown;
+        _popoverEscapeWasDown = escapeWasDown;
     }
 
     private void RepositionPopovers()
@@ -522,7 +501,7 @@ internal sealed partial class BarForm
             }
             else OpenPluginPopover(pluginId, _popoverPinned);
         }
-        if (_systemUsagePopover?.Visible == true) ShowSystemUsagePopover(_popoverPinned);
+        if (_systemUsagePopover is { Visible: true, IsClosing: false }) ShowSystemUsagePopover(_popoverPinned);
         if (_quotaPopover?.Visible == true) RefreshQuotaPopover();
         if (_codexAccountsPopover?.Visible == true) RefreshCodexAccountsPopover();
     }
@@ -558,6 +537,7 @@ internal sealed partial class BarForm
     {
         _codexAccountsPopover?.HidePopover();
         _hoverCodexAccountTarget = null;
+        _codexPopoverTarget = null;
         EnsureAnimationTimer();
         Invalidate();
     }
