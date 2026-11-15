@@ -334,6 +334,7 @@ if (args.Length == 1 && args[0] == "--taskbar-window-regressions")
     TestTaskbarFullWidthPlacement();
     TestTaskbarRowStability();
     TaskbarDpiReconnectTests.Run();
+    TaskbarInlineDragTests.Run();
     TestTaskbarEmbeddingWithFakeTaskbar();
     TestNativeWindowLifecycle();
     Console.WriteLine("PASS taskbar detach, drag z-order and session reconnect regressions");
@@ -586,6 +587,7 @@ var tests = new (string Name, Action Run)[]
     ("Taskbar monitor selection", TestTaskbarMonitorSelection),
     ("Taskbar full-width placement avoids shell controls", TestTaskbarFullWidthPlacement),
     ("Taskbar DPI rescale without a restart", () => TaskbarDpiReconnectTests.Run()),
+    ("Taskbar horizontal drag keeps the native parent", TaskbarInlineDragTests.Run),
     ("Taskbar keeps a clear seat and waits for a stable gap", TestTaskbarRowStability),
     ("Taskbar Mini collapse anchor", TestTaskbarMiniCollapseAnchor),
     ("Taskbar Mini popover placement", TestTaskbarMiniPopoverPlacement),

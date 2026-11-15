@@ -543,12 +543,10 @@ internal sealed partial class BarForm
                 return;
             }
 
-            if (_embedParent != 0) DetachFromTaskbar("dragging");
             HidePopovers();
             ClearHoverStateForTaskbarDrag();
             TaskbarPlacement.InvalidateCache();
             _taskbarDragMoved = true;
-            _taskbarRowOverlayFor = 0;
             _lastDragClickAt = DateTime.MinValue;
         }
 
@@ -556,6 +554,12 @@ internal sealed partial class BarForm
             _taskbarDragStartLocation.X + deltaX,
             _taskbarDragStartLocation.Y + deltaY);
         var preferredMonitor = PreferredTaskbarMonitor();
+        if (TaskbarPlacement.TryGetDragTrack(Size, currentScreen, preferredMonitor, out var inlineTrack, Scale(32))
+            && TryMoveDragInRow(inlineTrack, requested)) return;
+
+        // Leave the taskbar only after inline movement is no longer possible.
+        if (_embedParent != 0) DetachFromTaskbar("dragging");
+        _taskbarRowOverlayFor = 0;
         if (TaskbarPlacement.TryGetDockTarget(
                 Size,
                 requested,
@@ -575,6 +579,20 @@ internal sealed partial class BarForm
         _taskbarDocked = false;
         _taskbarDragCurrentLocation = requested;
         if (!TaskbarPlacement.MoveAt(Handle, requested, Size)) Location = requested;
+    }
+
+    internal bool TryMoveDragInRow(TaskbarPlacement.PlacementTrack track, Point requested)
+    {
+        var rowOverlay = !EmbeddedInTaskbar;
+        if (!_embedRequested || !IsHandleCreated || IsDisposed
+            || (rowOverlay ? _taskbarRowOverlayFor : _embedParent) != track.TaskbarWindow) return false;
+        if (!TryGetSafeRowLocation(track, Size, requested, ScreenBounds, rowOverlay,
+            out var location, out _, followAnchor: true)) return false;
+        if (!TaskbarPlacement.MoveAt(Handle, location, Size)) return false;
+        _taskbarDocked = true;
+        _resolvedTaskbarMonitor = track.MonitorName;
+        _taskbarDragCurrentLocation = location;
+        return true;
     }
 
     private string? PreferredTaskbarMonitor()

@@ -88,7 +88,7 @@ internal sealed partial class BarForm
 
     private bool TryGetSafeRowLocation(
         TaskbarPlacement.PlacementTrack track, Size size, Point anchor, Rectangle currentBounds, bool rowOverlay,
-        out Point location, out string reason)
+        out Point location, out string reason, bool followAnchor = false)
     {
         location = Point.Empty;
         reason = "";
@@ -128,6 +128,7 @@ internal sealed partial class BarForm
         // Only enter the brief stale-layout grace period from a seat with room for an
         // ordinary button change. An exact fit is usable only while it is verified.
         if (alreadyInRow && occupied is not null
+            && (!followAnchor || awaitingLayout)
             && _taskbarRowStability.CanKeepCurrent(currentBounds.Size == size, now)
             && TaskbarPlacement.CurrentRowLocationFits(track, size, currentBounds.Location, occupied,
                 awaitingLayout ? extraClearance : 0))
@@ -144,7 +145,7 @@ internal sealed partial class BarForm
             reason = "layout-unavailable";
             return false;
         }
-        var rowAnchor = alreadyInRow ? currentBounds.Location : anchor;
+        var rowAnchor = followAnchor ? anchor : alreadyInRow ? currentBounds.Location : anchor;
         if (!TaskbarPlacement.TryGetRowLocation(track, size, rowAnchor, occupied, out location, extraClearance)
             && !TaskbarPlacement.TryGetRowLocation(track, size, rowAnchor, occupied, out location))
         {

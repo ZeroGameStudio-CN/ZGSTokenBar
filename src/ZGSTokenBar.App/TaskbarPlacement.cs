@@ -78,15 +78,22 @@ internal static class TaskbarPlacement
         location = Point.Empty;
         relativePosition = 1;
         resolvedMonitor = null;
-        if (!TryGetTracks(windowSize, null, out var tracks)) return false;
-
-        var candidate = SelectDockTrack(tracks, cursorPosition, preferredMonitor);
-        if (candidate is not { } dockTrack
+        if (!TryGetDragTrack(windowSize, cursorPosition, preferredMonitor, out var dockTrack)
             || !TryGetAdjacentLocation(dockTrack, windowSize, dockTrack.Constrain(requestedLocation), out location))
             return false;
 
         resolvedMonitor = dockTrack.MonitorName;
         relativePosition = dockTrack.RelativePosition(location);
+        return true;
+    }
+
+    internal static bool TryGetDragTrack(Size size, Point cursor, string? preferredMonitor,
+        out PlacementTrack track, int threshold = DockThreshold)
+    {
+        track = default;
+        if (!TryGetTracks(size, null, out var tracks)
+            || SelectDockTrack(tracks, cursor, preferredMonitor, threshold) is not { } candidate) return false;
+        track = candidate;
         return true;
     }
 
@@ -174,11 +181,12 @@ internal static class TaskbarPlacement
     internal static PlacementTrack? SelectDockTrack(
         IReadOnlyList<PlacementTrack> tracks,
         Point cursorPosition,
-        string? preferredMonitor)
+        string? preferredMonitor,
+        int threshold = DockThreshold)
     {
         return tracks
             .Select(track => (Track: track, Distance: DistanceToTaskbar(track.TaskbarBounds, cursorPosition)))
-            .Where(candidate => candidate.Distance <= DockThreshold)
+            .Where(candidate => candidate.Distance <= threshold)
             .OrderBy(candidate => candidate.Distance)
             .ThenBy(candidate => string.Equals(
                 candidate.Track.MonitorName,

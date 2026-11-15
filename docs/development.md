@@ -295,6 +295,13 @@ reparenting into Explorer (`overlay:remote-session`, `embeddedInTaskbar: false`)
 It yields when the taskbar does not reserve the row or is behind a fullscreen
 window. Placement does not modify the Shell layout. When the setting is off,
 docking uses the adjacent overlay.
+
+Dragging an existing in-row dock horizontally keeps its native parent (or its
+remote-session row overlay) and follows the pointer inside verified clear
+space. It clamps before task buttons and the tray. Pulling away from the row
+leaves a DPI-scaled capture zone before using the normal floating/snap route.
+The isolated taskbar-window regressions verify both 100% and 200% movement
+without sending pointer or keyboard input.
 It also reports `recentConversationCount` and
 `latestTurnOutputTokensPerSecond`. The latter is output tokens divided by the
 entire turn's wall time, including tools and waiting, not server decode throughput.
