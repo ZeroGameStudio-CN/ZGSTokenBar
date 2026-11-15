@@ -16,8 +16,17 @@ internal sealed partial class BarForm
         if (string.Equals(previous, target?.Card.Card.Id, StringComparison.Ordinal)) return;
         if (previous is not null) _popoverHoverTimer.Stop();
         // Keep the usual leave grace when entering the card or the gap below it.
-        // A different icon should retire the old hover immediately.
-        if (!_popoverPinned && target is { } next && _pluginPopoverId != next.Card.PluginId)
+        // A sibling full panel stays painted during the short switch dwell.
+        var switching = !_popoverPinned && _pluginPopover is MonitorPanelForm { Visible: true }
+            && target is { } incoming && IsMonitorPlugin(incoming.Card.PluginId)
+            && _pluginPopoverId != incoming.Card.PluginId;
+        _popoverHoverTimer.Interval = switching ? 75 : 200;
+        if (switching && _pluginPopover is MonitorPanelForm current)
+        {
+            current.ResumeHover();
+            _popoverLeaveStarted = null;
+        }
+        if (!_popoverPinned && !switching && target is { } next && _pluginPopoverId != next.Card.PluginId)
             HidePluginPopover();
         Invalidate();
     }
@@ -204,6 +213,7 @@ internal sealed partial class BarForm
     {
         _popoverHoverTimer.Stop();
         if (_popoverPinned || _taskbarDragging) return;
+        if (_pluginPopover is IPluginPopoverContent { InteractionOpen: true }) return;
         if (_hoverSystemUsage)
         {
             if (!QuotaTargetScreenBounds(SystemUsageAnchorBounds).Contains(cursor)) return;
@@ -489,7 +499,20 @@ internal sealed partial class BarForm
 
     private void RepositionPopovers()
     {
-        if (_pluginPopover?.Visible == true && _pluginPopoverId is { } pluginId) OpenPluginPopover(pluginId, _popoverPinned);
+        if (_pluginPopover?.Visible == true && _pluginPopoverId is { } pluginId)
+        {
+            if (_pluginPopover is MonitorPanelForm panel)
+            {
+                var target = _taskbarPluginBounds.FirstOrDefault(slot => slot.Card.PluginId == pluginId);
+                if (target.Card is not null)
+                {
+                    _pluginPopoverAnchor = QuotaTargetScreenBounds(target.Bounds);
+                    panel.ConfigureFor(_pluginPopoverAnchor, _popoverPinned, _scale, _backgroundTheme,
+                        Screen.FromRectangle(_pluginPopoverAnchor).WorkingArea);
+                }
+            }
+            else OpenPluginPopover(pluginId, _popoverPinned);
+        }
         if (_systemUsagePopover?.Visible == true) ShowSystemUsagePopover(_popoverPinned);
         if (_quotaPopover?.Visible == true) RefreshQuotaPopover();
         if (_codexAccountsPopover?.Visible == true) RefreshCodexAccountsPopover();

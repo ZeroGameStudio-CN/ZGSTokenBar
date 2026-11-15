@@ -8,13 +8,16 @@ internal interface IPluginPopoverContent
     void SetPinned(bool pinned);
 }
 
-internal sealed class PluginPopoverRequest(string pluginId, Rectangle anchor, bool pinned, float scale, QuotaBackgroundTheme theme) : EventArgs
+internal sealed class PluginPopoverRequest(string pluginId, Rectangle anchor, bool pinned, float scale,
+    QuotaBackgroundTheme theme, bool animate = false, bool immediate = false) : EventArgs
 {
     public string PluginId { get; } = pluginId;
     public Rectangle Anchor { get; } = anchor;
     public bool Pinned { get; } = pinned;
     public float Scale { get; } = scale;
     public QuotaBackgroundTheme Theme { get; } = theme;
+    public bool Animate { get; } = animate;
+    public bool Immediate { get; } = immediate;
     public Form? Popup { get; set; }
 }
 
@@ -37,12 +40,23 @@ internal sealed partial class BarForm
         if (toggle && pinned && _popoverPinned && _pluginPopover?.Visible == true && _pluginPopoverId == pluginId)
         { HidePluginPopover(); return true; }
         if (!pinned && _popoverPinned) return true;
-        if (_pluginPopover?.Visible != true || _pluginPopoverId != pluginId) HidePopovers();
-        var request = new PluginPopoverRequest(pluginId, anchor, pinned, _scale, _backgroundTheme);
+        var previous = _pluginPopover;
+        var switching = !pinned && !_popoverPinned && previous is MonitorPanelForm { Visible: true }
+            && IsMonitorPlugin(pluginId) && _pluginPopoverId != pluginId;
+        if (!switching && (_pluginPopover?.Visible != true || _pluginPopoverId != pluginId)) HidePopovers();
+        // Keep the old full panel painted until the replacement has a native frame, then swap once.
+        var request = new PluginPopoverRequest(pluginId, anchor, pinned, _scale, _backgroundTheme,
+            _animationsEnabled, switching);
         using (PerfTrace.Measure($"plugin-popover.open {pluginId} pinned={pinned}"))
             PluginPopoverRequested?.Invoke(this, request);
         if (!pinned && request.Popup is null) ShowPluginHint(request);
         if (request.Popup is not { Visible: true } popup) return false;
+        if (switching && previous is MonitorPanelForm old && !ReferenceEquals(old, popup))
+        {
+            popup.Update();
+            old.HideImmediately();
+        }
+        if (popup is MonitorPanelForm panel) panel.ResumeHover();
         _pluginPopover = popup; _pluginPopoverId = pluginId; _pluginPopoverAnchor = anchor;
         _popoverPinned = pinned; _popoverLeaveStarted = null;
         _popoverMouseWasDown = Control.MouseButtons != MouseButtons.None;
@@ -85,6 +99,7 @@ internal sealed partial class BarForm
         if (!_pluginPopover.IsDisposed)
         {
             if (_pluginPopover is TaskbarHintPopoverForm hint) hint.HideImmediately();
+            else if (_pluginPopover is MonitorPanelForm panel) panel.HideImmediately();
             else _pluginPopover.Hide();
         }
         _pluginPopover = null;
@@ -103,19 +118,35 @@ internal sealed partial class BarForm
     internal void MonitorPluginPopover(Point cursor, bool mouseDown, bool escapeDown, DateTime now)
     {
         if (_pluginPopover is not { Visible: true } popup) return;
-        var inside = _pluginPopoverAnchor.Contains(cursor) || popup.Bounds.Contains(cursor);
+        var inside = popup is MonitorPanelForm monitor ? monitor.ContainsHoverPoint(cursor)
+            : _pluginPopoverAnchor.Contains(cursor) || popup.Bounds.Contains(cursor);
         var newClick = mouseDown && !_popoverMouseWasDown;
         var newEscape = escapeDown && !_popoverEscapeWasDown;
         _popoverMouseWasDown = mouseDown; _popoverEscapeWasDown = escapeDown;
-        if (popup is IPluginPopoverContent { InteractionOpen: true }) return;
+        if (popup is IPluginPopoverContent { InteractionOpen: true })
+        {
+            _popoverLeaveStarted = null;
+            if (popup is MonitorPanelForm interactive) interactive.ResumeHover();
+            return;
+        }
         if (!_popoverPinned)
         {
-            if (inside) _popoverLeaveStarted = null;
+            if (inside)
+            {
+                _popoverLeaveStarted = null;
+                if (popup is MonitorPanelForm panel) panel.ResumeHover();
+            }
             else _popoverLeaveStarted ??= now;
         }
         if (ShouldDismissPopover(_popoverPinned, inside, newClick, newEscape,
-            _popoverLeaveStarted is { } left ? now - left : null)) HidePluginPopover();
+            _popoverLeaveStarted is { } left ? now - left : null))
+        {
+            if (!_popoverPinned && !newEscape && popup is MonitorPanelForm panel) panel.DismissHover();
+            else HidePluginPopover();
+        }
     }
+
+    private static bool IsMonitorPlugin(string? id) => id is MiniAreaIds.Router or MiniAreaIds.Intake;
 
     internal static bool ShouldDismissPopover(bool pinned, bool inside, bool newClick, bool newEscape, TimeSpan? outsideFor) =>
         newEscape || (pinned ? newClick && !inside : !inside && outsideFor >= TimeSpan.FromMilliseconds(150));

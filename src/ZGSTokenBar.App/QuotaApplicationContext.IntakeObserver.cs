@@ -20,7 +20,7 @@ internal sealed partial class QuotaApplicationContext
     {
         if (request.PluginId != MiniAreaIds.Intake || !IntakeEnabled || _quitting) return;
         var panel = EnsureIntakeObserver();
-        panel.ShowFor(_bar, request.Anchor, request.Pinned, request.Scale, request.Theme);
+        panel.ShowFor(_bar, request.Anchor, request.Pinned, request.Scale, request.Theme, request.Animate, request.Immediate);
         request.Popup = panel;
     }
 

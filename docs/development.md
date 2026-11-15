@@ -238,6 +238,13 @@ The client stores no work item data on disk.
 Mini hovers share a 200 ms dwell delay. Both full monitor panels prepare their
 native controls shortly after startup, while hidden; intake prewarming performs
 no business reads. Opening and pinning reuse that same prepared window.
+Router and intake hovers fade in and out on their shared host without resizing or
+moving the content. The narrow icon-to-panel gap and the existing 150 ms leave grace keep
+pointer travel stable; returning during fade-out reverses it on the same window.
+Switching between these two icons keeps the old panel until the new native frame
+is ready after a short 75 ms dwell. Geometry refresh does not restart that lifecycle.
+Pinning, Escape, module disable and dragging still dismiss or settle immediately;
+the existing animation setting disables the fades.
 
 The collapsed ring row keeps reporting accounts with usage, exhausted quotas,
 and accounts needing attention visible. Known zero-usage or inactive healthy

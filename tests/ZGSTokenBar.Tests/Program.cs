@@ -143,6 +143,14 @@ if (args.Length is 1 or 2 && args[0] == "--dock-overflow")
     return 0;
 }
 
+if (args.Length is 1 or 2 && args[0] == "--monitor-hover-motion")
+{
+    System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
+    MonitorPanelMotionTests.Run(args.Length == 2 ? args[1] : null);
+    Console.WriteLine("PASS full monitor hover entrance, reversible exit, pointer bridge and pin lifecycle");
+    return 0;
+}
+
 if (args.Length is 1 or 2 && args[0] == "--interactive-quota")
 {
     InteractiveQuotaTests.Run(args.Length == 2 ? args[1] : null);
@@ -601,6 +609,7 @@ var tests = new (string Name, Action Run)[]
     ("Taskbar embed attach, detach and parent loss", TestTaskbarEmbeddingWithFakeTaskbar),
     ("Glass dock rate and router slots are layout-stable", TestGlassDockStableSlots),
     ("Glass dock preserves unused accounts in overflow", () => GlassDockOverflowTests.Run()),
+    ("Full monitor hover transitions preserve native lifecycle", () => MonitorPanelMotionTests.Run()),
     ("Grok plan comes from the settings cache, never the sign-in type", TestGrokPlanFromSettingsCache),
     ("Expired Grok CLI session is renewed with its refresh token", TestGrokExpiredSessionIsRenewed),
     ("Popovers never get a cyclic or self owner", TestPopoverOwnerNeverCyclic),

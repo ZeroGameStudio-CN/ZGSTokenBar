@@ -409,10 +409,12 @@ internal static class IntakeObserverTests
             new Dictionary<string, string>());
         var requests = 0;
         var activations = 0;
+        var previousPanelReady = false;
         bar.PluginActivated += (_, _) => activations++;
         bar.PluginPopoverRequested += (_, request) =>
         {
             requests++;
+            if (request.PluginId == IntakeObserverPlugin.Id) previousPanelReady = routerPanel.Visible;
             MonitorPanelForm panel = request.PluginId == IntakeObserverPlugin.Id ? intakePanel : routerPanel;
             panel.ShowFor(bar, request.Anchor, request.Pinned, request.Scale, request.Theme);
             request.Popup = panel;
@@ -444,7 +446,9 @@ internal static class IntakeObserverTests
         var intakeSize = intakePanel.Size;
         bar.TrackMiniHover(new PointF(-1, -1));
         bar.MonitorPluginPopover(outside, false, false, now);
+        var beforeRefresh = requests;
         bar.SetSnapshot(QuotaSnapshot.Empty(DateTimeOffset.UtcNow));
+        Check(requests == beforeRefresh, "A data/geometry refresh does not reopen the panel or reset its hover lifecycle");
         bar.MonitorPluginPopover(outside, false, false, now.AddMilliseconds(149));
         Check(intakePanel.Visible, "The shared leave grace allows travel into the panel");
         bar.MonitorPluginPopover(outside, false, false, now.AddMilliseconds(150));
@@ -455,8 +459,10 @@ internal static class IntakeObserverTests
         Check(routerPanel.Visible && !routerPanel.Pinned && routerPanel.Size == intakeSize,
             "Router hover opens the same full-sized layout");
         bar.TrackMiniHover(intakePoint);
-        Check(!routerPanel.Visible, "Changing icons closes the previous full hover");
+        Check(routerPanel.Visible, "Changing icons keeps the full hover until its replacement is ready");
         bar.ShowHoveredPopover(intakeScreen);
+        Check(previousPanelReady && !routerPanel.Visible && intakePanel.Visible,
+            "The previous panel remains visible through replacement creation and is retired only after the new frame is ready");
         var handle = intakePanel.Handle;
         bar.ActivateMiniTarget(intakePoint);
         Check(intakePanel.Visible && intakePanel.Pinned && intakePanel.Handle == handle

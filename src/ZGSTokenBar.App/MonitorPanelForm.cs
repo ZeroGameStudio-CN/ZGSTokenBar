@@ -5,7 +5,7 @@ using ZGSTokenBar.Core;
 namespace ZGSTokenBar.App;
 
 /// <summary>One native panel host for Router and work intake: DPI, anchor, tail, pinning and fonts.</summary>
-internal abstract class MonitorPanelForm : Form, IPluginPopoverContent
+internal abstract partial class MonitorPanelForm : Form, IPluginPopoverContent
 {
     protected static readonly Size PreferredBodySize = new(760, 796);
     protected float _popoverScale = 1;
@@ -46,6 +46,7 @@ internal abstract class MonitorPanelForm : Form, IPluginPopoverContent
         ShowIcon = false;
         TopMost = true;
         DoubleBuffered = true;
+        _hoverMotionTimer.Tick += (_, _) => AdvanceHoverMotion();
         BackColor = UiTokens.CardSurface;
         SetLogicalFont(this, "Microsoft YaHei UI", RouterVisualGeometry.LogicalFontPixels);
     }
@@ -65,7 +66,11 @@ internal abstract class MonitorPanelForm : Form, IPluginPopoverContent
             style = pinned ? style & ~0x08000000L : style | 0x08000000L;
             SetWindowLongPtr(Handle, -20, (nint)style);
         }
-        if (pinned && Visible) Activate();
+        if (pinned)
+        {
+            FinishHoverMotion();
+            if (changed && Visible) Activate();
+        }
     }
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     private static extern nint GetWindowLongPtr(nint window, int index);
@@ -140,23 +145,47 @@ internal abstract class MonitorPanelForm : Form, IPluginPopoverContent
         ApplyPalette(theme);
         _appliedScale = _popoverScale; _appliedTheme = theme;
         PerformLayout();
+        // Prepare layered-window interop and the timer's native window off the hover path.
+        var opacity = Opacity;
+        Opacity = .99;
+        Opacity = opacity;
+        _hoverMotionTimer.Start();
+        _hoverMotionTimer.Stop();
     }
 
-    internal void ShowFor(BarForm owner, Rectangle anchor, bool pinned, float scale, QuotaBackgroundTheme theme)
+    internal void ShowFor(BarForm owner, Rectangle anchor, bool pinned, float scale, QuotaBackgroundTheme theme,
+        bool animate = false, bool immediate = false)
     {
         ConfigureFor(anchor, pinned, scale, theme, Screen.FromRectangle(anchor).WorkingArea);
+        ShowPrepared(owner, animate, immediate);
+    }
+
+    internal void ShowPrepared(BarForm owner, bool animate, bool immediate = false)
+    {
+        _animateHover = animate;
         var firstShow = !IsHandleCreated;
-        if (!Visible) this.ShowPopover(BarForm.PopoverOwnerFor(owner));
+        var opening = !Visible;
+        if (opening)
+        {
+            var transitioning = _hoverMotionTimer.Enabled;
+            _hoverMotionTimer.Stop();
+            _hoverExiting = false;
+            if (animate && !_pinned && !immediate) Opacity = .01;
+            else if (transitioning || immediate) Opacity = 1;
+            this.ShowPopover(BarForm.PopoverOwnerFor(owner));
+        }
         // Creating the native window can rescale fonts after ConfigureFor ran; only then re-apply.
-        if (firstShow)
+        if (firstShow || FontsDrifted())
         {
             ApplyLogicalFonts();
-            ApplyPalette(theme);
+            ApplyPalette(_appliedTheme ?? owner.UiTheme);
         }
-        if (pinned) Activate();
+        if (opening && animate && !_pinned && !immediate) StartHoverMotion(exiting: false);
+        if (_pinned) { FinishHoverMotion(); Activate(); }
     }
     internal void ConfigureFor(Rectangle anchor, bool pinned, float scale, QuotaBackgroundTheme theme, Rectangle area)
     {
+        _hoverAnchor = anchor;
         SetPinned(pinned);
         var nextScale = Math.Max(1, scale);
         if (Math.Abs(nextScale - _popoverScale) > .001)
@@ -180,7 +209,8 @@ internal abstract class MonitorPanelForm : Form, IPluginPopoverContent
         var tail = (int)(8 * _popoverScale);
         var placement = TaskbarMiniPopoverMath.Place(anchor, _bodySize, tail, (int)(3 * _popoverScale), area);
         _tailSide = placement.TailSide; _tailOffset = placement.TailOffset;
-        if (_appliedWindowSize != placement.WindowSize || _appliedTailSide != _tailSide)
+        var shapeChanged = _appliedWindowSize != placement.WindowSize || _appliedTailSide != _tailSide;
+        if (shapeChanged)
         {
             SuspendLayout();
             Padding = new Padding(2 + (_tailSide == PopoverTailSide.Left ? tail : 0), 2 + (_tailSide == PopoverTailSide.Top ? tail : 0),
@@ -192,7 +222,7 @@ internal abstract class MonitorPanelForm : Form, IPluginPopoverContent
         }
         Location = placement.Location;
         var tailOffsetRounded = (int)Math.Round(_tailOffset);
-        if (_appliedTailOffset != tailOffsetRounded || Region is null)
+        if (shapeChanged || _appliedTailOffset != tailOffsetRounded || Region is null)
         {
             using var path = SurfacePath();
             var old = Region;
@@ -259,6 +289,7 @@ internal abstract class MonitorPanelForm : Form, IPluginPopoverContent
     }
     protected override void Dispose(bool disposing)
     {
+        if (disposing) { _hoverMotionTimer.Stop(); _hoverMotionTimer.Dispose(); }
         base.Dispose(disposing);
         if (disposing) foreach (var font in _scaledFonts.Values) font.Dispose();
     }

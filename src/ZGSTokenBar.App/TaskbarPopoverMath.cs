@@ -4,6 +4,24 @@ namespace ZGSTokenBar.App;
 
 internal static class TaskbarPopoverMath
 {
+    internal static bool ContainsHoverPoint(Rectangle anchor, Rectangle popup, Point cursor, int margin)
+    {
+        if (anchor.Contains(cursor) || popup.Contains(cursor)) return true;
+        if (anchor.IsEmpty || popup.IsEmpty) return false;
+        var maxGap = margin * 8;
+        Rectangle bridge;
+        if (popup.Bottom <= anchor.Top && anchor.Top - popup.Bottom <= maxGap)
+            bridge = Rectangle.FromLTRB(anchor.Left - margin, popup.Bottom, anchor.Right + margin, anchor.Top);
+        else if (anchor.Bottom <= popup.Top && popup.Top - anchor.Bottom <= maxGap)
+            bridge = Rectangle.FromLTRB(anchor.Left - margin, anchor.Bottom, anchor.Right + margin, popup.Top);
+        else if (popup.Right <= anchor.Left && anchor.Left - popup.Right <= maxGap)
+            bridge = Rectangle.FromLTRB(popup.Right, anchor.Top - margin, anchor.Left, anchor.Bottom + margin);
+        else if (anchor.Right <= popup.Left && popup.Left - anchor.Right <= maxGap)
+            bridge = Rectangle.FromLTRB(anchor.Right, anchor.Top - margin, popup.Left, anchor.Bottom + margin);
+        else return false;
+        return bridge.Contains(cursor);
+    }
+
     public static Point OffsetFromAnchor(Point anchor, PopoverTailSide tailSide, int offset) =>
         tailSide switch
         {

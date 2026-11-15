@@ -62,7 +62,7 @@ internal sealed class RouterModule : IDisposable
         var window = EnsureWindow();
         if (request.Pinned && !window.Visible) window.MarkOpenRequested(clicked);
         using (PerfTrace.Measure("router.panel.show"))
-            window.ShowFor(_bar, request.Anchor, request.Pinned, request.Scale, request.Theme);
+            window.ShowFor(_bar, request.Anchor, request.Pinned, request.Scale, request.Theme, request.Animate, request.Immediate);
         request.Popup = window;
     }
     private RouterMonitorForm EnsureWindow()
