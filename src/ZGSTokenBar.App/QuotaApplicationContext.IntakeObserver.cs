@@ -18,7 +18,7 @@ internal sealed partial class QuotaApplicationContext
 
     private void IntakePopoverRequested(object? sender, PluginPopoverRequest request)
     {
-        if (request.PluginId != MiniAreaIds.Intake || !request.Pinned || !IntakeEnabled || _quitting) return;
+        if (request.PluginId != MiniAreaIds.Intake || !IntakeEnabled || _quitting) return;
         if (_intakeObserver is null || _intakeObserver.IsDisposed)
         {
             _intakeObserver = new(_text.IsChinese);

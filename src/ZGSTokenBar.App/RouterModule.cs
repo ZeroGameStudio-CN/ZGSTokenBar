@@ -16,7 +16,6 @@ internal sealed class RouterModule : IDisposable
     private readonly RefreshScheduler _scheduler;
     private readonly System.Windows.Forms.Timer _warmup = new() { Interval = 600 };
     private RouterMonitorForm? _window;
-    private RouterHoverCardForm? _hover;
     private bool _disposed;
     public bool Visible => _window is { Visible: true, IsDisposed: false };
     public RouterSnapshot? Snapshot => _window is { IsDisposed: false } ? _window.Snapshot : null;
@@ -59,23 +58,12 @@ internal sealed class RouterModule : IDisposable
     private void Requested(object? sender, PluginPopoverRequest request)
     {
         if (request.PluginId != RouterPlugin.Id || !_enabled()) return;
-        if (!request.Pinned)
-        {
-            // Hover: the lightweight cached card; the full monitor panel is only built on click.
-            using var hover = PerfTrace.Measure("router.hover.show");
-            if (_window is { Visible: true, IsDisposed: false }) { request.Popup = _window; return; }
-            _hover ??= new RouterHoverCardForm();
-            _hover.ShowFor(_bar, request.Anchor, _bar.RouterCard, _bar.IsChinese, request.Scale);
-            request.Popup = _hover;
-            return;
-        }
         var clicked = System.Diagnostics.Stopwatch.GetTimestamp();
-        if (_hover is { Visible: true }) _hover.Hide();
-        EnsureWindow();
-        if (!_window!.Visible) _window.MarkOpenRequested(clicked);
+        var window = EnsureWindow();
+        if (request.Pinned && !window.Visible) window.MarkOpenRequested(clicked);
         using (PerfTrace.Measure("router.panel.show"))
-            _window.ShowFor(_bar, request.Anchor, request.Pinned, request.Scale, request.Theme);
-        request.Popup = _window;
+            window.ShowFor(_bar, request.Anchor, request.Pinned, request.Scale, request.Theme);
+        request.Popup = window;
     }
     private RouterMonitorForm EnsureWindow()
     {
@@ -98,7 +86,7 @@ internal sealed class RouterModule : IDisposable
         _bar.PluginPopoverRequested -= Requested;
         _disposed = true;
         _scheduler.Remove(RefreshSource);
-        _warmup.Stop(); _warmup.Dispose(); _window?.Dispose(); _hover?.Dispose();
+        _warmup.Stop(); _warmup.Dispose(); _window?.Dispose();
         // The monitor and all Editor jobs have their own lifetime and ownership.
     }
 }

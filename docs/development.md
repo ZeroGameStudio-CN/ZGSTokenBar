@@ -158,8 +158,8 @@ the badge summing waiting requests across all projects with pending work. Runnin
 and blocked requests are excluded using each project's public `queuedCount`; stale
 or failed contributing observations make the aggregate unavailable. The selected
 project still supplies the execution summary and popup contents.
-Full task information is kept in the popup. Hover uses the existing bar's delayed, anchored popup;
-clicking pins it. The popup has no taskbar entry or window chrome. The shared
+Hover opens the complete delayed, anchored panel; clicking pins that same window.
+The popup has no taskbar entry or window chrome. The shared
 pointer timer provides the same leave grace, outside-click and Escape dismissal
 as Codex; dialogs/dropdowns retain interaction. Only a pinned view enables
 execution controls. Data-only card refreshes do not reset window placement or
@@ -217,9 +217,11 @@ to pin the same anchored panel host used by Router, with shared screen/DPI
 geometry, header, project row, current-item section and equally sized tables.
 Pin, close, outside click and Escape use the same popover lifecycle.
 Its switch in Settings → Modules is
-independent of Router. The two monitors share the same icon slot, highlight,
-and preview layout. Disabled monitors leave no empty slot. Hovering shows a
-preview without making any requests.
+independent of Router. The two monitors share the same icon slot, highlight
+and full-panel hover. There is no intermediate summary card. Disabled monitors
+leave no empty slot. The visible panel makes bounded reads; leaving the icon
+and panel dismisses the unpinned view. Clicking pins it. Escape and the close
+button dismiss either view; text lookup and item actions require a pinned panel.
 The window uses the current user's managed Zero OS CLI and its existing session. The project list
 comes from work item read access; access to a project does not imply that
 automatic dispatch is enabled there. Select a recent item or enter its number

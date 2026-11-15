@@ -26,6 +26,15 @@ internal abstract class MonitorPanelForm : Form, IPluginPopoverContent
     public event EventHandler? CloseRequested;
     protected void RequestPinChange(bool pinned) => PinChanged?.Invoke(this, pinned);
     protected void RequestClose() => CloseRequested?.Invoke(this, EventArgs.Empty);
+    internal bool HandlePanelShortcut(Keys key)
+    {
+        if (key != Keys.Escape) return false;
+        RequestClose();
+        return true;
+    }
+
+    protected override bool ProcessCmdKey(ref Message message, Keys keyData) =>
+        HandlePanelShortcut(keyData) || base.ProcessCmdKey(ref message, keyData);
 
     protected MonitorPanelForm()
     {

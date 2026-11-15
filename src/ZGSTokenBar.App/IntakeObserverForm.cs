@@ -100,7 +100,10 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
         _recent.CellDoubleClick += async (_, e) =>
         {
             if (e.RowIndex >= 0 && _fresh && _recent.Rows[e.RowIndex].Tag is IntakeItem row)
+            {
+                if (!_pinned) RequestPinChange(true);
                 await LoadItemAsync(row.Id.ToString("D"));
+            }
         };
         _recent.KeyDown += async (_, e) =>
         {
@@ -160,6 +163,7 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
         base.SetPinned(pinned);
         _pin.Selected = pinned;
         _pin.AccessibleName = pinned ? T("取消固定", "Unpin") : T("固定弹层", "Pin");
+        UpdateButtons();
     }
     private void ApplyProjects()
     {
@@ -181,6 +185,7 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
                 Palette = new(UiTokens.CardSurface) };
             button.Click += async (_, _) =>
             {
+                if (!_pinned) RequestPinChange(true);
                 if (_projectKey == project.Key) return;
                 _projectKey = project.Key; ClearItem(); await LoadRecentAsync();
             };
@@ -191,7 +196,7 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
         foreach (var project in _projectCatalog.Except(shown))
         {
             var item = new ToolStripMenuItem(project.Title);
-            item.Click += async (_, _) => { _projectKey = project.Key; ClearItem(); await LoadRecentAsync(); };
+            item.Click += async (_, _) => { if (!_pinned) RequestPinChange(true); _projectKey = project.Key; ClearItem(); await LoadRecentAsync(); };
             _projectMenu.Items.Add(item);
         }
         if (_projectMenu.Items.Count > 0)
@@ -415,10 +420,11 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
 
     private void UpdateButtons()
     {
-        _copy.Enabled = _request is null && _detailFresh && _item is { Number.Length: > 0 };
-        _open.Enabled = _request is null && _detailFresh && _item is { } value && _client.WorkItemLink(value.Id) is not null;
-        _thread.Enabled = _request is null && _detailFresh && _item?.Thread is not null;
-        _diagnose.Enabled = _request is null && _detailFresh && _item is not null;
+        _reference.Enabled = _search.Enabled = _blocked.Enabled = _pinned && _request is null;
+        _copy.Enabled = _pinned && _request is null && _detailFresh && _item is { Number.Length: > 0 };
+        _open.Enabled = _pinned && _request is null && _detailFresh && _item is { } value && _client.WorkItemLink(value.Id) is not null;
+        _thread.Enabled = _pinned && _request is null && _detailFresh && _item?.Thread is not null;
+        _diagnose.Enabled = _pinned && _request is null && _detailFresh && _item is not null;
     }
 
     private void OpenItem()

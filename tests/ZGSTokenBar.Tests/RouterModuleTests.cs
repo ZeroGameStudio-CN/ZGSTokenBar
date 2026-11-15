@@ -708,10 +708,14 @@ internal static class RouterModuleTests
     {
         foreach (var dpi in new[] { 96, 144, 192 })
         {
-            using var hover = new RouterHoverCardForm();
-            using var image = hover.RenderForTest(Card("running", 3), chinese: true, dpi);
-            Check(image.Width == (int)Math.Round(248 * dpi / 96f), $"Router hover uses the shared card width at {dpi} DPI");
-            image.Save(Path.Combine(directory, $"router-hover-{dpi}.png"), ImageFormat.Png);
+            using var form = new RouterMonitorForm(new RouterMonitorClient(new Fixture()), observe: false);
+            var scale = dpi / 96f;
+            var area = new Rectangle(0, 0, (int)(1280 * scale), (int)(900 * scale));
+            form.ConfigureFor(new Rectangle(400, area.Bottom, 48, 44), false, scale,
+                QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), area);
+            form.Show(); form.RefreshViewAsync().GetAwaiter().GetResult();
+            Check(!form.Pinned && form.Width == (int)(760 * scale), $"Hover uses the full monitor layout at {dpi} DPI");
+            Save(form, Path.Combine(directory, $"router-hover-full-{dpi}.png"));
         }
         // Close-up: the dock icon (26 px slot) for every state at 6x, with and without a queue.
         var states = new[] { "idle", "running", "waiting", "cleanup", "attention", "offline", "unknown" };

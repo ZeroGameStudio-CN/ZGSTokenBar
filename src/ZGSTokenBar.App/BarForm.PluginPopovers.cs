@@ -21,7 +21,6 @@ internal sealed class PluginPopoverRequest(string pluginId, Rectangle anchor, bo
 internal sealed partial class BarForm
 {
     private Form? _pluginPopover;
-    private IntakeHoverCardForm? _intakeHover;
     private string? _pluginPopoverId;
     private Rectangle _pluginPopoverAnchor;
     public event EventHandler<PluginPopoverRequest>? PluginPopoverRequested;
@@ -40,18 +39,9 @@ internal sealed partial class BarForm
         if (!pinned && _popoverPinned) return true;
         if (_pluginPopover?.Visible != true || _pluginPopoverId != pluginId) HidePopovers();
         var request = new PluginPopoverRequest(pluginId, anchor, pinned, _scale, _backgroundTheme);
-        if (!pinned && pluginId == MiniAreaIds.Intake)
-        {
-            _intakeHover ??= new IntakeHoverCardForm();
-            _intakeHover.ShowFor(this, anchor, _text, _scale);
-            request.Popup = _intakeHover;
-        }
-        else
-        {
-            using (PerfTrace.Measure($"plugin-popover.open {pluginId} pinned={pinned}"))
-                PluginPopoverRequested?.Invoke(this, request);
-            if (!pinned && request.Popup is null) ShowPluginHint(request);
-        }
+        using (PerfTrace.Measure($"plugin-popover.open {pluginId} pinned={pinned}"))
+            PluginPopoverRequested?.Invoke(this, request);
+        if (!pinned && request.Popup is null) ShowPluginHint(request);
         if (request.Popup is not { Visible: true } popup) return false;
         _pluginPopover = popup; _pluginPopoverId = pluginId; _pluginPopoverAnchor = anchor;
         _popoverPinned = pinned; _popoverLeaveStarted = null;
@@ -113,11 +103,11 @@ internal sealed partial class BarForm
     internal void MonitorPluginPopover(Point cursor, bool mouseDown, bool escapeDown, DateTime now)
     {
         if (_pluginPopover is not { Visible: true } popup) return;
-        if (popup is IPluginPopoverContent { InteractionOpen: true }) return;
         var inside = _pluginPopoverAnchor.Contains(cursor) || popup.Bounds.Contains(cursor);
         var newClick = mouseDown && !_popoverMouseWasDown;
         var newEscape = escapeDown && !_popoverEscapeWasDown;
         _popoverMouseWasDown = mouseDown; _popoverEscapeWasDown = escapeDown;
+        if (popup is IPluginPopoverContent { InteractionOpen: true }) return;
         if (!_popoverPinned)
         {
             if (inside) _popoverLeaveStarted = null;
@@ -128,5 +118,5 @@ internal sealed partial class BarForm
     }
 
     internal static bool ShouldDismissPopover(bool pinned, bool inside, bool newClick, bool newEscape, TimeSpan? outsideFor) =>
-        pinned ? newEscape || newClick && !inside : !inside && outsideFor >= TimeSpan.FromMilliseconds(150);
+        newEscape || (pinned ? newClick && !inside : !inside && outsideFor >= TimeSpan.FromMilliseconds(150));
 }
