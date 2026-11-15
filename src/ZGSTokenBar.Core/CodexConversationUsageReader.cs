@@ -25,6 +25,8 @@ public sealed record CodexConversationTurn(
     [JsonIgnore]
     public int InstanceNumber { get; init; }
     [JsonIgnore]
+    public int InstanceAccountNumber { get; init; }
+    [JsonIgnore]
     public double? InstanceRemainingPercent { get; init; }
     public string? ServiceTier { get; init; }
     public string? ResponseModels { get; init; }

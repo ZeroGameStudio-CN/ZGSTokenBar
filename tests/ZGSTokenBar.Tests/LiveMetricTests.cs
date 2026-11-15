@@ -19,6 +19,11 @@ internal static class LiveMetricTests
         var estimated = tracker.Observe(Feed([Response("a", -7, -5, 200)], [active]), at);
         Check(Math.Abs(estimated.Estimated - 200d / 3) < .001 && estimated.HasEstimate,
             "Generating uses recent response-weighted speed and exposes the estimated share.");
+        Check(estimated.RecordedTotal == 0 && summed.RecordedTotal == summed.Measured,
+            "The primary output readout never includes extrapolated tokens");
+        var quiet = tracker.Observe(Feed([Response("a", -10, -8, 200)],
+            [active with { LastActivity = at.AddSeconds(-6), InFlightStart = at.AddSeconds(-7) }]), at);
+        Check(quiet.Estimated == 0, "A stale generation phase cannot extrapolate output for minutes without new log evidence");
         var switched = active with { Model = "new-model" };
         var missingModel = tracker.Observe(Feed([Response("a", -7, -5, 200)], [switched]), at);
         Check(missingModel.Estimated == 0 && missingModel.Total is null && missingModel.Conversations.Count == 0,
@@ -87,7 +92,7 @@ internal static class LiveMetricTests
         popover.UpdateContent(new SystemUsagePopoverContent(snapshot, false), text);
         Check(!popover.LiveRatesContentForAcceptance, "CPU hover keeps the system surface mode.");
         Check(popover.MetricLabelsForAcceptance.Contains("CPU")
-            && !popover.MetricLabelsForAcceptance.Contains("合计输出")
+            && !popover.MetricLabelsForAcceptance.Contains("已记录输出")
             && popover.ProcessRowCountForAcceptance == 1,
             "CPU hover contains CPU metrics and process rows only.");
 
@@ -95,8 +100,8 @@ internal static class LiveMetricTests
         Check(popover.LiveRatesContentForAcceptance, "Rate hover switches to the live surface mode.");
         Check(popover.CurrentLogicalBodyHeight <= 540,
             "Rates, today's token curve and cumulative history fit in a single unscrolled page.");
-        Check(popover.MetricLabelsForAcceptance.Contains("合计输出")
-            && popover.MetricLabelsForAcceptance.Contains("网络接收")
+        Check(popover.MetricLabelsForAcceptance.Contains("已记录输出")
+            && popover.MetricLabelsForAcceptance.Contains("本机接收")
             && !popover.MetricLabelsForAcceptance.Contains("CPU")
             && popover.ProcessRowCountForAcceptance == 0,
             "Rate hover contains output/network metrics without CPU or process rows.");
@@ -285,8 +290,9 @@ internal static class LiveMetricTests
         var sorted = CodexConversationView.Create(usage, new(SortColumn: 10), at).Rows;
         Check(sorted[^1].TurnId == "old", "Live sorting leaves unavailable historical values last.");
         var text = NativeText.For("zh-CN");
-        Check(text.CodexTurnLiveSpeed(view.Rows.Single(row => row.TurnId == "b")) == "≈20",
-            "Estimated per-conversation speed stays visibly marked.");
+        Check(text.CodexTurnLiveSpeed(view.Rows.Single(row => row.TurnId == "b")) == "0"
+            && text.CodexTurnTooltip(view.Rows.Single(row => row.TurnId == "b")).Contains("估算 ≈20"),
+            "Recorded row speed excludes its separately labelled estimate");
         Check(!System.Text.Json.JsonSerializer.Serialize(view.Rows[0]).Contains("LiveRate", StringComparison.OrdinalIgnoreCase),
             "Transient live speeds are never serialized into retained history.");
     }
@@ -503,6 +509,12 @@ internal static class LiveMetricTests
             Check(attached[1].InstanceLabel == "Codex · 2" && attached[1].InstanceNumber == 2
                 && attached[1].InstanceRemainingPercent is { } rem2 && Math.Abs(rem2 - 54) < .001,
                 "Default home turn resolves to taskbar ring Codex · 2 with 54% remaining.");
+            var three = CodexConversationDisplay.AttachInstances([.. turns,
+                turns[0] with { SessionId = "third-session", CodexHome = instTwoHome }], quota, map,
+                [instOneHome, defaultHome, instTwoHome]);
+            Check(three[2].InstanceNumber == 3 && three[2].InstanceAccountNumber == 1
+                && three[2].InstanceRemainingPercent == three[0].InstanceRemainingPercent,
+                "The third registered home retains instance 3 while sharing only account 1's quota");
 
             var fallbackCockpit = Path.Combine(directory, "empty-cockpit");
             var fallbackDefault = Path.Combine(directory, "fallback-codex");

@@ -31,6 +31,7 @@ internal static class IntakeObserverTests
         PrewarmedPanel();
         RefreshSelectedAndRecent();
         RefreshKeepsKeyboardSelection();
+        AllProjectsRecent();
         var denied = false;
         var switched = false;
         var reads = new List<string>();
@@ -52,7 +53,7 @@ internal static class IntakeObserverTests
             }
             if (args[0] == "list")
             {
-                Check(args.Contains("LAB") && args.Contains("--limit") && !args.Contains("--all"),
+                Check((args.Contains("LAB") || args.Contains("SYS")) && args.Contains("--limit") && !args.Contains("--all"),
                     "Project comes from access projection and history is bounded");
                 return Task.FromResult(Json(RecentJson));
             }
@@ -149,6 +150,26 @@ internal static class IntakeObserverTests
         }
         Check(operation.IsCompleted, "The isolated read must complete on the UI thread");
         operation.GetAwaiter().GetResult();
+    }
+
+    private static void AllProjectsRecent()
+    {
+        var projects = new List<string>();
+        var client = new IntakeObserverClient((args, _) =>
+        {
+            if (args[0] == "whoami") return Task.FromResult(Json("""{"subject":"fixture","authorization_revision":"same","project_access":[{"project_key":"LAB","capabilities":["work_item.read"]},{"project_key":"SYS","capabilities":["work_item.read"]}]}"""));
+            if (args[0] != "list") throw new InvalidOperationException("Unexpected all-project fixture read");
+            var project = args[2]; projects.Add(project);
+            return Task.FromResult(Json(JsonSerializer.Serialize(new { items = new[] { new {
+                work_item_id = project == "LAB" ? ItemId : OtherId, project_key = project,
+                work_item_number = project + "-1", title = project, status = "rework" } } })));
+        });
+        using var form = new IntakeObserverForm(true, client, observeOnShow: false);
+        RunOnUi(form.LoadRecentAsync());
+        Check(form.Observation is { Projects: 2, Recent: 2 }
+            && projects.Order().SequenceEqual(new[] { "LAB", "SYS" })
+            && Controls(form).OfType<RouterButton>().Single(button => button.Text == "全部项目").Selected,
+            "Intake defaults to all authorized projects while issuing only bounded exact-project reads");
     }
 
     private static void RefreshSelectedAndRecent()
@@ -482,6 +503,19 @@ internal static class IntakeObserverTests
         bar.SetPluginMiniCards([router]);
         Check(!intakePanel.Visible && bar.VisiblePluginPopoverId is null,
             "Disabling the module closes its pinned or hovering panel");
+        bar.SetPluginMiniCards([router, intake]);
+        bar.DrawToBitmap(image, new Rectangle(Point.Empty, image.Size));
+        var recoveredBounds = bar.MiniPluginBounds(IntakeObserverPlugin.Id)!.Value;
+        var stationary = Center(bar.QuotaTargetScreenBounds(recoveredBounds));
+        bar.RecoverStationaryHover(stationary);
+        bar.ShowHoveredPopover(stationary);
+        Check(intakePanel.Visible, "A stationary pointer recovers after a background layout invalidates its pending hover");
+        bar.HidePluginPopover(IntakeObserverPlugin.Id);
+        bar.RecoverStationaryHover(stationary); bar.ShowHoveredPopover(stationary);
+        Check(!intakePanel.Visible, "Stationary recovery respects an explicit dismissal until the pointer leaves");
+        bar.RecoverStationaryHover(outside);
+        bar.RecoverStationaryHover(stationary); bar.ShowHoveredPopover(stationary);
+        Check(intakePanel.Visible, "Leaving and returning clears the explicit dismissal without stale state");
         bar.Close();
 
         static Point Center(RectangleF bounds) =>

@@ -24,6 +24,7 @@ internal static class RouterModuleTests
         RefusalTiming();
         ExpandedSummary();
         MultiProjectQueueSummary();
+        AllProjectPages();
         LocalQueueUnavailable();
         QueueBadgeDigits();
         QueueRefreshRecovery();
@@ -78,7 +79,7 @@ internal static class RouterModuleTests
 
     private static void RefusalTiming()
     {
-        using var form = new RouterMonitorForm(new RouterMonitorClient(new Fixture { PreflightRefusal = true }), observe: false)
+        using var form = new RouterMonitorForm(new RouterMonitorClient(new Fixture { PreflightRefusal = true }), observe: false, initialProject: Fixture.Project)
         { ShowInTaskbar = false, StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
         form.Show(); Pump(form.RefreshViewAsync());
         var grid = AllControls(form).OfType<RouterGrid>().Single(table => table.Columns.Count == 6);
@@ -86,6 +87,34 @@ internal static class RouterModuleTests
         Check(grid.Columns[4].HeaderText == "占用" && grid.Rows[0].Cells[4].ToolTipText.Contains("原生操作未执行")
             && grid.Rows[0].Cells[4].ToolTipText.Contains("派发恢复等待 2999s"), "Occupied time remains visible with the known preflight/recovery split");
         form.Close();
+    }
+
+    private static void AllProjectPages()
+    {
+        using var handler = new Fixture { ProjectCatalog = JsonSerializer.SerializeToElement(new[] {
+            new { key = Fixture.Project, name = "POB", pending = 2, recorded = 76 },
+            new { key = new string('e', 64), name = "P5", pending = 1, recorded = 76 } }) };
+        using var client = new RouterMonitorClient(handler);
+        var all = client.SnapshotAsync(RouterMonitorClient.AllProjects).GetAwaiter().GetResult();
+        Check(all.ProjectKey == RouterMonitorClient.AllProjects && all.QueuedCount == 82
+            && RouterJson.Integer(all.View, "activeCount") == 2 && RouterJson.Text(all.View, "requestId").Length == 0,
+            "All-project overview sums observations without inventing a controllable current request");
+        var queue = client.QueueAsync(RouterMonitorClient.AllProjects, 3, limit: 5).GetAwaiter().GetResult();
+        Check(RouterJson.Rows(queue, "items").Count() == 5 && RouterJson.Integer(queue, "total") == 82
+            && RouterJson.Rows(queue, "items").All(row => RouterJson.IsHex(RouterJson.Text(row, "projectKey"), 64)),
+            "The global queue page stays bounded and retains each request's concrete project identity");
+        var history = client.HistoryAsync(RouterMonitorClient.AllProjects, "all", "finished", "all", "", 120, limit: 30).GetAwaiter().GetResult();
+        Check(RouterJson.Rows(history, "items").Count() == 30 && RouterJson.Integer(history, "total") == 152
+            && !RouterJson.Rows(history, "groups").Any(),
+            "Global history pages merge project prefixes without fabricating a merged P95");
+        Throws<ArgumentException>(() => client.ControlAsync(all, new string('b', 32), "cancel").GetAwaiter().GetResult());
+        Check(handler.Posts == 0, "An all-project observation cannot be used as execution authority");
+        using var form = new RouterMonitorForm(client, observe: false) { Opacity = 0 };
+        Pump(form.RefreshViewAsync());
+        Check(form.Snapshot?.ProjectKey == RouterMonitorClient.AllProjects,
+            "The native Router panel defaults to the complete project scope");
+        Pump(form.SelectProjectAsync(Fixture.Project));
+        Check(form.Snapshot?.ProjectKey == Fixture.Project, "A project filter restores the original exact-project route");
     }
 
     private static void ExpandedSummary()
@@ -230,7 +259,7 @@ internal static class RouterModuleTests
             executionSeconds = 3, cleanupVerified = i % phases.Length >= 5,
         })).ToArray();
         using var handler = new Fixture { HistoryItems = rows };
-        using var form = new RouterMonitorForm(new RouterMonitorClient(handler), observe: false)
+        using var form = new RouterMonitorForm(new RouterMonitorClient(handler), observe: false, initialProject: Fixture.Project)
         { ShowInTaskbar = false, StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
         form.SetPinned(true); form.Show(); Pump(form.RefreshViewAsync());
         var controls = AllControls(form).ToArray();
@@ -273,7 +302,7 @@ internal static class RouterModuleTests
     private static void PagingReads()
     {
         using var handler = new Fixture { HistoryTotal = 206 };
-        using var form = new RouterMonitorForm(new RouterMonitorClient(handler), observe: false)
+        using var form = new RouterMonitorForm(new RouterMonitorClient(handler), observe: false, initialProject: Fixture.Project)
         { ShowInTaskbar = false, StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
         form.SetPinned(true); form.Show();
         using var observer = new RouterMonitorClient(new Fixture());
@@ -330,7 +359,7 @@ internal static class RouterModuleTests
     private static void WheelPaging()
     {
         using var handler = new Fixture { HistoryTotal = 206 };
-        using var form = new RouterMonitorForm(new RouterMonitorClient(handler), observe: false)
+        using var form = new RouterMonitorForm(new RouterMonitorClient(handler), observe: false, initialProject: Fixture.Project)
         { ShowInTaskbar = false, StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
         form.Show(); Pump(form.RefreshViewAsync());
         var grids = AllControls(form).OfType<RouterGrid>().ToArray();
@@ -373,7 +402,7 @@ internal static class RouterModuleTests
         var watch = Stopwatch.StartNew();
         var small = client.HistoryAsync(snapshot.ProjectKey, "all", "all", "all", "", 0, limit: 5); Pump(small);
         var fiveRowReadMilliseconds = watch.Elapsed.TotalMilliseconds;
-        using var form = new RouterMonitorForm(client, observe: false)
+        using var form = new RouterMonitorForm(client, observe: false, initialProject: Fixture.Project)
         { ShowInTaskbar = false, StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
         form.SetPinned(true); form.Show(); form.ApplySnapshot(snapshot);
         watch.Restart(); Pump(form.HistoryAsync()); var windowReadMilliseconds = watch.Elapsed.TotalMilliseconds;
@@ -427,7 +456,7 @@ internal static class RouterModuleTests
         CaptureHoverAndCloseUp(directory);
         foreach (var dpi in new[] { 96, 144, 192 })
         {
-            using var form = new RouterMonitorForm(new RouterMonitorClient(new Fixture()), observe: false)
+            using var form = new RouterMonitorForm(new RouterMonitorClient(new Fixture()), observe: false, initialProject: Fixture.Project)
             { ShowInTaskbar = false, StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
             form.SetPinned(true);
             Check(!form.ShowInTaskbar && form.FormBorderStyle == System.Windows.Forms.FormBorderStyle.None, "Anchored popup has no independent window chrome");
@@ -472,7 +501,7 @@ internal static class RouterModuleTests
             Save(form, Path.Combine(directory, $"router-history-{dpi}.png"));
             var projectButtons = AllControls(form).OfType<RouterButton>().Where(button => button.AccessibleName?.StartsWith("切换工程 ") == true).ToArray();
             Check(projectButtons.Length == 3 && projectButtons.Count(button => button.Selected) == 1, "Registered projects use flat selected chips");
-            Check(projectButtons[0].AccessibleName == "切换工程 POB", "Most-used project stays first even when the catalog arrives alphabetically");
+            Check(projectButtons[0].AccessibleName == "切换工程 全部项目", "All projects stays first while concrete project filters remain available");
 
             projectButtons.Single(button => button.AccessibleName == "切换工程 ZGSProject_5").PerformClick();
             System.Windows.Forms.Application.DoEvents();
@@ -498,7 +527,7 @@ internal static class RouterModuleTests
             Save(form, Path.Combine(directory, $"router-unavailable-{dpi}.png"));
             form.Close();
 
-            using var empty = new RouterMonitorForm(new RouterMonitorClient(new Fixture { Empty = true }), observe: false)
+            using var empty = new RouterMonitorForm(new RouterMonitorClient(new Fixture { Empty = true }), observe: false, initialProject: Fixture.Project)
             { StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
             empty.SetPinned(true); empty.Show(); empty.RefreshViewAsync().GetAwaiter().GetResult();
             empty.ConfigureFor(new Rectangle(400, (int)(600 * scale), 48, 44), true, scale,
@@ -512,7 +541,7 @@ internal static class RouterModuleTests
             }
             empty.Close();
         }
-        using var compact = new RouterMonitorForm(new RouterMonitorClient(new Fixture()), observe: false)
+        using var compact = new RouterMonitorForm(new RouterMonitorClient(new Fixture()), observe: false, initialProject: Fixture.Project)
         { StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
         var smallArea = new Rectangle(0, 0, 1920, 1040);
         compact.ConfigureFor(new Rectangle(400, 980, 48, 44), true, 2,
@@ -531,7 +560,7 @@ internal static class RouterModuleTests
         using var owner = new BarForm(new AppSettings(), QuotaSnapshot.Empty(DateTimeOffset.UtcNow), renderOnly: true, renderDpi: 192)
         { Location = new(-30000, -30000), ShowInTaskbar = false };
         owner.Show();
-        using var form = new RouterMonitorForm(new RouterMonitorClient(new Fixture()), observe: false)
+        using var form = new RouterMonitorForm(new RouterMonitorClient(new Fixture()), observe: false, initialProject: Fixture.Project)
         { MaximumSize = new Size(1024, 768) };
         var anchor = new Rectangle(400, 600, 48, 44);
         var scales = new[] { 2f, 2f, 1.5f, 2f, 1f, 2f };
@@ -598,7 +627,7 @@ internal static class RouterModuleTests
         settings.PluginEnabled[MiniAreaIds.SystemMetrics] = false;
         using var bar = new BarForm(settings, QuotaSnapshot.Empty(DateTimeOffset.UtcNow), renderOnly: true, renderDpi: 96)
         { StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000), ShowInTaskbar = false };
-        using var popup = new RouterMonitorForm(new RouterMonitorClient(new Fixture()), observe: false)
+        using var popup = new RouterMonitorForm(new RouterMonitorClient(new Fixture()), observe: false, initialProject: Fixture.Project)
         { Location = new(-30000, -30000) };
         var view = new PluginMiniCardView(RouterPlugin.Id, "Router", Card("running", 3), new Dictionary<string, string>());
         bar.SetPluginMiniCards([view]);
@@ -708,7 +737,7 @@ internal static class RouterModuleTests
     {
         foreach (var dpi in new[] { 96, 144, 192 })
         {
-            using var form = new RouterMonitorForm(new RouterMonitorClient(new Fixture()), observe: false);
+            using var form = new RouterMonitorForm(new RouterMonitorClient(new Fixture()), observe: false, initialProject: Fixture.Project);
             var scale = dpi / 96f;
             var area = new Rectangle(0, 0, (int)(1280 * scale), (int)(900 * scale));
             form.ConfigureFor(new Rectangle(400, area.Bottom, 48, 44), false, scale,
@@ -768,7 +797,7 @@ internal static class RouterModuleTests
     {
         Directory.CreateDirectory(directory);
         using var handler = new Fixture();
-        using var form = new RouterMonitorForm(new RouterMonitorClient(handler), observe: false)
+        using var form = new RouterMonitorForm(new RouterMonitorClient(handler), observe: false, initialProject: Fixture.Project)
         {
             ShowInTaskbar = false,
             StartPosition = System.Windows.Forms.FormStartPosition.Manual,

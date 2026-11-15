@@ -6,7 +6,7 @@ using System.Text.Json.Nodes;
 namespace ZGSTokenBar.Plugin.Router;
 
 /// <summary>The Router owns every state and control decision; this adapter only transports bounded messages.</summary>
-public sealed class RouterMonitorClient : IDisposable
+public sealed partial class RouterMonitorClient : IDisposable
 {
     public static readonly Uri Address = new("http://127.0.0.1:18761/");
     private readonly HttpClient _http;
@@ -41,6 +41,8 @@ public sealed class RouterMonitorClient : IDisposable
         var projects = await ReadAsync("api/projects", cancellationToken);
         if (projects.ValueKind != JsonValueKind.Array || projects.GetArrayLength() > 128)
             throw new InvalidDataException("Invalid project catalog.");
+        _allCatalog = new(projects, DateTimeOffset.UtcNow);
+        if (projectKey == AllProjects) return await AllSnapshotAsync(RouterJson.Text(health, "instanceId"), projects, cancellationToken);
         var selected = projects.EnumerateArray().FirstOrDefault(row => RouterJson.Text(row, "key") == projectKey);
         if (selected.ValueKind == JsonValueKind.Undefined)
             selected = projects.EnumerateArray().FirstOrDefault(row => RouterJson.Integer(row, "pending") > 0);
@@ -74,11 +76,13 @@ public sealed class RouterMonitorClient : IDisposable
     }
 
     public Task<JsonElement> QueueAsync(string project, int offset, CancellationToken cancellationToken = default, int limit = 20) =>
-        ReadAsync($"api/queue?project={Project(project)}&offset={Math.Max(0, offset)}&limit={PageLimit(limit)}", cancellationToken);
+        project == AllProjects ? AllPageAsync(false, "all", "finished", "all", "", offset, PageLimit(limit), cancellationToken)
+            : ReadAsync($"api/queue?project={Project(project)}&offset={Math.Max(0, offset)}&limit={PageLimit(limit)}", cancellationToken);
 
     public Task<JsonElement> HistoryAsync(string project, string kind, string outcome, string day, string query,
         int offset, CancellationToken cancellationToken = default, int limit = 25) =>
-        ReadAsync($"api/history?project={Project(project)}&category={Escape(kind)}&outcome={Escape(outcome)}"
+        project == AllProjects ? AllPageAsync(true, kind, outcome, day, query, offset, PageLimit(limit), cancellationToken)
+            : ReadAsync($"api/history?project={Project(project)}&category={Escape(kind)}&outcome={Escape(outcome)}"
             + $"&day={Escape(day)}&query={Escape(query.Length > 160 ? query[..160] : query)}&offset={Math.Max(0, offset)}&limit={PageLimit(limit)}", cancellationToken);
 
     public async Task<string> ExportAsync(string project, CancellationToken cancellationToken = default)

@@ -173,12 +173,14 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
         _projectSignature = signature;
         foreach (Control child in _projects.Controls.Cast<Control>().ToArray()) child.Dispose();
         _projects.Controls.Clear();
-        var shown = _projectCatalog.Take(3).ToList();
+        var all = new IntakeProject("", T("全部项目", "All projects"));
+        var catalog = new[] { all }.Concat(_projectCatalog).ToArray();
+        var shown = catalog.Take(3).ToList();
         if (_projectCatalog.FirstOrDefault(project => project.Key == _projectKey) is { } selected && !shown.Contains(selected))
         { shown.RemoveAt(shown.Count - 1); shown.Add(selected); }
         foreach (var project in shown)
         {
-            var button = new RouterButton { Text = project.Title, Selected = project.Key == _projectKey,
+            var button = new RouterButton { Text = project.Title, Selected = project.Key.Length == 0 ? _projectKey is null : project.Key == _projectKey,
                 AccessibleName = T("切换项目 ", "Select project ") + project.Title, Font = (Font)Font.Clone(),
                 AutoSize = false, Height = (int)(26 * _popoverScale), Width = Math.Min((int)(200 * _popoverScale),
                     TextRenderer.MeasureText(project.Title, Font).Width + (int)(20 * _popoverScale)),
@@ -186,17 +188,18 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
             button.Click += async (_, _) =>
             {
                 if (!_pinned) RequestPinChange(true);
-                if (_projectKey == project.Key) return;
-                _projectKey = project.Key; ClearItem(); await LoadRecentAsync();
+                var selectedKey = project.Key.Length == 0 ? null : project.Key;
+                if (_projectKey == selectedKey) return;
+                _projectKey = selectedKey; ClearItem(); await LoadRecentAsync();
             };
             _projects.Controls.Add(button);
         }
         foreach (var item in _projectMenu.Items.Cast<ToolStripItem>().ToArray()) item.Dispose();
         _projectMenu.Items.Clear();
-        foreach (var project in _projectCatalog.Except(shown))
+        foreach (var project in catalog.Except(shown))
         {
             var item = new ToolStripMenuItem(project.Title);
-            item.Click += async (_, _) => { if (!_pinned) RequestPinChange(true); _projectKey = project.Key; ClearItem(); await LoadRecentAsync(); };
+            item.Click += async (_, _) => { if (!_pinned) RequestPinChange(true); _projectKey = project.Key.Length == 0 ? null : project.Key; ClearItem(); await LoadRecentAsync(); };
             _projectMenu.Items.Add(item);
         }
         if (_projectMenu.Items.Count > 0)
@@ -247,8 +250,7 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
         if (access.Projects.Count == 0) { NoReadableProjects(); return; }
         // RefreshAccess may clear the selection after an identity or permission change.
         var selected = _item;
-        var project = access.Projects.FirstOrDefault(row => row.Key == _projectKey) ?? access.Projects[0];
-        var rows = await _client.RecentAsync(project.Key, _blocked.Checked, token);
+        var rows = await _client.RecentAsync(access, _projectKey, _blocked.Checked, token);
         token.ThrowIfCancellationRequested();
         ApplyRecentRows(rows);
         var historyCapped = selected is not null && await ReadItemDataAsync(selected.Id.ToString("D"), access, token);
@@ -273,8 +275,7 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
     {
         var access = await RefreshAccessAsync(token);
         if (access.Projects.Count == 0) { NoReadableProjects(); return; }
-        var project = access.Projects.FirstOrDefault(row => row.Key == _projectKey) ?? access.Projects[0];
-        var rows = await _client.RecentAsync(project.Key, _blocked.Checked, token);
+        var rows = await _client.RecentAsync(access, _projectKey, _blocked.Checked, token);
         token.ThrowIfCancellationRequested();
         ClearItem();
         ApplyRecentRows(rows);
@@ -399,7 +400,7 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
         if (_access is not null && !_access.SameSession(access)) ClearSensitive();
         _access = access;
         _projectCatalog = access.Projects;
-        if (!_projectCatalog.Any(project => project.Key == _projectKey)) _projectKey = _projectCatalog.FirstOrDefault()?.Key;
+        if (_projectKey is not null && !_projectCatalog.Any(project => project.Key == _projectKey)) _projectKey = null;
         ApplyProjects();
         return access;
     }

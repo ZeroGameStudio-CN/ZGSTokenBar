@@ -68,7 +68,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
 
 
     private string _historySignature = "";
-    private string? _project;
+    private string? _project = RouterMonitorClient.AllProjects;
     internal RouterSnapshot? Snapshot => _snapshot;
     internal string FreshnessText => _freshness.Text;
 
@@ -76,8 +76,9 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
 
 
 
-    internal RouterMonitorForm(RouterMonitorClient? client = null, bool observe = true)
+    internal RouterMonitorForm(RouterMonitorClient? client = null, bool observe = true, string? initialProject = null)
     {
+        _project = initialProject ?? RouterMonitorClient.AllProjects;
         _client = client ?? new();
         SuspendLayout();
         Text = "Router";
@@ -367,7 +368,8 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
             _overviewStats.Text = "";
             return;
         }
-        var active = RouterJson.IsHex(RouterJson.Text(_snapshot.View, "requestId"), 32) ? 1 : 0;
+        var active = _snapshot.ProjectKey == RouterMonitorClient.AllProjects ? RouterJson.Integer(_snapshot.View, "activeCount")
+            : RouterJson.IsHex(RouterJson.Text(_snapshot.View, "requestId"), 32) ? 1 : 0;
         var queued = RouterJson.Integer(_snapshot.View, "queuedCount");
         _overviewStats.Text = _hasHistoryCounts
             ? $"当前 {active}  ·  排队 {queued}  ·  成功 {_completedCount}  ·  失败 {_failedCount}"
@@ -382,7 +384,10 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
 
     private void ApplyProjectTabs(RouterSnapshot snapshot)
     {
-        var catalog = OrderedProjects(snapshot.Projects);
+        var catalog = new[] { JsonSerializer.SerializeToElement(new { key = RouterMonitorClient.AllProjects, name = "全部项目",
+                recorded = snapshot.Projects.EnumerateArray().Sum(row => RouterJson.Integer(row, "recorded")),
+                pending = snapshot.Projects.EnumerateArray().Sum(row => RouterJson.Integer(row, "pending")) }) }
+            .Concat(OrderedProjects(snapshot.Projects)).ToArray();
         var shown = catalog.Take(3).ToList();
         if (shown.All(row => RouterJson.Text(row, "key") != snapshot.ProjectKey))
         {
@@ -437,7 +442,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         }
     }
 
-    private async Task SelectProjectAsync(string key)
+    internal async Task SelectProjectAsync(string key)
     {
         if (_controlling || key == _project) return;
         if (!_pinned) RequestPinChange(true);
@@ -696,6 +701,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
     private async Task ExportAsync()
     {
         if (_snapshot is null) return;
+        if (_snapshot.ProjectKey == RouterMonitorClient.AllProjects) { _notice.Text = "请选择单个项目后导出原始 CSV。"; return; }
         using var save = new SaveFileDialog { Filter = "CSV|*.csv", FileName = "router-history-" + DateTime.Now.ToString("yyyyMMdd") + ".csv" };
         _modal = true;
         try { if (save.ShowDialog(this) != DialogResult.OK) return; }
@@ -705,7 +711,8 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
     }
     private void UpdateControls()
     {
-        var fresh = _pinned && _available && !_controlling && _snapshot?.IsFresh(DateTimeOffset.UtcNow) == true;
+        var fresh = _pinned && _available && !_controlling && _snapshot?.ProjectKey != RouterMonitorClient.AllProjects
+            && _snapshot?.IsFresh(DateTimeOffset.UtcNow) == true;
         var current = fresh && RouterJson.IsHex(RouterJson.Text(_snapshot!.View, "requestId"), 32);
         _currentMenuButton.Enabled = current;
         _cancel.Enabled = _release.Enabled = current;

@@ -417,7 +417,7 @@ internal sealed partial class BarForm : Form
     public void SetLiveOutputRate(LiveOutputRate rate)
     {
         var first = _systemUsage.OutputRateCapturedAt is null;
-        _systemUsage = _systemUsage with { ObservedOutputTokensPerSecond = rate.Total, OutputRateCapturedAt = rate.CapturedAt, LiveRate = rate };
+        _systemUsage = _systemUsage with { ObservedOutputTokensPerSecond = rate.RecordedTotal, OutputRateCapturedAt = rate.CapturedAt, LiveRate = rate };
         if (first) ApplySnapshotLayout();
         Invalidate();
     }

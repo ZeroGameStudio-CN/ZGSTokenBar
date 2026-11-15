@@ -25,7 +25,7 @@ public static class CodexConversationDisplay
     }
 
     private static readonly object HomeAccountsGate = new();
-    private static (long InstancesTicks, long AccountsTicks, long AuthTicks, string Home)? _homeAccountsStamp;
+    private static (long InstancesTicks, long AccountsTicks, long AuthTicks, long BridgeTicks, long RegisteredAuthTicks, string Home)? _homeAccountsStamp;
     private static IReadOnlyDictionary<string, string> _homeAccounts =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
@@ -46,12 +46,17 @@ public static class CodexConversationDisplay
                 FileStampTicks(Path.Combine(cockpitHome, "codex_instances.json")),
                 FileStampTicks(Path.Combine(cockpitHome, "codex_accounts.json")),
                 FileStampTicks(Path.Combine(codexHome, "auth.json")),
+                FileStampTicks(InteractiveCodexHomes.RegistryPath),
+                InteractiveCodexHomes.Read(InteractiveCodexHomes.RegistryPath).Select(home => FileStampTicks(Path.Combine(home, "auth.json")))
+                    .Aggregate(0L, (stamp, ticks) => unchecked(stamp * 31 + ticks)),
                 codexHome);
             lock (HomeAccountsGate)
             {
                 if (_homeAccountsStamp != current)
                 {
-                    _homeAccounts = CockpitCodexInstanceActivity.ReadHomeAccountIds();
+                    var bindings = new Dictionary<string, string>(CockpitCodexInstanceActivity.ReadHomeAccountIds(), StringComparer.OrdinalIgnoreCase);
+                    foreach (var binding in InteractiveCodexHomes.AccountIds(InteractiveCodexHomes.RegistryPath)) bindings[binding.Key] = binding.Value;
+                    _homeAccounts = bindings;
                     _homeAccountsStamp = current;
                 }
                 return _homeAccounts;
@@ -66,13 +71,16 @@ public static class CodexConversationDisplay
     public static IReadOnlyList<CodexConversationTurn> AttachInstances(
         IReadOnlyList<CodexConversationTurn> rows,
         QuotaSnapshot snapshot,
-        IReadOnlyDictionary<string, string>? homeAccountIdsOverride = null)
+        IReadOnlyDictionary<string, string>? homeAccountIdsOverride = null,
+        IReadOnlyList<string>? instanceHomesOverride = null)
     {
         if (rows.Count == 0) return rows;
         var codexCards = snapshot.Cards
             .Where(card => card.Provider == ProviderKind.Codex && !card.IsService)
             .ToArray();
         var homeAccounts = homeAccountIdsOverride ?? CachedHomeAccountIds();
+        var instanceHomes = instanceHomesOverride ?? (homeAccountIdsOverride is null
+            ? InteractiveCodexHomes.Read(InteractiveCodexHomes.RegistryPath) : []);
         var defaultHome = CockpitCodexInstanceActivity.NormalizeDirectory(CodexQuotaService.CodexHome());
         static double? RemainingOf(IReadOnlyList<QuotaWindow> windows)
         {
@@ -99,6 +107,8 @@ public static class CodexConversationDisplay
                 continue;
             }
             var normalizedHome = CockpitCodexInstanceActivity.NormalizeDirectory(turn.CodexHome);
+            var instanceNumber = instanceHomes.Select((home, index) => (Home: CockpitCodexInstanceActivity.NormalizeDirectory(home), Number: index + 1))
+                .FirstOrDefault(entry => string.Equals(entry.Home, normalizedHome, StringComparison.OrdinalIgnoreCase)).Number;
             var accountId = normalizedHome is not null && homeAccounts.TryGetValue(normalizedHome, out var bound) ? bound : null;
             var quotaIdentity = accountId is null ? null : CodexQuotaService.StableCardKey($"strategy:{accountId}");
             var accountQuota = accountId is null
@@ -128,15 +138,17 @@ public static class CodexConversationDisplay
                 var ordinal = AccountOrdinal(card, codexCards);
                 var remaining = RemainingOf(card.Windows);
                 var label = ordinal > 0 ? $"Codex · {ordinal}" : "Codex";
-                result[i] = turn with { InstanceLabel = label, InstanceNumber = ordinal, InstanceRemainingPercent = remaining };
+                result[i] = turn with { InstanceLabel = instanceNumber > 0 ? $"Codex · {instanceNumber}" : label,
+                    InstanceNumber = instanceNumber > 0 ? instanceNumber : ordinal, InstanceAccountNumber = ordinal, InstanceRemainingPercent = remaining };
             }
             else if (accountQuota is not null)
             {
-                result[i] = turn with { InstanceLabel = "Codex", InstanceNumber = 0, InstanceRemainingPercent = RemainingOf(accountQuota.Windows) };
+                result[i] = turn with { InstanceLabel = instanceNumber > 0 ? $"Codex · {instanceNumber}" : "Codex",
+                    InstanceNumber = instanceNumber, InstanceRemainingPercent = RemainingOf(accountQuota.Windows) };
             }
             else
             {
-                result[i] = turn with { InstanceLabel = "Codex" };
+                result[i] = turn with { InstanceLabel = instanceNumber > 0 ? $"Codex · {instanceNumber}" : "Codex", InstanceNumber = instanceNumber };
             }
         }
         return result;

@@ -29,33 +29,37 @@ public sealed class CodexTokenUsageLedger
     private static Func<IReadOnlyList<string>> CachedHomes()
     {
         var sync = new object();
-        (long Length, long Ticks, string Home)? stamp = null;
+        (long Length, long Ticks, long BridgeLength, long BridgeTicks, string Home)? stamp = null;
         IReadOnlyList<string> homes = [];
         return () =>
         {
             var registry = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".antigravity_cockpit", "codex_instances.json");
-            (long, long, string) current;
+            (long, long, long, long, string) current;
             try
             {
                 var file = new FileInfo(registry);
-                current = file.Exists ? (file.Length, file.LastWriteTimeUtc.Ticks, CodexQuotaService.CodexHome())
-                    : (-1, 0, CodexQuotaService.CodexHome());
+                var bridge = new FileInfo(InteractiveCodexHomes.RegistryPath);
+                current = (file.Exists ? file.Length : -1, file.Exists ? file.LastWriteTimeUtc.Ticks : 0,
+                    bridge.Exists ? bridge.Length : -1, bridge.Exists ? bridge.LastWriteTimeUtc.Ticks : 0, CodexQuotaService.CodexHome());
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                return [CodexQuotaService.CodexHome(), .. CockpitCodexInstanceActivity.ReadTokenUsageHomes()];
+                return DiscoverHomes();
             }
             lock (sync)
             {
                 if (stamp != current)
                 {
-                    homes = [CodexQuotaService.CodexHome(), .. CockpitCodexInstanceActivity.ReadTokenUsageHomes()];
+                    homes = DiscoverHomes();
                     stamp = current;
                 }
                 return homes;
             }
         };
+        static IReadOnlyList<string> DiscoverHomes() => new[] { CodexQuotaService.CodexHome() }
+            .Concat(InteractiveCodexHomes.Read(InteractiveCodexHomes.RegistryPath))
+            .Concat(CockpitCodexInstanceActivity.ReadTokenUsageHomes()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
     internal CodexTokenUsageLedger(AppSettingsStore store, Func<IReadOnlyList<string>> homes)

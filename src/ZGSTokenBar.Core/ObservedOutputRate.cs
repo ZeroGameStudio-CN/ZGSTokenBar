@@ -11,6 +11,8 @@ public sealed record CodexLiveRateFeed(DateTimeOffset CapturedAt, IReadOnlyList<
 public sealed record LiveOutputRate(DateTimeOffset CapturedAt, double? Total, double Measured, double Estimated,
     int Generating, int Tools, int Sessions, int Pending)
 {
+    /// <summary>The primary UI readout excludes all model-based in-flight extrapolation.</summary>
+    public double? RecordedTotal => Total is null ? null : Measured;
     public IReadOnlyList<ConversationOutputRate> Conversations { get; init; } = [];
     public bool HasEstimate => Estimated > 0;
     public double EstimatedShare => Total is > 0 ? Estimated / Total.Value : 0;
@@ -36,15 +38,17 @@ public sealed class ObservedOutputRate
         var estimated = new Dictionary<(string SessionId, string? TurnId), double>();
         var unavailable = new HashSet<(string SessionId, string? TurnId)>();
         var generating = sessions.Where(s => s.Phase == "generating" && s.LastActivity <= now
-            && now - s.LastActivity <= TimeSpan.FromMinutes(5) && s.InFlightStart is not null).ToArray();
+            && now - s.LastActivity <= TimeSpan.FromSeconds(15) && s.InFlightStart is not null).ToArray();
         foreach (var session in generating)
         {
+            if (now - session.LastActivity > TimeSpan.FromSeconds(5)) continue;
             if (string.IsNullOrWhiteSpace(session.Model))
             {
                 unavailable.Add((session.SessionId, session.TurnId));
                 continue;
             }
-            var matchingModel = responses.Where(r => string.Equals(r.Model, session.Model, StringComparison.Ordinal));
+            var matchingModel = responses.Where(r => r.End >= now.AddMinutes(-10)
+                && string.Equals(r.Model, session.Model, StringComparison.Ordinal));
             var reference = matchingModel.Where(r => r.SessionId == session.SessionId
                 && r.End >= now.AddMinutes(-10)).Take(3).ToArray();
             if (reference.Length == 0) reference = matchingModel.Take(10).ToArray();
@@ -66,7 +70,7 @@ public sealed class ObservedOutputRate
         var known = (sessions.Length > 0 || responses.Length > 0)
             && !(unavailable.Count > 0 && rates.All(rate => rate.Total == 0));
         return new(now, known ? rates.Sum(r => r.Total) : null, rates.Sum(r => r.Measured), rates.Sum(r => r.Estimated), generating.Length,
-            sessions.Count(s => s.Phase == "tools" && s.LastActivity <= now && now - s.LastActivity <= TimeSpan.FromMinutes(5)), sessions.Length, feed.Pending)
+            sessions.Count(s => s.Phase == "tools" && s.LastActivity <= now && now - s.LastActivity <= TimeSpan.FromSeconds(15)), sessions.Length, feed.Pending)
             { Conversations = rates };
     }
     private static double Overlap(DateTimeOffset a, DateTimeOffset b, DateTimeOffset start, DateTimeOffset end) =>

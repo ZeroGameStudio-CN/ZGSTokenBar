@@ -131,7 +131,7 @@ internal sealed class SystemUsagePopoverForm : Form
         if (_content == content && ReferenceEquals(_text, text)) return;
         _content = content;
         _text = text;
-        Text = content.LiveRates ? (_text.IsChinese ? "实时速率" : "Live rates") : _text.SystemUsageTitle;
+        Text = content.LiveRates ? _text.ConversationUsageTitle : _text.SystemUsageTitle;
         var snapshot = content.Snapshot;
         if (content.LiveRates)
         {
@@ -139,11 +139,11 @@ internal sealed class SystemUsagePopoverForm : Form
             var zh = _text.IsChinese;
             _metrics =
             [
-                new(zh ? "合计输出" : "Output total", null, snapshot.CurrentOutputRate is { } rate ? $"{rate:0.0} tok/s" : "—"),
+                new(zh ? "已记录输出" : "Recorded output", null, snapshot.CurrentOutputRate is { } rate ? $"{rate:0.0} tok/s" : "—"),
                 new(zh ? "已记录" : "Recorded", null, live is null ? "—" : $"{live.Measured:0.#} tok/s"),
-                new(zh ? "生成中估算" : "In-flight estimate", null, live is null ? "—" : $"{live.Estimated:0.#} tok/s"),
-                new(zh ? "网络接收" : "Network receive", null, NetworkUsageSampler.Compact(snapshot.CurrentNetworkReceive) + "/s"),
-                new(zh ? "网络发送" : "Network send", null, NetworkUsageSampler.Compact(snapshot.CurrentNetworkSend) + "/s")
+                new(zh ? "生成中估算" : "In-flight estimate", null, live is null || live.Generating > 0 && live.Estimated == 0 ? "—" : $"≈{live.Estimated:0.#} tok/s"),
+                new(zh ? "本机接收" : "Device receive", null, NetworkUsageSampler.Compact(snapshot.CurrentNetworkReceive) + "/s"),
+                new(zh ? "本机发送" : "Device send", null, NetworkUsageSampler.Compact(snapshot.CurrentNetworkSend) + "/s")
             ];
             _processes = [];
         }
@@ -169,13 +169,16 @@ internal sealed class SystemUsagePopoverForm : Form
         }
         _sessionsVisible = content.LiveRates && content.Conversations is not null;
         var conversations = content.Conversations ?? [];
-        var active = conversations
+        var allActive = conversations
             .Where(turn => turn.LiveRate is { Total: > 0 } || turn.State == "running")
             .OrderByDescending(turn => turn.State == "running")
-            .ThenByDescending(turn => turn.LiveRate?.Total ?? 0)
+            .ThenByDescending(turn => turn.LiveRate?.Measured ?? 0)
             .ThenByDescending(turn => turn.ObservedAt)
-            .Take(MaximumSessionRows)
             .ToArray();
+        // Reserve one row per known instance before filling the remaining activity slots.
+        var representatives = allActive.Where(turn => turn.InstanceNumber > 0)
+            .GroupBy(turn => turn.InstanceNumber).Select(group => group.First()).Take(MaximumSessionRows).ToArray();
+        var active = representatives.Concat(allActive.Except(representatives)).Take(MaximumSessionRows).ToArray();
         _activeSessionCount = active.Length;
         _sessionsRecent = active.Length == 0;
         if (!_sessionsVisible)
@@ -442,7 +445,7 @@ internal sealed class SystemUsagePopoverForm : Form
         if (content.LiveRates)
         {
             using var stateBrush = new SolidBrush(content.Snapshot.CurrentOutputRate is null ? muted.Color
-                : content.Snapshot.LiveRate?.HasEstimate == true ? EstimateAccent : RecordedAccent);
+                : RecordedAccent);
             graphics.FillEllipse(stateBrush, body.X + 16, body.Y + 18, 5, 5);
             DrawString(graphics, Text, _titleFont, primary,
                 new RectangleF(body.X + 26, body.Y + 12, 110, 18), StringAlignment.Near);
@@ -532,21 +535,13 @@ internal sealed class SystemUsagePopoverForm : Form
 
         Panel(38, 112);
         TextAt(_metrics[0].Label, _metricLabelFont, muted, 24, 49, 136, 13);
-        TextAt(zh ? "3 秒窗口" : "3s window", _subtitleFont, muted, 176, 49, 100, 13, StringAlignment.Far);
+        TextAt(zh ? "3 秒日志均速" : "3s log average", _subtitleFont, muted, 176, 49, 100, 13, StringAlignment.Far);
         TextAt(_metrics[0].Value, _liveValueFont, primary, 24, 67, 252, 29);
         var rail = At(24, 105, 252, 3);
         using var railBrush = new SolidBrush(UiPalette.Slate500.WithAlpha(48));
         graphics.FillRoundedRectangle(railBrush, rail, 1.5f);
-        if (live?.Total is > 0)
-        {
-            var estimatedWidth = rail.Width * (float)Math.Clamp(live.EstimatedShare, 0, 1);
-            var recordedWidth = rail.Width - estimatedWidth;
-            if (recordedWidth > 0) graphics.FillRectangle(recorded, rail.X, rail.Y, recordedWidth, rail.Height);
-            if (estimatedWidth > 0) graphics.FillRectangle(estimated, rail.X + recordedWidth, rail.Y, estimatedWidth, rail.Height);
-        }
         TextAt(_metrics[1].Label, _subtitleFont, muted, 24, 115, 118, 12);
-        TextAt(live is null ? (zh ? "估算" : "Estimated")
-                : zh ? $"估算 · {live.EstimatedShare:P0}" : $"Estimated · {live.EstimatedShare:P0}",
+        TextAt(zh ? "生成中估算" : "In-flight estimate",
             _subtitleFont, muted, 158, 115, 118, 12);
         TextAt(_metrics[1].Value, _metricValueFont, live is null ? muted : recorded, 24, 131, 118, 14);
         TextAt(_metrics[2].Value, _metricValueFont, live is null ? muted : estimated, 158, 131, 118, 14);
@@ -903,7 +898,7 @@ internal sealed class SystemUsagePopoverForm : Form
             var speedFont = _tableValueFont;
             if (live is not null)
             {
-                speed = $"{live.Total.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)} tok/s";
+                speed = $"{live.Measured.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)} tok/s";
                 speedBrush = accent;
             }
             else if (turn.State == "running")

@@ -292,7 +292,7 @@ internal sealed partial class QuotaApplicationContext
                 PendingConversationCount = _cachedCodexTokenUsage?.PendingConversationCount ?? 0,
                 LatestTurnOutputTokensPerSecond = _cachedCodexTokenUsage?.RecentTurns.FirstOrDefault()?.OutputTokensPerSecond,
                 ConversationLiveRateTotal = _bar.LiveMetrics.CurrentOutputRate is null ? null
-                    : CodexConversationDisplay.Select(_cachedCodexTokenUsage).Sum(turn => turn.LiveRate?.Total ?? 0),
+                    : CodexConversationDisplay.Select(_cachedCodexTokenUsage).Sum(turn => turn.LiveRate?.Measured ?? 0),
                 ConversationLiveRateCount = CodexConversationDisplay.Select(_cachedCodexTokenUsage).Count(turn => turn.LiveRate is not null),
             },
             cancellationToken));

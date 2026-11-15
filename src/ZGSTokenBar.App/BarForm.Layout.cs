@@ -194,7 +194,7 @@ internal sealed partial class BarForm
         {
             defaultAreas.Add(TaskbarMiniAreaContent.ForSystem(_text.SystemUsageTitle));
             if (_systemUsage.OutputRateCapturedAt is not null)
-                defaultAreas.Add(TaskbarMiniAreaContent.ForLiveMetrics(_text.IsChinese ? "实时速率" : "Live rates"));
+                defaultAreas.Add(TaskbarMiniAreaContent.ForLiveMetrics(_text.ConversationUsageTitle));
         }
         _taskbarContentAreas = OrderTaskbarContentAreas(defaultAreas, _miniAreaOrder)
             .ToArray();

@@ -38,7 +38,7 @@ internal sealed partial class BarForm
     private bool RequestPluginPopover(string pluginId, Rectangle anchor, bool pinned, bool toggle = false)
     {
         if (toggle && pinned && _popoverPinned && _pluginPopover?.Visible == true && _pluginPopoverId == pluginId)
-        { HidePluginPopover(); return true; }
+        { _dismissedHoverPlugin = pluginId; HidePluginPopover(); return true; }
         if (!pinned && _popoverPinned) return true;
         var previous = _pluginPopover;
         var switching = !pinned && !_popoverPinned && previous is MonitorPanelForm { Visible: true }
@@ -112,7 +112,7 @@ internal sealed partial class BarForm
 
     internal void HidePluginPopover(string pluginId)
     {
-        if (_pluginPopoverId == pluginId) HidePluginPopover();
+        if (_pluginPopoverId == pluginId) { _dismissedHoverPlugin = pluginId; HidePluginPopover(); }
     }
 
     internal void MonitorPluginPopover(Point cursor, bool mouseDown, bool escapeDown, DateTime now)
@@ -142,7 +142,7 @@ internal sealed partial class BarForm
             _popoverLeaveStarted is { } left ? now - left : null))
         {
             if (!_popoverPinned && !newEscape && popup is MonitorPanelForm panel) panel.DismissHover();
-            else HidePluginPopover();
+            else { _dismissedHoverPlugin = _pluginPopoverId; HidePluginPopover(); }
         }
     }
 

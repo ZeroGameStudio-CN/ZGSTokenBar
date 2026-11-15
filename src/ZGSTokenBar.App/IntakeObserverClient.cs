@@ -85,6 +85,20 @@ internal sealed class IntakeObserverClient
         return Rows(value, "items").Take(RecentLimit).Select(ParseItem).Where(row => row.Project == project).ToArray();
     }
 
+    internal async Task<IReadOnlyList<IntakeItem>> RecentAsync(IntakeAccess access, string? project, bool blocked, CancellationToken token)
+    {
+        if (project is not null) return await RecentAsync(project, blocked, token);
+        using var gate = new SemaphoreSlim(4);
+        var pages = await Task.WhenAll(access.Projects.Select(async entry =>
+        {
+            await gate.WaitAsync(token);
+            try { return await RecentAsync(entry.Key, blocked, token); }
+            finally { gate.Release(); }
+        }));
+        return pages.SelectMany(page => page).DistinctBy(item => item.Id)
+            .OrderByDescending(item => item.UpdatedAt).Take(RecentLimit).ToArray();
+    }
+
     internal async Task<IntakeItem> ItemAsync(string reference, CancellationToken token)
     {
         if (!IsReference(reference)) throw new IntakeReadException("reference");

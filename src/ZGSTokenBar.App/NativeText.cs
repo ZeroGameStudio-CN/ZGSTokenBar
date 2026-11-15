@@ -434,6 +434,7 @@ internal sealed class NativeText
     public string QuotaDetailsTitle => T("ZGSTokenBar 配额详情", "ZGSTokenBar quota details");
     public string LiveQuota => T("实时配额", "Live quota");
     public string SystemUsageTitle => T("系统占用", "System usage");
+    public string ConversationUsageTitle => T("会话与用量", "Chats and usage");
     public string SystemUsageCpu => "CPU";
     public string SystemUsageMemory => T("内存", "Memory");
     public string SystemUsageDisk => T("磁盘", "Disk");
@@ -873,8 +874,8 @@ internal sealed class NativeText
         + (count > 6 ? T($" · 最近6/{count}组", $" · latest 6/{count} groups") : "");
     public string CodexFilteredSpeedHint => T("当前筛选中完整结束、有输出的轮次，按设置模型、强度与档位分组；未知强度或档位不进入卡片。\n均速=输出总量÷整轮总耗时；单轮最高包含思考、工具与等待。卡片显示最近6组、每组最多4种设置；下方列出全部分组。",
         "Complete output-producing selected turns, grouped by configured model, effort and tier; unknown effort/tier is omitted from cards.\nAverage = total output / total whole-turn time; best-turn speed includes reasoning, tools and waits. Cards show six recent models and four settings each; all groups are listed below.");
-    public string CodexHistoryHint => T("只查询已观测并留存的轮次，最多500轮、90天，不代表全部 API 请求。日期按本机时区的开始日筛选；点击表头排序。\n实时速度与总 tok/s 使用同一 3 秒采样，≈含估算；总值不随筛选和翻页变化。整轮均速含思考、工具与等待。CSV 保留整轮指标，不保存实时值。",
-        "Observed retained turns only, up to 500 turns within 90 days, not all API requests. Dates filter local turn starts; click a column to sort.\nLive speed and total tok/s share one 3-second sample; ≈ includes estimates. Filters/pages do not change the total. Whole-turn average includes reasoning, tools and waits. CSV retains whole-turn metrics, not transient live values.");
+    public string CodexHistoryHint => T("只查询已观测并留存的轮次，最多500轮、90天，不代表全部 API 请求。日期按本机时区的开始日筛选；点击表头排序。\n主数值和记录 tok/s 使用同一 3 秒日志窗口；生成中估算单列，不计入主数值。总值不随筛选和翻页变化。整轮均速含思考、工具与等待。CSV 保留整轮指标，不保存实时值。",
+        "Observed retained turns only, up to 500 turns within 90 days, not all API requests. Dates filter local turn starts; click a column to sort.\nThe primary readout and recorded tok/s share one 3-second log window; in-flight estimates are separate and excluded. Filters/pages do not change the total. Whole-turn average includes reasoning, tools and waits. CSV retains whole-turn metrics, not transient live values.");
     public string CodexExportHistory => T("导出筛选记录 CSV", "Export matching rows as CSV");
     public string CodexHistoryCost(decimal? cost, bool partial)
     {
@@ -887,13 +888,13 @@ internal sealed class NativeText
     public string[] CodexPrimaryConversationHeaders =>
         [T("对话 / 设置模型", "Chat / Configured model"), T("状态", "State"), T("开始时间", "Started"), T("新增输入", "Input"),
          T("输出", "Output"), T("缓存", "Cached"), T("缓存率", "Cache hit"), T("估算 $", "Est. $"),
-         T("整轮均速", "Turn avg"), T("首字 s", "First s"), T("实时 tok/s", "Live tok/s")];
+         T("整轮均速", "Turn avg"), T("首字 s", "First s"), T("记录 tok/s", "Recorded tok/s")];
     public string[] CodexConversationHeaders =>
         [T("开始时间", "Started"), T("对话 / 模型", "Chat / Model"), T("新增输入", "Input"), T("输出", "Output"), T("缓存", "Cached"),
          T("估算 $", "Est. $"), T("整轮均速", "Turn avg"), T("首字 s", "First s")];
     public string CodexConversationHint => T(
-        "实时速度使用最近 3 秒窗口，≈含生成中估算；每个会话仅最新一行参与总 tok/s。总值汇总所有已发现会话，不随筛选或翻页变化；生成和工具数按日志阶段统计。整轮均速单位也是 tok/s，包含思考、工具和等待。首字仅使用日志记录。",
-        "Live speed uses the last 3 seconds; ≈ includes in-flight estimates. Only the latest row per session contributes to total tok/s, across all discovered sessions and independent of filters/pages. Generating and tools counts follow recorded phases. Turn average is also tok/s and includes reasoning, tools and waits. First-token latency requires a recorded measurement.");
+        "记录均速使用最近 3 秒日志窗口，生成中估算单列且不计入主数值；这不是逐 Token 实时测量。每个会话仅最新一行参与总 tok/s。总值汇总所有已发现会话，不随筛选或翻页变化；生成和工具数按日志阶段统计。整轮均速单位也是 tok/s，包含思考、工具和等待。首字仅使用日志记录。",
+        "Recorded speed uses the last 3 seconds of log intervals; in-flight estimates are separate, not included in the primary readout, and not per-token measurements. Only the latest row per session contributes to total tok/s, across all discovered sessions and independent of filters/pages. Generating and tools counts follow recorded phases. Turn average is also tok/s and includes reasoning, tools and waits. First-token latency requires a recorded measurement.");
     public string CodexTurnTime(CodexConversationTurn turn) =>
         turn.StartedAt.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture);
     public string CodexTurnDate(CodexConversationTurn turn) =>
@@ -947,13 +948,16 @@ internal sealed class NativeText
     };
     public string CodexTurnSpeedNote => T("含思考、工具和等待时间；不是纯生成速度", "Includes reasoning, tools and waiting; not decode speed");
     public string CodexTurnLiveSpeed(CodexConversationTurn turn) => turn.LiveRate is { } live
-        ? (live.Estimated > 0 ? "≈" : "") + live.Total.ToString("0.#", CultureInfo.InvariantCulture) : "—";
+        ? live.Measured.ToString("0.#", CultureInfo.InvariantCulture) : "—";
     public string CodexTurnDetail(CodexConversationTurn turn) => T(
         $"{turn.SessionId[^Math.Min(8, turn.SessionId.Length)..]} · {CodexTurnDate(turn)} {CodexTurnTime(turn)} · 输出 {turn.OutputTokens:N0} · {CodexTurnState(turn)}",
         $"{turn.SessionId[^Math.Min(8, turn.SessionId.Length)..]} · {CodexTurnDate(turn)} {CodexTurnTime(turn)} · out {turn.OutputTokens:N0} · {CodexTurnState(turn)}");
     public string CodexTurnTooltip(CodexConversationTurn turn)
     {
         var lines = new List<string> { CodexTurnName(turn) };
+        if (turn.InstanceNumber > 0)
+            lines.Add(T($"实例 {turn.InstanceNumber}", $"Instance {turn.InstanceNumber}")
+                + (turn.InstanceAccountNumber > 0 ? T($" · 额度账号 {turn.InstanceAccountNumber}", $" · quota account {turn.InstanceAccountNumber}") : ""));
         var model = CodexTurnModelDetails(turn);
         if (model.Length > 0) lines.Add(T("设置模型 ", "Configured model ") + model);
         lines.Add(turn.SessionId);
@@ -973,8 +977,8 @@ internal sealed class NativeText
             lines.Add(T($"整轮耗时 {turn.ElapsedSeconds:0.0}s", $"Turn duration {turn.ElapsedSeconds:0.0}s"));
         if (turn.FirstTokenSeconds is { } first) lines.Add(T($"首 Token {first:0.0}s", $"First token {first:0.0}s"));
         if (turn.LiveRate is { } live)
-            lines.Add(T($"实时 {CodexTurnLiveSpeed(turn)} tok/s · 实测 {live.Measured:0.#} · 估算 {live.Estimated:0.#}（3 秒窗口）",
-                $"Live {CodexTurnLiveSpeed(turn)} tok/s · recorded {live.Measured:0.#} · estimated {live.Estimated:0.#} (3-second window)"));
+            lines.Add(T($"记录均速 {live.Measured:0.#} tok/s · 生成中估算 ≈{live.Estimated:0.#} tok/s（3 秒窗口；非逐 Token 测量）",
+                $"Recorded {live.Measured:0.#} tok/s · in-flight estimate ≈{live.Estimated:0.#} tok/s (3-second window, not per-token measurement)"));
         if (turn.OutputTokensPerSecond is { } average) lines.Add(T($"整轮均速 {average:0.#} tok/s · ", $"Whole-turn average {average:0.#} tok/s · ") + CodexTurnSpeedNote);
         return string.Join('\n', lines);
     }

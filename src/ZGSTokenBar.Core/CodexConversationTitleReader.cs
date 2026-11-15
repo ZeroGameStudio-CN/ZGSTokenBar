@@ -93,7 +93,7 @@ internal sealed class CodexConversationTitleReader
         {
             var entry = titles.GetValueOrDefault(turn.SessionId);
             var title = entry?.Title;
-            var home = entry?.Home ?? pathHomes?.GetValueOrDefault(turn.SessionId) ?? turn.CodexHome;
+            var home = turn.CodexHome ?? pathHomes?.GetValueOrDefault(turn.SessionId) ?? entry?.Home;
             return string.Equals(turn.Title, title, StringComparison.Ordinal)
                 && string.Equals(turn.CodexHome, home, StringComparison.OrdinalIgnoreCase)
                 ? turn

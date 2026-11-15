@@ -234,6 +234,11 @@ identity when rows reorder; a removed or off-page selection clears the focus.
 Rows are updated in place; changed access
 clears both surfaces before another read. Closing the window stops reads.
 The client stores no work item data on disk.
+The default scope is all projects available to the current CLI session. Recent
+items merge bounded project reads by update time; a project chip narrows the
+scope. Router also starts in its all-project read-only overview: queue rows keep
+their project's original order, history merges by submission time, and execution
+controls/CSV require a concrete project. Per-project P95 values are not combined.
 
 Mini hovers share a 200 ms dwell delay. Both full monitor panels prepare their
 native controls shortly after startup, while hidden; intake prewarming performs
@@ -536,22 +541,25 @@ seconds and divide by three. Intervals under 500 ms use a 500 ms floor; missing,
 future, reversed or over-fifteen-minute intervals are excluded. During generating
 phases, estimate only the uncovered interval after the last response, using the
 same session's latest three responses within ten minutes, then up to ten matching
-model responses within thirty minutes as fallback. Both steps require the
+model responses within ten minutes as fallback. Both steps require the
 current configured model. A missing model or matching reference leaves the
 in-flight estimate unavailable; recorded response output is retained across
 model changes. Tool/idle phases receive
-no extrapolation. A tilde denotes estimated output; hover exposes recorded and
-estimated values/share. These are response-window observations and estimates,
+no extrapolation. A generation estimate expires after five seconds without a
+new phase observation; phase counts require evidence within fifteen seconds.
+The bar, primary output readout and conversation speed cells show recorded
+response-window averages only. Estimates stay separately labelled with ≈ and
+never contribute to those primary values. These are response-window observations and estimates,
 not server decode speed or a guarantee that every client/request is captured.
 
 The existing incremental reader publishes a separate
 in-memory rate feed; it does not change durable token accounting/history. The
-conversation table's Live tok/s column and the bar total use the same sampled
+conversation table's recorded tok/s column and the bar total use the same sampled
 per-session values; the total is their unrounded sum. Only each session's latest
 turn row displays that session's live window, including a window spanning a turn
 boundary. Older rows remain unavailable rather than repeating that contribution.
 Filtering and paging do not change the global total. Recorded/estimated shares
-remain separate, and an estimate is marked with ≈. The distinct whole-turn
+remain separate. The distinct whole-turn
 average column and CSV whole-turn fields keep their original meaning; transient
 live values are not persisted or exported. Both live surfaces expire with the
 same 15-second sample limit. `window inspect` exposes `conversationLiveRateTotal`
@@ -560,6 +568,12 @@ The existing one-second clock refreshes this feed under the existing non-overlap
 Discovery includes every registered home's session date folders, including resumed
 older chats, without a conversation-count cap. Session copies are deduplicated
 before reading; unchanged logs retain their incremental checkpoints.
+Interactive home registrations participate in discovery even without Cockpit's
+registry. Home/instance numbers follow that registry independently of quota
+account numbers; two homes sharing an account share only its quota, not their
+instance label. The activity list reserves a row for each discovered instance
+before filling remaining slots. Live-source home metadata wins over copied title
+index metadata; historical counters and their cross-process transaction stay unchanged.
 No second watcher/timer or ledger is added. Unavailable/expired feeds remain
 unavailable; pending catch-up and observed session coverage are shown. Historical
 records are positioned on their original timestamps, so discovery cannot produce

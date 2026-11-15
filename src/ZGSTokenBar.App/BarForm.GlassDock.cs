@@ -336,7 +336,7 @@ internal sealed partial class BarForm
             _systemUsage.GpuPercent,
             _hoverSystemUsage && !_systemAnchorIsLive,
             _systemUsage.CurrentOutputRate,
-            _systemUsage.CurrentOutputRate is not null && _systemUsage.LiveRate?.HasEstimate == true,
+            false, // Main tok/s is recorded output; the estimate has its own field in the activity panel.
             _hoverSystemUsage && _systemAnchorIsLive)
         {
             ItemPainted = GlassItemPainted,
@@ -346,6 +346,7 @@ internal sealed partial class BarForm
         GlassDockPainter.Draw(graphics, scene, _badgeFont);
         // A ring that painted cleanly this time rejoins (its earlier fault is forgotten).
         _taskbarRenderFailureAreaIds.RemoveWhere(id => id != "bar" && !_glassFailedThisPaint.Contains(id));
+        QueueHoverRecovery();
     }
 
     /// <summary>One ring's paint result: faults are isolated (traced, ring left blank) and clear on the next good paint.</summary>

@@ -12,6 +12,7 @@ internal sealed partial class BarForm
     private void UpdatePluginHoverTarget((RectangleF Bounds, PluginMiniCardView Card)? target)
     {
         var previous = _hoverPluginTarget?.Card.Card.Id;
+        if (_dismissedHoverPlugin != target?.Card.PluginId) _dismissedHoverPlugin = null;
         _hoverPluginTarget = target;
         if (string.Equals(previous, target?.Card.Card.Id, StringComparison.Ordinal)) return;
         if (previous is not null) _popoverHoverTimer.Stop();
@@ -34,6 +35,7 @@ internal sealed partial class BarForm
     private void UpdateHintHover(HoverTarget target)
     {
         if (target != HoverTarget.Plugin || _popoverPinned || _hoverPluginTarget is not { } hovered
+            || _dismissedHoverPlugin == hovered.Card.PluginId
             || _pluginPopover?.Visible == true && _pluginPopoverId == hovered.Card.PluginId) return;
         if (_hoverSystemUsage || _systemUsagePopover?.Visible == true) HideSystemUsagePopover();
         if (_codexAccountsPopover?.Visible == true) HideCodexAccountsPopover();
@@ -213,7 +215,12 @@ internal sealed partial class BarForm
     {
         _popoverHoverTimer.Stop();
         if (_popoverPinned || _taskbarDragging) return;
-        if (_pluginPopover is IPluginPopoverContent { InteractionOpen: true }) return;
+        if (_pluginPopover is { Visible: true } && _pluginPopover is IPluginPopoverContent { InteractionOpen: true })
+        {
+            // Keep the intent alive if a menu/text interaction temporarily prevents opening.
+            if (ClientRectangle.Contains(PointToClient(cursor))) _popoverHoverTimer.Start();
+            return;
+        }
         if (_hoverSystemUsage)
         {
             if (!QuotaTargetScreenBounds(SystemUsageAnchorBounds).Contains(cursor)) return;
@@ -228,12 +235,15 @@ internal sealed partial class BarForm
         }
         if (_hoverPluginTarget is { } hoveredPlugin)
         {
+            if (_dismissedHoverPlugin == hoveredPlugin.Card.PluginId) return;
             // Resolve the last painted position again: the bar can reflow or
             // the plugin can be disabled while waiting for the hover delay.
             var live = _taskbarPluginBounds.FirstOrDefault(slot => slot.Card.Card.Id == hoveredPlugin.Card.Card.Id);
             if (live.Card is not null && _pluginMiniCards.Any(card => card.Card.Id == live.Card.Card.Id)
                 && QuotaTargetScreenBounds(live.Bounds) is { } anchor && anchor.Contains(cursor))
-                RequestPluginPopover(live.Card.PluginId, anchor, pinned: false);
+            {
+                if (!RequestPluginPopover(live.Card.PluginId, anchor, pinned: false)) _popoverHoverTimer.Start();
+            }
             return;
         }
         ShowHoveredQuotaPopover(cursor);

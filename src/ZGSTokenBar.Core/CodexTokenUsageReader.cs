@@ -274,7 +274,8 @@ public sealed class CodexTokenUsageReader
     public CodexTokenUsageReadResult Refresh(
         DateTimeOffset now,
         CancellationToken cancellationToken = default) =>
-        Refresh([CodexQuotaService.CodexHome(), .. CockpitCodexInstanceActivity.ReadTokenUsageHomes()], now, cancellationToken);
+        Refresh([CodexQuotaService.CodexHome(), .. InteractiveCodexHomes.Read(InteractiveCodexHomes.RegistryPath),
+            .. CockpitCodexInstanceActivity.ReadTokenUsageHomes()], now, cancellationToken);
 
     internal CodexTokenUsageReadResult Refresh(
         string codexHome,
