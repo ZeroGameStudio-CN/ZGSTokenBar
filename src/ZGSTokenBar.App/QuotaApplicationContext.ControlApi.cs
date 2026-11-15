@@ -294,6 +294,9 @@ internal sealed partial class QuotaApplicationContext
                 ConversationLiveRateTotal = _bar.LiveMetrics.CurrentOutputRate is null ? null
                     : CodexConversationDisplay.Select(_cachedCodexTokenUsage).Sum(turn => turn.LiveRate?.Measured ?? 0),
                 ConversationLiveRateCount = CodexConversationDisplay.Select(_cachedCodexTokenUsage).Count(turn => turn.LiveRate is not null),
+                ObservedCodexInstanceNumbers = CodexConversationDisplay.Select(_cachedCodexTokenUsage?.RecentTurns ?? [],
+                    _bar.LiveMetrics.LiveRate, DateTimeOffset.UtcNow, _snapshot).Select(turn => turn.InstanceNumber)
+                    .Where(number => number > 0).Distinct().Order().ToArray(),
             },
             cancellationToken));
 

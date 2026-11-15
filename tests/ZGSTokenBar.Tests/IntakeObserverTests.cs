@@ -503,6 +503,7 @@ internal static class IntakeObserverTests
         bar.SetPluginMiniCards([router]);
         Check(!intakePanel.Visible && bar.VisiblePluginPopoverId is null,
             "Disabling the module closes its pinned or hovering panel");
+        bar.RecoverStationaryHover(outside);
         bar.SetPluginMiniCards([router, intake]);
         bar.DrawToBitmap(image, new Rectangle(Point.Empty, image.Size));
         var recoveredBounds = bar.MiniPluginBounds(IntakeObserverPlugin.Id)!.Value;
@@ -511,8 +512,11 @@ internal static class IntakeObserverTests
         bar.ShowHoveredPopover(stationary);
         Check(intakePanel.Visible, "A stationary pointer recovers after a background layout invalidates its pending hover");
         bar.HidePluginPopover(IntakeObserverPlugin.Id);
+        bar.SetPluginMiniCards([intake]);
+        bar.DrawToBitmap(image, new Rectangle(Point.Empty, image.Size));
+        stationary = Center(bar.QuotaTargetScreenBounds(bar.MiniPluginBounds(IntakeObserverPlugin.Id)!.Value));
         bar.RecoverStationaryHover(stationary); bar.ShowHoveredPopover(stationary);
-        Check(!intakePanel.Visible, "Stationary recovery respects an explicit dismissal until the pointer leaves");
+        Check(!intakePanel.Visible, "A background reflow cannot override explicit dismissal while the pointer remains on that module");
         bar.RecoverStationaryHover(outside);
         bar.RecoverStationaryHover(stationary); bar.ShowHoveredPopover(stationary);
         Check(intakePanel.Visible, "Leaving and returning clears the explicit dismissal without stale state");

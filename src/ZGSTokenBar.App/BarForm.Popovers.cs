@@ -12,7 +12,6 @@ internal sealed partial class BarForm
     private void UpdatePluginHoverTarget((RectangleF Bounds, PluginMiniCardView Card)? target)
     {
         var previous = _hoverPluginTarget?.Card.Card.Id;
-        if (_dismissedHoverPlugin != target?.Card.PluginId) _dismissedHoverPlugin = null;
         _hoverPluginTarget = target;
         if (string.Equals(previous, target?.Card.Card.Id, StringComparison.Ordinal)) return;
         if (previous is not null) _popoverHoverTimer.Stop();

@@ -574,6 +574,8 @@ account numbers; two homes sharing an account share only its quota, not their
 instance label. The activity list reserves a row for each discovered instance
 before filling remaining slots. Live-source home metadata wins over copied title
 index metadata; historical counters and their cross-process transaction stay unchanged.
+`window inspect` includes `observedCodexInstanceNumbers` from parsed recent rows
+so a registered-but-unobserved home cannot be mistaken for captured activity.
 No second watcher/timer or ledger is added. Unavailable/expired feeds remain
 unavailable; pending catch-up and observed session coverage are shown. Historical
 records are positioned on their original timestamps, so discovery cannot produce

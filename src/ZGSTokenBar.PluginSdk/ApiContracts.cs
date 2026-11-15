@@ -137,6 +137,7 @@ public sealed record WindowInspection(
     public double? LatestTurnOutputTokensPerSecond { get; init; }
     public double? ConversationLiveRateTotal { get; init; }
     public int ConversationLiveRateCount { get; init; }
+    public int[] ObservedCodexInstanceNumbers { get; init; } = [];
 }
 
 public sealed record SnapshotSummary(

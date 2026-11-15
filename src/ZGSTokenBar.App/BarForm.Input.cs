@@ -49,6 +49,7 @@ internal sealed partial class BarForm
             && !systemUsageTarget
             ? TaskbarPluginTargetAt(logical)
             : null;
+        if (_dismissedHoverPlugin != pluginTarget?.Card.PluginId) _dismissedHoverPlugin = null;
         UpdatePluginHoverTarget(pluginTarget);
         var quotaTarget = codexAccountTarget is null
             && pluginTarget is null && !systemUsageTarget
@@ -81,6 +82,7 @@ internal sealed partial class BarForm
     {
         base.OnMouseLeave(e);
         if (_taskbarDragging) return;
+        _dismissedHoverPlugin = null;
         UpdateSystemUsageHover(false);
         UpdateCodexAccountsHover(null);
         UpdateQuotaHover(null);
