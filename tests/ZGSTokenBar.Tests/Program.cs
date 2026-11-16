@@ -19,6 +19,19 @@ using ZGSTokenBar.Plugin.AiGatewayObserver;
 
 if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJobExitCode;
 
+if (args.Length == 5 && args[0] == "--conversation-checkpoint-worker")
+{
+    ConversationCheckpointTests.Worker(args[1], args[2], args[3], args[4]);
+    return 0;
+}
+
+if (args.Length == 1 && args[0] == "--conversation-checkpoints")
+{
+    ConversationCheckpointTests.Run();
+    Console.WriteLine("PASS durable conversation checkpoints, restart, append, corruption and ledger isolation");
+    return 0;
+}
+
 if (args.Length == 2 && args[0] == "--grok-plan-hover")
 {
     // Offscreen render of the unified Grok hover card: the plan pill comes from the Grok CLI's
@@ -519,6 +532,7 @@ var tests = new (string Name, Action Run)[]
     ("Token ledger failed-save retry", PersistenceRegressionTests.LedgerSaveRetry),
     ("Conversation history persistence", PersistenceRegressionTests.ConversationHistoryPersistence),
     ("Observed live output and network rates", LiveMetricTests.Run),
+    ("Conversation byte checkpoints survive restart without duplicate accounting", ConversationCheckpointTests.Run),
     ("Retained conversation query and export", ConversationQueryTests.Run),
     ("Unchanged conversation refresh allocation and persistence", ConversationHistoryRefreshTests.Run),
     ("Built-in plugin host data-root isolation", PersistenceRegressionTests.BuiltinDataRootIsolation),

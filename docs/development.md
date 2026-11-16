@@ -343,9 +343,12 @@ It also reports `recentConversationCount` and
 `latestTurnOutputTokensPerSecond`. The latter is output tokens divided by the
 entire turn's wall time, including tools and waiting, not server decode throughput.
 
-Conversation measurement incrementally scans all discovered sessions,
-with an 8 MiB per-file budget per refresh. A complete turn in the last 2 MiB
-bootstraps immediately; longer turns catch up across refreshes. Only complete
+Conversation measurement incrementally scans all discovered sessions.
+Small live appends retain their 8 MiB per-file budget. Cold/new/large backlogs share
+up to 32 MiB and roughly 50 ms of scanning per refresh (checked between 64 KiB
+reads); checkpoint validation and disk commits are separate from that scan budget.
+A complete turn in the last 2 MiB bootstraps immediately; longer turns catch up
+across refreshes. Only complete
 catch-up is published. Subsequent refreshes parse new
 bytes, retaining partial JSONL lines in a bounded memory buffer and validating
 file checkpoints before reuse. No conversation content is persisted. Real turn
@@ -365,6 +368,33 @@ The tok/s hover lists the most recent sessions (Token in→out, average speed,
 first-token latency and cache hit rate) above today's Token total, the 24-hour
 curve and cache read/write statistics. Plugin snapshot details continue to
 expose the bounded recent view.
+
+On Windows, `conversation-checkpoints-v1/` under the resolved data root retains
+one derived parser checkpoint per source path. Every completed scan batch saves
+its byte offset, cumulative-counter baseline, active-turn flags, model/route/cost
+metadata and bounded response samples using the existing cross-process lock and
+atomic replacement primitive. This sidecar never changes the cumulative ledger,
+settings or source logs. The format is versioned with the parser semantics and
+limited to 512 KiB per file, with a SHA-256 payload digest. It contains no prompt,
+message or tool-output body. A partial UTF-8 line is reconstructed and hash-checked
+from its original source, rather than copied into the checkpoint.
+
+Restart validates the physical Windows file identity, length, modification time,
+prefix and saved-boundary fingerprints before restoring. Unchanged sources require
+no JSONL rescan; appended sources continue at the saved position, including an
+unfinished catch-up. Normal exit and process termination retain the latest atomic
+checkpoint. Truncation, replacement, corruption or failed validation rebuilds only
+the affected source; unavailable caches fall back to bounded scanning. A slower
+writer cannot replace a later valid offset, and an older app preserves future
+cache formats. These caches are disposable and do not migrate the token index.
+`window inspect --json` reports `conversationCheckpointRestoredCount`,
+`conversationRestoredBytes` (sum of restored byte positions),
+`conversationScannedBytes` (JSONL bytes scanned in this process) and
+`conversationCheckpointFailures` alongside the existing pending count.
+
+The isolated `--conversation-checkpoints` test mode covers normal and forcibly
+terminated child processes, partial UTF-8/JSONL lines, append/truncate/replace,
+corruption, stale writers, unavailable/future caches and exact ledger preservation.
 
 Live-only refreshes reuse filtered ordering, summaries, model groups and unchanged
 window geometry. Recorded changes, filter changes, local midnight, sample

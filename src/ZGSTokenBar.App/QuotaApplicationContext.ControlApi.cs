@@ -292,6 +292,10 @@ internal sealed partial class QuotaApplicationContext
                 RouterObservedAt = _routerModule.Snapshot?.ReceivedAt,
                 RecentConversationCount = _cachedCodexTokenUsage?.RecentTurns.Count ?? 0,
                 PendingConversationCount = _cachedCodexTokenUsage?.PendingConversationCount ?? 0,
+                ConversationCheckpointRestoredCount = _cachedCodexTokenUsage?.ConversationCheckpointRestoredCount ?? 0,
+                ConversationRestoredBytes = _cachedCodexTokenUsage?.ConversationRestoredBytes ?? 0,
+                ConversationScannedBytes = _cachedCodexTokenUsage?.ConversationScannedBytes ?? 0,
+                ConversationCheckpointFailures = _cachedCodexTokenUsage?.ConversationCheckpointFailures ?? 0,
                 LatestTurnOutputTokensPerSecond = _cachedCodexTokenUsage?.RecentTurns.FirstOrDefault()?.OutputTokensPerSecond,
                 ConversationLiveRateTotal = _bar.LiveMetrics.CurrentOutputRate is null ? null
                     : CodexConversationDisplay.Select(_cachedCodexTokenUsage).Sum(turn => turn.LiveRate?.Measured ?? 0),

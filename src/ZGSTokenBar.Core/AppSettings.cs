@@ -582,6 +582,7 @@ public sealed class AppSettingsStore
     public string CachePath => Path.Combine(DataDirectory, "quota-cache.json");
     public string QuotaRateHistoryPath => Path.Combine(DataDirectory, "quota-rate-history.json");
     public string CodexTokenUsageIndexPath => Path.Combine(DataDirectory, "codex-token-usage-index.json");
+    public string CodexConversationCheckpointDirectory => Path.Combine(DataDirectory, "conversation-checkpoints-v1");
     public string CodexQuotaTokenHistoryPath => Path.Combine(DataDirectory, "codex-quota-token-history.json");
 
     public bool SettingsReadPending

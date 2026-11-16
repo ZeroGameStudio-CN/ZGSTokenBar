@@ -7,7 +7,7 @@ public sealed class CodexTokenUsageLedger
     private readonly object _sync = new();
     private CodexTokenUsageIndex? _pending;
     private CodexTokenUsageSummary? _summary;
-    private readonly CodexConversationUsageReader _conversations = new();
+    private readonly CodexConversationUsageReader _conversations;
     private readonly CodexConversationTitleReader _titles = new();
     private IReadOnlyList<string> _recentSessionPaths = [];
     private readonly Dictionary<string, SessionDirectory> _sessionDirectories = new(StringComparer.OrdinalIgnoreCase);
@@ -66,6 +66,7 @@ public sealed class CodexTokenUsageLedger
     {
         _store = store;
         _homes = homes;
+        _conversations = new(store.CodexConversationCheckpointDirectory);
     }
 
     public CodexTokenUsageSummary? Snapshot(DateTimeOffset now)
@@ -115,6 +116,10 @@ public sealed class CodexTokenUsageLedger
                 {
                     RecentTurns = _conversations.Refresh(_recentSessionPaths, now, cancellationToken),
                     PendingConversationCount = _conversations.PendingSessions,
+                    ConversationCheckpointRestoredCount = _conversations.RestoredSessions,
+                    ConversationRestoredBytes = _conversations.RestoredBytes,
+                    ConversationScannedBytes = _conversations.ScannedBytes,
+                    ConversationCheckpointFailures = _conversations.CheckpointFailures,
                     LiveRateFeed = _conversations.LiveRateFeed,
                 };
                 _summary = PersistConversationHistory(_summary, now);
@@ -133,6 +138,10 @@ public sealed class CodexTokenUsageLedger
             {
                 RecentTurns = _conversations.Refresh(_recentSessionPaths, now, cancellationToken),
                 PendingConversationCount = _conversations.PendingSessions,
+                ConversationCheckpointRestoredCount = _conversations.RestoredSessions,
+                ConversationRestoredBytes = _conversations.RestoredBytes,
+                ConversationScannedBytes = _conversations.ScannedBytes,
+                ConversationCheckpointFailures = _conversations.CheckpointFailures,
                 LiveRateFeed = _conversations.LiveRateFeed,
             };
             _summary = PersistConversationHistory(_summary, now);

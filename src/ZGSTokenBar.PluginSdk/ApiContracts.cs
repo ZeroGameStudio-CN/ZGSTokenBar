@@ -136,6 +136,10 @@ public sealed record WindowInspection(
     public DateTimeOffset? RouterObservedAt { get; init; }
     public int RecentConversationCount { get; init; }
     public int PendingConversationCount { get; init; }
+    public int ConversationCheckpointRestoredCount { get; init; }
+    public long ConversationRestoredBytes { get; init; }
+    public long ConversationScannedBytes { get; init; }
+    public int ConversationCheckpointFailures { get; init; }
     public double? LatestTurnOutputTokensPerSecond { get; init; }
     public double? ConversationLiveRateTotal { get; init; }
     public int ConversationLiveRateCount { get; init; }

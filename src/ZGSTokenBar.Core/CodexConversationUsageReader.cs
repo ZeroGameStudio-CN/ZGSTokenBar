@@ -53,15 +53,23 @@ public sealed record CodexConversationTurn(
         ? OutputTokens / ElapsedSeconds : null;
 }
 
-public sealed class CodexConversationUsageReader
+public sealed partial class CodexConversationUsageReader
 {
     internal const int ScanBudgetBytes = 8 * 1024 * 1024;
     private const int BootstrapBytes = 2 * 1024 * 1024;
     // Cold work (new sessions, invalidated checkpoints, long catch-up replays) shares one byte
     // budget per Refresh so a cold start spreads over several ticks instead of parsing every
-    // recent session in one burst. Live appends to caught-up sessions are never deferred.
-    internal const int DefaultRefreshColdBudgetBytes = 4 * 1024 * 1024;
+    // recent session in one burst. Small live appends retain priority; large backlogs share the cold budget.
+    internal const int DefaultRefreshColdBudgetBytes = 32 * 1024 * 1024;
     internal int RefreshColdBudgetBytes { get; init; } = DefaultRefreshColdBudgetBytes;
+    internal int RefreshColdMilliseconds { get; init; } = 50;
+    private readonly ConversationCheckpointStore? _checkpoints;
+    public CodexConversationUsageReader() : this(null) { }
+    public CodexConversationUsageReader(string? checkpointDirectory) =>
+        _checkpoints = checkpointDirectory is null ? null : new(checkpointDirectory);
+    public int RestoredSessions { get; private set; }
+    public long RestoredBytes { get; private set; }
+    public int CheckpointFailures => _checkpoints?.Failures ?? 0;
     // Sessions untouched for a while are only re-stated on a slower cadence; a resumed old
     // session is still picked up within ColdRecheckMs.
     private static readonly long ColdFileAgeTicks = TimeSpan.FromMinutes(10).Ticks;
@@ -79,6 +87,7 @@ public sealed class CodexConversationUsageReader
         var retained = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         PendingSessions = 0;
         long coldSpent = 0;
+        long coldScanMilliseconds = 0;
         foreach (var path in paths.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -106,8 +115,10 @@ public sealed class CodexConversationUsageReader
                     if (state.ToTurn(now) is { } unchanged) turns.Add(unchanged);
                     continue;
                 }
-                var cold = state is not { CaughtUp: true, ReadFailed: false };
-                if (cold && coldSpent >= RefreshColdBudgetBytes)
+                var cold = state is not { CaughtUp: true, ReadFailed: false }
+                    || file.Length - state.Offset > ScanBudgetBytes;
+                if (cold && (coldSpent >= RefreshColdBudgetBytes || coldScanMilliseconds >= RefreshColdMilliseconds)
+                    && !(state is null && _checkpoints?.Exists(path) == true))
                 {
                     // Budget for this tick is used up; the next refresh continues here.
                     PendingSessions++;
@@ -118,18 +129,39 @@ public sealed class CodexConversationUsageReader
                 using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
                     FileShare.ReadWrite | FileShare.Delete);
                 var length = stream.Length;
-                var budget = ScanBudgetBytes;
+                if (state is null && RestoreCheckpoint(path, stream, file.LastWriteTimeUtc.Ticks) is { } restored)
+                {
+                    state = restored;
+                    _cache[path] = state;
+                }
+                if (state is { CaughtUp: true, ReadFailed: false } && state.Offset >= length
+                    && state.Length == length && state.WriteTicks == file.LastWriteTimeUtc.Ticks)
+                {
+                    state.CheckedAt = checkedAt;
+                    if (state.ToTurn(now) is { } warm) turns.Add(warm);
+                    continue;
+                }
+                cold = state is not { CaughtUp: true, ReadFailed: false } || length - state.Offset > ScanBudgetBytes;
+                if (cold && (coldSpent >= RefreshColdBudgetBytes || coldScanMilliseconds >= RefreshColdMilliseconds))
+                {
+                    PendingSessions++;
+                    continue;
+                }
+                var budget = cold ? (int)Math.Min(RefreshColdBudgetBytes - coldSpent, DefaultRefreshColdBudgetBytes) : ScanBudgetBytes;
+                long? deadline = cold ? Environment.TickCount64 + RefreshColdMilliseconds - coldScanMilliseconds : null;
                 var changed = state is null || length != state.Length || file.LastWriteTimeUtc.Ticks != state.WriteTicks;
                 if (state is null || length < state.Length || length < state.Offset
                     || changed && (length == state.Length || !state.MatchesCheckpoint(stream)))
                 {
                     state = new FileState(SessionId(path));
-                    if (length > BootstrapBytes)
+                    if (length > BootstrapBytes && budget >= BootstrapBytes * 2)
                     {
                         state.Offset = length - BootstrapBytes;
                         stream.Position = state.Offset - 1;
                         state.LineTooLong = stream.ReadByte() != '\n';
-                        var bootstrapRead = Scan(stream, length, state, now, cancellationToken, BootstrapBytes);
+                        var bootstrapStarted = Environment.TickCount64;
+                        var bootstrapRead = Scan(stream, length, state, now, cancellationToken, BootstrapBytes, deadline);
+                        if (cold) coldScanMilliseconds += Environment.TickCount64 - bootstrapStarted;
                         ScannedBytes += bootstrapRead;
                         coldSpent += bootstrapRead;
                         budget -= bootstrapRead;
@@ -141,13 +173,21 @@ public sealed class CodexConversationUsageReader
                 if (changed || state.Offset < length)
                 {
                     state.CaughtUp = false;
-                    var consumed = Scan(stream, length, state, now, cancellationToken, budget);
-                    ScannedBytes += consumed;
-                    if (cold) coldSpent += consumed;
-                    ParsedFiles++;
-                    state.Length = length;
-                    state.WriteTicks = file.LastWriteTimeUtc.Ticks;
-                    state.SaveCheckpoint(stream);
+                    var scanStart = state.Offset;
+                    var scanStarted = Environment.TickCount64;
+                    try { Scan(stream, length, state, now, cancellationToken, budget, deadline); }
+                    finally
+                    {
+                        var consumed = state.Offset - scanStart;
+                        ScannedBytes += consumed;
+                        if (cold) coldSpent += consumed;
+                        if (cold) coldScanMilliseconds += Environment.TickCount64 - scanStarted;
+                        ParsedFiles++;
+                        state.Length = length;
+                        state.WriteTicks = file.LastWriteTimeUtc.Ticks;
+                        state.SaveCheckpoint(stream);
+                        PersistCheckpoint(path, state, stream);
+                    }
                 }
                 state.CaughtUp = state.Offset >= length;
                 state.ReadFailed = false;
@@ -176,7 +216,7 @@ public sealed class CodexConversationUsageReader
     }
 
     private static int Scan(FileStream stream, long length, FileState state, DateTimeOffset now,
-        CancellationToken cancellationToken, int budget)
+        CancellationToken cancellationToken, int budget, long? deadline = null)
     {
         stream.Position = state.Offset;
         var buffer = new byte[64 * 1024];
@@ -185,6 +225,7 @@ public sealed class CodexConversationUsageReader
         while (remaining > 0)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (deadline is { } until && Environment.TickCount64 >= until) break;
             var read = stream.Read(buffer, 0, Math.Min(buffer.Length, remaining));
             if (read == 0) break;
             var start = 0;
@@ -251,7 +292,7 @@ public sealed class CodexConversationUsageReader
         DateTimeOffset.TryParse(value.StringProperty(name), CultureInfo.InvariantCulture,
             DateTimeStyles.AssumeUniversal, out var at) ? at : null;
 
-    private sealed class FileState(string sessionId)
+    private sealed partial class FileState(string sessionId)
     {
         public long Offset;
         public long Length;
@@ -571,8 +612,10 @@ public sealed class CodexConversationUsageReader
         }
     }
 
-    private sealed class TurnState(string id, DateTimeOffset startedAt, bool hasCounterBaseline)
+    internal sealed class TurnState(string id, DateTimeOffset startedAt, bool hasCounterBaseline)
     {
+        [JsonConstructor]
+        public TurnState() : this("", default, false) { }
         public string Id = id;
         public bool HasCounterBaseline = hasCounterBaseline;
         public DateTimeOffset StartedAt = startedAt;

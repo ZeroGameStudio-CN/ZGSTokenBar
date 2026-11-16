@@ -25,6 +25,10 @@ public sealed record CodexTokenUsageSummary(
     public IReadOnlyList<CodexConversationTurn> RecentTurns { get; init; } = [];
     public IReadOnlyList<CodexConversationTurn> ConversationHistory { get; init; } = [];
     public int PendingConversationCount { get; init; }
+    public int ConversationCheckpointRestoredCount { get; init; }
+    public long ConversationRestoredBytes { get; init; }
+    public long ConversationScannedBytes { get; init; }
+    public int ConversationCheckpointFailures { get; init; }
     [JsonIgnore]
     public CodexLiveRateFeed? LiveRateFeed { get; init; }
     [JsonIgnore]
