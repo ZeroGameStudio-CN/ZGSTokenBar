@@ -29,8 +29,8 @@ internal sealed class NativeText
     public string Advanced => T("高级", "Advanced");
     public string About => T("关于", "About");
     public string Modules => T("模块", "Modules");
-    public string IntakeObserver => T("自动分拣", "Work intake");
-    public string IntakeObserverHint => T("悬停查看工单和分拣记录，点击固定（只读）", "Hover to view work items and intake records; click to pin (read only)");
+    public string IntakeObserver => T("工单与分拣", "Work intake");
+    public string IntakeObserverHint => T("悬停查看工单队列和时间线，点击固定（只读）", "Hover to view work item queues and timelines; click to pin (read only)");
     public string SystemMetricsModuleHint => T(
         "显示 CPU、内存、磁盘与 GPU 占用；关闭后停止采样。",
         "Show CPU, memory, disk, and GPU usage; sampling stops while disabled.");

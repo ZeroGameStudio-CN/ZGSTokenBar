@@ -19,6 +19,14 @@ using ZGSTokenBar.Plugin.AiGatewayObserver;
 
 if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJobExitCode;
 
+if (args.Length is 1 or 2 && args[0] == "--bar-observer-polish")
+{
+    System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
+    IntakePolishTests.Run(args.Length == 2 ? args[1] : null);
+    Console.WriteLine("PASS bounded queue views, loading and empty states, single-click timeline selection");
+    return 0;
+}
+
 if (args.Length == 1 && args[0] == "--checkpoint-p2")
 {
     ConversationCheckpointTests.RunP2();
@@ -600,6 +608,7 @@ var tests = new (string Name, Action Run)[]
     ("Settings v2 plugin migration", TestSettingsV2PluginMigration),
     ("Native Router module", RouterModuleTests.Run),
     ("Read-only work intake", () => IntakeObserverTests.Run()),
+    ("Work item queues and context-specific monitor states", () => IntakePolishTests.Run()),
     ("Provider local credential auto-discovery", TestProviderLocalCredentialAutoDiscovery),
     ("Bundled plugin extraction closes package file", TestBundledPluginExtraction),
     ("Plugin profile state redaction", TestPluginProfileStateRedaction),

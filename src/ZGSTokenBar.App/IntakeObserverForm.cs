@@ -3,7 +3,7 @@ using ZGSTokenBar.Core;
 
 namespace ZGSTokenBar.App;
 
-internal sealed class IntakeObserverForm : MonitorPanelForm
+internal sealed partial class IntakeObserverForm : MonitorPanelForm
 {
     private readonly IntakeObserverClient _client;
     private readonly bool _zh;
@@ -38,7 +38,7 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
         _zh = chinese;
         _client = client ?? new();
         _observeOnShow = observeOnShow;
-        Text = T("自动分拣", "Work intake");
+        Text = T("工单与分拣", "Work intake");
         SuspendLayout();
         _root = CreatePanelLayout();
         Controls.Add(_root);
@@ -81,12 +81,14 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
         AddColumn(_timeline, T("结果", "Result"), 114);
         _recent.AccessibleName = T("近期工单", "Recent work items");
         _timeline.AccessibleName = T("工单时间线和诊断", "Timeline and diagnostics");
-        _root.Controls.Add(TableSection(_recent.AccessibleName, _recent, Flow(_blocked)), 0, 2);
-        _root.Controls.Add(TableSection(T("历史", "History"), _timeline, Flow()), 0, 3);
+        _root.Controls.Add(TableSection(T("工单", "Items"), _recent, Flow(_blocked)), 0, 2);
+        _root.Controls.Add(TableSection(T("工单时间线", "Item timeline"), _timeline, Flow()), 0, 3);
         _root.Controls.Add(_status, 0, 4);
 
-        _detail.Text = T("选择一张工单后查看时间线", "Select a work item to view its timeline");
+        _detail.Text = T("单击工单查看时间线", "Select a work item to view its timeline");
+        SetTimelineEmpty();
         _status.Text = T("连接 ZOS…", "Connecting to ZOS…");
+        SetRecentEmpty(T("正在连接 ZOS…", "Connecting to ZOS…"), T("连接后显示近期工单", "Recent items appear after connection"));
         _refresh.Click += async (_, _) => await RefreshVisibleAsync();
         _pin.Click += (_, _) => RequestPinChange(!_pinned);
         _close.Click += (_, _) => RequestClose();
@@ -97,7 +99,7 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
             e.SuppressKeyPress = true; await FindAsync();
         };
         _search.Click += async (_, _) => await FindAsync();
-        _recent.CellDoubleClick += async (_, e) =>
+        _recent.CellClick += async (_, e) =>
         {
             if (e.RowIndex >= 0 && _fresh && _recent.Rows[e.RowIndex].Tag is IntakeItem row)
             {
@@ -147,7 +149,9 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
         body.RowStyles.Add(new(SizeType.Absolute, 30)); body.RowStyles.Add(new(SizeType.Percent, 100));
         var pager = new MonitorTablePager(grid);
         actions.Dock = DockStyle.None; actions.AutoSize = true;
-        body.Controls.Add(CreateHeader(heading, Flow(new[] { actions }.Concat(pager.Buttons).ToArray()), 300), 0, 0);
+        Control left = ReferenceEquals(grid, _recent) ? Flow(heading, CreateViews()) : heading;
+        if (ReferenceEquals(grid, _recent)) heading.Width = 72;
+        body.Controls.Add(CreateHeader(left, Flow(new[] { actions }.Concat(pager.Buttons).ToArray()), 300), 0, 0);
         body.Controls.Add(grid, 0, 1);
         var section = RouterSurface.Section(title); section.Controls.Add(body); return section;
     }
@@ -208,7 +212,7 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
             more.Click += (_, _) => _projectMenu.Show(more, new Point(0, more.Height));
             _projects.Controls.Add(more);
         }
-        _projectSummary.Text = T("只读", "Read only") + " · " + _projectCatalog.Count;
+        _projectSummary.Text = T($"只读 · {_projectCatalog.Count} 个项目", $"Read only · {_projectCatalog.Count} projects");
     }
 
     protected override void ApplyPalette(QuotaBackgroundTheme theme)
@@ -250,7 +254,7 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
         if (access.Projects.Count == 0) { NoReadableProjects(); return; }
         // RefreshAccess may clear the selection after an identity or permission change.
         var selected = _item;
-        var rows = await _client.RecentAsync(access, _projectKey, _blocked.Checked, token);
+        var rows = await _client.ItemsAsync(access, _projectKey, _itemsView, _blocked.Checked, token);
         token.ThrowIfCancellationRequested();
         ApplyRecentRows(rows);
         var historyCapped = selected is not null && await ReadItemDataAsync(selected.Id.ToString("D"), access, token);
@@ -275,7 +279,7 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
     {
         var access = await RefreshAccessAsync(token);
         if (access.Projects.Count == 0) { NoReadableProjects(); return; }
-        var rows = await _client.RecentAsync(access, _projectKey, _blocked.Checked, token);
+        var rows = await _client.ItemsAsync(access, _projectKey, _itemsView, _blocked.Checked, token);
         token.ThrowIfCancellationRequested();
         ClearItem();
         ApplyRecentRows(rows);
@@ -289,14 +293,15 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
     }
 
     private string RecentMessage(int count) => count == 0
-        ? T("没有符合条件的工单", "No matching work items")
-        : T("近期工单 · 双击查看时间线", "Recent work items · Double-click for timeline");
+        ? T("当前视图没有匹配工单", "No matching work items in this view")
+        : T($"显示最近 {count} 条 · 单击查看时间线", $"Latest {count} items · Select for timeline");
 
     private void ApplyRecentRows(IReadOnlyList<IntakeItem> items)
     {
         SetGridRows(_recent, items.Select(row =>
             (new object?[] { row.Number, row.Title, ItemState(row), At(row.UpdatedAt) }, (object?)row)).ToArray());
         _fresh = true;
+        SetRecentEmpty(ViewEmptyTitle(), T("切换视图或项目查看其他工单", "Switch view or project to see other items"));
     }
 
     internal Task LoadItemAsync(string reference) => ReadAsync(async token =>
@@ -304,11 +309,12 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
         var referenceChanged = _item is not { } old || (!string.Equals(old.Id.ToString("D"), reference, StringComparison.OrdinalIgnoreCase)
             && !string.Equals(old.Number, reference, StringComparison.OrdinalIgnoreCase));
         if (referenceChanged) ClearItem();
+        SetTimelineEmpty(T("正在读取时间线…", "Reading timeline…"), T("正在等待工单历史", "Waiting for item history"));
         var access = await RefreshAccessAsync(token);
         var historyCapped = await ReadItemDataAsync(reference, access, token);
         Observe(historyCapped ? T("显示最近 60 条工单历史", "Showing up to 60 recent history entries")
-            : T("工单状态来自 ZOS；派发需另有回执", "Work item state is from ZOS; dispatch requires a receipt"));
-    });
+            : T("工单时间线已更新", "Item timeline updated"));
+    }, preserveRecent: true);
 
     private async Task<bool> ReadItemDataAsync(string reference, IntakeAccess access, CancellationToken token)
     {
@@ -405,13 +411,21 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
         return access;
     }
 
-    private async Task ReadAsync(Func<CancellationToken, Task> work, bool diagnosticOnly = false)
+    private async Task ReadAsync(Func<CancellationToken, Task> work, bool diagnosticOnly = false, bool preserveRecent = false)
     {
         _request?.Cancel();
         using var operation = new CancellationTokenSource();
         _request = operation;
         _status.Text = T("读取中…", "Reading…");
-        if (!diagnosticOnly) { _fresh = false; _detailFresh = false; }
+        if (!diagnosticOnly)
+        {
+            _detailFresh = false;
+            if (!preserveRecent)
+            {
+                _fresh = false;
+                SetRecentEmpty(T("正在读取工单…", "Reading work items…"), T("首次连接可能需要几秒", "The first connection can take a few seconds"));
+            }
+        }
         UpdateButtons();
         try { await work(operation.Token); }
         catch (OperationCanceledException) when (operation.IsCancellationRequested) { }
@@ -432,11 +446,14 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
                 "account_changed" => T("账号权限已变化，请刷新工单列表", "Account access changed. Refresh the item list"),
                 "not_found" => T("找不到工单或当前不可见", "Work item is missing or not visible"),
                 "no_work_items" => T("此项目尚未提供工单", "Work items aren't available for this project"),
+                "invalid" => T("返回数据不完整，请刷新", "Incomplete response; try refreshing"),
                 "not_installed" => T("请先安装 Zero OS CLI", "Install the Zero OS CLI first"),
                 "install_invalid" => T("Zero OS CLI 安装不可读", "The Zero OS CLI installation could not be verified"),
                 _ => _observed is { } seen ? T($"暂不可用 · 上次更新 {At(seen)}", $"Unavailable · Last read {At(seen)}")
                     : T("暂不可用，稍后刷新", "Unavailable. Try refreshing later"),
             };
+            if (!diagnosticOnly && !preserveRecent) SetRecentEmpty(T("工单暂不可用", "Work items unavailable"), _status.Text);
+            else if (!diagnosticOnly) SetTimelineEmpty(T("时间线暂不可用", "Timeline unavailable"), _status.Text);
         }
         finally
         {
@@ -470,7 +487,8 @@ internal sealed class IntakeObserverForm : MonitorPanelForm
         _item = null;
         _detailFresh = false;
         _timeline.Rows.Clear();
-        _detail.Text = T("选择一张工单后查看时间线", "Select a work item to view its timeline");
+        _detail.Text = T("单击工单查看时间线", "Select a work item to view its timeline");
+        SetTimelineEmpty();
         UpdateButtons();
     }
 

@@ -212,7 +212,7 @@ read-only local performance probe runs with the same command and
 `--router-history-benchmark <temporary-output-directory>`; it measures live reads
 and cached native page rendering without execution controls or production settings.
 
-The **Work intake** inbox icon sits beside Router in the Mini. Left-click it
+The **Work intake** (工单与分拣) inbox icon sits beside Router in the Mini. Left-click it
 to pin the same anchored panel host used by Router, with shared screen/DPI
 geometry, header, project row, current-item section and equally sized tables.
 Pin, close, outside click and Escape use the same popover lifecycle.
@@ -224,10 +224,21 @@ and panel dismisses the unpinned view. Clicking pins it. Escape and the close
 button dismiss either view; text lookup and item actions require a pinned panel.
 The window uses the current user's managed Zero OS CLI and its existing session. The project list
 comes from work item read access; access to a project does not imply that
-automatic dispatch is enabled there. Select a recent item or enter its number
-to view the original status and transition history. Diagnostics are requested
+automatic dispatch is enabled there. The Recent, Triage, Pending and Running chips query the existing bounded list
+endpoint with exact project and status/execution filters. All Projects remains
+the default; the blocked-only switch composes with the selected view. These are
+read-only work-item projections, not a dispatcher service queue. Single-click an
+item or enter its number to view its original status and transition history. Diagnostics are requested
 only for the selected item and keep the server's authorization and evidence
 limits. An empty diagnosis does not establish dispatch, failure, or inactivity.
+The two tables distinguish connecting/loading, no matching work items, no selected
+item and unavailable responses. The timeline never labels an unselected item as
+an empty queue. Missing list/history arrays are invalid responses, not empty
+results. Loading one item retains the recent list's read state, so the next item
+can be selected immediately; in-flight detail reads still cancel on a new
+selection. View controls, table paging and all-project navigation use the same
+monitor host, sizing and theme as Router. No hidden business reads or new watcher
+are added by prewarming.
 Visible refresh updates both the recent-item list and selected-item details,
 keeping the current item and page. A selected item's keyboard focus follows its
 identity when rows reorder; a removed or off-page selection clears the focus.

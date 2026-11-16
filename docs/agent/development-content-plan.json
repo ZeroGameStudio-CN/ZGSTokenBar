@@ -16,13 +16,13 @@
     },
     {
       "id": "work-intake-observer",
-      "title": "Work intake observer",
+      "title": "Read-only work item queues and timeline",
       "stage": "Previewable",
       "availability": "InternalOnly",
       "targetReleaseId": "",
-      "entrance": "Click the Work intake inbox icon beside Router in the Mini; switch it independently in Settings.",
+      "entrance": "Hover or pin Work intake beside Router; default All Projects, then Recent/Triage/Pending/Running and a single-click item timeline.",
       "resourcePath": "src/ZGSTokenBar.App/IntakeObserverForm.cs",
-      "nextAction": "Review the local panel; add dispatch evidence only when the workflow publishes it through the existing diagnostic service."
+      "nextAction": "Verify the final installed panel and real data reads; dispatcher-wide runtime/log evidence remains separate until an authorized capability is published."
     },
     {
       "id": "linked-worktree-build-cleanup",

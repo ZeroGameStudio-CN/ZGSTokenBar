@@ -26,6 +26,7 @@ internal sealed record IntakeTransition(DateTimeOffset? Timestamp, string Comman
 internal sealed record IntakeDiagnosticEvent(DateTimeOffset? Timestamp, string Name, string Phase, string Outcome, string Error);
 internal sealed record IntakeDiagnostics(string Status, int FactCount, bool HasMore,
     IReadOnlyList<IntakeDiagnosticEvent> Events);
+internal enum IntakeItemsView { Recent, Triage, Pending, Running }
 
 internal sealed class IntakeReadException(string code) : Exception(code)
 {
@@ -37,7 +38,7 @@ internal sealed class IntakeObserverClient
     private const int RecentLimit = 16;
     internal const int HistoryLimit = 60;
     private const int BodyLimit = 4 * 1024 * 1024;
-    private static readonly Regex ProjectKey = new(@"\A[A-Za-z0-9][A-Za-z0-9_-]{0,31}\z", RegexOptions.CultureInvariant);
+    private static readonly Regex ProjectKey = new(@"\A[A-Za-z0-9][A-Za-z0-9_-]{0,63}\z", RegexOptions.CultureInvariant);
     private static readonly Regex ItemNumber = new(@"\A[A-Za-z][A-Za-z0-9_-]{0,15}-[1-9][0-9]{0,11}\z", RegexOptions.CultureInvariant);
     private readonly Func<IReadOnlyList<string>, CancellationToken, Task<JsonElement>> _read;
 
@@ -76,23 +77,37 @@ internal sealed class IntakeObserverClient
     }
 
     internal async Task<IReadOnlyList<IntakeItem>> RecentAsync(string project, bool blocked, CancellationToken token)
+        => await ItemsAsync(project, IntakeItemsView.Recent, blocked, token);
+
+    private async Task<IReadOnlyList<IntakeItem>> ItemsAsync(string project, IntakeItemsView view, bool blocked, CancellationToken token)
     {
         if (!ProjectKey.IsMatch(project)) throw new IntakeReadException("invalid");
         var args = new List<string> { "list", "--project-key", project, "--limit",
             RecentLimit.ToString(CultureInfo.InvariantCulture), "--sort", "updated_desc" };
         if (blocked) args.Add("--blocked");
+        if (view == IntakeItemsView.Triage) args.AddRange(["--status", "pending_triage"]);
+        else if (view is IntakeItemsView.Pending or IntakeItemsView.Running)
+            args.AddRange(["--execution", view == IntakeItemsView.Pending ? "pending" : "running"]);
         var value = await _read(args, token).ConfigureAwait(false);
+        if (Field(value, "items").ValueKind != JsonValueKind.Array) throw new IntakeReadException("invalid");
         return Rows(value, "items").Take(RecentLimit).Select(ParseItem).Where(row => row.Project == project).ToArray();
     }
 
     internal async Task<IReadOnlyList<IntakeItem>> RecentAsync(IntakeAccess access, string? project, bool blocked, CancellationToken token)
+        => await ItemsAsync(access, project, IntakeItemsView.Recent, blocked, token);
+
+    internal async Task<IReadOnlyList<IntakeItem>> ItemsAsync(IntakeAccess access, string? project, IntakeItemsView view, bool blocked, CancellationToken token)
     {
-        if (project is not null) return await RecentAsync(project, blocked, token);
+        if (project is not null)
+        {
+            if (!access.Projects.Any(entry => entry.Key == project)) throw new IntakeReadException("denied");
+            return await ItemsAsync(project, view, blocked, token);
+        }
         using var gate = new SemaphoreSlim(4);
         var pages = await Task.WhenAll(access.Projects.Select(async entry =>
         {
             await gate.WaitAsync(token);
-            try { return await RecentAsync(entry.Key, blocked, token); }
+            try { return await ItemsAsync(entry.Key, view, blocked, token); }
             finally { gate.Release(); }
         }));
         return pages.SelectMany(page => page).DistinctBy(item => item.Id)
@@ -113,6 +128,7 @@ internal sealed class IntakeObserverClient
     internal async Task<IReadOnlyList<IntakeTransition>> HistoryAsync(Guid id, CancellationToken token)
     {
         var value = await _read(["history", id.ToString("D")], token).ConfigureAwait(false);
+        if (Field(value, "transitions").ValueKind != JsonValueKind.Array) throw new IntakeReadException("invalid");
         return Rows(value, "transitions").Select(row => new IntakeTransition(
                 Time(row, "created_at"), Text(row, "command", 64), Text(row, "to_status", 48)))
             .OrderByDescending(row => row.Timestamp).Take(HistoryLimit).ToArray();
