@@ -19,6 +19,9 @@ public sealed record GlassDockRing(
     /// <summary>A known unused account stays reachable through +N without taking a collapsed slot.</summary>
     public bool OverflowOnly { get; init; }
 
+    /// <summary>An observed active account takes precedence over passive quota readings.</summary>
+    public bool InUse { get; init; }
+
     /// <summary>
     /// Where remaining would be under even use of the ring's window (100 − elapsed share), drawn
     /// as a thin pace tick on the ring; null without a reset time and duration, or after the reset.
@@ -236,6 +239,7 @@ public static class GlassDockLayout
 
     private static GlassDockRing[] Order(IReadOnlyList<GlassDockRing> rings) => rings
         .OrderBy(ring => ring.OverflowOnly)
+        .ThenByDescending(ring => ring.InUse)
         .ThenBy(ring => ring.RemainingPercent ?? double.PositiveInfinity)
         .ThenBy(ring => ring.Title, StringComparer.Ordinal)
         .ThenBy(ring => ring.AccountNumber)

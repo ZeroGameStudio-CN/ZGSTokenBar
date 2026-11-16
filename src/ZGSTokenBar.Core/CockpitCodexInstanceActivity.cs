@@ -420,7 +420,7 @@ internal static class CockpitCodexInstanceActivity
     /// names, unlike <see cref="System.Diagnostics.Process.GetProcesses()"/>, which also
     /// materialises every thread of every process. Returns false if the snapshot fails.
     /// </summary>
-    internal static bool TryReadRunningProcessNames(IReadOnlySet<string> wanted, ISet<string> found)
+    internal static bool TryReadRunningProcessNames(IReadOnlySet<string> wanted, ISet<string> found, int ignoredParentProcessId = 0)
     {
         if (!OperatingSystem.IsWindows()) return false;
         var snapshot = CreateToolhelp32Snapshot(SnapshotProcesses, 0);
@@ -432,7 +432,8 @@ internal static class CockpitCodexInstanceActivity
             do
             {
                 var processName = Path.GetFileNameWithoutExtension(entry.ExecutableFile);
-                if (wanted.Contains(processName)) found.Add(processName);
+                if (wanted.Contains(processName)
+                    && (ignoredParentProcessId == 0 || entry.ParentProcessId != ignoredParentProcessId)) found.Add(processName);
             }
             while (Process32Next(snapshot, ref entry));
             return true;

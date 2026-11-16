@@ -140,7 +140,7 @@ internal sealed partial class BarForm
         // an attachment. A missing reading or sustained event burst uses the full-size overlay.
         if (awaitingLayout || occupied is null)
         {
-            _taskbarRowStability.ResetReturn();
+            if (occupied is null) _taskbarRowStability.ResetReturn();
             reason = "layout-unavailable";
             return false;
         }

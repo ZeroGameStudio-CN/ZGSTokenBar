@@ -14,6 +14,20 @@ public static class ProviderProcessActivity
     private static readonly HashSet<string> WatchedNames =
         ProcessNames.Values.SelectMany(names => names).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+    private static readonly HashSet<string> GrokNames = new(["grok"], StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Null means the observation failed. The observer's own usage CLI is not user activity.</summary>
+    public static bool? DetectGrokActivity()
+    {
+        try
+        {
+            var found = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            return CockpitCodexInstanceActivity.TryReadRunningProcessNames(GrokNames, found, Environment.ProcessId)
+                ? found.Count != 0 : null;
+        }
+        catch { return null; }
+    }
+
     public static IReadOnlySet<ProviderKind> DetectActiveProviders()
     {
         try

@@ -9,6 +9,7 @@ namespace ZGSTokenBar.App;
 internal sealed partial class BarForm
 {
     private UsageBoard _usageBoard = UsageBoard.Empty;
+    private readonly Dictionary<string, bool?> _usageProviderActivity = new(StringComparer.Ordinal);
     private int _glassMaxRings = GlassDockLayout.MaxVisibleRings;
     private ContextMenuStrip? _glassMenu;
     private bool _glassExpanded;
@@ -31,8 +32,18 @@ internal sealed partial class BarForm
 
     internal void SetUsageBoard(UsageBoard board)
     {
+        var previousWidth = CurrentGlassPlan().Width;
         _usageBoard = board ?? UsageBoard.Empty;
         UsageBoardChanged?.Invoke(this, _usageBoard);
+        if (CurrentGlassPlan().Width != previousWidth) ApplySnapshotLayout();
+        Invalidate();
+    }
+
+    internal void SetUsageProviderActivity(string providerId, bool? active)
+    {
+        if (_usageProviderActivity.TryGetValue(providerId, out var previous) && previous == active) return;
+        _usageProviderActivity[providerId] = active;
+        ApplySnapshotLayout();
         Invalidate();
     }
 
@@ -95,7 +106,8 @@ internal sealed partial class BarForm
             {
                 ExpectedRemaining = RingPace(remaining, window),
                 Warn = needsAttention,
-                OverflowOnly = !needsAttention && (window?.UsedPercent is <= 0 || !card.Active),
+                InUse = card.Active,
+                OverflowOnly = !needsAttention && (window?.UsedPercent is <= 0 && !knownCodexAccount || !card.Active),
             };
             var name = multi ? GlassAccountName(card, ordinal) : card.DisplayLabel;
             items.Add(new GlassItem("card:" + card.Key, ring, name, ProviderLogo(card.Provider), card, window, null));
@@ -120,13 +132,15 @@ internal sealed partial class BarForm
             var accent = view.Card.AccentToken is { Length: 7 } token && token[0] == '#' ? token : "#8b5cf6";
             var icon = GlassPluginIcon(view);
             var quota = remaining is not null ? GlassPluginQuota(view) : null;
+            var activity = _usageProviderActivity.GetValueOrDefault(view.PluginId);
             var ring = new GlassDockRing(view.PluginId, view.Title, view.Title, 0, remaining, quota?.Window.ResetsAt, balance, accent)
             {
                 // The provider layer flags accounts needing attention outside the headline (e.g. another
                 // Antigravity group running low); the ring's chip shows it.
                 Warn = remaining is not null && ProviderWarning(view.PluginId),
                 ExpectedRemaining = RingPace(remaining, quota?.Window),
-                OverflowOnly = remaining is >= 100 && !ProviderWarning(view.PluginId)
+                InUse = activity is true,
+                OverflowOnly = activity is false || activity is not true && remaining is >= 100 && !ProviderWarning(view.PluginId)
                     && (quota is null || !quota.Value.Card.Windows.Any(window => window.UsedPercent is > 0)),
             };
             items.Add(quota is { } scoped

@@ -6,6 +6,7 @@ internal static class GlassDockOverflowTests
 {
     internal static void Run(string? captures = null)
     {
+        ActiveAccountsAndIdleGrok(captures);
         var used = Ring("used", 80);
         var zero = Ring("zero", 100) with { OverflowOnly = true };
         var idle = Ring("idle", 70) with { OverflowOnly = true };
@@ -24,9 +25,12 @@ internal static class GlassDockOverflowTests
             "An all-unused set still has a visible non-overlapping +N entry");
         Check(GlassDockLayout.Plan(rings, maxVisible: 1).OverflowUrgent,
             "An unknown authenticated account in overflow keeps an attention indicator");
+        var activeCodex = Ring("active Codex", 99) with { InUse = true };
+        Check(GlassDockLayout.Plan([exhausted, activeCodex], maxVisible: 1).Visible.SequenceEqual([activeCodex]),
+            "A running account wins a primary slot over an idle low-quota reading.");
 
         var now = DateTimeOffset.UtcNow;
-        var cards = new[] { Card("used", 20), Card("zero", 0), Card("idle", 30, active: false),
+        var cards = new[] { Card("used", 20), Card("zero", 0, active: false), Card("idle", 30, active: false),
             Card("exhausted", 100), Card("unknown", null), Card("signed-out", null, active: false, known: false) };
         foreach (var dpi in new[] { 96, 192 })
         {
@@ -67,4 +71,37 @@ internal static class GlassDockOverflowTests
 
     private static void Check(bool value, string message)
     { if (!value) throw new InvalidOperationException(message); }
+
+    private static void ActiveAccountsAndIdleGrok(string? captures)
+    {
+        var now = DateTimeOffset.UtcNow;
+        foreach (var dpi in new[] { 96, 192 })
+        {
+            QuotaCard Card(string key, double used) => new(key, ProviderKind.Codex, "Codex · " + key, "pro", "#10a37f", true,
+                [new("7d", used, now.AddDays(3), TimeSpan.FromDays(7))]) { HasAccountIdentity = true };
+            using var bar = new BarForm(new AppSettings { EnableAnimations = false },
+                new QuotaSnapshot([Card("1", 0), Card("2", 78)], [new(ProviderKind.Codex, true, "fixture", ProviderHealthCode.Current)], now),
+                renderOnly: true, renderDpi: dpi, activeProviders: new HashSet<ProviderKind> { ProviderKind.Codex });
+            var account = new UsageAccountSnapshot("fixture", "Grok", "paid", "grok-auth",
+                [new("credits", "Monthly", 100, now.AddDays(20), TimeSpan.FromDays(30))], null, null, [], UsageFreshness.Current, now, null);
+            var provider = new UsageProviderSnapshot(UsageProviderIds.Grok, "Grok", "#38bdf8", 900, [account]);
+            bar.SetUsageBoard(new([provider]));
+            bar.SetPluginMiniCards([new(UsageProviderIds.Grok, "Grok", UsageProjection.MiniCard(provider, true), new Dictionary<string, string>())]);
+            bar.SetUsageProviderActivity(UsageProviderIds.Grok, false); Paint("idle-grok");
+            Check(bar.VisibleCodexAccountCount == 2 && Plan().Visible.All(ring => ring.ProviderId != UsageProviderIds.Grok)
+                && Plan().OverflowCount == 1, "Active Codex accounts survive a zero quota reading while idle Grok remains in overflow.");
+            bar.SetUsageProviderActivity(UsageProviderIds.Grok, true); Paint("active-grok");
+            Check(Plan().Visible.Any(ring => ring.ProviderId == UsageProviderIds.Grok), "Launching Grok promotes its signed-in account again.");
+            bar.SetUsageProviderActivity(UsageProviderIds.Grok, null); Paint("unknown-activity");
+            Check(Plan().Visible.Any(ring => ring.ProviderId == UsageProviderIds.Grok), "An unavailable process observation cannot hide an account as idle.");
+            GlassDockPlan Plan() => (GlassDockPlan)typeof(BarForm).GetMethod("CurrentGlassPlan",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(bar, null)!;
+            void Paint(string state)
+            {
+                using var image = new Bitmap(bar.Width, bar.Height); bar.DrawToBitmap(image, new Rectangle(Point.Empty, image.Size));
+                if (captures is null) return;
+                Directory.CreateDirectory(captures); image.Save(Path.Combine(captures, $"dock-priority-{state}-{dpi}.png"));
+            }
+        }
+    }
 }

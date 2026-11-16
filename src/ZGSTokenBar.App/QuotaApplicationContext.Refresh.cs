@@ -209,7 +209,7 @@ internal sealed partial class QuotaApplicationContext
         var previousStamp = _codexAccountStamp;
         var readAt = _codexAccountsReadAt;
         var tick = Environment.TickCount64;
-        (ValueTuple<long, long, long, long> Stamp, IReadOnlyList<CodexAccountInfo>? Accounts, HashSet<ProviderKind> Providers) probe;
+        (ValueTuple<long, long, long, long> Stamp, IReadOnlyList<CodexAccountInfo>? Accounts, HashSet<ProviderKind> Providers, bool? GrokActive) probe;
         try
         {
             probe = await Task.Run(() =>
@@ -218,7 +218,7 @@ internal sealed partial class QuotaApplicationContext
                 var accounts = !requestRefresh || stamp != previousStamp || tick - readAt >= CodexAccountPollMs
                     ? CockpitCodexAccountDirectory.Read()
                     : null;
-                return (stamp, accounts, ActiveProviders(settings));
+                return (stamp, accounts, ActiveProviders(settings), ProviderProcessActivity.DetectGrokActivity());
             }, _shutdown.Token);
         }
         catch (OperationCanceledException)
@@ -227,6 +227,7 @@ internal sealed partial class QuotaApplicationContext
         }
 
         if (_quitting || _bar.IsDisposed || _shutdown.IsCancellationRequested) return;
+        _bar.SetUsageProviderActivity(UsageProviderIds.Grok, probe.GrokActive);
         if (probe.Accounts is { } nextAccounts)
         {
             _codexAccountStamp = probe.Stamp;

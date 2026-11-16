@@ -17,7 +17,6 @@ internal sealed class TaskbarRowStability
     {
         _awaitingLayoutSince ??= now;
         _layoutRevision++;
-        ResetReturn();
     }
 
     internal bool ConfirmLayout(long revision)
@@ -44,6 +43,9 @@ internal sealed class TaskbarRowStability
 
     internal bool CanReturn(Rectangle bounds, long observedAt)
     {
+        // A notice is not evidence that a verified gap moved. Preserve its history while
+        // blocking attachment until a fresh, matching revision confirms the actual geometry.
+        if (AwaitingLayout) return false;
         if (_clearSince is null || bounds != _candidate)
         {
             _candidate = bounds;

@@ -12734,6 +12734,17 @@ static void TestTaskbarRowStability()
     state.ForgetLayout();
     Check(!state.ConfirmLayout(revision) && !state.CanReturn(left, 11000),
         "a changed taskbar cannot inherit a sample or return timing from an old window");
+
+    var notices = new TaskbarRowStability();
+    Check(!notices.CanReturn(left, 1000), "The first clear reading starts a fresh return interval.");
+    foreach (var at in new long[] { 1500, 2000, 2500, 3000 })
+    {
+        notices.OnLayoutChanged(at);
+        Check(!notices.CanReturn(left, at), "A pending layout notice cannot authorize an attachment.");
+        Check(notices.ConfirmLayout(notices.LayoutRevision), "Only the latest layout read confirms this notice.");
+        var ready = notices.CanReturn(left, at + 100);
+        Check(ready == (at >= 3000), "Fresh matching gap readings must eventually permit re-entry despite unrelated layout notices.");
+    }
 }
 
 static void TestTaskbarEmbeddingWithFakeTaskbar()
