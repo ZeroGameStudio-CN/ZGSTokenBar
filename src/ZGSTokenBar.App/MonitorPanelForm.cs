@@ -170,8 +170,11 @@ internal abstract partial class MonitorPanelForm : Form, IPluginPopoverContent
             var transitioning = _hoverMotionTimer.Enabled;
             _hoverMotionTimer.Stop();
             _hoverExiting = false;
-            if (animate && !_pinned && !immediate) Opacity = .01;
-            else if (transitioning || immediate) Opacity = 1;
+            // Keep the outgoing sibling visible through native child creation and first paint.
+            // Showing an opaque replacement here exposes the child HWNDs' unpainted backgrounds.
+            if (immediate) Opacity = 0;
+            else if (animate && !_pinned) Opacity = .01;
+            else if (transitioning) Opacity = 1;
             this.ShowPopover(BarForm.PopoverOwnerFor(owner));
         }
         // Creating the native window can rescale fonts after ConfigureFor ran; only then re-apply.
@@ -179,6 +182,12 @@ internal abstract partial class MonitorPanelForm : Form, IPluginPopoverContent
         {
             ApplyLogicalFonts();
             ApplyPalette(_appliedTheme ?? owner.UiTheme);
+        }
+        if (opening && immediate)
+        {
+            // Update() paints only this HWND; Refresh() also completes every native child frame.
+            Refresh();
+            Opacity = 1;
         }
         if (opening && animate && !_pinned && !immediate) StartHoverMotion(exiting: false);
         if (_pinned) { FinishHoverMotion(); Activate(); }

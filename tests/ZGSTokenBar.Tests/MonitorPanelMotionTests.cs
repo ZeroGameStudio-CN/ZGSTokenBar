@@ -10,6 +10,7 @@ internal static class MonitorPanelMotionTests
     internal static void Run(string? evidence = null)
     {
         var frames = new List<object>();
+        HandoffPainting(frames);
         var anchor = new Rectangle(420, 1086, 52, 52);
         var panel = new Rectangle(0, 200, 1520, 864);
         Check(TaskbarPopoverMath.ContainsHoverPoint(anchor, panel, new(445, 1075), 12),
@@ -104,6 +105,57 @@ internal static class MonitorPanelMotionTests
         while (!condition() && Environment.TickCount64 < deadline) { Application.DoEvents(); sample?.Invoke(); Thread.Sleep(5); }
         Check(condition(), "The bounded native hover transition must settle: " + (condition() ? "" : detail?.Invoke()));
     }
+
+    private static void HandoffPainting(List<object> frames)
+    {
+        foreach (var dpi in new[] { 96, 144, 192 })
+        {
+            using var owner = new BarForm(new AppSettings { EnableAnimations = false },
+                QuotaSnapshot.Empty(DateTimeOffset.UtcNow), renderOnly: true, renderDpi: dpi)
+            { Location = new(-30000, -30000), StartPosition = FormStartPosition.Manual, Opacity = 0 };
+            owner.Show();
+            foreach (var make in new Func<MonitorPanelForm>[] {
+                () => new RouterMonitorForm(observe: false), () => new IntakeObserverForm(true, observeOnShow: false) })
+            {
+                using var popup = make();
+                var scale = dpi / 96f;
+                popup.Prewarm(scale, owner.UiTheme);
+                popup.ConfigureFor(new(-29500, -28000, 52, 52), false, scale, owner.UiTheme,
+                    new(-30000, -30000, 3840, 2160));
+                var grids = Descendants(popup).OfType<DataGridView>().ToArray();
+                var painted = new HashSet<Control>();
+                var visibleOpacity = -1d;
+                byte? visibleAlpha = null;
+                popup.VisibleChanged += (_, _) =>
+                {
+                    if (!popup.Visible) return;
+                    visibleOpacity = popup.Opacity;
+                    visibleAlpha = GetLayeredWindowAttributes(popup.Handle, out _, out var alpha, out _) ? alpha : null;
+                };
+                foreach (var grid in grids) grid.Paint += (_, _) => painted.Add(grid);
+                var handle = popup.Handle;
+                foreach (var animate in new[] { true, false, true })
+                {
+                    painted.Clear();
+                    var start = Environment.TickCount64;
+                    popup.ShowPrepared(owner, animate, immediate: true);
+                    frames.Add(new { panel = popup.GetType().Name, dpi, phase = "painted-handoff", animate,
+                        visibleOpacity, visibleAlpha, paintedGrids = painted.Count, grids = grids.Length,
+                        milliseconds = Environment.TickCount64 - start });
+                    Check(visibleOpacity == 0 && visibleAlpha == 0,
+                        "A sibling's native window stays fully transparent while its first frame is unpainted.");
+                    Check(grids.Length > 0 && grids.All(painted.Contains),
+                        "Every native child grid is painted synchronously before a handoff exposes the replacement.");
+                    Check(popup.Visible && popup.Opacity == 1 && popup.Handle == handle,
+                        "Cold and reused sibling panels become opaque without recreating their native handle.");
+                    popup.HideImmediately();
+                }
+            }
+        }
+    }
+
+    private static IEnumerable<Control> Descendants(Control parent) => parent.Controls.Cast<Control>()
+        .SelectMany(control => new[] { control }.Concat(Descendants(control)));
     private static void Check(bool value, string message)
     { if (!value) throw new InvalidOperationException(message); }
 

@@ -437,7 +437,8 @@ internal static class IntakeObserverTests
             requests++;
             if (request.PluginId == IntakeObserverPlugin.Id) previousPanelReady = routerPanel.Visible;
             MonitorPanelForm panel = request.PluginId == IntakeObserverPlugin.Id ? intakePanel : routerPanel;
-            panel.ShowFor(bar, request.Anchor, request.Pinned, request.Scale, request.Theme);
+            panel.ConfigureFor(request.Anchor, request.Pinned, request.Scale, request.Theme, new(-30000, -30000, 3840, 2160));
+            panel.ShowPrepared(bar, request.Animate, request.Immediate);
             request.Popup = panel;
         };
         routerPanel.PinChanged += (_, pinned) => bar.PinPluginPopover(pinned);
