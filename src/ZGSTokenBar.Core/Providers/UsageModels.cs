@@ -99,7 +99,11 @@ public sealed record ProviderDefinition(
     string Accent,
     int Order,
     UsageSurface Surface,
-    string Source);
+    string Source)
+{
+    /// <summary>Known local clients/CLIs. Empty means local activity cannot be determined.</summary>
+    public IReadOnlyList<string> ActivityProcessNames { get; init; } = [];
+}
 
 public static class UsageProviderIds
 {

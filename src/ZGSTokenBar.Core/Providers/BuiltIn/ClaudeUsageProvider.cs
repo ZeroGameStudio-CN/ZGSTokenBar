@@ -4,7 +4,8 @@ namespace ZGSTokenBar.Core;
 public sealed class ClaudeUsageProvider : UsageProvider
 {
     public override ProviderDefinition Definition { get; } = new(UsageProviderIds.Claude, "Claude", "#d97757", 100, UsageSurface.Projected,
-        "Existing OAuth usage read; extra accounts from ~/.claude/accounts");
+        "Existing OAuth usage read; extra accounts from ~/.claude/accounts")
+        { ActivityProcessNames = ["claude", "claude-code", "claude_desktop"] };
 
     public override string IconResource => "claude-icon-rounded.png";
     public override IReadOnlyList<string> Windows => ["5h", "7d"];

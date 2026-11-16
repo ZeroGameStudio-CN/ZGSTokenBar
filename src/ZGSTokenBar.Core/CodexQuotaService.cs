@@ -66,7 +66,7 @@ public sealed class CodexQuotaService
             .Where(account => account.IsApiService && account.Active)
             .ToArray();
         var cockpitCredentials = cockpitAccounts
-            .Where(account => !string.IsNullOrWhiteSpace(account.AccessToken))
+            .Where(account => !account.IsApiService && !string.IsNullOrWhiteSpace(account.AccessToken))
             .Select(account => new CodexCredential(
                 "",
                 account.Key,
@@ -137,8 +137,10 @@ public sealed class CodexQuotaService
                 account.CapturedAt))
             .ToArray();
         var accounts = liveAccounts.Concat(cachedAccounts).ToArray();
-        var visibleCandidates = accounts.Where(account => account.Credential.Active
-            && (interactiveCredentials.Count == 0
+        var visibleCandidates = accounts.Where(account => liveAccounts.Any(live =>
+                !string.IsNullOrWhiteSpace(live.Credential.AccessToken) && live.HttpStatus is not (401 or 403)
+                && SameIdentity(live.Credential, account.Credential))
+            || account.Credential.Active && (interactiveCredentials.Count == 0
                 || interactiveCredentials.Any(interactive => SameIdentity(account.Credential, interactive)))).ToArray();
         var visibleAccounts = DistinctVisibleAccounts(visibleCandidates);
         var quotaCards = visibleAccounts
@@ -189,7 +191,7 @@ public sealed class CodexQuotaService
                 .GroupBy(counter => counter.CardKey, StringComparer.Ordinal)
                 .Select(group => group.First())
                 .ToArray(),
-            ReplaceCachedCards = visibleAccounts.Length == 0
+            ReplaceCachedCards = visibleAccounts.All(account => !account.Credential.Active)
                 && accounts.All(account => !account.Credential.Active),
         };
     }
@@ -882,20 +884,26 @@ public sealed class CodexQuotaService
 
     private static AccountResult[] DistinctVisibleAccounts(IEnumerable<AccountResult> accounts)
     {
+        var source = accounts.ToArray();
         var distinct = new List<AccountResult>();
-        foreach (var account in accounts
+        foreach (var account in source
                      .OrderByDescending(account => account.Usage is not null)
                      .ThenByDescending(account => account.Live)
                      .ThenByDescending(account => account.Credential.Active)
                      .ThenBy(account => account.DisplayIndex))
         {
             if (distinct.Any(existing => SameIdentity(existing.Credential, account.Credential))) continue;
-            distinct.Add(account);
+            // Quota availability chooses the reading; current bindings choose account identity.
+            // A cached reading must not turn an actively bound account into an idle one.
+            var identity = source.Where(candidate => SameIdentity(candidate.Credential, account.Credential))
+                .OrderByDescending(candidate => candidate.Credential.Active)
+                .ThenByDescending(candidate => !string.IsNullOrWhiteSpace(candidate.Credential.AccessToken))
+                .ThenBy(candidate => candidate.DisplayIndex).First();
+            distinct.Add(account with { Credential = identity.Credential });
         }
 
         return distinct
-            .OrderByDescending(account => account.Credential.Active)
-            .ThenBy(account => account.DisplayIndex)
+            .OrderBy(account => account.Credential.AccountId ?? account.Credential.Key, StringComparer.Ordinal)
             .ToArray();
     }
 
@@ -989,7 +997,8 @@ public sealed class CodexQuotaService
     private static ProviderResult Missing(string detail, ProviderHealthCode code) => new(
         ProviderKind.Codex,
         [PlaceholderCard(new CodexCredential("", "codex", "Codex", null, true, "", null, null, null, DefaultClientId, null))],
-        new ProviderHealth(ProviderKind.Codex, false, detail, code));
+        new ProviderHealth(ProviderKind.Codex, false, detail, code))
+        { ReplaceCachedCards = code == ProviderHealthCode.MissingCredentials };
 
     private sealed record CodexCredential(
         string Path,

@@ -3,7 +3,8 @@ namespace ZGSTokenBar.Core;
 public sealed class CursorUsageProvider : UsageProvider
 {
     public override ProviderDefinition Definition { get; } = new(UsageProviderIds.Cursor, "Cursor", "#8b5cf6", 920, UsageSurface.Mini,
-        "GET https://cursor.com/api/usage-summary with the local Cursor session");
+        "GET https://cursor.com/api/usage-summary with the local Cursor session")
+        { ActivityProcessNames = ["cursor", "cursor-agent"] };
 
     public override string IconResource => "cursor-official-icon.png";
     public override IReadOnlyList<string> Windows => ["auto", "api", "included"];

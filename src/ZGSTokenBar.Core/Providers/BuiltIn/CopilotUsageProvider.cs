@@ -3,7 +3,8 @@ namespace ZGSTokenBar.Core;
 public sealed class CopilotUsageProvider : UsageProvider
 {
     public override ProviderDefinition Definition { get; } = new(UsageProviderIds.Copilot, "Copilot", "#6e40c9", 930, UsageSurface.Mini,
-        "GET https://api.github.com/copilot_internal/user with the GitHub CLI token");
+        "GET https://api.github.com/copilot_internal/user with the GitHub CLI token")
+        { ActivityProcessNames = ["copilot", "github-copilot", "code", "code - insiders", "devenv", "rider", "rider64"] };
 
     public override IReadOnlyList<string> Windows => ["premium_interactions", "chat", "completions"];
 

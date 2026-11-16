@@ -129,7 +129,7 @@ public sealed class ClaudeQuotaService
                     credential.Plan,
                     "#d97757",
                     true,
-                    windows);
+                    windows) { HasAccountIdentity = true };
                 return new ProviderResult(
                     ProviderKind.Claude,
                     [card],
@@ -278,7 +278,11 @@ public sealed class ClaudeQuotaService
             [
                 new QuotaWindow("5h", null, null, TimeSpan.FromHours(5)),
                 new QuotaWindow("1w", null, null, TimeSpan.FromDays(7)),
-            ]);
+            ])
+        {
+            HasAccountIdentity = code is not (ProviderHealthCode.MissingCredentials
+                or ProviderHealthCode.OAuthExpired or ProviderHealthCode.OAuthRefreshFailed),
+        };
         return new ProviderResult(
             ProviderKind.Claude,
             [card],
@@ -288,7 +292,7 @@ public sealed class ClaudeQuotaService
                 detail,
                 code,
                 httpStatus,
-                retryAt));
+                retryAt)) { ReplaceCachedCards = code == ProviderHealthCode.MissingCredentials };
     }
 
     private static string? PlanLabel(string? tier, string? subscription)

@@ -422,20 +422,44 @@ internal static class CockpitCodexInstanceActivity
     /// </summary>
     internal static bool TryReadRunningProcessNames(IReadOnlySet<string> wanted, ISet<string> found, int ignoredParentProcessId = 0)
     {
+        if (!TryReadProcessEntries(out var processes)) return false;
+        var byId = processes.ToDictionary(process => process.ProcessId);
+        foreach (var process in processes)
+            if (wanted.Contains(process.ProcessName)
+                && (ignoredParentProcessId == 0 || !IsDescendantOf(process.ProcessId, ignoredParentProcessId, byId)))
+                found.Add(process.ProcessName);
+        return true;
+    }
+
+    internal static bool IsDescendantOf(int processId, int ancestorId, IReadOnlyDictionary<int, ProcessEntry> processes)
+    {
+        var seen = new HashSet<int>();
+        while (processId != 0 && seen.Add(processId) && processes.TryGetValue(processId, out var process))
+        {
+            if (processId == ancestorId || process.ParentProcessId == ancestorId) return true;
+            processId = process.ParentProcessId;
+        }
+        return false;
+    }
+
+    internal static bool TryReadProcessEntries(out IReadOnlyList<ProcessEntry> processes)
+    {
+        processes = [];
         if (!OperatingSystem.IsWindows()) return false;
         var snapshot = CreateToolhelp32Snapshot(SnapshotProcesses, 0);
         if (snapshot == 0 || snapshot == InvalidHandleValue) return false;
         try
         {
+            var result = new List<ProcessEntry>();
             var entry = new ProcessEntry32 { Size = (uint)Marshal.SizeOf<ProcessEntry32>() };
             if (!Process32First(snapshot, ref entry)) return false;
             do
             {
-                var processName = Path.GetFileNameWithoutExtension(entry.ExecutableFile);
-                if (wanted.Contains(processName)
-                    && (ignoredParentProcessId == 0 || entry.ParentProcessId != ignoredParentProcessId)) found.Add(processName);
+                result.Add(new((int)entry.ProcessId, (int)entry.ParentProcessId,
+                    Path.GetFileNameWithoutExtension(entry.ExecutableFile)));
             }
             while (Process32Next(snapshot, ref entry));
+            processes = result;
             return true;
         }
         finally

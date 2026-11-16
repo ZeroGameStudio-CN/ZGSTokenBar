@@ -19,6 +19,14 @@ using ZGSTokenBar.Plugin.AiGatewayObserver;
 
 if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJobExitCode;
 
+if (args.Length is 1 or 2 && args[0] == "--dock-policy")
+{
+    System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
+    DockPolicyTests.Run(args.Length == 2 ? args[1] : null);
+    Console.WriteLine("PASS unified signed-in activity, stable selection and overflow policy");
+    return 0;
+}
+
 if (args.Length is 1 or 2 && args[0] == "--bar-observer-polish")
 {
     System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
@@ -647,6 +655,7 @@ var tests = new (string Name, Action Run)[]
     ("Taskbar embed attach, detach and parent loss", TestTaskbarEmbeddingWithFakeTaskbar),
     ("Glass dock rate and router slots are layout-stable", TestGlassDockStableSlots),
     ("Glass dock preserves unused accounts in overflow", () => GlassDockOverflowTests.Run()),
+    ("Unified account activity and stable dock selection", () => DockPolicyTests.Run()),
     ("Full monitor hover transitions preserve native lifecycle", () => MonitorPanelMotionTests.Run()),
     ("Cross-type hover handoffs preserve one active owner", CrossPopoverHandoffTests.Run),
     ("Grok plan comes from the settings cache, never the sign-in type", TestGrokPlanFromSettingsCache),
@@ -3183,11 +3192,13 @@ static void TestCockpitProCodexAccountMerge()
 
         Equal(true, result.Health.Connected, "Cockpit accounts merge with live Codex");
         Equal(ProviderHealthCode.Current, result.Health.Code, "live duplicate keeps current health");
-        Equal(2, result.Cards.Count, "inactive API service is not displayed with quota cards");
+        Equal(3, result.Cards.Count, "two bound accounts and the valid signed-in idle account remain available");
+        Equal(2, result.Cards.Count(card => card.Active), "keeping the idle account does not promote its binding");
         Equal("Codex · 1", result.Cards[0].Label, "current native account uses ordinal label");
         Equal("Codex · 2", result.Cards[1].Label, "current Cockpit account uses ordinal label");
         Equal(0, result.Cards.Count(card => card.IsService), "inactive API service cards are hidden");
-        Equal(1, result.Cards.Count(card => card.Badge == "pro"), "current Cockpit account retains Pro badge");
+        Equal(1, result.Cards.Count(card => card.Badge == "pro" && card.Active), "the bound Cockpit account retains Pro badge");
+        Equal(2, result.Cards.Count(card => card.Badge == "pro"), "the valid idle Pro account is retained separately");
         Equal(1, result.Cards.Count(card => card.Badge == "plus"), "current native account retains Plus badge");
         Equal(3, result.CodexAccounts.Count, "all valid Cockpit accounts expose quota summaries");
         Equal("2,1", string.Join(',', result.CodexAccounts.Single(account => account.AccountId == currentId)
@@ -3212,7 +3223,7 @@ static void TestCockpitProCodexAccountMerge()
             "all valid Cockpit account quotas refresh live");
         Equal(
             "11,17",
-            string.Join(',', result.Cards
+            string.Join(',', result.Cards.Where(card => card.Active)
                 .SelectMany(card => card.Windows)
                 .Select(window => window.UsedPercent)
                 .Where(value => value is not null)
@@ -3273,18 +3284,20 @@ static void TestCockpitProCodexAccountMerge()
             }));
 
         var staleNativePlan = service.FetchAsync(CancellationToken.None).GetAwaiter().GetResult();
-        Equal(1, staleNativePlan.Cards.Count, "duplicate active account still produces one card");
+        var boundPlanCards = staleNativePlan.Cards.Where(card => card.Active).ToArray();
+        Equal(1, boundPlanCards.Length, "duplicate active account still produces one bound card");
+        Equal(3, staleNativePlan.Cards.Count, "other signed-in idle accounts remain reachable");
         Equal(
             CodexQuotaService.StableCardKey(nativeCurrentKey),
-            staleNativePlan.Cards.Single().Key,
+            boundPlanCards.Single().Key,
             "plan correction retains the native stable card key");
         Equal(
             23d,
-            staleNativePlan.Cards.Single().Windows.Single().UsedPercent,
+            boundPlanCards.Single().Windows.Single().UsedPercent,
             "plan correction retains the native access token");
         Equal(
             "pro",
-            staleNativePlan.Cards.Single().Badge,
+            boundPlanCards.Single().Badge,
             "active Cockpit Pro plan overrides a stale native Plus registry value");
     }
     finally
@@ -3593,16 +3606,24 @@ static void TestInactiveCodexAccountsDoNotRestoreCachedCards()
 
         Environment.SetEnvironmentVariable("CODEX_HOME", codexHome);
         Environment.SetEnvironmentVariable("ZTB_DISABLE_REFRESH", "1");
-        using var handler = new CodexUsageMapHandler(new Dictionary<string, double>());
+        var usageByToken = new Dictionary<string, double>();
+        using var handler = new CodexUsageMapHandler(usageByToken);
         using var client = new HttpClient(handler);
         var result = new CodexQuotaService(client, directory)
             .FetchAsync(CancellationToken.None)
             .GetAwaiter()
             .GetResult();
 
-        Equal(0, result.Cards.Count, "inactive Cockpit account does not create a visible Codex card");
+        Equal(0, result.Cards.Count, "a rejected inactive credential cannot create a signed-in ring");
         Equal(1, result.CodexAccounts.Count, "inactive account remains available to account summaries");
         Equal(true, result.ReplaceCachedCards, "inactive account refresh explicitly replaces cached cards");
+
+        WriteCockpitCodexAccount(Path.Combine(accountDirectory, "inactive.json"), key, accountId,
+            "inactive@example.test", "plus", 50, now, accessToken: "idle-valid");
+        usageByToken["idle-valid"] = 25;
+        result = new CodexQuotaService(client, directory).FetchAsync(CancellationToken.None).GetAwaiter().GetResult();
+        Equal(1, result.Cards.Count, "a signed-in idle credential remains reachable in overflow");
+        Equal(false, result.Cards[0].Active, "keeping the credential does not invent an active binding");
 
         var previousCard = new QuotaCard(
             "codex.inactive",
@@ -3619,7 +3640,15 @@ static void TestInactiveCodexAccountsDoNotRestoreCachedCards()
             [result],
             new QuotaSnapshot([previousCard], [result.Health], now.AddMinutes(-1)),
             now);
-        Equal(0, merged.Cards.Count, "inactive Codex card is not restored from the previous snapshot");
+        Equal(1, merged.Cards.Count, "only the current signed-in idle account is retained");
+        Equal(false, merged.Cards.Any(card => card.Key == "codex.inactive"), "the previous stale card is not restored");
+        File.Delete(Path.Combine(accountDirectory, "inactive.json"));
+        var signedOut = new CodexQuotaService(client, directory).FetchAsync(CancellationToken.None).GetAwaiter().GetResult();
+        Equal(true, signedOut.Cards.All(card => !card.HasAccountIdentity && card.Windows.All(window => window.UsedPercent is null)),
+            "missing credentials produce only an unbound placeholder, never a signed-in ring");
+        var afterLogout = QuotaCoordinator.MergeResults([signedOut], merged, now);
+        Equal(true, afterLogout.Cards.All(card => !card.HasAccountIdentity && card.Windows.All(window => window.UsedPercent is null)),
+            "missing credentials clear the known account instead of restoring its previous quota");
     }
     finally
     {

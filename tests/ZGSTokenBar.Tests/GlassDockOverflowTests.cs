@@ -14,7 +14,7 @@ internal static class GlassDockOverflowTests
         var unknown = Ring("unknown", null) with { Warn = true };
         GlassDockRing[] rings = [zero, used, idle, exhausted, unknown];
         var plan = GlassDockLayout.Plan(rings, maxVisible: 8);
-        Check(plan.Visible.SequenceEqual([exhausted, used, unknown]) && plan.OverflowCount == 2,
+        Check(plan.Visible.SequenceEqual([exhausted, unknown, used]) && plan.OverflowCount == 2,
             "Unused accounts remain in overflow even when primary slots are available");
         var expanded = GlassDockLayout.PlanExpanded(rings, maxVisible: 8);
         Check(expanded.Visible.Take(plan.Visible.Count).SequenceEqual(plan.Visible)

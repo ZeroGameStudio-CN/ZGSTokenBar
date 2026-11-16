@@ -19,7 +19,8 @@ public sealed class DeepSeekUsageProvider : UsageProvider
 public sealed class OpenCodeUsageProvider : UsageProvider
 {
     public override ProviderDefinition Definition { get; } = new(UsageProviderIds.OpenCode, "OpenCode", "#f97316", 950, UsageSurface.Mini,
-        "GET https://opencode.ai/zen/go/v1/usage with the local OpenCode key");
+        "GET https://opencode.ai/zen/go/v1/usage with the local OpenCode key")
+        { ActivityProcessNames = ["opencode"] };
 
     public override string IconResource => "opencode-official-icon.png";
     public override IReadOnlyList<string> Windows => ["rolling", "weekly", "monthly"];

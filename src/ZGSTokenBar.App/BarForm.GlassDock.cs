@@ -10,6 +10,8 @@ internal sealed partial class BarForm
 {
     private UsageBoard _usageBoard = UsageBoard.Empty;
     private readonly Dictionary<string, bool?> _usageProviderActivity = new(StringComparer.Ordinal);
+    private HashSet<ProviderKind> _enabledQuotaProviders = Enum.GetValues<ProviderKind>().ToHashSet();
+    private readonly bool _explicitQuotaEnablement;
     private int _glassMaxRings = GlassDockLayout.MaxVisibleRings;
     private ContextMenuStrip? _glassMenu;
     private bool _glassExpanded;
@@ -39,10 +41,19 @@ internal sealed partial class BarForm
         Invalidate();
     }
 
-    internal void SetUsageProviderActivity(string providerId, bool? active)
+    internal void SetUsageProviderActivity(string providerId, bool? active) =>
+        SetUsageProviderActivities(new Dictionary<string, bool?> { [providerId] = active });
+
+    internal void SetUsageProviderActivities(IReadOnlyDictionary<string, bool?> activities)
     {
-        if (_usageProviderActivity.TryGetValue(providerId, out var previous) && previous == active) return;
-        _usageProviderActivity[providerId] = active;
+        var changed = false;
+        foreach (var (providerId, active) in activities)
+        {
+            if (_usageProviderActivity.TryGetValue(providerId, out var previous) && (active is null || previous == active)) continue;
+            _usageProviderActivity[providerId] = active;
+            changed = true;
+        }
+        if (!changed) return;
         ApplySnapshotLayout();
         Invalidate();
     }
@@ -67,7 +78,7 @@ internal sealed partial class BarForm
     private IReadOnlyList<GlassItem> BuildGlassItems()
     {
         var items = new List<GlassItem>();
-        var cards = _snapshot.Cards.Where(card => _activeProviders.Contains(card.Provider)).ToArray();
+        var cards = _snapshot.Cards.Where(card => _enabledQuotaProviders.Contains(card.Provider)).ToArray();
         var codexCount = cards.Count(card => card.Provider == ProviderKind.Codex && !card.IsService);
         foreach (var card in cards)
         {
@@ -78,19 +89,22 @@ internal sealed partial class BarForm
             var balance = card.Balance is { TotalBalance: { } amount } money
                 ? UsageFormatting.Money(money.Currency, amount)
                 : null;
-            var knownCodexAccount = card.Provider == ProviderKind.Codex && !card.IsService
-                && card.Active && card.HasAccountIdentity;
-            if (remaining is null && balance is null && !knownCodexAccount) continue;
-            window ??= card.Windows.FirstOrDefault();
+            var knownAccount = card.HasAccountIdentity || remaining is not null || balance is not null || card.IsService && card.ServiceCount > 0;
+            if (!knownAccount) continue;
+            window ??= card.Windows.FirstOrDefault() ?? UnknownDockWindow();
             var multi = card.Provider == ProviderKind.Codex && !card.IsService && codexCount > 1;
             var ordinal = multi && int.TryParse(CodexAccountOrdinal(card), out var number) ? number : 0;
             var providerId = card.Provider switch
             {
                 ProviderKind.Claude => UsageProviderIds.Claude,
                 ProviderKind.Codex => UsageProviderIds.Codex,
+                ProviderKind.AiGateway => "zgstokenbar.provider.ai-gateway",
                 _ => card.Key,
             };
             var title = card.Provider == ProviderKind.Codex ? "Codex" : card.DisplayLabel;
+            var activityId = card.Provider == ProviderKind.AiGateway ? UsageProviderIds.DeepSeek : providerId;
+            var inUse = DockAccountInUse(activityId, card.Active,
+                card.Provider != ProviderKind.AiGateway && _activeProviders.Contains(card.Provider));
             var needsAttention = remaining is < 20 || remaining is null && balance is null
                 || card.Balance?.TotalBalance is <= 0
                 || _snapshot.Health.Any(health => health.Provider == card.Provider && !health.Connected);
@@ -106,47 +120,17 @@ internal sealed partial class BarForm
             {
                 ExpectedRemaining = RingPace(remaining, window),
                 Warn = needsAttention,
-                InUse = card.Active,
-                OverflowOnly = !needsAttention && (window?.UsedPercent is <= 0 && !knownCodexAccount || !card.Active),
+                InUse = inUse,
+                OverflowOnly = !inUse,
+                ProviderOrder = ProviderCatalog.Find(activityId)?.Order ?? int.MaxValue,
+                StableId = "card:" + card.Key,
             };
             var name = multi ? GlassAccountName(card, ordinal) : card.DisplayLabel;
-            items.Add(new GlassItem("card:" + card.Key, ring, name, ProviderLogo(card.Provider), card, window, null));
+            items.Add(new GlassItem("card:" + card.Key, ring, name, ProviderLogo(card.Provider),
+                card.Windows.Count == 0 ? card with { Windows = [window ?? UnknownDockWindow()] } : card, window, null));
         }
 
-        foreach (var view in _pluginMiniCards)
-        {
-            if (view.PluginId is MiniAreaIds.Router or MiniAreaIds.Intake or MiniAreaIds.SystemMetrics or MiniAreaIds.LiveMetrics) continue;
-            if (items.Any(item => string.Equals(item.Ring.ProviderId, view.PluginId, StringComparison.Ordinal))) continue;
-            var summary = view.Card.Summary.FirstOrDefault();
-            if (summary is null) continue;
-            double? remaining = summary.Status == "usage-remaining" ? summary.Value.Number : null;
-            string? balance = null;
-            if (remaining is null
-                && (view.Card.Kind == ContributionKind.Balance || summary.Value.Kind == "currency")
-                && summary.Status is not ("unavailable" or "error" or "loading" or "unknown"))
-            {
-                var text = CompactPluginValue(summary.Value);
-                if (!string.IsNullOrWhiteSpace(text) && text != "—") balance = text;
-            }
-            if (remaining is null && balance is null) continue;
-            var accent = view.Card.AccentToken is { Length: 7 } token && token[0] == '#' ? token : "#8b5cf6";
-            var icon = GlassPluginIcon(view);
-            var quota = remaining is not null ? GlassPluginQuota(view) : null;
-            var activity = _usageProviderActivity.GetValueOrDefault(view.PluginId);
-            var ring = new GlassDockRing(view.PluginId, view.Title, view.Title, 0, remaining, quota?.Window.ResetsAt, balance, accent)
-            {
-                // The provider layer flags accounts needing attention outside the headline (e.g. another
-                // Antigravity group running low); the ring's chip shows it.
-                Warn = remaining is not null && ProviderWarning(view.PluginId),
-                ExpectedRemaining = RingPace(remaining, quota?.Window),
-                InUse = activity is true,
-                OverflowOnly = activity is false || activity is not true && remaining is >= 100 && !ProviderWarning(view.PluginId)
-                    && (quota is null || !quota.Value.Card.Windows.Any(window => window.UsedPercent is > 0)),
-            };
-            items.Add(quota is { } scoped
-                ? new GlassItem(view.PluginId, ring, view.Title, icon, scoped.Card, scoped.Window, null, icon)
-                : new GlassItem(view.PluginId, ring, view.Title, icon, null, null, view));
-        }
+        AddUsageDockAccounts(items);
 
         return items;
     }
@@ -167,18 +151,6 @@ internal sealed partial class BarForm
     /// Codex and Claude rings use, so hovering its ring opens the shared per-ring quota popover
     /// scoped to that provider's own account instead of the combined usage board.
     /// </summary>
-    private (QuotaCard Card, QuotaWindow Window)? GlassPluginQuota(PluginMiniCardView view)
-    {
-        var provider = _usageBoard.Providers.FirstOrDefault(item => string.Equals(item.ProviderId, view.PluginId, StringComparison.Ordinal));
-        if (provider is null) return null;
-        foreach (var account in provider.Accounts)
-        {
-            if (UsageQuotaCard(provider, account, view.Title) is { } projected) return projected;
-        }
-
-        return null;
-    }
-
     /// <summary>
     /// One usage-board account as a quota card. Its key is stable per provider/account, so the pace
     /// tracker (QuotaApplicationContext.ObserveUsagePace) samples the same series the hover reads.
@@ -269,14 +241,13 @@ internal sealed partial class BarForm
 
     private (GlassDockPlan Plan, IReadOnlyList<GlassItem> Items) CurrentGlassLayout()
     {
-        var items = BuildGlassItems().Where(item => !_hiddenDockItems.Contains(item.Id)).ToArray();
+        var items = BuildGlassItems().Where(item => !_hiddenDockItems.Contains(item.Id) && !_hiddenDockItems.Contains(item.Ring.ProviderId)).ToArray();
         var rings = items.Select(item => item.Ring).ToArray();
         var showRouter = RouterCard is not null;
         var plan = GlassDockLayout.Plan(rings, _glassMaxRings, HasIntakeCard, showRouter);
         if (_glassExpanded)
         {
             if (plan.OverflowCount > 0) plan = GlassDockLayout.PlanExpanded(rings, _glassMaxRings, HasIntakeCard, showRouter);
-            else _glassExpanded = false;
         }
         var byRing = new Dictionary<GlassDockRing, GlassItem>(ReferenceEqualityComparer.Instance);
         foreach (var item in items) byRing[item.Ring] = item;

@@ -3,7 +3,8 @@ namespace ZGSTokenBar.Core;
 public sealed class AntigravityUsageProvider : UsageProvider
 {
     public override ProviderDefinition Definition { get; } = new(UsageProviderIds.Antigravity, "Antigravity", "#4285f4", 910, UsageSurface.Mini,
-        "agy /usage text or Cloud Code retrieveUserQuotaSummary");
+        "agy /usage text or Cloud Code retrieveUserQuotaSummary")
+        { ActivityProcessNames = ["antigravity", "agy"] };
 
     public override string IconResource => "antigravity-official-icon.png";
     public override IReadOnlyList<string> Windows => ["weekly", "5h"];

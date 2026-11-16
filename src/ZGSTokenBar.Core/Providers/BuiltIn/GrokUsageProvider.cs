@@ -3,7 +3,8 @@ namespace ZGSTokenBar.Core;
 public sealed class GrokUsageProvider : UsageProvider
 {
     public override ProviderDefinition Definition { get; } = new(UsageProviderIds.Grok, "Grok", "#38bdf8", 900, UsageSurface.Mini,
-        "GET https://cli-chat-proxy.grok.com/v1/billing?format=credits with ~/.grok/auth.json, else grok usage --json");
+        "GET https://cli-chat-proxy.grok.com/v1/billing?format=credits with ~/.grok/auth.json, else grok usage --json")
+        { ActivityProcessNames = ["grok"] };
 
     public override string IconResource => "grok-official-icon.png";
     public override IReadOnlyList<string> Windows => ["credits"];

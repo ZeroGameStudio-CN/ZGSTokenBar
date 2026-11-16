@@ -7,25 +7,37 @@ public static class ProviderProcessActivity
     private static readonly IReadOnlyDictionary<ProviderKind, string[]> ProcessNames =
         new Dictionary<ProviderKind, string[]>
         {
-            [ProviderKind.Claude] = ["claude", "claude-code", "claude_desktop"],
-            [ProviderKind.Codex] = ["chatgpt", "codex", "codex-cli"],
+            [ProviderKind.Claude] = ProviderCatalog.Find(UsageProviderIds.Claude)!.ActivityProcessNames.ToArray(),
+            [ProviderKind.Codex] = ProviderCatalog.Find(UsageProviderIds.Codex)!.ActivityProcessNames.ToArray(),
         };
 
     private static readonly HashSet<string> WatchedNames =
         ProcessNames.Values.SelectMany(names => names).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-    private static readonly HashSet<string> GrokNames = new(["grok"], StringComparer.OrdinalIgnoreCase);
-
-    /// <summary>Null means the observation failed. The observer's own usage CLI is not user activity.</summary>
-    public static bool? DetectGrokActivity()
+    /// <summary>A single read-only process snapshot serves every provider. Unknown is not idle.</summary>
+    public static IReadOnlyDictionary<string, bool?> DetectUsageProviderActivity()
     {
         try
         {
-            var found = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            return CockpitCodexInstanceActivity.TryReadRunningProcessNames(GrokNames, found, Environment.ProcessId)
-                ? found.Count != 0 : null;
+            return FromProcessSnapshot(CockpitCodexInstanceActivity.TryReadProcessEntries(out var processes) ? processes : null,
+                Environment.ProcessId);
         }
-        catch { return null; }
+        catch { return FromProcessSnapshot(null, Environment.ProcessId); }
+    }
+
+    internal static IReadOnlyDictionary<string, bool?> FromProcessSnapshot(
+        IReadOnlyList<CockpitCodexInstanceActivity.ProcessEntry>? processes, int observerId)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (processes is not null)
+        {
+            var byId = processes.GroupBy(process => process.ProcessId).ToDictionary(group => group.Key, group => group.First());
+            foreach (var process in processes)
+                if (!CockpitCodexInstanceActivity.IsDescendantOf(process.ProcessId, observerId, byId)) names.Add(process.ProcessName);
+        }
+        return ProviderCatalog.All.ToDictionary(provider => provider.Id,
+            provider => processes is null || provider.ActivityProcessNames.Count == 0 ? (bool?)null
+                : provider.ActivityProcessNames.Any(names.Contains), StringComparer.Ordinal);
     }
 
     public static IReadOnlySet<ProviderKind> DetectActiveProviders()

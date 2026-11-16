@@ -423,7 +423,9 @@ public static class UsageProviderFixtureTests
         Check(rings.Count(ring => ring.AccountNumber > 0) == 2, "multi-account provider badges each account");
         var plan = GlassDockLayout.Plan(rings);
         Check(plan.Width == GlassDockLayout.WidthFor(3, false) && plan.Width < GlassDockLayout.Width && plan.Height == GlassDockLayout.Height, "dock fits its rings");
-        Check(plan.Visible[0].RemainingPercent == 30, "tightest remaining leads");
+        Check(GlassDockLayout.Plan(rings.Select(ring => ring with { RemainingPercent = 100 - ring.RemainingPercent }).Reverse().ToArray())
+            .Visible.Select(ring => ring.StableId).SequenceEqual(plan.Visible.Select(ring => ring.StableId)),
+            "quota updates and input ordering cannot reorder stable account identities");
         Check(plan.OverflowCount == 0, "three accounts fit");
         var many = Enumerable.Range(0, 12).Select(index => new GlassDockRing(
             "p" + index.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -438,7 +440,7 @@ public static class UsageProviderFixtureTests
         var single = GlassDockLayout.Plan(many.Take(1).ToArray());
         Check(bounded.Width == GlassDockLayout.Width && single.Width < bounded.Width, "width is capped however many providers report");
         Check(bounded.Visible.Count == 4 && bounded.OverflowCount == 8, "four rings then +N");
-        Check(bounded.Visible[0].RemainingPercent == 80 - 11, "tightest of the long list is first");
+        Check(bounded.Visible[0].ProviderId == "p0", "stable provider order leads independently of quota");
         Check(bounded.Slots.Count == 5 && bounded.Slots[^1].Chip, "overflow chip is laid out");
         Check(bounded.Slots.All(slot => slot.Bounds.Right <= GlassDockLayout.SystemLeft - GlassDockLayout.DividerGap), "rings stay left of the system cluster");
         Check(bounded.Slots.Where(slot => !slot.Chip).All(slot => slot.Bounds.Width <= GlassDockLayout.RingSize + 4) && GlassDockLayout.WidthFor(4, false) - GlassDockLayout.WidthFor(3, false) == GlassDockLayout.ItemWidth + GlassDockLayout.RingGap, "percent sits inside the ring so N rings take about N ring widths");
@@ -465,7 +467,8 @@ public static class UsageProviderFixtureTests
                 new CodexAccountQuota("two", [new QuotaWindow("5h", 95, null, TimeSpan.FromHours(5))]),
             ]);
         var codexPlan = GlassDockLayout.Plan(quota);
-        Check(codexPlan.Visible[0].ProviderId == UsageProviderIds.Codex && codexPlan.Visible[0].RemainingPercent == 5, "codex accounts are separate rings");
+        Check(codexPlan.Visible.Where(ring => ring.ProviderId == UsageProviderIds.Codex).Select(ring => ring.RemainingPercent)
+            .OrderBy(value => value).SequenceEqual(new double?[] { 5, 16 }), "codex accounts retain separate quota rings without quota-based sorting");
         Check(codexPlan.Visible.Count(ring => ring.AccountNumber > 0) == 2, "both codex accounts keep a badge");
         var groups = GlassDockComposer.Groups(rings, DateTimeOffset.Parse("2026-11-10T12:00:00Z"), true);
         Check(groups[0].Title == "Grok" && groups[0].Accounts.Count == 2 && groups[0].Accounts[0].Label == "账号1", "flyout keeps provider groups");

@@ -170,10 +170,13 @@ internal sealed partial class BarForm : Form
         IReadOnlySet<ProviderKind>? activeProviders = null,
         Func<DisplayTopologySnapshot?>? topologyCapture = null,
         Func<DateTimeOffset>? utcNow = null,
-        Func<string, Exception?>? renderFaultForAcceptance = null)
+        Func<string, Exception?>? renderFaultForAcceptance = null,
+        IReadOnlySet<ProviderKind>? enabledQuotaProviders = null)
     {
         _foregroundChangedHandler = OnForegroundChanged;
         _snapshot = snapshot;
+        _explicitQuotaEnablement = enabledQuotaProviders is not null;
+        _enabledQuotaProviders = enabledQuotaProviders?.ToHashSet() ?? Enum.GetValues<ProviderKind>().ToHashSet();
         _activeProviders = activeProviders?.ToHashSet() ?? Enum.GetValues<ProviderKind>().ToHashSet();
         _codexAccounts = (codexAccounts ?? []).ToArray();
         _renderOnly = renderOnly;
@@ -522,6 +525,7 @@ internal sealed partial class BarForm : Form
 
     public void ApplySettings(AppSettings settings)
     {
+        if (_explicitQuotaEnablement) _enabledQuotaProviders = Enum.GetValues<ProviderKind>().Where(settings.IsEnabled).ToHashSet();
         _text = NativeText.For(settings.Locale);
         _backgroundTheme = QuotaBackgroundPalette.Resolve(settings.BackgroundPalette);
         BackColor = Color.FromArgb(28, 22, 36);

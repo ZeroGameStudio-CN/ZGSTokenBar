@@ -26,7 +26,7 @@ internal sealed partial class BarForm
             item.Name,
             string.IsNullOrWhiteSpace(item.Ring.AccountLabel) || item.Ring.AccountLabel == item.Name ? null : item.Ring.AccountLabel,
             item.Logo ?? item.Icon,
-            !_hiddenDockItems.Contains(item.Id)))
+            !_hiddenDockItems.Contains(item.Id) && !_hiddenDockItems.Contains(item.Ring.ProviderId)))
         .GroupBy(entry => entry.Id, StringComparer.Ordinal)
         .Select(group => group.First())
         .ToArray();

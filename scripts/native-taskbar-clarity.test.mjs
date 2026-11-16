@@ -199,12 +199,17 @@ test('collapsed generic balance plugins retain their primary amount', () => {
   assert.match(barForm, /AiGatewayBalanceFormatting\.CompactAmount\(currency\)/);
 });
 
-test('provider visibility follows active App or CLI processes', () => {
-  assert.match(processActivity, /\[ProviderKind\.Claude\] = \["claude", "claude-code", "claude_desktop"\]/);
-  assert.match(processActivity, /\[ProviderKind\.Codex\] = \["chatgpt", "codex", "codex-cli"\]/);
+test('provider activity shares descriptors while idle accounts remain reachable', () => {
+  assert.match(processActivity, /ProviderCatalog\.Find\(UsageProviderIds\.Claude\)!\.ActivityProcessNames/);
+  assert.match(processActivity, /ProviderCatalog\.Find\(UsageProviderIds\.Codex\)!\.ActivityProcessNames/);
+  assert.match(fs.readFileSync('src/ZGSTokenBar.Core/Providers/BuiltIn/ClaudeUsageProvider.cs', 'utf8'),
+    /ActivityProcessNames = \["claude", "claude-code", "claude_desktop"\]/);
+  assert.match(fs.readFileSync('src/ZGSTokenBar.Core/Providers/BuiltIn/CodexUsageProvider.cs', 'utf8'),
+    /ActivityProcessNames = \["chatgpt", "codex", "codex-cli"\]/);
   assert.match(applicationContext, /_providerActivityTimer = new System\.Windows\.Forms\.Timer \{ Interval = 5_000 \}/);
   assert.match(applicationContext, /activeProviders: _activeProviders/);
-  assert.match(barForm, /_snapshot\.Cards[\s\S]*?Where\(card => _activeProviders\.Contains\(card\.Provider\)\)/);
+  assert.match(barForm, /_snapshot\.Cards[\s\S]*?Where\(card => _enabledQuotaProviders\.Contains\(card\.Provider\)\)/);
+  assert.match(barForm, /OverflowOnly = !inUse/);
   assert.match(barForm, /public void SetActiveProviders\(IReadOnlySet<ProviderKind> providers\)/);
 });
 

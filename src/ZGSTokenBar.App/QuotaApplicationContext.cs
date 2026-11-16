@@ -115,7 +115,8 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
             _settings,
             _snapshot,
             codexAccounts: _codexAccounts,
-            activeProviders: _activeProviders);
+            activeProviders: _activeProviders,
+            enabledQuotaProviders: Enum.GetValues<ProviderKind>().Where(_settings.IsEnabled).ToHashSet());
         _bar.UsageBoardChanged += (_, board) => ObserveUsagePace(board);
         _otherToolsModule = new OtherToolsModule(_bar, ApplyGenericPluginCards, _refreshScheduler);
         _otherToolsModule.SetAntigravityPrimaryGroup(_settings.AntigravityPrimaryGroup);

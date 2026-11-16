@@ -22,6 +22,9 @@ public sealed record GlassDockRing(
     /// <summary>An observed active account takes precedence over passive quota readings.</summary>
     public bool InUse { get; init; }
 
+    public int ProviderOrder { get; init; }
+    public string StableId { get; init; } = "";
+
     /// <summary>
     /// Where remaining would be under even use of the ring's window (100 − elapsed share), drawn
     /// as a thin pace tick on the ring; null without a reset time and duration, or after the reset.
@@ -240,7 +243,8 @@ public static class GlassDockLayout
     private static GlassDockRing[] Order(IReadOnlyList<GlassDockRing> rings) => rings
         .OrderBy(ring => ring.OverflowOnly)
         .ThenByDescending(ring => ring.InUse)
-        .ThenBy(ring => ring.RemainingPercent ?? double.PositiveInfinity)
+        .ThenBy(ring => ring.ProviderOrder)
+        .ThenBy(ring => ring.StableId, StringComparer.Ordinal)
         .ThenBy(ring => ring.Title, StringComparer.Ordinal)
         .ThenBy(ring => ring.AccountNumber)
         .ThenBy(ring => ring.AccountLabel, StringComparer.Ordinal)
@@ -294,7 +298,7 @@ public static class GlassDockComposer
                     remaining,
                     window?.ResetsAt,
                     balance,
-                    provider.Accent));
+                    provider.Accent) { ProviderOrder = provider.Order, StableId = provider.ProviderId + ":" + account.AccountId });
             }
         }
 

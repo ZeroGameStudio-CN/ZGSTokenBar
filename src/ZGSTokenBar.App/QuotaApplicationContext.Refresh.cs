@@ -209,7 +209,8 @@ internal sealed partial class QuotaApplicationContext
         var previousStamp = _codexAccountStamp;
         var readAt = _codexAccountsReadAt;
         var tick = Environment.TickCount64;
-        (ValueTuple<long, long, long, long> Stamp, IReadOnlyList<CodexAccountInfo>? Accounts, HashSet<ProviderKind> Providers, bool? GrokActive) probe;
+        (ValueTuple<long, long, long, long> Stamp, IReadOnlyList<CodexAccountInfo>? Accounts, HashSet<ProviderKind> Providers,
+            IReadOnlyDictionary<string, bool?> Activity) probe;
         try
         {
             probe = await Task.Run(() =>
@@ -218,7 +219,8 @@ internal sealed partial class QuotaApplicationContext
                 var accounts = !requestRefresh || stamp != previousStamp || tick - readAt >= CodexAccountPollMs
                     ? CockpitCodexAccountDirectory.Read()
                     : null;
-                return (stamp, accounts, ActiveProviders(settings), ProviderProcessActivity.DetectGrokActivity());
+                var activity = ProviderProcessActivity.DetectUsageProviderActivity();
+                return (stamp, accounts, ActiveProviders(settings, activity), activity);
             }, _shutdown.Token);
         }
         catch (OperationCanceledException)
@@ -227,7 +229,7 @@ internal sealed partial class QuotaApplicationContext
         }
 
         if (_quitting || _bar.IsDisposed || _shutdown.IsCancellationRequested) return;
-        _bar.SetUsageProviderActivity(UsageProviderIds.Grok, probe.GrokActive);
+        _bar.SetUsageProviderActivities(probe.Activity);
         if (probe.Accounts is { } nextAccounts)
         {
             _codexAccountStamp = probe.Stamp;
@@ -290,9 +292,11 @@ internal sealed partial class QuotaApplicationContext
         return true;
     }
 
-    private static HashSet<ProviderKind> ActiveProviders(AppSettings settings)
+    private static HashSet<ProviderKind> ActiveProviders(AppSettings settings, IReadOnlyDictionary<string, bool?>? activity = null)
     {
-        var active = ProviderProcessActivity.DetectActiveProviders()
+        activity ??= ProviderProcessActivity.DetectUsageProviderActivity();
+        var active = new[] { ProviderKind.Claude, ProviderKind.Codex }
+            .Where(provider => activity[provider == ProviderKind.Codex ? UsageProviderIds.Codex : UsageProviderIds.Claude] is not false)
             .Where(settings.IsEnabled)
             .ToHashSet();
         return active;
