@@ -3299,6 +3299,22 @@ static void TestCockpitProCodexAccountMerge()
             "pro",
             boundPlanCards.Single().Badge,
             "active Cockpit Pro plan overrides a stale native Plus registry value");
+
+        var boundPlusHome = Path.Combine(directory, "bound-plus");
+        var boundSecondHome = Path.Combine(directory, "bound-second");
+        Directory.CreateDirectory(boundPlusHome); Directory.CreateDirectory(boundSecondHome);
+        File.WriteAllText(Path.Combine(boundPlusHome, "auth.json"), JsonSerializer.Serialize(new
+            { tokens = new { access_token = nativePlusAccessToken, account_id = "acct-valid-plus" } }));
+        File.WriteAllText(Path.Combine(boundSecondHome, "auth.json"), JsonSerializer.Serialize(new
+            { tokens = new { access_token = accessToken, account_id = "acct-" + secondProId } }));
+        var interactivePath = Path.Combine(directory, "interactive-bindings.json");
+        File.WriteAllText(interactivePath, JsonSerializer.Serialize(new { instances = new[] {
+            new { codexHome = boundPlusHome }, new { codexHome = boundSecondHome } } }));
+        var boundOnly = new CodexQuotaService(client, directory, interactivePath).FetchAsync(CancellationToken.None).GetAwaiter().GetResult();
+        Equal(3, boundOnly.Cards.Count, "the valid launcher account remains reachable when not bound to an interactive instance");
+        Equal(2, boundOnly.Cards.Count(card => card.Active), "only currently registered interactive accounts are in use");
+        Equal(false, boundOnly.Cards.Single(card => card.Key == CodexQuotaService.StableCardKey("cockpit:" + currentId)).Active,
+            "a launcher's historical current selection cannot promote an unbound idle account");
     }
     finally
     {

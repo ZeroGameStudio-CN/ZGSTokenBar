@@ -136,7 +136,12 @@ public sealed class CodexQuotaService
                 false,
                 account.CapturedAt))
             .ToArray();
-        var accounts = liveAccounts.Concat(cachedAccounts).ToArray();
+        var accounts = liveAccounts.Concat(cachedAccounts)
+            .Select(account => interactiveCredentials.Count > 0
+                && !interactiveCredentials.Any(interactive => SameIdentity(account.Credential, interactive))
+                    ? account with { Credential = account.Credential with { Active = false } }
+                    : account)
+            .ToArray();
         var visibleCandidates = accounts.Where(account => liveAccounts.Any(live =>
                 !string.IsNullOrWhiteSpace(live.Credential.AccessToken) && live.HttpStatus is not (401 or 403)
                 && SameIdentity(live.Credential, account.Credential))
