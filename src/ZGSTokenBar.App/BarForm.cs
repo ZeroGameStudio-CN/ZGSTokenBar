@@ -192,6 +192,7 @@ internal sealed partial class BarForm : Form
         _miniAreaOrder = AppSettings.CopyMiniAreaOrder(settings.MiniAreaOrder);
         _showSystemMetrics = settings.IsPluginEnabled("zgstokenbar.metrics.system", true);
         _glassMaxRings = NormalizeGlassMax(settings.GlassDockMaxRings);
+        _codexDockVisibleTiers = CodexDockTierFilter.Normalize(settings.CodexDockVisibleTiers).ToHashSet(StringComparer.Ordinal);
         _hiddenDockItems = new HashSet<string>(AppSettings.CopyHiddenDockItems(settings.HiddenDockItems), StringComparer.Ordinal);
         _glassExpanded = settings.GlassDockExpanded;
         _animationsEnabled = settings.EnableAnimations && SystemInformation.IsMenuAnimationEnabled;
@@ -536,6 +537,7 @@ internal sealed partial class BarForm : Form
         var previousMiniAreaLayouts = _miniAreaLayouts;
         var previousMiniAreaOrder = _miniAreaOrder;
         var previousShowSystemMetrics = _showSystemMetrics;
+        _codexDockVisibleTiers = CodexDockTierFilter.Normalize(settings.CodexDockVisibleTiers).ToHashSet(StringComparer.Ordinal);
         _miniAreaLayouts = AppSettings.CopyMiniAreaLayouts(settings.MiniAreaLayouts);
         _miniAreaOrder = AppSettings.CopyMiniAreaOrder(settings.MiniAreaOrder);
         _showSystemMetrics = settings.IsPluginEnabled("zgstokenbar.metrics.system", true);

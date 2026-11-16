@@ -32,6 +32,7 @@ internal static class SettingsChangeDetector
             && MiniAreaLayoutsEqual(previous.MiniAreaLayouts, next.MiniAreaLayouts)
             && previous.MiniAreaOrder.SequenceEqual(next.MiniAreaOrder, StringComparer.Ordinal)
             && previous.HiddenDockItems.SequenceEqual(next.HiddenDockItems, StringComparer.Ordinal)
+            && CodexDockTierFilter.Normalize(previous.CodexDockVisibleTiers).SequenceEqual(CodexDockTierFilter.Normalize(next.CodexDockVisibleTiers))
             && string.Equals(previous.AntigravityPrimaryGroup, next.AntigravityPrimaryGroup, StringComparison.Ordinal)
             && previous.WindowX == next.WindowX
             && previous.WindowY == next.WindowY

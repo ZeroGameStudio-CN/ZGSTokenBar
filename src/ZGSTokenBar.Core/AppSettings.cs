@@ -33,6 +33,8 @@ public sealed class AppSettings
     public string[] MiniAreaOrder { get; set; } = [];
     /// <summary>Bar rings the user hid from the dock (provider id or Codex/Claude card key).</summary>
     public string[] HiddenDockItems { get; set; } = [];
+    /// <summary>Codex tiers allowed in the dock and overflow. Usage and logs remain unfiltered.</summary>
+    public string[] CodexDockVisibleTiers { get; set; } = CodexDockTierFilter.All.ToArray();
     /// <summary>Whether the overflow (+N) part of the dock is expanded; persisted across restarts.</summary>
     public bool GlassDockExpanded { get; set; }
     // Legacy read-only migration fields from the per-card collapse prototypes.
@@ -181,6 +183,7 @@ public sealed class AppSettings
 
     public void Normalize()
     {
+        CodexDockVisibleTiers = CodexDockTierFilter.Normalize(CodexDockVisibleTiers);
         SchemaVersion = CurrentSchemaVersion;
         DropRetiredPlugins();
         EnabledProviders = (EnabledProviders ?? [])

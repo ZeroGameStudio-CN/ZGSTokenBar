@@ -19,6 +19,14 @@ using ZGSTokenBar.Plugin.AiGatewayObserver;
 
 if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJobExitCode;
 
+if (args.Length is 1 or 2 && args[0] == "--codex-tier-filter")
+{
+    System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
+    CodexTierFilterTests.Run(args.Length == 2 ? args[1] : null);
+    Console.WriteLine("PASS Codex display tiers, settings persistence and unfiltered data projection");
+    return 0;
+}
+
 if (args.Length is 1 or 2 && args[0] == "--dock-policy")
 {
     System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
@@ -656,6 +664,7 @@ var tests = new (string Name, Action Run)[]
     ("Glass dock rate and router slots are layout-stable", TestGlassDockStableSlots),
     ("Glass dock preserves unused accounts in overflow", () => GlassDockOverflowTests.Run()),
     ("Unified account activity and stable dock selection", () => DockPolicyTests.Run()),
+    ("Codex dock tier filtering leaves usage data unchanged", () => CodexTierFilterTests.Run()),
     ("Full monitor hover transitions preserve native lifecycle", () => MonitorPanelMotionTests.Run()),
     ("Cross-type hover handoffs preserve one active owner", CrossPopoverHandoffTests.Run),
     ("Grok plan comes from the settings cache, never the sign-in type", TestGrokPlanFromSettingsCache),

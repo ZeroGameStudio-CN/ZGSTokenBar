@@ -48,6 +48,7 @@ internal sealed partial class SettingsForm : Form
     private readonly Dictionary<string, ToggleSwitch> _usageProviderToggles = new(StringComparer.Ordinal);
     /// <summary>Show-on-Bar switch per dock ring (provider or account), in dock order.</summary>
     private readonly List<(DockVisibilityEntry Entry, ToggleSwitch Toggle)> _dockItemToggles = [];
+    private readonly Dictionary<string, ToggleSwitch> _codexTierToggles = new(StringComparer.Ordinal);
     private readonly ToggleSwitch _codexLocalUsage;
     private readonly ToggleSwitch _sub2ApiPool;
     private readonly ToggleSwitch _openAtLogin;
@@ -191,6 +192,9 @@ internal sealed partial class SettingsForm : Form
             settings.IsPluginEnabled("zgstokenbar.metrics.system", true));
         _claude = CreateToggle("Claude", _text.ClaudeProviderHint, settings.IsEnabled(ProviderKind.Claude));
         _codex = CreateToggle("Codex", _text.CodexProviderHint, settings.IsEnabled(ProviderKind.Codex));
+        foreach (var tier in CodexDockTierFilter.All)
+            _codexTierToggles.Add(tier, CreateToggle(CodexTierTitle(tier), CodexTierHint,
+                CodexDockTierFilter.Normalize(settings.CodexDockVisibleTiers).Contains(tier, StringComparer.Ordinal)));
         _grok = CreateToggle("Grok", _text.IsChinese ? "读取本机 Grok 配额" : "Read local Grok quota",
             settings.IsPluginEnabled(OtherToolsModule.GrokId, true));
         _antigravity = CreateToggle("Antigravity", _text.IsChinese ? "读取本机 Antigravity 配额" : "Read local Antigravity quota",
@@ -327,6 +331,7 @@ internal sealed partial class SettingsForm : Form
         _antigravity.CheckedChanged += (_, _) => RefreshDirtyState();
         foreach (var toggle in _usageProviderToggles.Values) toggle.CheckedChanged += (_, _) => RefreshDirtyState();
         foreach (var (_, toggle) in _dockItemToggles) toggle.CheckedChanged += (_, _) => RefreshDirtyState();
+        foreach (var toggle in _codexTierToggles.Values) toggle.CheckedChanged += (_, _) => RefreshDirtyState();
         _codexLocalUsage.CheckedChanged += (_, _) =>
         {
             if (!_updatingCodexDependency && _codex.Checked)
@@ -565,6 +570,10 @@ internal sealed partial class SettingsForm : Form
         : $"Reads the local {name} sign-in or key; off stops reading it and hides it from the Bar";
 
     private string DockItemHint => _text.IsChinese ? "在 Bar 上显示" : "Show on the Bar";
+    private string CodexTierTitle(string tier) => tier == "other"
+        ? _text.IsChinese ? "其他／未知" : "Other / unknown"
+        : tier == "free" ? "Free" : tier == "plus" ? "Plus" : "Pro";
+    private string CodexTierHint => _text.IsChinese ? "在任务栏和折叠区显示此档位" : "Show this tier on the dock and in overflow";
 
     private ToggleSwitch CreateToggle(string name, string description, bool value) => new(_theme, _scale)
     {

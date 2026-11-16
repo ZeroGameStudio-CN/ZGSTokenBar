@@ -10,6 +10,7 @@ internal sealed partial class BarForm
 {
     private UsageBoard _usageBoard = UsageBoard.Empty;
     private readonly Dictionary<string, bool?> _usageProviderActivity = new(StringComparer.Ordinal);
+    private HashSet<string> _codexDockVisibleTiers = CodexDockTierFilter.All.ToHashSet(StringComparer.Ordinal);
     private HashSet<ProviderKind> _enabledQuotaProviders = Enum.GetValues<ProviderKind>().ToHashSet();
     private readonly bool _explicitQuotaEnablement;
     private int _glassMaxRings = GlassDockLayout.MaxVisibleRings;
@@ -241,7 +242,9 @@ internal sealed partial class BarForm
 
     private (GlassDockPlan Plan, IReadOnlyList<GlassItem> Items) CurrentGlassLayout()
     {
-        var items = BuildGlassItems().Where(item => !_hiddenDockItems.Contains(item.Id) && !_hiddenDockItems.Contains(item.Ring.ProviderId)).ToArray();
+        var items = BuildGlassItems().Where(item => !_hiddenDockItems.Contains(item.Id) && !_hiddenDockItems.Contains(item.Ring.ProviderId)
+            && (item.Card is not { Provider: ProviderKind.Codex, IsService: false } account
+                || _codexDockVisibleTiers.Contains(CodexDockTierFilter.Category(account.Badge)))).ToArray();
         var rings = items.Select(item => item.Ring).ToArray();
         var showRouter = RouterCard is not null;
         var plan = GlassDockLayout.Plan(rings, _glassMaxRings, HasIntakeCard, showRouter);

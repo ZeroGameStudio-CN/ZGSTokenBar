@@ -44,6 +44,7 @@ internal sealed partial class SettingsForm
             MiniAreaLayouts = AppSettings.CopyMiniAreaLayouts(_original.MiniAreaLayouts),
             MiniAreaOrder = AppSettings.CopyMiniAreaOrder(_original.MiniAreaOrder),
             HiddenDockItems = BuildHiddenDockItems(),
+            CodexDockVisibleTiers = CodexDockTierFilter.All.Where(tier => _codexTierToggles[tier].Checked).ToArray(),
             GlassDockExpanded = _original.GlassDockExpanded,
             BackgroundPalette = _backgroundPalette,
             AntigravityPrimaryGroup = (_antigravityGroup.SelectedItem as AntigravityGroupChoice)?.Value ?? _original.AntigravityPrimaryGroup,
@@ -108,6 +109,7 @@ internal sealed partial class SettingsForm
         && MiniAreaLayoutsEqual(left.MiniAreaLayouts, right.MiniAreaLayouts)
         && left.MiniAreaOrder.SequenceEqual(right.MiniAreaOrder, StringComparer.Ordinal)
         && left.HiddenDockItems.SequenceEqual(right.HiddenDockItems, StringComparer.Ordinal)
+        && CodexDockTierFilter.Normalize(left.CodexDockVisibleTiers).SequenceEqual(CodexDockTierFilter.Normalize(right.CodexDockVisibleTiers))
         && DictionaryEqual(left.PluginEnabled, right.PluginEnabled)
         && string.Equals(left.BackgroundPalette, right.BackgroundPalette, StringComparison.Ordinal)
         && string.Equals(left.AntigravityPrimaryGroup, right.AntigravityPrimaryGroup, StringComparison.Ordinal)
@@ -131,6 +133,7 @@ internal sealed partial class SettingsForm
             MiniAreaLayouts = AppSettings.CopyMiniAreaLayouts(settings.MiniAreaLayouts),
             MiniAreaOrder = AppSettings.CopyMiniAreaOrder(settings.MiniAreaOrder),
             HiddenDockItems = AppSettings.CopyHiddenDockItems(settings.HiddenDockItems),
+            CodexDockVisibleTiers = CodexDockTierFilter.Normalize(settings.CodexDockVisibleTiers),
             GlassDockExpanded = settings.GlassDockExpanded,
             BackgroundPalette = AppSettings.NormalizeBackgroundPalette(settings.BackgroundPalette),
             AntigravityPrimaryGroup = settings.AntigravityPrimaryGroup,

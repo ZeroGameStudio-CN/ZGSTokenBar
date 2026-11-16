@@ -85,6 +85,13 @@ internal sealed partial class SettingsForm
             _theme,
             _scale));
 
+        display.Add(new SectionNote(_text.IsChinese
+            ? "Codex 显示档位：仅筛选任务栏和折叠区，不影响读取、统计和日志；账号的手动隐藏仍优先。"
+            : "Codex tiers: filters the dock and overflow only. Reading, statistics and logs are unchanged; manual account hiding still takes precedence.",
+            _theme, _scale));
+        foreach (var (tier, toggle) in _codexTierToggles)
+            display.Add(new ToggleSettingRow(toggle, CodexTierTitle(tier), CodexTierHint, _theme, _scale));
+
         var advanced = AddPage("advanced", _text.Advanced);
         advanced.Add(new ToggleSettingRow(
             _refreshClaudeOAuth,
