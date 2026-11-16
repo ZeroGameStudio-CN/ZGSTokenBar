@@ -81,16 +81,21 @@ internal static class LiveMetricTests
         var snapshot = new SystemUsageSnapshot(1, 2, 3, 5, 1, null, 0, 4, at.AddMinutes(-1))
         { NetworkReceiveBytesPerSecond = 100, ObservedOutputTokensPerSecond = 30, OutputRateCapturedAt = at.AddMinutes(-1) };
         Check(snapshot.CurrentOutputRate is null && snapshot.CurrentNetworkReceive is null, "Stale display values expire.");
-        var estimateOnly = snapshot with { LiveRate = new(at, 20, 0, 20, 1, 0, 1, 0) { RecordedAt = null } };
+        // Earlier reader/process fixtures may take longer than the display's 15-second TTL on CI.
+        // A fresh-display assertion needs its own timestamp, not the suite's initial clock sample.
+        var displayAt = DateTimeOffset.UtcNow;
+        var estimateOnly = snapshot with { LiveRate = new(displayAt, 20, 0, 20, 1, 0, 1, 0) { RecordedAt = null } };
         Check(estimateOnly.CurrentLiveRate?.Estimated == 20 && estimateOnly.CurrentOutputRate is null,
             "A missing recorded response cannot hide a fresh, separately labelled generation estimate.");
+        Check((estimateOnly with { LiveRate = estimateOnly.LiveRate! with { CapturedAt = displayAt.AddSeconds(-16) } }).CurrentLiveRate is null,
+            "Fixing fixture freshness must not weaken the real display expiry.");
         var context = SynchronizationContext.Current;
         HoverSurfaces(snapshot with
         {
             TopProcesses = [new("worker", 1, 5, 1234, 0)],
-            LiveRate = new LiveOutputRate(at, 12, 10, 2, 1, 0, 1, 0) { RecordedAt = at },
+            LiveRate = new LiveOutputRate(displayAt, 12, 10, 2, 1, 0, 1, 0) { RecordedAt = displayAt },
             ObservedOutputTokensPerSecond = 12,
-            OutputRateCapturedAt = at,
+            OutputRateCapturedAt = displayAt,
         });
         Check(ReferenceEquals(context, SynchronizationContext.Current),
             "Native hover checks cannot leak a UI synchronization context into later async checks.");
