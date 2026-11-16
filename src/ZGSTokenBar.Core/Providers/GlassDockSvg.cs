@@ -21,7 +21,7 @@ public static class GlassDockSvg
         {
             if (slot.Chip)
             {
-                Chip(svg, x + slot.Bounds.X, y + slot.Bounds.Y, slot.Bounds.Width, slot.Bounds.Height, "+" + plan.OverflowCount.ToString(CultureInfo.InvariantCulture), plan.OverflowUrgent, light);
+                Chip(svg, x + slot.Bounds.X, y + slot.Bounds.Y, slot.Bounds.Width, slot.Bounds.Height, "+" + plan.OverflowCount.ToString(CultureInfo.InvariantCulture), light);
                 continue;
             }
 
@@ -135,17 +135,13 @@ public static class GlassDockSvg
         }
     }
 
-    private static void Chip(StringBuilder svg, int x, int y, int width, int height, string text, bool urgent, bool light)
+    private static void Chip(StringBuilder svg, int x, int y, int width, int height, string text, bool light)
     {
         svg.Append("<rect x=\"").Append(x).Append("\" y=\"").Append(y).Append("\" width=\"").Append(width).Append("\" height=\"").Append(height)
             .Append("\" rx=\"9\" fill=\"").Append(light ? "rgba(20,24,32,.08)" : "rgba(255,255,255,.1)").Append("\"/>");
         svg.Append("<text x=\"").Append(x + width / 2).Append("\" y=\"").Append(y + 12).Append("\" text-anchor=\"middle\" fill=\"")
             .Append(light ? "#1c2430" : "rgba(255,255,255,.86)").Append("\" font-family=\"Segoe UI, sans-serif\" font-size=\"9\" font-weight=\"700\">")
             .Append(Escape(text)).Append("</text>");
-        if (urgent)
-        {
-            svg.Append("<circle cx=\"").Append(x + width - 1).Append("\" cy=\"").Append(y + 1).Append("\" r=\"3\" fill=\"#FFB020\"/>");
-        }
     }
 
     private static void Router(StringBuilder svg, int x, int y, bool warning)

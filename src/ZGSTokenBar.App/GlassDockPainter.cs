@@ -617,9 +617,6 @@ internal static class GlassDockPainter
         using var font = new Font("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Pixel);
         var label = scene.Expanded ? "‹" : "+" + scene.Plan.OverflowCount.ToString(CultureInfo.InvariantCulture);
         DrawCentered(graphics, label, font, text, rect);
-        if (scene.Expanded || !scene.Plan.OverflowUrgent) return;
-        using var dot = new SolidBrush(Color.FromArgb(255, 80, 80));
-        graphics.FillEllipse(dot, rect.Right - 5, rect.Top - 1, 6, 6);
     }
 
     /// <summary>The four classic system metrics as labelled rows: CPU, RAM, I/O (disk) and GPU.</summary>
