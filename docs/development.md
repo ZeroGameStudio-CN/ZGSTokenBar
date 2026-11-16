@@ -387,6 +387,13 @@ checkpoint. Truncation, replacement, corruption or failed validation rebuilds on
 the affected source; unavailable caches fall back to bounded scanning. A slower
 writer cannot replace a later valid offset, and an older app preserves future
 cache formats. These caches are disposable and do not migrate the token index.
+Running readers also check physical identity before reusing in-memory state, even
+when a replacement preserves length and mtime. This opens a metadata handle, not a
+JSONL rescan; invalidated state is removed even if the rebuild must wait for its
+cold budget. Only recognizable newer `ZGSCV` versions are preserved as future
+formats. Broken/truncated headers and damaged payloads increment the process's
+cumulative checkpoint-failure counter and are atomically repaired after source
+validation, so the next restart can resume normally.
 `window inspect --json` reports `conversationCheckpointRestoredCount`,
 `conversationRestoredBytes` (sum of restored byte positions),
 `conversationScannedBytes` (JSONL bytes scanned in this process) and

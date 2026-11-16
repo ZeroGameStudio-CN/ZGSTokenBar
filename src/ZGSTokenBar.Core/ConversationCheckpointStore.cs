@@ -51,10 +51,12 @@ internal sealed class ConversationCheckpointStore(string directory)
     {
         try
         {
-            var state = Read(CachePath(source), out _);
-            return state is not null && state.SourceKey == Key(source)
-                && state.SessionId == CodexConversationUsageReader.SessionId(source)
-                && ValidState(state) && MatchesSource(state, stream, writeTicks) ? state : null;
+            var state = Read(CachePath(source), out _, out var corrupt);
+            if (corrupt) Failures++;
+            if (state is null) return null;
+            if (state.SourceKey != Key(source) || state.SessionId != CodexConversationUsageReader.SessionId(source)
+                || !ValidState(state)) { Failures++; return null; }
+            return MatchesSource(state, stream, writeTicks) ? state : null;
         }
         catch (Exception error) when (CacheError(error)) { Failures++; return null; }
     }
@@ -74,7 +76,8 @@ internal sealed class ConversationCheckpointStore(string directory)
                 FileShare.ReadWrite | FileShare.Delete);
             var ticks = File.GetLastWriteTimeUtc(source).Ticks;
             if (!MatchesSource(state, stream, ticks)) return false;
-            var current = Read(path, out var unsupported);
+            var current = Read(path, out var unsupported, out var corrupt);
+            if (corrupt) Failures++;
             if (unsupported) return false; // An older app must preserve a future cache format.
             if (current is not null && ValidState(current) && current.SourceKey == state.SourceKey
                 && MatchesSource(current, stream, ticks) && current.Offset >= state.Offset) return false;
@@ -90,22 +93,36 @@ internal sealed class ConversationCheckpointStore(string directory)
         catch (Exception error) when (CacheError(error)) { Failures++; return false; }
     }
 
-    private static ConversationCheckpoint? Read(string path, out bool unsupported)
+    private static ConversationCheckpoint? Read(string path, out bool unsupported, out bool corrupt)
     {
         unsupported = false;
+        corrupt = false;
         if (!File.Exists(path)) return null;
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
-        if (stream.Length < 8) return null;
+        if (stream.Length < 8) { corrupt = true; return null; }
         Span<byte> header = stackalloc byte[HeaderBytes];
         stream.ReadExactly(header[..8]);
-        if (!header[..8].SequenceEqual(Magic)) { unsupported = true; return null; }
-        if (stream.Length < HeaderBytes || stream.Length > MaximumCacheBytes) return null;
+        if (!header[..8].SequenceEqual(Magic))
+        {
+            // Preserve only recognizable newer versions, not arbitrary damaged headers.
+            unsupported = header[..5].SequenceEqual("ZGSCV"u8) && header[7] == (byte)'\n'
+                && header[5] is >= (byte)'0' and <= (byte)'9' && header[6] is >= (byte)'0' and <= (byte)'9'
+                && (header[5] - (byte)'0') * 10 + header[6] - (byte)'0' > 1;
+            corrupt = !unsupported;
+            return null;
+        }
+        if (stream.Length < HeaderBytes || stream.Length > MaximumCacheBytes) { corrupt = true; return null; }
         stream.ReadExactly(header[8..]);
         var payload = new byte[(int)stream.Length - HeaderBytes];
         stream.ReadExactly(payload);
-        if (!CryptographicOperations.FixedTimeEquals(header[8..], SHA256.HashData(payload))) return null;
-        try { return JsonSerializer.Deserialize(payload, ConversationCheckpointJsonContext.Default.ConversationCheckpoint); }
-        catch (JsonException) { return null; }
+        if (!CryptographicOperations.FixedTimeEquals(header[8..], SHA256.HashData(payload))) { corrupt = true; return null; }
+        try
+        {
+            var state = JsonSerializer.Deserialize(payload, ConversationCheckpointJsonContext.Default.ConversationCheckpoint);
+            corrupt = state is null;
+            return state;
+        }
+        catch (JsonException) { corrupt = true; return null; }
     }
 
     private static bool MatchesSource(ConversationCheckpoint state, FileStream stream, long writeTicks)

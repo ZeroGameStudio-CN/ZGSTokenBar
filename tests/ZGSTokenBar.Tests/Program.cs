@@ -19,6 +19,13 @@ using ZGSTokenBar.Plugin.AiGatewayObserver;
 
 if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJobExitCode;
 
+if (args.Length == 1 && args[0] == "--checkpoint-p2")
+{
+    ConversationCheckpointTests.RunP2();
+    Console.WriteLine("PASS running-file replacement and corrupt-header recovery");
+    return 0;
+}
+
 if (args.Length == 5 && args[0] == "--conversation-checkpoint-worker")
 {
     ConversationCheckpointTests.Worker(args[1], args[2], args[3], args[4]);

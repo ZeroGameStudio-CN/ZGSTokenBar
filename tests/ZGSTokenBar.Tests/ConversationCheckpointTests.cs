@@ -4,10 +4,11 @@ using System.Text;
 using System.Text.Json;
 using ZGSTokenBar.Core;
 
-internal static class ConversationCheckpointTests
+internal static partial class ConversationCheckpointTests
 {
     internal static void Run()
     {
+        RunP2();
         WarmAppendAndMetadata();
         PartialProgressAndUtf8();
         InvalidationAndCorruption();

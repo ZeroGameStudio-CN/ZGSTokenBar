@@ -20,6 +20,7 @@ public sealed partial class CodexConversationUsageReader
             var state = new FileState(saved.SessionId)
             {
                 Offset = saved.Offset, Length = saved.Length, WriteTicks = saved.WriteTicks,
+                FileIdentity = saved.FileIdentity,
                 CaughtUp = saved.Offset >= stream.Length, Active = saved.Active, Responses = [.. saved.Responses],
                 _prefix = saved.Prefix, _checkpoint = saved.Boundary, _signatureLength = saved.SignatureLength,
                 _previousUsage = saved.PreviousUsage, _responseStart = saved.ResponseStart, _lastActivity = saved.LastActivity,

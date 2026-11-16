@@ -70,10 +70,6 @@ public sealed partial class CodexConversationUsageReader
     public int RestoredSessions { get; private set; }
     public long RestoredBytes { get; private set; }
     public int CheckpointFailures => _checkpoints?.Failures ?? 0;
-    // Sessions untouched for a while are only re-stated on a slower cadence; a resumed old
-    // session is still picked up within ColdRecheckMs.
-    private static readonly long ColdFileAgeTicks = TimeSpan.FromMinutes(10).Ticks;
-    private const long ColdRecheckMs = 15_000;
     private readonly Dictionary<string, FileState> _cache = new(StringComparer.OrdinalIgnoreCase);
     internal long ParsedFiles { get; private set; }
     internal long ScannedBytes { get; private set; }
@@ -93,21 +89,21 @@ public sealed partial class CodexConversationUsageReader
             cancellationToken.ThrowIfCancellationRequested();
             retained.Add(path);
             _cache.TryGetValue(path, out var state);
-            var checkedAt = Environment.TickCount64;
-            if (state is { CaughtUp: true, ReadFailed: false } && state.Offset >= state.Length
-                && DateTime.UtcNow.Ticks - state.WriteTicks > ColdFileAgeTicks
-                && checkedAt - state.CheckedAt < ColdRecheckMs)
-            {
-                if (state.ToTurn(now) is { } cold) turns.Add(cold);
-                continue;
-            }
             try
             {
                 var file = new FileInfo(path);
-                if (state is not null) state.CheckedAt = checkedAt;
-                if (!file.Exists) continue;
-                // Idle sessions are the common case: an unchanged, fully read file needs no open,
-                // checkpoint hash or scan, only its cached turn.
+                if (!file.Exists) { if (state is not null) state.ReadFailed = true; continue; }
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete);
+                var identity = ConversationSourceIdentity.Read(stream);
+                if (OperatingSystem.IsWindows() && state is not null
+                    && (identity is null || identity != state.FileIdentity))
+                {
+                    _cache.Remove(path);
+                    state = null;
+                }
+                // Verify physical identity before the metadata fast path. Replacement/copy tools
+                // can preserve both length and mtime; unchanged sources still need no JSONL scan.
                 if (state is { CaughtUp: true, ReadFailed: false }
                     && file.Length == state.Length && state.Offset >= state.Length
                     && file.LastWriteTimeUtc.Ticks == state.WriteTicks)
@@ -126,8 +122,6 @@ public sealed partial class CodexConversationUsageReader
                     continue;
                 }
 
-                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
-                    FileShare.ReadWrite | FileShare.Delete);
                 var length = stream.Length;
                 if (state is null && RestoreCheckpoint(path, stream, file.LastWriteTimeUtc.Ticks) is { } restored)
                 {
@@ -137,7 +131,6 @@ public sealed partial class CodexConversationUsageReader
                 if (state is { CaughtUp: true, ReadFailed: false } && state.Offset >= length
                     && state.Length == length && state.WriteTicks == file.LastWriteTimeUtc.Ticks)
                 {
-                    state.CheckedAt = checkedAt;
                     if (state.ToTurn(now) is { } warm) turns.Add(warm);
                     continue;
                 }
@@ -168,6 +161,7 @@ public sealed partial class CodexConversationUsageReader
                         // A complete recent turn needs no historical replay. Long turns fall back to bounded catch-up.
                         if (state.Active is null || !state.Active.HasCounterBaseline) state = new FileState(SessionId(path));
                     }
+                    state.FileIdentity = identity;
                     _cache[path] = state;
                 }
                 if (changed || state.Offset < length)
@@ -191,7 +185,6 @@ public sealed partial class CodexConversationUsageReader
                 }
                 state.CaughtUp = state.Offset >= length;
                 state.ReadFailed = false;
-                state.CheckedAt = checkedAt;
                 if (state.Offset < length)
                 {
                     PendingSessions++;
@@ -297,7 +290,7 @@ public sealed partial class CodexConversationUsageReader
         public long Offset;
         public long Length;
         public long WriteTicks;
-        public long CheckedAt;
+        public string? FileIdentity;
         private byte[] _line = [];
         public int LineLength { get; private set; }
         public bool LineTooLong;
