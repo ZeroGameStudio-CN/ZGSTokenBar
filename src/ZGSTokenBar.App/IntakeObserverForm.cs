@@ -277,11 +277,12 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
 
     internal Task LoadRecentAsync() => ReadAsync(async token =>
     {
+        _recent.Rows.Clear();
+        ClearItem();
         var access = await RefreshAccessAsync(token);
         if (access.Projects.Count == 0) { NoReadableProjects(); return; }
         var rows = await _client.ItemsAsync(access, _projectKey, _itemsView, _blocked.Checked, token);
         token.ThrowIfCancellationRequested();
-        ClearItem();
         ApplyRecentRows(rows);
         Observe(RecentMessage(rows.Count));
     });
@@ -290,6 +291,8 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
     {
         ClearSensitive();
         _status.Text = T("当前账号没有可读工单项目", "This account has no readable work item projects");
+        SetRecentEmpty(T("没有可读工单项目", "No readable work item projects"),
+            T("请检查 ZOS 账号的项目读取权限后刷新", "Check your ZOS account's project read access, then refresh"));
     }
 
     private string RecentMessage(int count) => count == 0
