@@ -31,7 +31,7 @@ Mainstream quota readers share one model in `ZGSTokenBar.Core/Providers`: a prov
 | Claude | Existing OAuth refresh for the primary login. Additional `~/.claude/accounts/*.json` files are read-only and are not refreshed. | `GET https://api.anthropic.com/api/oauth/usage` |
 | Codex | Existing per-account quota snapshots | `GET chatgpt.com/backend-api/wham/usage` |
 | Cursor | Cursor `state.vscdb` `cursorAuth/accessToken`, or an account file | `GET https://cursor.com/api/usage-summary` |
-| Antigravity / Gemini | `agy` output, or `~/.gemini/antigravity-cli/antigravity-oauth-token` | Local `/usage` text, otherwise `POST https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary` |
+| Antigravity / Gemini | Existing valid `~/.gemini/antigravity-cli/antigravity-oauth-token` | `POST https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary`. Expired, missing or failed reads stay unavailable; background refresh never launches `agy` or browser sign-in. |
 | GitHub Copilot | GitHub CLI `hosts.yml` | `GET https://api.github.com/copilot_internal/user` |
 | DeepSeek | `DEEPSEEK_API_KEY` or an account file. Harness balance still uses its process plugin. | `GET https://api.deepseek.com/user/balance` |
 | OpenCode | OpenCode `auth.json` | `GET https://opencode.ai/zen/go/v1/usage` |

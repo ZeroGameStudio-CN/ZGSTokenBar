@@ -274,17 +274,21 @@ internal sealed partial class QuotaApplicationContext
                 SettingsVisible = _settingsDialog is { Visible: true },
                 SettingsFontsMatchLayout = _settingsDialog?.FontsMatchLayout,
                 RouterVisible = _routerModule.Visible,
-                IntakeVisible = _intakeObserver is { Visible: true, IsDisposed: false },
-                IntakePinned = _intakeObserver is { Visible: true, IsDisposed: false, Pinned: true },
-                IntakePanelBounds = _intakeObserver is { Visible: true, IsDisposed: false } panel
+                IntakeVisible = ActiveIntakePanel is not null,
+                IntakePinned = ActiveIntakePanel is { Pinned: true },
+                IntakePanelBounds = ActiveIntakePanel is { } panel
                     ? new UiBounds(panel.Left, panel.Top, panel.Width, panel.Height) : null,
                 VisibleCodexAccountCount = _bar.Visible ? _bar.VisibleCodexAccountCount : 0,
                 IntakeMiniBounds = _bar.Visible && _bar.HasIntakeCard && _bar.MiniPluginBounds(MiniAreaIds.Intake) is { } intakeBounds
                     ? new((int)intakeBounds.X, (int)intakeBounds.Y, (int)intakeBounds.Width, (int)intakeBounds.Height) : null,
-                IntakeProjectCount = _intakeObserver is { Visible: true, IsDisposed: false } intake
-                    ? intake.Observation.Projects : 0,
-                IntakeWorkItemCount = _intakeObserver is { Visible: true, IsDisposed: false } items
-                    ? items.Observation.Recent : 0,
+                IntakeProjectCount = ActiveIntakePanel is IntakeServiceMonitorForm service ? service.Observation.Projects
+                    : ActiveIntakePanel is IntakeObserverForm intake ? intake.Observation.Projects : 0,
+                IntakeWorkItemCount = ActiveIntakePanel is IntakeServiceMonitorForm records ? records.Observation.Recent
+                    : ActiveIntakePanel is IntakeObserverForm items ? items.Observation.Recent : 0,
+                IntakeMode = ActiveIntakePanel is IntakeServiceMonitorForm ? "service" : ActiveIntakePanel is not null ? "work-items" : null,
+                IntakeHistoryCount = ActiveIntakePanel is IntakeServiceMonitorForm history ? history.Observation.History : 0,
+                IntakeInFlightCount = ActiveIntakePanel is IntakeServiceMonitorForm progress ? progress.Observation.InFlight : 0,
+                IntakeServiceStatus = ActiveIntakePanel is IntakeServiceMonitorForm status ? status.Observation.Status : null,
                 DisplayedRouterQueuedCount = _bar.DisplayedRouterQueuedCount,
                 DisplayedRouterState = _bar.DisplayedRouterState,
                 RouterProjectKey = _routerModule.Snapshot?.ProjectKey,

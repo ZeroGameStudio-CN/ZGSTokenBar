@@ -304,13 +304,13 @@ public static class UsageProviderFixtureTests
             var context = new UsageDetectContext(new UsagePaths(root, root, root), new MapUsageEnvironment(new Dictionary<string, string>()), true);
             var now = DateTimeOffset.Parse("2026-11-10T00:00:00Z");
             await fallback.ApplyAsync(UsageBoard.Empty, context, id => id == UsageProviderIds.Antigravity, now);
-            Check(runs.Count == 2, "every CLI attempt is tried until one parses");
+            Check(runs.Count == 0, "an installed, disconnected AGY never starts browser-capable CLI authentication");
             await fallback.ApplyAsync(UsageBoard.Empty, context, id => id == UsageProviderIds.Antigravity, now.AddMinutes(5));
-            Check(runs.Count == 2, "a slow CLI's reading is reused inside its cache window");
+            Check(runs.Count == 0, "repeated background reads remain noninteractive");
             await fallback.ApplyAsync(UsageBoard.Empty, context, id => id == UsageProviderIds.Antigravity, now.AddMinutes(11));
-            Check(runs.Count == 4, "the CLI runs again once the cache window passes");
+            Check(runs.Count == 0, "a later refresh cannot restart AGY sign-in");
             await fallback.ApplyAsync(UsageBoard.Empty, context, _ => false, now.AddMinutes(30));
-            Check(runs.Count == 4, "a disabled provider never spawns its CLI");
+            Check(runs.Count == 0, "a disabled provider never spawns its CLI");
         }
         finally
         {

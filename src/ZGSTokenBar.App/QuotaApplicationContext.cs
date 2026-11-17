@@ -357,7 +357,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _intakeWarmup.Stop();
         _settingsDialog?.Dispose();
         _settingsDialog = null;
-        _intakeObserver?.Close();
+        CloseIntakeObservers();
         if (!_bar.IsDisposed) _bar.Hide();
         try
         {
@@ -409,6 +409,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
             _activationWait.Unregister(null);
             _settingsDialog?.Dispose();
             _intakeObserver?.Dispose();
+            _intakeServiceObserver?.Dispose();
             _tray.Dispose();
             _bar.Dispose();
             _coordinator.Dispose();

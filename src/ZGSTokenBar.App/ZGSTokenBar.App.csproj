@@ -40,6 +40,7 @@
     <InternalsVisibleTo Include="ZGSTokenBar.Tests" />
   </ItemGroup>
   <ItemGroup>
+    <EmbeddedResource Include="Assets\intake-service-read.py" LogicalName="ZGSTokenBar.App.IntakeServiceRead.py" />
     <EmbeddedResource Include="Assets\claude-icon-rounded.png" LogicalName="ZGSTokenBar.App.Assets.claude-icon-rounded.png" />
     <EmbeddedResource Include="Assets\openai-official-ios-icon.png" LogicalName="ZGSTokenBar.App.Assets.openai-official-ios-icon.png" />
     <EmbeddedResource Include="Assets\deepseek-whale-icon.png" LogicalName="ZGSTokenBar.App.Assets.deepseek-whale-icon.png" />

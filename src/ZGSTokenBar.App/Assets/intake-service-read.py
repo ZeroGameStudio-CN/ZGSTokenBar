@@ -1,0 +1,180 @@
+"""Bounded, read-only intake observation. Receipts are observations, never an executable queue."""
+import datetime
+import json
+import re
+import sqlite3
+import subprocess
+import time
+from pathlib import Path, PurePosixPath
+
+SCHEMA = "zgstokenbar.intake-monitor.v1"
+ACTIVE = {"sending", "model_started", "classified", "waiting_upstream", "waiting_original", "submitting", "submitted", "retry"}
+ATTENTION = {"indeterminate", "needs_attention", "needs_review"}
+EVENTS = {"intake_ready", "intake_result", "intake_rework", "intake_archive", "intake_error",
+          "intake_rework_attention", "intake_related_attention", "intake_archive_attention", "intake_resume_attention"}
+
+
+def clean(value, limit=160):
+    return "".join(c if c.isprintable() else " " for c in str(value or ""))[:limit]
+
+
+def code(value):
+    text = str(value or "")
+    return text if re.fullmatch(r"[A-Za-z0-9_.:-]{0,100}", text) else "unavailable"
+
+
+def read_store(root):
+    """Only selected JSON fields leave SQLite; prompts, model results and credentials never do."""
+    root = Path(root)
+    if root.resolve() != root.absolute():
+        raise ValueError("redirected_state_directory")
+    path = root / "intake.sqlite3"
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("receipts_unavailable")
+    db = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=2)
+    try:
+        db.execute("PRAGMA query_only=ON")
+        deadline = time.monotonic() + 5
+        db.set_progress_handler(lambda: int(time.monotonic() > deadline), 10000)
+        references = {}
+        query = """SELECT key, json_extract(value,'$.project_key'), json_extract(value,'$.work_item_number'),
+                   substr(json_extract(value,'$.title'),1,160)
+                   FROM receipts WHERE key LIKE 'reference:%' AND json_valid(value) LIMIT 1000"""
+        for key, project, number, title in db.execute(query):
+            references[key.removeprefix("reference:")] = (clean(project, 64), clean(number, 32), clean(title))
+        rows = []
+        # No payload column is returned. Newest intent per operation/item is used for the current view.
+        for key, phase, intent_id, value_id in db.execute("""SELECT key,phase,
+                CASE WHEN json_valid(intent) THEN coalesce(json_extract(intent,'$.item_id'),
+                    json_extract(intent,'$.work_item_id'),json_extract(intent,'$.reported_item_id'),json_extract(intent,'$.original_item_id')) END,
+                CASE WHEN json_valid(value) THEN coalesce(json_extract(value,'$.item_id'),
+                    json_extract(value,'$.work_item_id'),json_extract(value,'$.reported_item_id')) END FROM receipts
+                WHERE key LIKE 'precheck:%' OR key LIKE 'rework:%' OR key LIKE 'archive:%'
+                OR key LIKE 'related:%' OR key LIKE 'related-delivery:%' OR key LIKE 'original-blocked-continuation:%'
+                OR key LIKE 'new-user-evidence-continuation:%' ORDER BY rowid DESC LIMIT 1001"""):
+            ids = re.findall(r"[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}", key)
+            candidates = [intent_id, value_id, *ids]
+            identity = next((v.lower() for v in candidates if isinstance(v, str)
+                             and re.fullmatch(r"[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}", v)), "")
+            project, number, title = references.get(identity, ("", identity[:8], ""))
+            kind = key.split(":", 1)[0]
+            if kind == "precheck" and ":rework:" in key:
+                kind = "rework"
+            if kind == "related-delivery":
+                kind = "related"
+            if kind in ("original-blocked-continuation", "new-user-evidence-continuation"):
+                kind = "original_continuation"
+            rows.append(dict(id=key[:256], itemId=identity, project=project, number=number, title=title,
+                             kind=kind, phase=code(phase), observedAt=None))
+        return dict(records=rows[:1000], projects=sorted({v[0] for v in references.values() if v[0]}),
+                    gaps=["receipts_capped"] if len(rows) > 1000 else [])
+    finally:
+        db.close()
+
+
+def bounded(command, *, input_text=None, limit=2 * 1024 * 1024):
+    # All children are owned read-only commands, with bounded time and output.
+    with subprocess.Popen(command, stdin=subprocess.PIPE if input_text is not None else subprocess.DEVNULL,
+                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as process:
+        if input_text is not None:
+            process.stdin.write(input_text.encode("utf-8"))
+            process.stdin.close()
+        import threading
+        timer = threading.Timer(8, process.kill)
+        timer.start()
+        try:
+            data = process.stdout.read(limit + 1)
+            if len(data) > limit:
+                process.kill()
+                raise ValueError("output_limit")
+            if process.wait(timeout=2) != 0:
+                raise ValueError("read_unavailable")
+            return data.decode("utf-8")
+        finally:
+            timer.cancel()
+
+
+def project(config, service, store, journal):
+    gaps = list(store.get("gaps", []))
+    records = store.get("records", [])
+    lookup = {}
+    for row in records:
+        if row["itemId"]:
+            lookup.setdefault(row["itemId"], row)
+    history = {}
+    for line in journal.splitlines():
+        try:
+            entry = json.loads(line)
+            message = entry.get("MESSAGE", "")
+            if not isinstance(message, str) or not message.lstrip().startswith("{"):
+                continue  # Ordinary systemd lifecycle text is not a missing structured service event.
+            event = json.loads(message)
+            if event.get("event") not in EVENTS:
+                continue
+            identity = str(event.get("item_id", "")).lower()
+            item = lookup.get(identity, {})
+            stamp = int(entry["__REALTIME_TIMESTAMP"]) / 1000000
+            at = datetime.datetime.fromtimestamp(stamp, datetime.timezone.utc).isoformat()
+            kind = event["event"].removeprefix("intake_")
+            phase = code(event.get("phase") or ("error" if kind == "error" else "needs_attention" if kind.endswith("attention") else "ready"))
+            # Startup backfill can repeat a confirmed archive; do not present it as another operation.
+            key = (kind, identity, phase, str(event.get("generation", "")))
+            history[key] = dict(id="|".join(key), itemId=identity, project=item.get("project", ""),
+                                number=item.get("number", identity[:8]), title=item.get("title", ""),
+                                kind=kind, phase=phase, observedAt=at)
+        except (ValueError, TypeError, KeyError, OverflowError, AttributeError):
+            gaps.append("unparsed_event")
+    latest = {}
+    for row in records:
+        latest.setdefault((row["kind"], row["itemId"]), row)
+    pending = [r for r in latest.values() if r["phase"] in ACTIVE | ATTENTION]
+    pending.sort(key=lambda r: (r["phase"] not in ACTIVE, r["id"]))
+    if len(pending) > 64:
+        gaps.append("progress_capped")
+    # Receipt states fill older history when the journal no longer retains an event. No timestamp is invented.
+    seen = {(r["itemId"], r["phase"]) for r in history.values()}
+    for row in latest.values():
+        if (row["itemId"], row["phase"]) not in seen:
+            history[("receipt", row["id"])] = {**row, "kind": "receipt:" + row["kind"]}
+    return dict(schema=SCHEMA, sourceId=config["id"], observedAt=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                active=service.get("ActiveState") == "active" and service.get("SubState") == "running", serviceState=code(service.get("SubState")),
+                invocation=code(service.get("InvocationID")), projects=store.get("projects", []),
+                progress=pending[:64], history=sorted(history.values(), key=lambda r: r["observedAt"] or "", reverse=True)[:160],
+                gaps=sorted(set(gaps)))
+
+
+def collect(config):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.@-]{0,100}\.service", config["unit"]):
+        raise ValueError("invalid_unit")
+    root = PurePosixPath(config["stateDirectory"])
+    if not str(root).startswith("/var/lib/") or ".." in root.parts or Path(str(root)).is_symlink():
+        raise ValueError("invalid_state_directory")
+    raw = bounded(["systemctl", "show", config["unit"], "--no-pager", "-p", "User", "-p", "ActiveState",
+                   "-p", "SubState", "-p", "InvocationID"])
+    service = dict(line.split("=", 1) for line in raw.splitlines() if "=" in line)
+    user = service.get("User", "")
+    if user == "root" or not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", user):
+        raise ValueError("invalid_service_user")
+    script = "import base64,json\nscope={'__name__':'intake_reader'}\n"
+    script += "exec(base64.b64decode(" + repr(SOURCE_BASE64) + "),scope)\n"
+    script += "print(json.dumps(scope['read_store'](" + repr(str(root)) + ")))\n"
+    gaps = []
+    try:
+        store = json.loads(bounded(["sudo", "-n", "-u", user, "python3", "-"], input_text=script))
+    except (ValueError, subprocess.SubprocessError):
+        store = dict(records=[], projects=[])
+        gaps.append("receipts_unavailable")
+    try:
+        journal = bounded(["journalctl", "-u", config["unit"], "-n", "160", "--since", "3 days ago", "--no-pager",
+                           "-o", "json", "--output-fields=__REALTIME_TIMESTAMP,MESSAGE"])
+    except (ValueError, subprocess.SubprocessError):
+        journal = ""
+        gaps.append("journal_unavailable")
+    result = project(config, service, store, journal)
+    result["gaps"] = sorted(set(result["gaps"] + gaps))
+    return result
+
+
+if __name__ == "__main__":
+    # The native client supplies CONFIG as data before this bundled module, never as shell text.
+    print(json.dumps(collect(CONFIG), ensure_ascii=False))

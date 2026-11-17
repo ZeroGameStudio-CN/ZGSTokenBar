@@ -129,6 +129,10 @@ public sealed record WindowInspection(
     public UiBounds? IntakeMiniBounds { get; init; }
     public int IntakeProjectCount { get; init; }
     public int IntakeWorkItemCount { get; init; }
+    public string? IntakeMode { get; init; }
+    public int IntakeHistoryCount { get; init; }
+    public int IntakeInFlightCount { get; init; }
+    public string? IntakeServiceStatus { get; init; }
     public long? DisplayedRouterQueuedCount { get; init; }
     public string? DisplayedRouterState { get; init; }
     public string? RouterProjectKey { get; init; }

@@ -49,8 +49,8 @@ public static partial class UsageAccountDirectory
     /// <summary>
     /// agy keeps <c>{ token: { access_token, refresh_token, expiry }, auth_method }</c> (older builds
     /// wrote the token fields at the root). The Google access token lives about an hour and agy
-    /// refreshes it in memory only, so an expired file token is reported as such and the
-    /// <c>agy /usage</c> fallback supplies the reading instead.
+    /// refreshes it in memory only. An expired file token is reported as unavailable; passive
+    /// reads must never run the CLI's potentially interactive authentication fallback.
     /// </summary>
     internal static UsageCredential? ReadAntigravityToken(string path, string? account = null)
     {

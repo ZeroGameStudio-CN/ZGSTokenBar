@@ -119,7 +119,7 @@ internal sealed partial class QuotaApplicationContext
         else
         {
             _bar.HidePluginPopover(MiniAreaIds.Intake);
-            _intakeObserver?.Close();
+            CloseIntakeObservers();
         }
         _bar.SetPluginMiniCards(cards);
     }

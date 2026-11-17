@@ -217,8 +217,16 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
 
     protected override void ApplyPalette(QuotaBackgroundTheme theme)
     {
+        ApplyObservationPalette(this, _popoverScale, _detail);
         var palette = new RouterVisualPalette(UiTokens.CardSurface);
-        foreach (var control in Children(this))
+        _projectMenu.Renderer = new DarkContextMenuRenderer(palette.Surface, palette.Input, palette.Border, palette.Text, palette.Muted);
+        _projectMenu.Font = Font;
+    }
+
+    internal static void ApplyObservationPalette(Control root, float scale, Label primary)
+    {
+        var palette = new RouterVisualPalette(UiTokens.CardSurface);
+        foreach (var control in Children(root))
         {
             var parentSurface = control.Parent;
             while (parentSurface is not null && parentSurface is not RouterSurface) parentSurface = parentSurface.Parent;
@@ -232,21 +240,19 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
                     grid.BackgroundColor = palette.Background; grid.GridColor = palette.Border;
                     grid.ColumnHeadersDefaultCellStyle.BackColor = grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = palette.Surface;
                     grid.ColumnHeadersDefaultCellStyle.ForeColor = grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = palette.Muted;
-                    grid.ColumnHeadersDefaultCellStyle.Padding = new((int)(4 * _popoverScale), (int)(6 * _popoverScale),
-                        (int)(4 * _popoverScale), (int)(6 * _popoverScale));
-                    grid.ColumnHeadersHeight = (int)(30 * _popoverScale); grid.RowTemplate.Height = (int)(26 * _popoverScale);
+                    grid.ColumnHeadersDefaultCellStyle.Padding = new((int)(4 * scale), (int)(6 * scale),
+                        (int)(4 * scale), (int)(6 * scale));
+                    grid.ColumnHeadersHeight = (int)(30 * scale); grid.RowTemplate.Height = (int)(26 * scale);
                     foreach (DataGridViewRow row in grid.Rows) row.Height = grid.RowTemplate.Height;
                     grid.DefaultCellStyle.BackColor = palette.Background; grid.DefaultCellStyle.SelectionBackColor = UiTokens.Mix(palette.Background, palette.Accent, .11f);
-                    grid.DefaultCellStyle.Padding = new((int)(8 * _popoverScale), (int)(4 * _popoverScale), (int)(8 * _popoverScale), (int)(4 * _popoverScale));
+                    grid.DefaultCellStyle.Padding = new((int)(8 * scale), (int)(4 * scale), (int)(8 * scale), (int)(4 * scale));
                     break;
-                case Label label: label.BackColor = background; label.ForeColor = label == _detail ? palette.Text : palette.Muted; break;
+                case Label label: label.BackColor = background; label.ForeColor = label == primary ? palette.Text : palette.Muted; break;
                 case CheckBox check: check.BackColor = background; check.ForeColor = palette.Text; break;
                 case Panel panel: panel.BackColor = background; break;
                 case TextBox text: text.BackColor = palette.Input; text.ForeColor = palette.Text; break;
             }
         }
-        _projectMenu.Renderer = new DarkContextMenuRenderer(palette.Surface, palette.Input, palette.Border, palette.Text, palette.Muted);
-        _projectMenu.Font = Font;
     }
     internal Task RefreshVisibleAsync() => ReadAsync(async token =>
     {
@@ -262,7 +268,7 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
             : historyCapped
                 ? T("列表与当前工单已更新 · 显示最近 60 条历史", "Recent items and selected item updated · Up to 60 recent history entries")
                 : T("列表与当前工单已更新；状态来自 ZOS", "Recent items and selected item updated from ZOS"));
-    });
+    }, preserveRecent: true, refreshingRecent: true);
 
     private async Task FindAsync()
     {
@@ -414,7 +420,7 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
         return access;
     }
 
-    private async Task ReadAsync(Func<CancellationToken, Task> work, bool diagnosticOnly = false, bool preserveRecent = false)
+    private async Task ReadAsync(Func<CancellationToken, Task> work, bool diagnosticOnly = false, bool preserveRecent = false, bool refreshingRecent = false)
     {
         _request?.Cancel();
         using var operation = new CancellationTokenSource();
@@ -455,7 +461,7 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
                 _ => _observed is { } seen ? T($"暂不可用 · 上次更新 {At(seen)}", $"Unavailable · Last read {At(seen)}")
                     : T("暂不可用，稍后刷新", "Unavailable. Try refreshing later"),
             };
-            if (!diagnosticOnly && !preserveRecent) SetRecentEmpty(T("工单暂不可用", "Work items unavailable"), _status.Text);
+            if (!diagnosticOnly && (!preserveRecent || refreshingRecent)) SetRecentEmpty(T("工单暂不可用", "Work items unavailable"), _status.Text);
             else if (!diagnosticOnly) SetTimelineEmpty(T("时间线暂不可用", "Timeline unavailable"), _status.Text);
         }
         finally
@@ -552,7 +558,7 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
     private string T(string zh, string en) => _zh ? zh : en;
     private static string At(DateTimeOffset? value) => value?.ToLocalTime().ToString("MM-dd HH:mm") ?? "—";
 
-    private static RouterGrid Grid()
+    internal static RouterGrid Grid()
     {
         var palette = new RouterVisualPalette(UiTokens.CardSurface);
         var view = new RouterGrid
@@ -577,7 +583,7 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
         return view;
     }
 
-    private static void AddColumn(DataGridView grid, string title, int width) => grid.Columns.Add(new DataGridViewTextBoxColumn
+    internal static void AddColumn(DataGridView grid, string title, int width) => grid.Columns.Add(new DataGridViewTextBoxColumn
     {
         HeaderText = title, ReadOnly = true, SortMode = DataGridViewColumnSortMode.NotSortable,
         MinimumWidth = 40, FillWeight = width == 0 ? 340 : width,

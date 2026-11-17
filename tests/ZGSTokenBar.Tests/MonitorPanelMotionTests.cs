@@ -29,7 +29,7 @@ internal static class MonitorPanelMotionTests
             { Location = new(-30000, -30000), StartPosition = FormStartPosition.Manual, Opacity = 0 };
             owner.Show();
             foreach (var make in new Func<MonitorPanelForm>[] {
-                () => new RouterMonitorForm(observe: false), () => new IntakeObserverForm(true, observeOnShow: false) })
+                () => new RouterMonitorForm(observe: false), () => new IntakeObserverForm(true, observeOnShow: false), IntakeServiceMonitorTests.UnobservedPanel })
             {
                 using var popup = make();
                 var scale = dpi / 96f;
@@ -115,7 +115,7 @@ internal static class MonitorPanelMotionTests
             { Location = new(-30000, -30000), StartPosition = FormStartPosition.Manual, Opacity = 0 };
             owner.Show();
             foreach (var make in new Func<MonitorPanelForm>[] {
-                () => new RouterMonitorForm(observe: false), () => new IntakeObserverForm(true, observeOnShow: false) })
+                () => new RouterMonitorForm(observe: false), () => new IntakeObserverForm(true, observeOnShow: false), IntakeServiceMonitorTests.UnobservedPanel })
             {
                 using var popup = make();
                 var scale = dpi / 96f;
