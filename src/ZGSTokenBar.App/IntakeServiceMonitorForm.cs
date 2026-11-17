@@ -234,10 +234,13 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
       "waiting_upstream" => T("等待上游恢复", "Waiting for upstream"), "waiting_original" => T("等待原任务", "Waiting for original"),
       "submitting" => T("正在提交续办", "Submitting continuation"), "submitted" => T("已提交待回执", "Submitted; awaiting receipt"),
       "retry" => T("等待重查", "Waiting for reconciliation"), "classified" => T("分类已记录", "Classification recorded"),
+      "archive_pending" => T("等待归档回执", "Awaiting archive receipt"),
+      "archive_submitted" => T("归档请求已提交", "Archive request submitted"),
+      "archive_observation_deferred" => T("等待归档观测", "Deferred archive check"),
       "confirmed" => T("回执已确认", "Receipt confirmed"), "archived" => T("已归档", "Archived"), "needs_attention" => T("保留待核对", "Held for review"),
       "needs_review" => T("待核对", "Needs review"), "indeterminate" => T("结果待核对", "Outcome unknown"), "related" => T("已关联原任务", "Linked to original"),
       "source_changed" => T("原卡已有变化", "Source changed"), "reconciled_existing" => T("已有记录已核对", "Existing record reconciled"),
-      "error" => T("服务异常", "Service error"), "ready" => T("已启动", "Ready"), _ => phase };
+      "error" => T("服务异常", "Service error"), "ready" => T("已启动", "Ready"), _ => T("其他已记录阶段", "Other recorded stage") };
     private static Label Label(string text = "") => new() { Text = text, Dock = DockStyle.Fill, AutoEllipsis = true, Margin = Padding.Empty,
         UseCompatibleTextRendering = true, TextAlign = ContentAlignment.MiddleLeft, Height = 26 };
     private static FlowLayoutPanel Flow(params Control[] controls)
