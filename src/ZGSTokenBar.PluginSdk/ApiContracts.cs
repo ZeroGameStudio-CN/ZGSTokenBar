@@ -98,6 +98,9 @@ public sealed record WindowInspection(
     public bool Visible { get; init; }
     public bool EmbeddedInTaskbar { get; init; }
     public string? TaskbarEmbedStatus { get; init; }
+    public string? TaskbarLastDetachReason { get; init; }
+    public DateTimeOffset? TaskbarLastDetachAt { get; init; }
+    public string? TaskbarLastDetachDetail { get; init; }
     public bool RemoteSession { get; init; }
     public double? ObservedOutputTokensPerSecond { get; init; }
     public DateTimeOffset? OutputRateCapturedAt { get; init; }

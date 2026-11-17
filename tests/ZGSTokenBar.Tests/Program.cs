@@ -19,6 +19,13 @@ using ZGSTokenBar.Plugin.AiGatewayObserver;
 
 if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJobExitCode;
 
+if (args.Length == 1 && args[0] == "--dock-quota-order")
+{
+    DockQuotaOrderTests.Run();
+    Console.WriteLine("PASS provider grouping, quota ranking, settled changes and interaction stability");
+    return 0;
+}
+
 if (args.Length == 1 && args[0] == "--taskbar-fullscreen-regressions")
 {
     System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
@@ -684,6 +691,7 @@ var tests = new (string Name, Action Run)[]
     ("Taskbar keeps a clear seat and waits for a stable gap", TestTaskbarRowStability),
     ("Fresh taskbar reads retain an existing safe seat during layout races", TaskbarFreshSeatTests.Run),
     ("Fullscreen video suspends and restores the embedded taskbar child", TaskbarFullscreenTests.Run),
+    ("Dock quota order settles changes within fixed provider groups", DockQuotaOrderTests.Run),
     ("Taskbar Mini collapse anchor", TestTaskbarMiniCollapseAnchor),
     ("Taskbar Mini popover placement", TestTaskbarMiniPopoverPlacement),
     ("Taskbar embed attach, detach and parent loss", TestTaskbarEmbeddingWithFakeTaskbar),

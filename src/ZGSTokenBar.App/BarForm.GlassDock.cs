@@ -11,6 +11,7 @@ internal sealed partial class BarForm
     private UsageBoard _usageBoard = UsageBoard.Empty;
     private readonly Dictionary<string, bool?> _usageProviderActivity = new(StringComparer.Ordinal);
     private HashSet<string> _codexDockVisibleTiers = CodexDockTierFilter.All.ToHashSet(StringComparer.Ordinal);
+    private readonly GlassDockAccountOrder _glassAccountOrder = new();
     private HashSet<ProviderKind> _enabledQuotaProviders = Enum.GetValues<ProviderKind>().ToHashSet();
     private readonly bool _explicitQuotaEnablement;
     private int _glassMaxRings = GlassDockLayout.MaxVisibleRings;
@@ -245,6 +246,13 @@ internal sealed partial class BarForm
         var items = BuildGlassItems().Where(item => !_hiddenDockItems.Contains(item.Id) && !_hiddenDockItems.Contains(item.Ring.ProviderId)
             && (item.Card is not { Provider: ProviderKind.Codex, IsService: false } account
                 || _codexDockVisibleTiers.Contains(CodexDockTierFilter.Category(account.Badge)))).ToArray();
+        var interacting = !_renderOnly && (_popoverPinned || _taskbarDragging
+            || _quotaPopover is { Visible: true } || _pluginPopover is { Visible: true }
+            || _systemUsagePopover is { Visible: true } || _codexAccountsPopover is { Visible: true }
+            || _glassMenu is { Visible: true }
+            || IsHandleCreated && ClientRectangle.Contains(PointToClient(Cursor.Position)));
+        var order = _glassAccountOrder.Update(items.Select(item => item.Ring).ToArray(), Environment.TickCount64, interacting);
+        items = items.Select(item => item with { Ring = item.Ring with { AccountOrder = order[item.Ring.StableId] } }).ToArray();
         var rings = items.Select(item => item.Ring).ToArray();
         var showRouter = RouterCard is not null;
         var plan = GlassDockLayout.Plan(rings, _glassMaxRings, HasIntakeCard, showRouter);

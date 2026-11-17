@@ -46,6 +46,15 @@ internal static class TaskbarFullscreenTests
         Set("_taskbarRowProbePending", true); Set("_taskbarRowProbeAfter", long.MaxValue); Set("_taskbarRowPollAfter", long.MaxValue);
         var fullscreen = false;
         Set("_fullscreenWindowProbe", (Func<string?, bool>)(_ => fullscreen));
+        // Ordinary background layout reads can also be temporarily unavailable without
+        // requesting a desktop overlay. Retain the child and restore from new evidence.
+        Set("_taskbarRowSample", ((Rectangle[]?)null, Environment.TickCount64));
+        Place();
+        Check(!bar.Visible && bar.EmbeddedInTaskbar && TaskbarEmbedding.ParentOf(bar.Handle) == parent.Handle,
+            $"An ordinary transient layout recheck never shows an adjacent floating bar: visible={bar.Visible}, embedded={bar.EmbeddedInTaskbar}, parent={TaskbarEmbedding.ParentOf(bar.Handle)}, expected={parent.Handle}, status={bar.TaskbarEmbedStatus}, detach={bar.TaskbarLastDetachReason}, detail={bar.TaskbarLastDetachDetail}");
+        Set("_taskbarRowSample", (new Rectangle[] { apps, tray }, Environment.TickCount64));
+        Place();
+        Check(bar.Visible && bar.TaskbarEmbedStatus == "embedded", "A fresh layout restores the same in-row child.");
         for (var cycle = 0; cycle < 4; cycle++)
         {
             fullscreen = true; Place();

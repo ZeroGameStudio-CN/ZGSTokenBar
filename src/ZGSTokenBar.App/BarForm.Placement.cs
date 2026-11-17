@@ -15,7 +15,6 @@ internal sealed partial class BarForm
     private Point _adjacentTaskbarAnchor;
     private int? _dockedRenderDpi;
     private bool _taskbarFullscreenSuspended;
-    private long _taskbarFullscreenResumeDeadline;
     private Func<string?, bool> _fullscreenWindowProbe = TaskbarPlacement.ShouldHideForFullscreen;
 
     public void SyncTaskbarPlacement()
@@ -105,23 +104,21 @@ internal sealed partial class BarForm
         try
         {
             if (SuspendForFullscreen(track.MonitorName)) return;
-            if (_taskbarFullscreenSuspended && _taskbarFullscreenResumeDeadline == 0)
-                _taskbarFullscreenResumeDeadline = Environment.TickCount64 + 5000;
             var oldBounds = ScreenBounds;
             var wasEmbedded = EmbeddedInTaskbar;
             var wasInRow = wasEmbedded || _taskbarRowOverlayFor != 0;
             var remote = _embedRequested && RemoteSession();
             if (remote && wasEmbedded) DetachFromTaskbar("remote-session");
             var rowCandidate = TryGetSafeRowLocation(track, placementSize, anchor, oldBounds, remote, out var location, out var reason);
-            if (!rowCandidate && _taskbarFullscreenSuspended
-                && (reason is "layout-unavailable" or "waiting-for-space")
-                && Environment.TickCount64 < _taskbarFullscreenResumeDeadline)
+            if (!rowCandidate && _embedRequested && (reason is "layout-unavailable" or "waiting-for-space"))
             {
+                // A transient recheck is not a request to switch to a desktop overlay.
+                // Keep any existing native parent; a fresh verified fit restores in the row.
+                TaskbarEmbedStatus = "hidden:" + reason;
                 if (Visible) Hide();
                 return;
             }
             _taskbarFullscreenSuspended = false;
-            _taskbarFullscreenResumeDeadline = 0;
             var rowOverlay = rowCandidate && remote;
             if (rowCandidate && !rowOverlay)
             {
@@ -190,7 +187,6 @@ internal sealed partial class BarForm
         if (!_fullscreenWindowProbe(monitor)) return false;
         if (!_taskbarFullscreenSuspended) InvalidateTaskbarRowSample();
         _taskbarFullscreenSuspended = true;
-        _taskbarFullscreenResumeDeadline = 0;
         TaskbarEmbedStatus = "hidden:fullscreen";
         if (Visible) Hide();
         return true;

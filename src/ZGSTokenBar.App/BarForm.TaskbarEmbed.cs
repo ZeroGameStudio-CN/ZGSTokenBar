@@ -39,6 +39,9 @@ internal sealed partial class BarForm
 
     /// <summary>Last embed outcome, for logs and acceptance checks.</summary>
     internal string TaskbarEmbedStatus { get; private set; } = "off";
+    internal string? TaskbarLastDetachReason { get; private set; }
+    internal DateTimeOffset? TaskbarLastDetachAt { get; private set; }
+    internal string? TaskbarLastDetachDetail { get; private set; }
 
     /// <summary>
     /// While embedded the bar cannot own popovers (that would make Shell_TrayWnd their owner and tie
@@ -331,6 +334,11 @@ internal sealed partial class BarForm
     private void DetachFromTaskbar(string reason)
     {
         if (_embedParent == 0) return;
+        TaskbarLastDetachReason = reason;
+        TaskbarLastDetachAt = DateTimeOffset.UtcNow;
+        TaskbarLastDetachDetail = $"bounds={ScreenBounds}; sampleAgeMs={Environment.TickCount64 - _taskbarRowSample.ReadAt}; "
+            + $"layoutPending={_taskbarRowStability.AwaitingLayout}; revision={_taskbarRowStability.LayoutRevision}; "
+            + $"probePending={_taskbarRowProbePending}; parent={_embedParent}; visible={Visible}";
         _embedParent = 0;
         _taskbarRowStability.ResetReturn();
         _embedTransition = true;
@@ -412,7 +420,7 @@ internal sealed partial class BarForm
     /// True while this session is shown over Remote Desktop. Asked live (SM_REMOTESESSION), so a
     /// console session taken over by RDP, or handed back, is noticed by the next watchdog tick.
     /// </summary>
-    private static bool RemoteSession() => SystemInformation.TerminalServerSession;
+    private bool RemoteSession() => !_renderOnly && SystemInformation.TerminalServerSession;
 
     private void OnTaskbarRecreated()
     {

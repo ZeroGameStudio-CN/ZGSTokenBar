@@ -23,6 +23,7 @@ public sealed record GlassDockRing(
     public bool InUse { get; init; }
 
     public int ProviderOrder { get; init; }
+    public int AccountOrder { get; init; }
     public string StableId { get; init; } = "";
 
     /// <summary>
@@ -244,6 +245,7 @@ public static class GlassDockLayout
         .OrderBy(ring => ring.OverflowOnly)
         .ThenByDescending(ring => ring.InUse)
         .ThenBy(ring => ring.ProviderOrder)
+        .ThenBy(ring => ring.AccountOrder)
         .ThenBy(ring => ring.StableId, StringComparer.Ordinal)
         .ThenBy(ring => ring.Title, StringComparer.Ordinal)
         .ThenBy(ring => ring.AccountNumber)
