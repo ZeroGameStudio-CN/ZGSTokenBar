@@ -128,7 +128,7 @@ internal sealed partial class BarForm
         // ordinary button change. An exact fit is usable only while it is verified.
         if (alreadyInRow && occupied is not null
             && (!followAnchor || awaitingLayout)
-            && _taskbarRowStability.CanKeepCurrent(currentBounds.Size == size, now)
+            && _taskbarRowStability.CanKeepCurrent(currentBounds.Size == size, now, observed.ReadAt)
             && TaskbarPlacement.CurrentRowLocationFits(track, size, currentBounds.Location, occupied,
                 awaitingLayout ? extraClearance : 0))
         {
@@ -136,8 +136,8 @@ internal sealed partial class BarForm
             return true;
         }
 
-        // An unconfirmed layout can keep the existing seat briefly, but cannot justify a move or
-        // an attachment. A missing reading or sustained event burst uses the full-size overlay.
+        // A recent unconfirmed read may only retain the same clear seat, never move or attach.
+        // Missing or stale evidence still uses the full-size overlay.
         if (awaitingLayout || occupied is null)
         {
             if (occupied is null) _taskbarRowStability.ResetReturn();
@@ -179,12 +179,17 @@ internal sealed partial class BarForm
                 _taskbarRowProbePending = false;
             }
             if (IsDisposed || !IsHandleCreated || !_embedRequested || !_taskbarDocked) return;
-            if (key == _taskbarRowKey && _taskbarRowStability.ConfirmLayout(revision))
+            if (key == _taskbarRowKey)
             {
                 var now = Environment.TickCount64;
                 if (now - startedAt >= LayoutMaximumAgeMs) occupied = null;
-                _taskbarRowSample = (occupied, startedAt);
-                _taskbarRowPollAfter = occupied is null ? now + LayoutUnavailablePollMs : startedAt + LayoutPollMs;
+                var confirmed = _taskbarRowStability.ConfirmLayout(revision);
+                // A newer notice does not make a real clear-space measurement useless. Keep it
+                // for the short existing-seat lease; AwaitingLayout still blocks moves/attachment.
+                if (confirmed || _taskbarRowStability.AwaitingLayout && occupied is not null)
+                    _taskbarRowSample = (occupied, startedAt);
+                if (confirmed)
+                    _taskbarRowPollAfter = occupied is null ? now + LayoutUnavailablePollMs : startedAt + LayoutPollMs;
             }
             SyncTaskbarPlacement();
         }

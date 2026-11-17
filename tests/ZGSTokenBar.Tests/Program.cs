@@ -19,6 +19,14 @@ using ZGSTokenBar.Plugin.AiGatewayObserver;
 
 if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJobExitCode;
 
+if (args.Length == 1 && args[0] == "--taskbar-seat-read-race")
+{
+    System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
+    TaskbarFreshSeatTests.Run();
+    Console.WriteLine("PASS fresh taskbar-seat readings, stale revisions and real-overlap protection");
+    return 0;
+}
+
 if (args.Length is 1 or 2 && args[0] == "--intake-service")
 {
     System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
@@ -666,6 +674,7 @@ var tests = new (string Name, Action Run)[]
     ("Taskbar DPI rescale without a restart", () => TaskbarDpiReconnectTests.Run()),
     ("Taskbar horizontal drag keeps the native parent", TaskbarInlineDragTests.Run),
     ("Taskbar keeps a clear seat and waits for a stable gap", TestTaskbarRowStability),
+    ("Fresh taskbar reads retain an existing safe seat during layout races", TaskbarFreshSeatTests.Run),
     ("Taskbar Mini collapse anchor", TestTaskbarMiniCollapseAnchor),
     ("Taskbar Mini popover placement", TestTaskbarMiniPopoverPlacement),
     ("Taskbar embed attach, detach and parent loss", TestTaskbarEmbeddingWithFakeTaskbar),

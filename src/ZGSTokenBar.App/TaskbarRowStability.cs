@@ -26,8 +26,10 @@ internal sealed class TaskbarRowStability
         return true;
     }
 
-    internal bool CanKeepCurrent(bool sameSize, long now) =>
-        _awaitingLayoutSince is not { } since || (sameSize && now - since < RefreshGraceMs);
+    internal bool CanKeepCurrent(bool sameSize, long now, long? observedAt = null) =>
+        _awaitingLayoutSince is not { } since || sameSize &&
+        (now - since < RefreshGraceMs
+            || observedAt is { } read && read >= since && read <= now && now - read < RefreshGraceMs);
 
     internal void ForgetLayout()
     {
