@@ -42,7 +42,7 @@ class ReaderTests(unittest.TestCase):
 
     def test_no_writes_or_private_payloads(self):
         with tempfile.TemporaryDirectory(prefix="zgstokenbar-intake-fixture-") as directory:
-            root = Path(directory); path = self.fixture(root)
+            root = Path(directory).resolve(); path = self.fixture(root)
             before = hashlib.sha256(path.read_bytes()).hexdigest()
             value = reader.read_store(root)
             self.assertEqual(value["projects"], ["LAB"])
@@ -53,7 +53,7 @@ class ReaderTests(unittest.TestCase):
 
     def test_replay_and_old_inflight_intents_are_not_new_work(self):
         with tempfile.TemporaryDirectory(prefix="zgstokenbar-intake-fixture-") as directory:
-            root = Path(directory); self.fixture(root)
+            root = Path(directory).resolve(); self.fixture(root)
             lines = [json.dumps(dict(MESSAGE="Started intake service.", __REALTIME_TIMESTAMP="1700000000000000"))]
             for stamp in (1700000001000000, 1700000002000000):
                 lines.append(json.dumps(dict(MESSAGE=json.dumps(dict(event="intake_archive", item_id=A, phase="archived", generation=1)),
@@ -67,7 +67,7 @@ class ReaderTests(unittest.TestCase):
 
     def test_hashed_archive_and_continuation_formats_keep_identity_and_stage(self):
         with tempfile.TemporaryDirectory(prefix="zgstokenbar-intake-fixture-") as directory:
-            root = Path(directory); path = self.fixture(root)
+            root = Path(directory).resolve(); path = self.fixture(root)
             with closing(sqlite3.connect(path)) as db, db:
                 for key, phase in (("precheck:" + B + ":rework:2:digest", "waiting_original"),
                                    ("related-delivery:" + A + ":digest", "submitted")):
@@ -83,7 +83,7 @@ class ReaderTests(unittest.TestCase):
 
     def test_collector_child_is_readonly_and_service_user_scoped(self):
         with tempfile.TemporaryDirectory(prefix="zgstokenbar-intake-fixture-") as directory:
-            root = Path(directory); self.fixture(root)
+            root = Path(directory).resolve(); self.fixture(root)
             calls = []
             def command(args, **kwargs):
                 calls.append(args)
