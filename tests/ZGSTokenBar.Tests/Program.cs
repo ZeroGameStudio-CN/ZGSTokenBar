@@ -19,6 +19,14 @@ using ZGSTokenBar.Plugin.AiGatewayObserver;
 
 if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJobExitCode;
 
+if (args.Length == 1 && args[0] == "--taskbar-fullscreen-regressions")
+{
+    System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
+    TaskbarFullscreenTests.Run();
+    Console.WriteLine("PASS fullscreen suspension, native-parent retention and direct in-row restoration");
+    return 0;
+}
+
 if (args.Length == 1 && args[0] == "--taskbar-seat-read-race")
 {
     System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
@@ -675,6 +683,7 @@ var tests = new (string Name, Action Run)[]
     ("Taskbar horizontal drag keeps the native parent", TaskbarInlineDragTests.Run),
     ("Taskbar keeps a clear seat and waits for a stable gap", TestTaskbarRowStability),
     ("Fresh taskbar reads retain an existing safe seat during layout races", TaskbarFreshSeatTests.Run),
+    ("Fullscreen video suspends and restores the embedded taskbar child", TaskbarFullscreenTests.Run),
     ("Taskbar Mini collapse anchor", TestTaskbarMiniCollapseAnchor),
     ("Taskbar Mini popover placement", TestTaskbarMiniPopoverPlacement),
     ("Taskbar embed attach, detach and parent loss", TestTaskbarEmbeddingWithFakeTaskbar),

@@ -32,6 +32,10 @@ internal static class DockPolicyTests
             Check(state[id] is null, "API-only providers have unknown activity instead of fabricated usage-based activity.");
         var cliOnly = ProviderProcessActivity.FromProcessSnapshot([new(206, 1, "gh")], 100);
         Check(cliOnly[UsageProviderIds.Copilot] is false, "An ordinary GitHub CLI command does not count as Copilot activity.");
+        var bot = ProviderProcessActivity.FromProcessSnapshot([new(300, 1, "Grok Bot")], 100);
+        Check(bot[UsageProviderIds.Grok] is true, "The running Grok Bot desktop client promotes its signed-in Grok account.");
+        var ownBot = ProviderProcessActivity.FromProcessSnapshot([new(100, 1, "ZGSTokenBar"), new(301, 100, "Grok Bot")], 100);
+        Check(ownBot[UsageProviderIds.Grok] is false, "A matching helper owned by the observer still cannot fabricate activity.");
         Check(ProviderProcessActivity.FromProcessSnapshot(null, 100).Values.All(value => value is null),
             "A failed process snapshot is unknown for every provider.");
     }

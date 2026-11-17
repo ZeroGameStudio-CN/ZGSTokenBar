@@ -14,6 +14,9 @@ internal sealed partial class BarForm
     private TaskbarPlacement.PlacementTrack? _adjacentTaskbarTrack;
     private Point _adjacentTaskbarAnchor;
     private int? _dockedRenderDpi;
+    private bool _taskbarFullscreenSuspended;
+    private long _taskbarFullscreenResumeDeadline;
+    private Func<string?, bool> _fullscreenWindowProbe = TaskbarPlacement.ShouldHideForFullscreen;
 
     public void SyncTaskbarPlacement()
     {
@@ -57,6 +60,8 @@ internal sealed partial class BarForm
         var placementSize = WindowState == FormWindowState.Normal ? Size : RestoreBounds.Size;
         if (placementSize.Width <= 0 || placementSize.Height <= 0) placementSize = Size;
         var preference = _placementCoordinator.DockedPreference(topology, profile);
+        if (SuspendForFullscreen(preference.PreferredMonitorName ?? _resolvedTaskbarMonitor
+            ?? Screen.FromHandle(Handle).DeviceName)) return;
         if (TaskbarPlacement.TryGetTrack(placementSize, preference.PreferredMonitorName, out var track))
         {
             // A remote/display reconnect can leave WinForms' DeviceDpi at the old value.
@@ -99,16 +104,30 @@ internal sealed partial class BarForm
         _placingTaskbar = true;
         try
         {
+            if (SuspendForFullscreen(track.MonitorName)) return;
+            if (_taskbarFullscreenSuspended && _taskbarFullscreenResumeDeadline == 0)
+                _taskbarFullscreenResumeDeadline = Environment.TickCount64 + 5000;
             var oldBounds = ScreenBounds;
             var wasEmbedded = EmbeddedInTaskbar;
             var wasInRow = wasEmbedded || _taskbarRowOverlayFor != 0;
             var remote = _embedRequested && RemoteSession();
             if (remote && wasEmbedded) DetachFromTaskbar("remote-session");
             var rowCandidate = TryGetSafeRowLocation(track, placementSize, anchor, oldBounds, remote, out var location, out var reason);
+            if (!rowCandidate && _taskbarFullscreenSuspended
+                && (reason is "layout-unavailable" or "waiting-for-space")
+                && Environment.TickCount64 < _taskbarFullscreenResumeDeadline)
+            {
+                if (Visible) Hide();
+                return;
+            }
+            _taskbarFullscreenSuspended = false;
+            _taskbarFullscreenResumeDeadline = 0;
             var rowOverlay = rowCandidate && remote;
             if (rowCandidate && !rowOverlay)
             {
-                using (PerfTrace.Measure("placement.embed")) EnsureTaskbarEmbedding(track.MonitorName);
+                if (!EmbeddedInTaskbar || _embedParent != track.TaskbarWindow
+                    || TaskbarEmbedding.ParentOf(Handle) != track.TaskbarWindow || !TaskbarEmbedding.IsChild(Handle))
+                    using (PerfTrace.Measure("placement.embed")) EnsureTaskbarEmbedding(track.MonitorName);
             }
             else if (!rowCandidate)
             {
@@ -118,13 +137,6 @@ internal sealed partial class BarForm
 
             var inRow = rowOverlay || EmbeddedInTaskbar;
             _taskbarRowOverlayFor = 0;
-            if (!EmbeddedInTaskbar && TaskbarPlacement.ShouldHideForFullscreen(track.MonitorName))
-            {
-                _taskbarRowStability.ResetReturn();
-                if (rowOverlay) TaskbarEmbedStatus = "fallback:fullscreen";
-                if (Visible) Hide();
-                return;
-            }
             // Cross the taskbar edge without jumping sideways, and keep that anchor through
             // subsequent refreshes instead of snapping back to the saved preference.
             var adjacentAnchor = preserveAdjacentPosition && wasInRow ? oldBounds.Location :
@@ -158,6 +170,7 @@ internal sealed partial class BarForm
             }
             // Showing before moving can leave a one-frame overlap while Explorer lays out its icons.
             if (!wasVisible) Show();
+            if (EmbeddedInTaskbar) TaskbarEmbedStatus = "embedded";
             if (inRow && rowOverlay)
             {
                 _taskbarRowOverlayFor = track.TaskbarWindow;
@@ -170,6 +183,17 @@ internal sealed partial class BarForm
                 using (PerfTrace.Measure("placement.reposition-popovers")) RepositionPopovers();
         }
         finally { _placingTaskbar = false; }
+    }
+
+    private bool SuspendForFullscreen(string? monitor)
+    {
+        if (!_fullscreenWindowProbe(monitor)) return false;
+        if (!_taskbarFullscreenSuspended) InvalidateTaskbarRowSample();
+        _taskbarFullscreenSuspended = true;
+        _taskbarFullscreenResumeDeadline = 0;
+        TaskbarEmbedStatus = "hidden:fullscreen";
+        if (Visible) Hide();
+        return true;
     }
 
     public void ClampToVisibleScreen()

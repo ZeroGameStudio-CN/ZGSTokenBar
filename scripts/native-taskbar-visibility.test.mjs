@@ -17,7 +17,9 @@ test('taskbar Mini restores a system-minimized window during its placement tick'
   assert.match(body, /WindowState != FormWindowState\.Normal/);
   assert.match(body, /WindowState = FormWindowState\.Normal/);
   assert.match(body, /TaskbarPlacement\.ShowAt\(Handle, location, placementSize\)/);
-  assert.match(body, /TaskbarPlacement\.ShouldHideForFullscreen\(/);
+  assert.match(body, /SuspendForFullscreen\(/);
+  assert.match(barForm, /_fullscreenWindowProbe = TaskbarPlacement\.ShouldHideForFullscreen/);
+  assert.ok(body.indexOf('SuspendForFullscreen(') < body.indexOf('TryGetSafeRowLocation('));
   assert.match(body, /\+\+_taskbarPlacementMisses < TaskbarPlacementMissThreshold/);
   assert.match(body, /_taskbarPlacementEstablished = true/);
 });
@@ -36,7 +38,8 @@ test('taskbar Mini placement reasserts topmost without forcing a visible window 
 });
 
 test('taskbar Mini treats maximized windows separately from real fullscreen windows', () => {
-  assert.match(placement, /if \(IsZoomed\(foreground\)\) return false/);
+  assert.match(placement, /return CoversMonitor\(bounds\.Rectangle, screen\)/);
+  assert.doesNotMatch(placement, /if \(IsZoomed\(foreground\)\) return false/);
   assert.match(placement, /Screen\.FromHandle\(foreground\)\.Bounds/);
   assert.match(placement, /Windows\.UI\.Core\.CoreWindow/);
   assert.match(placement, /XamlExplorerHostIslandWindow/);

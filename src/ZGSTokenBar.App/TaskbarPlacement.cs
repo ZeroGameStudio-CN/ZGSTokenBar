@@ -445,7 +445,6 @@ internal static class TaskbarPlacement
         {
             return false;
         }
-        if (IsZoomed(foreground)) return false;
         if (!GetWindowRect(foreground, out var bounds)) return false;
 
         var foregroundScreen = Screen.FromHandle(foreground);
@@ -456,15 +455,15 @@ internal static class TaskbarPlacement
         }
 
         var screen = Screen.FromHandle(foreground).Bounds;
-        var coversScreen = bounds.Left <= screen.Left + 1
-            && bounds.Top <= screen.Top + 1
-            && bounds.Right >= screen.Right - 1
-            && bounds.Bottom >= screen.Bottom - 1;
-        if (!coversScreen) return false;
-
-        var monitorTaskbar = FindTaskbarForMonitor(foregroundScreen.DeviceName, taskbar);
-        return monitorTaskbar == 0 || !IsWindowAbove(monitorTaskbar, foreground);
+        // Chromium/video fullscreen can retain WS_MAXIMIZE. Geometry distinguishes it from
+        // ordinary maximization into the work area. Shell Z-order may lag fullscreen entry.
+        return CoversMonitor(bounds.Rectangle, screen);
     }
+
+    internal static bool CoversMonitor(Rectangle bounds, Rectangle screen) =>
+        bounds.Width > 0 && bounds.Height > 0 && screen.Width > 0 && screen.Height > 0
+        && bounds.Left <= screen.Left + 1 && bounds.Top <= screen.Top + 1
+        && bounds.Right >= screen.Right - 1 && bounds.Bottom >= screen.Bottom - 1;
 
     private static nint FindTaskbarForMonitor(string monitorName, nint primaryTaskbar)
     {

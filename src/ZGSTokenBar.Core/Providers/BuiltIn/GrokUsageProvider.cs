@@ -4,7 +4,7 @@ public sealed class GrokUsageProvider : UsageProvider
 {
     public override ProviderDefinition Definition { get; } = new(UsageProviderIds.Grok, "Grok", "#38bdf8", 900, UsageSurface.Mini,
         "GET https://cli-chat-proxy.grok.com/v1/billing?format=credits with ~/.grok/auth.json, else grok usage --json")
-        { ActivityProcessNames = ["grok"] };
+        { ActivityProcessNames = ["grok", "grok bot", "grokbot"] };
 
     public override string IconResource => "grok-official-icon.png";
     public override IReadOnlyList<string> Windows => ["credits"];
