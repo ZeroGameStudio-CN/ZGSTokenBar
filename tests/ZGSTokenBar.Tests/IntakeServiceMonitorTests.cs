@@ -11,6 +11,7 @@ internal static class IntakeServiceMonitorTests
         var context = SynchronizationContext.Current;
         try
         {
+            CheckInvalidConfigurations();
             Throws(() => IntakeServiceMonitorClient.ValidateSources([Source with { SshTarget = "-oProxyCommand=bad" }]));
             Throws(() => IntakeServiceMonitorClient.ValidateSources([Source with { StateDirectory = "/var/lib/../etc" }]));
             Throws(() => IntakeServiceMonitorClient.ValidateSources([Source with { Unit = "x.service;touch x" }]));
@@ -21,6 +22,24 @@ internal static class IntakeServiceMonitorTests
                 foreach (var chinese in new[] { true, false }) View(dpi, chinese, captures);
         }
         finally { SynchronizationContext.SetSynchronizationContext(context); }
+    }
+
+    private static void CheckInvalidConfigurations()
+    {
+        var directory = Directory.CreateTempSubdirectory("tokenbar-intake-config-");
+        var profile = IntakeServiceMonitorClient.ProfilePath(directory.FullName);
+        try
+        {
+            foreach (var json in new[] { """{"schemaVersion":2,"sources":[]}""",
+                         """{"schemaVersion":1.5,"sources":[]}""", """{"schemaVersion":1,"sources":[]}""" })
+            {
+                File.WriteAllText(profile, json);
+                var client = new IntakeServiceMonitorClient(directory.FullName);
+                Check(client.ConfigurationError is not null && client.Sources.Count == 0,
+                    "An invalid on-disk profile becomes an unavailable state with no SSH targets.");
+            }
+        }
+        finally { File.Delete(profile); directory.Delete(); }
     }
 
     private static IntakeServiceReading Reading()
@@ -36,12 +55,13 @@ internal static class IntakeServiceMonitorTests
 
     private static void View(int dpi, bool chinese, string? captures)
     {
-        var reads = 0; var fail = false; var partial = false;
+        var reads = 0; var fail = false; var partial = false; var malformed = false;
         TaskCompletionSource<IntakeServiceReading>? pending = null;
         var client = new IntakeServiceMonitorClient([Source], (_, token) =>
         {
             reads++;
             if (fail) return Task.FromException<IntakeServiceReading>(new IOException("fixture"));
+            if (malformed) return Task.FromResult(Reading() with { Schema = "unexpected" });
             if (partial) return Task.FromResult(Reading() with { Progress = [], History = [], Projects = [], Gaps = ["receipts_unavailable"] });
             return pending?.Task.WaitAsync(token) ?? Task.FromResult(Reading());
         });
@@ -49,11 +69,19 @@ internal static class IntakeServiceMonitorTests
         form.ConfigureFor(new(-28500, -28000, 48, 44), true, dpi / 96f,
             QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), new(-30000, -30000, 3840, 2160));
         form.Show(); Application.DoEvents();
+        var progress = Descendants(form).OfType<RouterGrid>().Single(grid => grid.ColumnCount == 3);
+        Check(progress.EmptyTitle.Contains(chinese ? "正在读取" : "Reading", StringComparison.Ordinal),
+            "Before the first observation the surface shows loading instead of an empty queue.");
+        malformed = true;
+        Pump(form.RefreshAsync());
+        Check(progress.EmptyTitle.Contains(chinese ? "不可确认" : "unconfirmed", StringComparison.Ordinal)
+            && form.Observation.History == 0, "A malformed first observation leaves the queue unconfirmed.");
+        malformed = false;
         Pump(form.RefreshAsync());
         Check(form.Observation is { Projects: 2, History: 2, InFlight: 1 }, "History and progress appear directly without a work-item selection.");
         var buttons = Descendants(form).OfType<RouterButton>().ToArray();
         buttons.Single(b => b.Text == "LAB").PerformClick();
-        Check(form.Observation.History == 1 && reads == 1, "Project selection filters the observation, without another business read.");
+        Check(form.Observation.History == 1 && reads == 2, "Project selection filters the observation, without another business read.");
         buttons = Descendants(form).OfType<RouterButton>().ToArray();
         buttons.Single(b => b.Text == (chinese ? "全部项目" : "All projects")).PerformClick();
         Check(form.Observation.History == 2, "All projects remains available and is the default.");
@@ -80,7 +108,10 @@ internal static class IntakeServiceMonitorTests
         partial = true; Pump(form.RefreshAsync());
         Check(form.Observation.History == 2 && form.Observation.Status.Contains(chinese ? "不完整" : "incomplete", StringComparison.Ordinal),
             "A partial service read retains history and cannot claim a successful empty queue.");
-        partial = false; fail = true; Pump(form.RefreshAsync());
+        partial = false; malformed = true; Pump(form.RefreshAsync());
+        Check(form.Observation.History == 2 && form.Observation.Status.Contains(chinese ? "保留上次记录" : "Keeping previous records", StringComparison.Ordinal),
+            "A non-conforming reply retains earlier rows and reports unavailability through the UI.");
+        malformed = false; fail = true; Pump(form.RefreshAsync());
         Check(form.Observation.History == 2 && form.Observation.Status.Contains(chinese ? "不可用" : "unavailable", StringComparison.Ordinal),
             "A failed observation is unavailable with retained history, never an empty or healthy service.");
     }

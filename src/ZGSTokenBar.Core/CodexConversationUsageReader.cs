@@ -91,11 +91,14 @@ public sealed partial class CodexConversationUsageReader
             _cache.TryGetValue(path, out var state);
             try
             {
-                var file = new FileInfo(path);
-                if (!file.Exists) { if (state is not null) state.ReadFailed = true; continue; }
                 using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
                     FileShare.ReadWrite | FileShare.Delete);
-                var identity = ConversationSourceIdentity.Read(stream);
+                // Check identity, length and write time on the same open file. A rename or
+                // replacement between a path stat and opening could otherwise mix two files.
+                var source = ConversationSourceIdentity.ReadSnapshot(stream);
+                var identity = source?.Identity;
+                var length = source?.Length ?? stream.Length;
+                var writeTicks = source?.WriteTicks ?? File.GetLastWriteTimeUtc(stream.SafeFileHandle).Ticks;
                 if (OperatingSystem.IsWindows() && state is not null
                     && (identity is null || identity != state.FileIdentity))
                 {
@@ -105,14 +108,13 @@ public sealed partial class CodexConversationUsageReader
                 // Verify physical identity before the metadata fast path. Replacement/copy tools
                 // can preserve both length and mtime; unchanged sources still need no JSONL scan.
                 if (state is { CaughtUp: true, ReadFailed: false }
-                    && file.Length == state.Length && state.Offset >= state.Length
-                    && file.LastWriteTimeUtc.Ticks == state.WriteTicks)
+                    && length == state.Length && state.Offset >= length && writeTicks == state.WriteTicks)
                 {
                     if (state.ToTurn(now) is { } unchanged) turns.Add(unchanged);
                     continue;
                 }
                 var cold = state is not { CaughtUp: true, ReadFailed: false }
-                    || file.Length - state.Offset > ScanBudgetBytes;
+                    || length - state.Offset > ScanBudgetBytes;
                 if (cold && (coldSpent >= RefreshColdBudgetBytes || coldScanMilliseconds >= RefreshColdMilliseconds)
                     && !(state is null && _checkpoints?.Exists(path) == true))
                 {
@@ -122,14 +124,13 @@ public sealed partial class CodexConversationUsageReader
                     continue;
                 }
 
-                var length = stream.Length;
-                if (state is null && RestoreCheckpoint(path, stream, file.LastWriteTimeUtc.Ticks) is { } restored)
+                if (state is null && RestoreCheckpoint(path, stream, writeTicks) is { } restored)
                 {
                     state = restored;
                     _cache[path] = state;
                 }
                 if (state is { CaughtUp: true, ReadFailed: false } && state.Offset >= length
-                    && state.Length == length && state.WriteTicks == file.LastWriteTimeUtc.Ticks)
+                    && state.Length == length && state.WriteTicks == writeTicks)
                 {
                     if (state.ToTurn(now) is { } warm) turns.Add(warm);
                     continue;
@@ -142,7 +143,7 @@ public sealed partial class CodexConversationUsageReader
                 }
                 var budget = cold ? (int)Math.Min(RefreshColdBudgetBytes - coldSpent, DefaultRefreshColdBudgetBytes) : ScanBudgetBytes;
                 long? deadline = cold ? Environment.TickCount64 + RefreshColdMilliseconds - coldScanMilliseconds : null;
-                var changed = state is null || length != state.Length || file.LastWriteTimeUtc.Ticks != state.WriteTicks;
+                var changed = state is null || length != state.Length || writeTicks != state.WriteTicks;
                 if (state is null || length < state.Length || length < state.Offset
                     || changed && (length == state.Length || !state.MatchesCheckpoint(stream)))
                 {
@@ -178,7 +179,7 @@ public sealed partial class CodexConversationUsageReader
                         if (cold) coldScanMilliseconds += Environment.TickCount64 - scanStarted;
                         ParsedFiles++;
                         state.Length = length;
-                        state.WriteTicks = file.LastWriteTimeUtc.Ticks;
+                        state.WriteTicks = writeTicks;
                         state.SaveCheckpoint(stream);
                         PersistCheckpoint(path, state, stream);
                     }
@@ -191,6 +192,10 @@ public sealed partial class CodexConversationUsageReader
                     continue;
                 }
                 if (state.ToTurn(now) is { } turn) turns.Add(turn);
+            }
+            catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+            {
+                if (state is not null) state.ReadFailed = true;
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {

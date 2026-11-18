@@ -21,7 +21,7 @@ internal enum GlassRingStyle
 /// <summary>Where the icon-in-ring layout puts its % label.</summary>
 internal enum GlassPercentPosition
 {
-    /// <summary>A compact pill on the ring's lower-left, mirroring the index badge (default).</summary>
+    /// <summary>A compact percent pill on the lower left, with the account number on the upper right.</summary>
     BottomLeft,
     /// <summary>Centred under the ring.</summary>
     Below,
@@ -263,15 +263,14 @@ internal static class GlassDockPainter
         var inner = RectangleF.Inflate(ringBounds, -stroke - 2.5f, -stroke - 2.5f);
         using var valueBrush = new SolidBrush(ValueColor(ring, light));
         var core = RectangleF.Inflate(ringBounds, -stroke - 1f, -stroke - 1f);
-        var chipRight = float.NaN;
         if (below)
         {
             DrawWatermark(graphics, core, item, light, 1f, .86f);
             var text = balanceOnly ? ring.BalanceText! : GlassDockLayout.PercentText(ring.RemainingPercent);
             if (!stacked)
             {
-                DrawCornerPercent(graphics, slot, ringBounds, text, labelSize, ring.AccountNumber > 0,
-                    !balanceOnly && GlassDockLayout.Band(ring.RemainingPercent) == "red", light, out chipRight);
+                DrawChip(graphics, Math.Max(8f, slot.X - 1.5f), ringBounds.Bottom + 2.5f, text, labelSize,
+                    !balanceOnly && GlassDockLayout.Band(ring.RemainingPercent) == "red", light);
             }
             else
             {
@@ -308,12 +307,13 @@ internal static class GlassDockPainter
 
         if (ring.AccountNumber > 0)
         {
-            // The account index is the same chip as the % (font size, translucent fill, outline,
-            // baseline); it sits on the ring's lower-right and slides right to clear the % chip.
             var index = ring.AccountNumber.ToString(CultureInfo.InvariantCulture);
-            var width = ChipWidth(graphics, index, labelSize);
-            var left = Math.Max(ringBounds.Right - width + 2f, float.IsNaN(chipRight) ? 0f : chipRight - 1.5f);
-            DrawChip(graphics, left, ringBounds.Bottom + 2.5f, index, labelSize, critical: false, light);
+            var cornerLayout = below && !stacked;
+            var indexSize = cornerLayout ? 9f : labelSize;
+            var width = ChipWidth(graphics, index, indexSize);
+            var right = cornerLayout ? slot.Right - 1f : ringBounds.Right + 2f;
+            var bottom = cornerLayout ? ringBounds.Top + 8f : ringBounds.Bottom + 2.5f;
+            DrawChip(graphics, right - width, bottom, index, indexSize, critical: false, light);
         }
     }
 
@@ -346,19 +346,6 @@ internal static class GlassDockPainter
     ];
 
     internal static CornerChipStyle ChipStyle { get; set; } = ChipStyleOptions[0];
-
-    /// <summary>
-    /// The % as a chip on the ring's lower-left, mirroring the index badge on the lower-right.
-    /// Low remaining arcs end at 12 o'clock (used grows clockwise from 12), so they never sit under it. The chip is a translucent dark
-    /// pill so the provider logo still shows through; the text carries a soft shadow instead of
-    /// an opaque fill. The font size is fixed for every value and the chip grows with the text;
-    /// the index badge moves right to clear it (the ring gap leaves room for 100%).
-    /// </summary>
-    private static void DrawCornerPercent(Graphics graphics, Rectangle slot, RectangleF ringBounds, string text,
-        float labelSize, bool hasBadge, bool critical, bool light, out float chipRight)
-    {
-        chipRight = DrawChip(graphics, Math.Max(8f, slot.X - 1.5f), ringBounds.Bottom + 2.5f, text, labelSize, critical, light).Right;
-    }
 
     /// <summary>
     /// The one small-number chip of the dock: ring %, account index and Router queue count all use
@@ -646,7 +633,7 @@ internal static class GlassDockPainter
     /// <summary>
     /// tok/s in a fixed slot: the number (constant size, one fixed decimal, right-aligned in a box sized
     /// for the widest value so the decimal point never moves) over a small "tok/s" caption, the pair
-    /// centred vertically. No estimate marker: the live total is a sum of per-session rates either way.
+    /// centred vertically. The displayed total sums recorded response rates for the active sessions.
     /// </summary>
     private static void DrawRate(Graphics graphics, Rectangle bounds, GlassDockScene scene)
     {

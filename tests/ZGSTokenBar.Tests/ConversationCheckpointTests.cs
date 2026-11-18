@@ -100,6 +100,8 @@ internal static partial class ConversationCheckpointTests
         var replaced = f.Reader();
         Check(CatchUp(replaced, f).Single() == CatchUp(new(), f).Single() && replaced.RestoredSessions == 0,
             "A different physical file is rejected even when length and mtime are preserved.");
+        Check(CatchUp(changed, f).Single() == CatchUp(replaced, f).Single(),
+            "A warm reader verifies physical identity even when the replacement preserves length and mtime.");
         f.Write(f.Line(-1, "event_msg", new { type = "task_started", turn_id = "truncated" })
             + f.Line(0, "event_msg", f.Usage(100, 100)));
         var truncated = f.Reader();

@@ -35,12 +35,15 @@ internal sealed class IntakeServiceMonitorClient
             using var stream = File.OpenRead(ProfilePath(dataDirectory));
             if (stream.Length > 65536) throw new InvalidDataException();
             using var doc = JsonDocument.Parse(stream);
-            if (doc.RootElement.GetProperty("schemaVersion").GetInt32() != 1) throw new InvalidDataException();
+            var version = doc.RootElement.GetProperty("schemaVersion");
+            if (version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out var schema) || schema != 1)
+                throw new InvalidDataException("invalid_schema_version");
             var sources = doc.RootElement.GetProperty("sources").Deserialize<IntakeServiceSource[]>(Json) ?? [];
             ValidateSources(sources);
             Sources = sources;
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or KeyNotFoundException or ArgumentException)
+        catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException or JsonException
+            or InvalidOperationException or KeyNotFoundException or ArgumentException)
         {
             Sources = [];
             ConfigurationError = "configuration_unavailable";
@@ -80,8 +83,8 @@ internal sealed class IntakeServiceMonitorClient
                 return new IntakeServiceResult(source, reading, null);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
-            catch (Exception e) when (e is IOException or JsonException or InvalidOperationException
-                or System.ComponentModel.Win32Exception or OperationCanceledException or ArgumentException)
+            catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException or JsonException
+                or InvalidOperationException or System.ComponentModel.Win32Exception or OperationCanceledException or ArgumentException)
             { return new IntakeServiceResult(source, null, "unavailable"); }
             finally { gate.Release(); }
         }));
