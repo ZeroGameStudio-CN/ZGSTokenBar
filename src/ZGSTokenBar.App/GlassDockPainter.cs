@@ -59,6 +59,7 @@ internal sealed record GlassDockScene(
     public Func<string, Exception?, bool>? ItemPainted { get; init; }
     public bool IntakeHovered { get; init; }
     public int? IntakeProcessingCount { get; init; }
+    public bool IntakeServiceConfigured { get; init; }
 }
 
 internal static class GlassDockPainter
@@ -139,7 +140,13 @@ internal static class GlassDockPainter
             var bounds = scene.Plan.IntakeBounds;
             DrawMonitorHover(graphics, bounds, scene.IntakeHovered, scene.Light);
             var icon = MonitorGlyph.Centered(bounds);
-            MonitorGlyph.DrawIntake(graphics, icon, scene.Light);
+            var state = scene.IntakeProcessingCount switch
+            {
+                > 0 => IntakeGlyphState.Processing,
+                null when scene.IntakeServiceConfigured => IntakeGlyphState.Unconfirmed,
+                _ => IntakeGlyphState.Idle,
+            };
+            MonitorGlyph.DrawIntake(graphics, icon, scene.Light, state);
             if (scene.IntakeProcessingCount is > 0 and var processing)
                 DrawMonitorCount(graphics, icon, processing, scene.LabelSize, (GlassDockLayout.Height + scene.IconRingSize) / 2f + 2.5f, scene.Light);
         }

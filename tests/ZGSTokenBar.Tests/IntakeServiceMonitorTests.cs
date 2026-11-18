@@ -56,12 +56,17 @@ internal static class IntakeServiceMonitorTests
             if (save && captures is not null)
             {
                 Directory.CreateDirectory(captures);
-                File.WriteAllBytes(Path.Combine(captures, $"intake-count-{count ?? 0}-{dpi}.png"), stream.ToArray());
+                var label = count?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unconfirmed";
+                File.WriteAllBytes(Path.Combine(captures, $"intake-count-{label}-{dpi}.png"), stream.ToArray());
             }
             return stream.ToArray();
         }
-        Check(Render(null).SequenceEqual(Render(0, save: true)), "Unknown and confirmed zero leave the same plain intake icon.");
-        Check(!Render(0).SequenceEqual(Render(12, save: true)), "A positive active count paints the badge.");
+        var launcher = Render(null);
+        bar.SetIntakeServiceConfigured(true);
+        var idle = Render(0, save: true);
+        Check(launcher.SequenceEqual(idle), "An unconfigured launcher has the neutral icon rather than a failure state.");
+        Check(!Render(null, save: true).SequenceEqual(idle), "An unconfirmed service visibly dims the icon.");
+        Check(!idle.SequenceEqual(Render(12, save: true)), "A positive active count highlights the icon and paints the badge.");
         Check(Render(100, save: true).SequenceEqual(Render(101)), "Large counts are capped at 99+.");
     }
 

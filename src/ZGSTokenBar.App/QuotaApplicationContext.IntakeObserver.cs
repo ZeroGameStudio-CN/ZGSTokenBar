@@ -63,9 +63,12 @@ internal sealed partial class QuotaApplicationContext
         return _intakeObserver;
     }
 
-    private IntakeServiceMonitorClient? ReadIntakeProfile() => File.Exists(IntakeServiceMonitorClient.ProfilePath(_store.DataDirectory))
-        ? _intakeServiceClient ??= new(_store.DataDirectory)
-        : null;
+    private IntakeServiceMonitorClient? ReadIntakeProfile()
+    {
+        var configured = File.Exists(IntakeServiceMonitorClient.ProfilePath(_store.DataDirectory));
+        _bar.SetIntakeServiceConfigured(configured);
+        return configured ? _intakeServiceClient ??= new(_store.DataDirectory) : null;
+    }
 
     private void RegisterIntakeSummary() => _refreshScheduler.Add("intake-summary", () => IntakeSummaryInterval,
         async () => { await RefreshIntakeSummaryAsync(); return true; }, firstDelay: TimeSpan.FromSeconds(3));
@@ -108,6 +111,7 @@ internal sealed partial class QuotaApplicationContext
     private void CloseIntakeObservers()
     {
         ResetIntakeSummary();
+        _bar.SetIntakeServiceConfigured(false);
         _intakeObserver?.Close();
         _intakeServiceObserver?.Close();
     }

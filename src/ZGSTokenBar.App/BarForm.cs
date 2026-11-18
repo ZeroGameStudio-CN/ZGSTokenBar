@@ -405,9 +405,18 @@ internal sealed partial class BarForm : Form
     internal const long IntakeCountLifetimeMs = 75_000;
     private int? _intakeProcessingCount;
     private long _intakeCountReadAt;
+    private bool _intakeServiceConfigured;
 
     internal int? DisplayedIntakeProcessingCount => HasIntakeCard
         && Environment.TickCount64 - _intakeCountReadAt < IntakeCountLifetimeMs ? _intakeProcessingCount : null;
+
+    internal void SetIntakeServiceConfigured(bool configured)
+    {
+        if (_intakeServiceConfigured == configured) return;
+        _intakeServiceConfigured = configured;
+        if (!configured) _intakeProcessingCount = null;
+        if (!IsDisposed) Invalidate();
+    }
 
     internal void SetIntakeProcessingCount(int? count)
     {
