@@ -337,6 +337,7 @@ internal sealed partial class BarForm
         {
             ItemPainted = GlassItemPainted,
             IntakeHovered = intake is not null && _hoverPluginTarget?.Card.PluginId == MiniAreaIds.Intake,
+            IntakeProcessingCount = DisplayedIntakeProcessingCount,
         };
         _glassFailedThisPaint.Clear();
         GlassDockPainter.Draw(graphics, scene, _badgeFont);

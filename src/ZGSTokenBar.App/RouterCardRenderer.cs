@@ -27,7 +27,7 @@ internal static class RouterCardRenderer
                 // Collapsed (taskbar dock): the shared ring chip (GlassDockPainter.DrawChip) on the
                 // icon's lower-left, the same corner and look as the ring % chips.
                 var chip = queueChip ?? new RouterQueueChip(GlassDockPainter.DefaultLabelSize, null, false);
-                GlassDockPainter.DrawChip(graphics, icon.X - 3f, chip.Bottom ?? icon.Bottom + 4f, text, chip.LabelSize, critical: false, chip.Light);
+                GlassDockPainter.DrawMonitorCount(graphics, icon, queued, chip.LabelSize, chip.Bottom ?? icon.Bottom + 4f, chip.Light);
                 graphics.Restore(saved);
                 return;
             }

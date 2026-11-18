@@ -20,9 +20,19 @@
       "stage": "Previewable",
       "availability": "InternalOnly",
       "targetReleaseId": "",
-      "entrance": "Hover or pin Work intake beside Router; registered service observations show current receipt stages and direct all-project history; pinned Work items retains the original item timeline.",
+      "entrance": "Work intake beside Router shows a fresh positive processing count. Hover or pin to see receipt stages and all-project history; pinned Work items retains the item timeline.",
       "resourcePath": "src/ZGSTokenBar.App/IntakeServiceMonitorForm.cs",
       "nextAction": "Collect user visual feedback on explicitly registered live read-only service observations; preserve the separate human acceptance boundary."
+    },
+    {
+      "id": "quiet-runtime-health",
+      "title": "Read-only runtime health check",
+      "stage": "Previewable",
+      "availability": "InternalOnly",
+      "targetReleaseId": "",
+      "entrance": "Existing background refresh surfaces a local tray warning only for persistent faults; window inspect reports current confirmed issues.",
+      "resourcePath": "src/ZGSTokenBar.App/QuotaApplicationContext.Health.cs",
+      "nextAction": "Use the installed build in normal operation; simulate fault and recovery on isolated fixtures."
     },
     {
       "id": "linked-worktree-build-cleanup",

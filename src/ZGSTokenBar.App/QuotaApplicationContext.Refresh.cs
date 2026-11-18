@@ -47,6 +47,7 @@ internal sealed partial class QuotaApplicationContext
                     activeProviders: activeProviders),
                 _shutdown.Token);
             if (_shutdown.IsCancellationRequested || _bar.IsDisposed) return;
+            if (activeProviders.Contains(ProviderKind.Codex)) ObserveCodexQuotaHealth(activeCandidate);
             var observedAt = DateTimeOffset.UtcNow;
             var candidate = MergeActiveProviderResults(
                 _snapshot,

@@ -36,6 +36,9 @@ internal sealed partial class QuotaApplicationContext
     private void ScheduleResumeRefresh()
     {
         if (_quitting) return;
+        _runtimeHealth.ResetPending();
+        _previousLogCheck = null;
+        ResetIntakeSummary();
         _resumeTimer ??= CreateResumeTimer();
         _resumeTimer.Stop();
         _resumeTimer.Start();
@@ -50,6 +53,7 @@ internal sealed partial class QuotaApplicationContext
             if (_quitting) return;
             _ = RefreshAsync();
             _otherToolsModule.RequestRefresh();
+            _ = RefreshIntakeSummaryAsync();
         };
         return timer;
     }

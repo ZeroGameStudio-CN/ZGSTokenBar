@@ -19,6 +19,8 @@ internal sealed class RouterModule : IDisposable
     private bool _disposed;
     public bool Visible => _window is { Visible: true, IsDisposed: false };
     public RouterSnapshot? Snapshot => _window is { IsDisposed: false } ? _window.Snapshot : null;
+    internal (bool? Healthy, long Version) MonitorHealth => _enabled() ? _monitorHealth : default;
+    private (bool? Healthy, long Version) _monitorHealth;
 
     public RouterModule(BarForm bar, ZgsTokenBarHost host, Func<bool> enabled, CancellationToken shutdown, RefreshScheduler scheduler)
     {
@@ -40,19 +42,24 @@ internal sealed class RouterModule : IDisposable
     private async Task<bool> RefreshMonitorAsync()
     {
         if (_disposed || _shutdown.IsCancellationRequested) return true;
-        if (!_enabled()) { _bar.HidePluginPopover(RouterPlugin.Id); _window?.Close(); return true; }
+        if (!_enabled()) { _monitorHealth = default; _bar.HidePluginPopover(RouterPlugin.Id); _window?.Close(); return true; }
         try
         {
-            await _host.RefreshPluginAsync(RouterPlugin.Id, "monitor", _shutdown);
+            var snapshot = await _host.RefreshPluginAsync(RouterPlugin.Id, "monitor", _shutdown);
+            _monitorHealth = (snapshot.Health.Connected, Environment.TickCount64);
             if (_window is { IsDisposed: false, Visible: false } && !_bar.IsDisposed && _bar.IsHandleCreated)
             {
                 try { _bar.BeginInvoke(() => { if (_window is { IsDisposed: false, Visible: false } window) _ = window.WarmInBackgroundAsync(); }); }
                 catch (InvalidOperationException) { }
             }
-            return true;
+            return snapshot.Health.Connected;
         }
         catch (OperationCanceledException) { return true; }
-        catch (Exception e) when (e is HostCommandException or InvalidOperationException) { return false; }
+        catch (Exception e) when (e is HostCommandException or InvalidOperationException)
+        {
+            _monitorHealth = (false, Environment.TickCount64);
+            return false;
+        }
     }
 
     private void Requested(object? sender, PluginPopoverRequest request)

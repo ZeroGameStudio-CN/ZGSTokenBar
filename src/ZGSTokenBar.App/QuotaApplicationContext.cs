@@ -281,6 +281,8 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _routerModule = new(_bar, _pluginHost,
             () => _settings.IsPluginEnabled(ZGSTokenBar.Plugin.Router.RouterPlugin.Id, false), _shutdown.Token,
             _refreshScheduler);
+        RegisterIntakeSummary();
+        RegisterRuntimeHealthCheck();
         _intakeWarmup.Tick += (_, _) =>
         {
             _intakeWarmup.Stop();

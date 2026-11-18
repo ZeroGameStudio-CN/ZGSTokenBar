@@ -58,6 +58,7 @@ internal sealed record GlassDockScene(
     /// </summary>
     public Func<string, Exception?, bool>? ItemPainted { get; init; }
     public bool IntakeHovered { get; init; }
+    public int? IntakeProcessingCount { get; init; }
 }
 
 internal static class GlassDockPainter
@@ -137,7 +138,10 @@ internal static class GlassDockPainter
         {
             var bounds = scene.Plan.IntakeBounds;
             DrawMonitorHover(graphics, bounds, scene.IntakeHovered, scene.Light);
-            MonitorGlyph.DrawIntake(graphics, MonitorGlyph.Centered(bounds), scene.Light);
+            var icon = MonitorGlyph.Centered(bounds);
+            MonitorGlyph.DrawIntake(graphics, icon, scene.Light);
+            if (scene.IntakeProcessingCount is > 0 and var processing)
+                DrawMonitorCount(graphics, icon, processing, scene.LabelSize, (GlassDockLayout.Height + scene.IconRingSize) / 2f + 2.5f, scene.Light);
         }
 
         var barsBounds = GlassDockLayout.BarsBoundsFor(scene.Width);
@@ -151,6 +155,12 @@ internal static class GlassDockPainter
     private static void DrawMonitorHover(Graphics graphics, RectangleF bounds, bool hovered, bool light)
     {
         if (hovered) DrawHover(graphics, RectangleF.Inflate(bounds, 3, 3), light);
+    }
+
+    internal static void DrawMonitorCount(Graphics graphics, RectangleF icon, long count, float fontSize, float bottom, bool light)
+    {
+        var text = count > 99 ? "99+" : count.ToString(CultureInfo.InvariantCulture);
+        DrawChip(graphics, icon.X - 3f, bottom, text, fontSize, critical: false, light);
     }
 
     /// <summary>Space kept under the card for its soft drop shadow (logical px).</summary>

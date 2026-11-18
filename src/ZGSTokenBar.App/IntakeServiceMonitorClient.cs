@@ -11,18 +11,22 @@ internal sealed record IntakeServiceRecord(string Id, string ItemId, string Proj
     string Kind, string Phase, DateTimeOffset? ObservedAt)
 {
     internal bool InFlight => Phase is "sending" or "model_started" or "classified" or "waiting_upstream"
-        or "waiting_original" or "submitting" or "submitted" or "retry";
+        or "waiting_original" or "submitting" or "submitted" or "retry" or "archive_pending" or "archive_submitted";
 }
 internal sealed record IntakeServiceReading(string Schema, string SourceId, DateTimeOffset ObservedAt, bool Active,
     string ServiceState, string Invocation, string[] Projects, IntakeServiceRecord[] Progress,
-    IntakeServiceRecord[] History, string[] Gaps);
+    IntakeServiceRecord[] History, string[] Gaps)
+{
+    public int? ProcessingCount { get; init; }
+}
 internal sealed record IntakeServiceResult(IntakeServiceSource Source, IntakeServiceReading? Reading, string? Error);
 
 /// <summary>Explicitly registered operator observations. Never runs an action or changes the remote service.</summary>
 internal sealed class IntakeServiceMonitorClient
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
-    private readonly Func<IntakeServiceSource, CancellationToken, Task<IntakeServiceReading>> _read;
+    private readonly Func<IntakeServiceSource, bool, CancellationToken, Task<IntakeServiceReading>> _read;
+    private readonly SemaphoreSlim _batch = new(1);
     internal IReadOnlyList<IntakeServiceSource> Sources { get; }
     internal string? ConfigurationError { get; }
     internal static string ProfilePath(string dataDirectory) => Path.Combine(dataDirectory, "intake-services.json");
@@ -53,7 +57,7 @@ internal sealed class IntakeServiceMonitorClient
     internal IntakeServiceMonitorClient(IReadOnlyList<IntakeServiceSource> sources,
         Func<IntakeServiceSource, CancellationToken, Task<IntakeServiceReading>> read)
     {
-        ValidateSources(sources); Sources = sources; _read = read;
+        ValidateSources(sources); Sources = sources; _read = (source, _, token) => read(source, token);
     }
 
     internal static void ValidateSources(IReadOnlyList<IntakeServiceSource> sources)
@@ -70,31 +74,45 @@ internal sealed class IntakeServiceMonitorClient
                 throw new InvalidDataException("invalid_source");
     }
 
-    internal async Task<IReadOnlyList<IntakeServiceResult>> ReadAsync(CancellationToken token)
+    internal async Task<IReadOnlyList<IntakeServiceResult>> ReadAsync(CancellationToken token, bool summaryOnly = false)
     {
-        using var gate = new SemaphoreSlim(2);
-        return await Task.WhenAll(Sources.Select(async source =>
+        await _batch.WaitAsync(token).ConfigureAwait(false);
+        try
         {
-            await gate.WaitAsync(token);
-            try
+            using var gate = new SemaphoreSlim(2);
+            return await Task.WhenAll(Sources.Select(async source =>
             {
-                var reading = await _read(source, token);
-                ValidateReading(source, reading);
-                return new IntakeServiceResult(source, reading, null);
-            }
-            catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
-            catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException or JsonException
-                or InvalidOperationException or System.ComponentModel.Win32Exception or OperationCanceledException or ArgumentException)
-            { return new IntakeServiceResult(source, null, "unavailable"); }
-            finally { gate.Release(); }
-        }));
+                await gate.WaitAsync(token).ConfigureAwait(false);
+                try
+                {
+                    var reading = await _read(source, summaryOnly, token).ConfigureAwait(false);
+                    ValidateReading(source, reading);
+                    return new IntakeServiceResult(source, reading, null);
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+                catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException or JsonException
+                    or InvalidOperationException or System.ComponentModel.Win32Exception or OperationCanceledException or ArgumentException)
+                { return new IntakeServiceResult(source, null, "unavailable"); }
+                finally { gate.Release(); }
+            })).ConfigureAwait(false);
+        }
+        finally { _batch.Release(); }
     }
+
+    internal int? ProcessingCount(IReadOnlyList<IntakeServiceResult> readings) =>
+        ConfigurationError is not null || readings.Count == 0 || readings.Count != Sources.Count
+            || readings.Any(result => result.Reading is not { Active: true, ProcessingCount: not null })
+            ? null
+            : readings.DistinctBy(result => (result.Source.SshTarget, result.Source.Unit, result.Source.StateDirectory))
+                .Sum(result => result.Reading!.ProcessingCount!.Value);
 
     internal static void ValidateReading(IntakeServiceSource source, IntakeServiceReading value)
     {
         if (value.Schema != "zgstokenbar.intake-monitor.v1" || value.SourceId != source.Id
             || value.Projects is null || value.Projects.Length > 64 || value.Progress is null || value.Progress.Length > 64
             || value.History is null || value.History.Length > 160 || value.Gaps is null || value.Gaps.Length > 32
+            || value.ProcessingCount is < 0 or > 1000
+            || value.ProcessingCount is not null && (!value.Active || value.Gaps.Any(gap => gap is "receipts_unavailable" or "receipts_capped"))
             || value.ObservedAt > DateTimeOffset.UtcNow.AddMinutes(5) || value.ObservedAt < DateTimeOffset.UtcNow.AddMinutes(-5))
             throw new InvalidDataException("invalid_reading");
         if (value.Projects.Any(p => p is null || !Regex.IsMatch(p, @"\A[A-Za-z0-9][A-Za-z0-9_-]{0,63}\z")))
@@ -107,7 +125,7 @@ internal sealed class IntakeServiceMonitorClient
                 throw new InvalidDataException("invalid_record");
     }
 
-    private static async Task<IntakeServiceReading> ReadSourceAsync(IntakeServiceSource source, CancellationToken token)
+    private static async Task<IntakeServiceReading> ReadSourceAsync(IntakeServiceSource source, bool summaryOnly, CancellationToken token)
     {
         using var resource = Assembly.GetExecutingAssembly().GetManifestResourceStream("ZGSTokenBar.App.IntakeServiceRead.py")
             ?? throw new InvalidDataException("collector_missing");
@@ -131,9 +149,10 @@ internal sealed class IntakeServiceMonitorClient
         var errors = ReadBoundedAsync(process.StandardError.BaseStream, 8192, deadline.Token);
         try
         {
-            await process.StandardInput.WriteAsync($"import base64,json\nCONFIG=json.loads(base64.b64decode('{config}'))\nSOURCE_BASE64='{encoded}'\n{script}".AsMemory(), deadline.Token);
+            var mode = summaryOnly ? "True" : "False";
+            await process.StandardInput.WriteAsync($"import base64,json\nCONFIG=json.loads(base64.b64decode('{config}'))\nSUMMARY_ONLY={mode}\nSOURCE_BASE64='{encoded}'\n{script}".AsMemory(), deadline.Token);
             process.StandardInput.Close();
-            await Task.WhenAll(output, errors, process.WaitForExitAsync(deadline.Token));
+            await Task.WhenAll(output, errors, process.WaitForExitAsync(deadline.Token)).WaitAsync(deadline.Token);
             if (process.ExitCode != 0) throw new IOException("collector_unavailable");
             return JsonSerializer.Deserialize<IntakeServiceReading>(await output, Json) ?? throw new InvalidDataException();
         }

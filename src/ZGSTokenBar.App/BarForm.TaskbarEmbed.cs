@@ -42,6 +42,18 @@ internal sealed partial class BarForm
 
     internal bool NativeTaskbarParentVerified => HasNativeTaskbarParent(_embedParent);
 
+    internal bool? ObserveDockHealth()
+    {
+        if (!_taskbarDocked || !_embedRequested || _hiddenToTray || _taskbarDragging) return null;
+        return TaskbarEmbedStatus switch
+        {
+            "hidden:fullscreen" or "fallback:no-clear-space" or "fallback:secondary-monitor" or "fallback:unreserved-row" => null,
+            "embedded" => NativeTaskbarParentVerified && TaskbarEmbedding.IsVisible(Handle),
+            "overlay:remote-session" or "overlay:embed-unavailable" => IsHandleCreated && TaskbarEmbedding.IsVisible(Handle),
+            _ => false,
+        };
+    }
+
     private bool HasNativeTaskbarParent(nint parent) =>
         EmbeddedInTaskbar && _embedParent == parent && TaskbarEmbedding.IsAlive(parent)
         && TaskbarEmbedding.ParentOf(Handle) == parent && TaskbarEmbedding.IsChild(Handle);

@@ -19,6 +19,13 @@ using ZGSTokenBar.Plugin.AiGatewayObserver;
 
 if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJobExitCode;
 
+if (args is ["--runtime-health"])
+{
+    RuntimeHealthCheckTests.Run();
+    Console.WriteLine("PASS read-only health check debounce, silent recovery and single incident notification");
+    return 0;
+}
+
 if (args is ["--quota-pipe-fixture"]) return AntigravityLocalQuotaTests.RunPipeFixture(null);
 if (args is ["--quota-pipe-fixture", var quotaMarker]) return AntigravityLocalQuotaTests.RunPipeFixture(quotaMarker);
 if (args is ["--agy-quota"])
@@ -711,6 +718,7 @@ var tests = new (string Name, Action Run)[]
     ("Codex dock tier filtering leaves usage data unchanged", () => CodexTierFilterTests.Run()),
     ("Intake service observations preserve read-only history and availability", () => IntakeServiceMonitorTests.Run()),
     ("Full monitor hover transitions preserve native lifecycle", () => MonitorPanelMotionTests.Run()),
+    ("Read-only health checks coalesce persistent failures and recover silently", RuntimeHealthCheckTests.Run),
     ("Cross-type hover handoffs preserve one active owner", CrossPopoverHandoffTests.Run),
     ("Grok plan comes from the settings cache, never the sign-in type", TestGrokPlanFromSettingsCache),
     ("Expired Grok CLI session is renewed with its refresh token", TestGrokExpiredSessionIsRenewed),

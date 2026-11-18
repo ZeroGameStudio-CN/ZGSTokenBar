@@ -60,6 +60,7 @@ class ReaderTests(unittest.TestCase):
                                             __REALTIME_TIMESTAMP=str(stamp))))
             result = reader.project(CONFIG, {"ActiveState": "active", "SubState": "running"}, reader.read_store(root), "\n".join(lines))
             self.assertEqual(result["gaps"], [])
+            self.assertEqual(result["processingCount"], 1)
             self.assertEqual([(r["itemId"], r["phase"]) for r in result["progress"]], [(B, "model_started")])
             self.assertEqual(len([r for r in result["history"] if r["kind"] == "archive"]), 1)
             self.assertTrue(any(r["observedAt"] is None for r in result["history"]))
@@ -109,6 +110,30 @@ class ReaderTests(unittest.TestCase):
             self.assertEqual(value["gaps"], [])
             self.assertTrue(value["active"])
             self.assertEqual(len(calls), 3)
+            calls.clear()
+            with patch.object(reader, "bounded", command):
+                summary = reader.collect(CONFIG, summary_only=True)
+            self.assertEqual([call[0] for call in calls], ["systemctl", "sudo"])
+            self.assertEqual(summary["processingCount"], value["processingCount"])
+            self.assertEqual([summary[key] for key in ("projects", "progress", "history")], [[], [], []])
+            self.assertNotIn(B, json.dumps(summary))
+
+    def test_processing_count_excludes_held_or_paused_and_keeps_unknown_distinct(self):
+        with tempfile.TemporaryDirectory(prefix="zgstokenbar-intake-fixture-") as directory:
+            root = Path(directory).resolve(); path = self.fixture(root)
+            with closing(sqlite3.connect(path)) as db, db:
+                for key, phase in (("precheck:" + A + ":rework:2:hold", "needs_attention"),
+                                   ("related:" + A + ":paused", "waiting_upstream"),
+                                   ("rework:" + B + ":retry", "retry"),
+                                   ("archive:" + B + ":unconfirmed", "archive_pending")):
+                    db.execute("INSERT INTO receipts VALUES(?,?,?,?)", (key, "{}", phase, "{}"))
+            store = reader.read_store(root, summary_only=True)
+            self.assertEqual(store["projects"], [])
+            online = dict(ActiveState="active", SubState="running")
+            self.assertEqual(reader.project(CONFIG, online, store, "", summary_only=True)["processingCount"], 2)
+            self.assertEqual(reader.project(CONFIG, online, {"records": []}, "", summary_only=True)["processingCount"], 0)
+            for status, inputs in (({}, store), (online, dict(store, gaps=["receipts_capped"]))):
+                self.assertIsNone(reader.project(CONFIG, status, inputs, "", summary_only=True)["processingCount"])
 
     def test_invalid_targets_never_execute_commands(self):
         with patch.object(reader, "bounded", side_effect=AssertionError("must not execute")):

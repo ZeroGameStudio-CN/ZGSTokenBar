@@ -2,6 +2,8 @@ using System.Drawing;
 using System.Windows.Forms;
 using ZGSTokenBar.App;
 using ZGSTokenBar.Core;
+using ZGSTokenBar.Plugin.Intake;
+using ZGSTokenBar.Plugin.Router;
 
 internal static class IntakeServiceMonitorTests
 {
@@ -18,10 +20,49 @@ internal static class IntakeServiceMonitorTests
             Throws(() => IntakeServiceMonitorClient.ValidateSources([Source, Source]));
             Throws(() => IntakeServiceMonitorClient.ValidateReading(Source, Reading() with { SourceId = "other" }));
             Throws(() => IntakeServiceMonitorClient.ValidateReading(Source, Reading() with { ObservedAt = DateTimeOffset.UtcNow.AddMinutes(-10) }));
+            var alternate = Source with { Id = "second", Unit = "second-intake.service" };
+            var client = new IntakeServiceMonitorClient([Source, alternate], (_, _) => Task.FromResult(Reading()));
+            var a = new IntakeServiceResult(Source, Reading(), null);
+            var b = new IntakeServiceResult(alternate, Reading() with { SourceId = alternate.Id, ProcessingCount = 2 }, null);
+            Check(client.ProcessingCount([a, b]) == 3 && client.ProcessingCount([a, b with { Reading = null }]) is null,
+                "A global count requires fresh active readings from every registered source.");
+            Check(client.ProcessingCount([a, b with { Source = Source with { Id = alternate.Id } }]) == 1,
+                "Duplicate profiles for the same service do not double-count its operations.");
             foreach (var dpi in new[] { 96, 144, 192 })
+            {
+                CaptureCount(dpi, captures);
                 foreach (var chinese in new[] { true, false }) View(dpi, chinese, captures);
+            }
         }
         finally { SynchronizationContext.SetSynchronizationContext(context); }
+    }
+
+    private static void CaptureCount(int dpi, string? captures)
+    {
+        using var bar = new BarForm(new AppSettings { EnableAnimations = false },
+            QuotaSnapshot.Empty(DateTimeOffset.UtcNow), renderOnly: true, renderDpi: dpi);
+        bar.SetPluginMiniCards([
+            new(RouterPlugin.Id, "Router", RouterModuleTests.Card("running", 7), new Dictionary<string, string>()),
+            new(IntakeObserverPlugin.Id, "自动分拣", IntakeObserverPlugin.Launcher, new Dictionary<string, string>())]);
+        var bounds = bar.ClientSize;
+        byte[] Render(int? count, bool save = false)
+        {
+            bar.SetIntakeProcessingCount(count);
+            using var image = new Bitmap(bar.Width, bar.Height);
+            bar.DrawToBitmap(image, new Rectangle(Point.Empty, image.Size));
+            Check(bar.ClientSize == bounds, "A count update cannot change the taskbar footprint.");
+            using var stream = new MemoryStream();
+            image.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
+            if (save && captures is not null)
+            {
+                Directory.CreateDirectory(captures);
+                File.WriteAllBytes(Path.Combine(captures, $"intake-count-{count ?? 0}-{dpi}.png"), stream.ToArray());
+            }
+            return stream.ToArray();
+        }
+        Check(Render(null).SequenceEqual(Render(0, save: true)), "Unknown and confirmed zero leave the same plain intake icon.");
+        Check(!Render(0).SequenceEqual(Render(12, save: true)), "A positive active count paints the badge.");
+        Check(Render(100, save: true).SequenceEqual(Render(101)), "Large counts are capped at 99+.");
     }
 
     private static void CheckInvalidConfigurations()
@@ -47,7 +88,7 @@ internal static class IntakeServiceMonitorTests
         var a = new IntakeServiceRecord("a", "00000000-0000-4000-8000-000000000001", "LAB", "LAB-1", "First feedback", "precheck", "model_started", null);
         var b = new IntakeServiceRecord("b", "00000000-0000-4000-8000-000000000002", "OTHER", "OTHER-2", "Older archive", "archive", "archived", DateTimeOffset.UtcNow.AddHours(-1));
         return new("zgstokenbar.intake-monitor.v1", Source.Id, DateTimeOffset.UtcNow, true, "running", "fixture",
-            ["LAB", "OTHER"], [a], [a, b], []);
+            ["LAB", "OTHER"], [a], [a, b], []) { ProcessingCount = 1 };
     }
 
     internal static IntakeServiceMonitorForm UnobservedPanel() => new(true,
@@ -62,10 +103,12 @@ internal static class IntakeServiceMonitorTests
             reads++;
             if (fail) return Task.FromException<IntakeServiceReading>(new IOException("fixture"));
             if (malformed) return Task.FromResult(Reading() with { Schema = "unexpected" });
-            if (partial) return Task.FromResult(Reading() with { Progress = [], History = [], Projects = [], Gaps = ["receipts_unavailable"] });
+            if (partial) return Task.FromResult(Reading() with { Progress = [], History = [], Projects = [], ProcessingCount = null, Gaps = ["receipts_unavailable"] });
             return pending?.Task.WaitAsync(token) ?? Task.FromResult(Reading());
         });
         using var form = new IntakeServiceMonitorForm(chinese, client, observe: false) { Opacity = 0 };
+        int? observed = null;
+        form.ProcessingObserved += count => observed = count;
         form.ConfigureFor(new(-28500, -28000, 48, 44), true, dpi / 96f,
             QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), new(-30000, -30000, 3840, 2160));
         form.Show(); Application.DoEvents();
@@ -78,7 +121,8 @@ internal static class IntakeServiceMonitorTests
             && form.Observation.History == 0, "A malformed first observation leaves the queue unconfirmed.");
         malformed = false;
         Pump(form.RefreshAsync());
-        Check(form.Observation is { Projects: 2, History: 2, InFlight: 1 }, "History and progress appear directly without a work-item selection.");
+        Check(form.Observation is { Projects: 2, History: 2, InFlight: 1 } && observed == 1,
+            "A full panel observation also feeds the global number without another service read.");
         var buttons = Descendants(form).OfType<RouterButton>().ToArray();
         buttons.Single(b => b.Text == "LAB").PerformClick();
         Check(form.Observation.History == 1 && reads == 2, "Project selection filters the observation, without another business read.");

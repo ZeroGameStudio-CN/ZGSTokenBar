@@ -8,7 +8,8 @@ import time
 from pathlib import Path, PurePosixPath
 
 SCHEMA = "zgstokenbar.intake-monitor.v1"
-ACTIVE = {"sending", "model_started", "classified", "waiting_upstream", "waiting_original", "submitting", "submitted", "retry"}
+PROCESSING = {"sending", "model_started", "classified", "submitting", "submitted", "archive_pending", "archive_submitted"}
+ACTIVE = PROCESSING | {"waiting_upstream", "waiting_original", "retry"}
 ATTENTION = {"indeterminate", "needs_attention", "needs_review"}
 EVENTS = {"intake_ready", "intake_result", "intake_rework", "intake_archive", "intake_error",
           "intake_rework_attention", "intake_related_attention", "intake_archive_attention", "intake_resume_attention"}
@@ -23,7 +24,7 @@ def code(value):
     return text if re.fullmatch(r"[A-Za-z0-9_.:-]{0,100}", text) else "unavailable"
 
 
-def read_store(root):
+def read_store(root, summary_only=False):
     """Only selected JSON fields leave SQLite; prompts, model results and credentials never do."""
     root = Path(root)
     if root.resolve() != root.absolute():
@@ -40,8 +41,9 @@ def read_store(root):
         query = """SELECT key, json_extract(value,'$.project_key'), json_extract(value,'$.work_item_number'),
                    substr(json_extract(value,'$.title'),1,160)
                    FROM receipts WHERE key LIKE 'reference:%' AND json_valid(value) LIMIT 1000"""
-        for key, project, number, title in db.execute(query):
-            references[key.removeprefix("reference:")] = (clean(project, 64), clean(number, 32), clean(title))
+        if not summary_only:
+            for key, project, number, title in db.execute(query):
+                references[key.removeprefix("reference:")] = (clean(project, 64), clean(number, 32), clean(title))
         rows = []
         # No payload column is returned. Newest intent per operation/item is used for the current view.
         for key, phase, intent_id, value_id in db.execute("""SELECT key,phase,
@@ -94,9 +96,25 @@ def bounded(command, *, input_text=None, limit=2 * 1024 * 1024):
             timer.cancel()
 
 
-def project(config, service, store, journal):
+def current_receipts(records):
+    latest = {}
+    for row in records:
+        latest.setdefault((row["kind"], row["itemId"] or row["id"]), row)
+    return latest.values()
+
+
+def project(config, service, store, journal, summary_only=False):
     gaps = list(store.get("gaps", []))
     records = store.get("records", [])
+    latest = current_receipts(records)
+    active = service.get("ActiveState") == "active" and service.get("SubState") == "running"
+    processing = [row for row in latest if row["phase"] in PROCESSING]
+    count = len(processing) if active and not gaps and all(row["itemId"] for row in processing) else None
+    snapshot = dict(schema=SCHEMA, sourceId=config["id"], observedAt=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    active=active, serviceState=code(service.get("SubState")), invocation=code(service.get("InvocationID")),
+                    processingCount=count, projects=[], progress=[], history=[], gaps=gaps)
+    if summary_only:
+        return snapshot
     lookup = {}
     for row in records:
         if row["itemId"]:
@@ -126,26 +144,20 @@ def project(config, service, store, journal):
                                 kind=kind, phase=phase, observedAt=at)
         except (ValueError, TypeError, KeyError, OverflowError, AttributeError):
             gaps.append("unparsed_event")
-    latest = {}
-    for row in records:
-        latest.setdefault((row["kind"], row["itemId"]), row)
-    pending = [r for r in latest.values() if r["phase"] in ACTIVE | ATTENTION]
+    pending = [r for r in latest if r["phase"] in ACTIVE | ATTENTION]
     pending.sort(key=lambda r: (r["phase"] not in ACTIVE, r["id"]))
     if len(pending) > 64:
         gaps.append("progress_capped")
     # Receipt states fill older history when the journal no longer retains an event. No timestamp is invented.
     seen = {(r["itemId"], r["phase"]) for r in history.values()}
-    for row in latest.values():
+    for row in latest:
         if (row["itemId"], row["phase"]) not in seen:
             history[("receipt", row["id"])] = {**row, "kind": "receipt:" + row["kind"]}
-    return dict(schema=SCHEMA, sourceId=config["id"], observedAt=datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                active=service.get("ActiveState") == "active" and service.get("SubState") == "running", serviceState=code(service.get("SubState")),
-                invocation=code(service.get("InvocationID")), projects=store.get("projects", []),
-                progress=pending[:64], history=sorted(history.values(), key=lambda r: r["observedAt"] or "", reverse=True)[:160],
-                gaps=sorted(set(gaps)))
+    return dict(snapshot, projects=store.get("projects", []), progress=pending[:64],
+                history=sorted(history.values(), key=lambda r: r["observedAt"] or "", reverse=True)[:160], gaps=sorted(set(gaps)))
 
 
-def collect(config):
+def collect(config, summary_only=False):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.@-]{0,100}\.service", config["unit"]):
         raise ValueError("invalid_unit")
     root = PurePosixPath(config["stateDirectory"])
@@ -159,13 +171,14 @@ def collect(config):
         raise ValueError("invalid_service_user")
     script = "import base64,json\nscope={'__name__':'intake_reader'}\n"
     script += "exec(base64.b64decode(" + repr(SOURCE_BASE64) + "),scope)\n"
-    script += "print(json.dumps(scope['read_store'](" + repr(str(root)) + ")))\n"
-    gaps = []
+    script += "print(json.dumps(scope['read_store'](" + repr(str(root)) + ", " + repr(summary_only) + ")))\n"
     try:
         store = json.loads(bounded(["sudo", "-n", "-u", user, "python3", "-"], input_text=script))
     except (ValueError, subprocess.SubprocessError):
-        store = dict(records=[], projects=[])
-        gaps.append("receipts_unavailable")
+        store = dict(records=[], projects=[], gaps=["receipts_unavailable"])
+    if summary_only:
+        return project(config, service, store, "", summary_only=True)
+    gaps = []
     try:
         journal = bounded(["journalctl", "-u", config["unit"], "-n", "160", "--since", "3 days ago", "--no-pager",
                            "-o", "json", "--output-fields=__REALTIME_TIMESTAMP,MESSAGE"])
@@ -179,4 +192,4 @@ def collect(config):
 
 if __name__ == "__main__":
     # The native client supplies CONFIG as data before this bundled module, never as shell text.
-    print(json.dumps(collect(CONFIG), ensure_ascii=False))
+    print(json.dumps(collect(CONFIG, globals().get("SUMMARY_ONLY", False)), ensure_ascii=False))

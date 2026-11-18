@@ -402,6 +402,20 @@ internal sealed partial class BarForm : Form
 
     internal MiniCardContribution? RouterCard => _pluginMiniCards.FirstOrDefault(card => card.PluginId == MiniAreaIds.Router)?.Card;
     internal bool HasIntakeCard => _pluginMiniCards.Any(card => card.PluginId == MiniAreaIds.Intake);
+    internal const long IntakeCountLifetimeMs = 75_000;
+    private int? _intakeProcessingCount;
+    private long _intakeCountReadAt;
+
+    internal int? DisplayedIntakeProcessingCount => HasIntakeCard
+        && Environment.TickCount64 - _intakeCountReadAt < IntakeCountLifetimeMs ? _intakeProcessingCount : null;
+
+    internal void SetIntakeProcessingCount(int? count)
+    {
+        var before = DisplayedIntakeProcessingCount;
+        _intakeProcessingCount = count;
+        _intakeCountReadAt = Environment.TickCount64;
+        if (before != DisplayedIntakeProcessingCount && !IsDisposed) Invalidate();
+    }
     internal int VisibleCodexAccountCount => _cardBounds.Where(item => item.Card.Provider == ProviderKind.Codex)
         .Select(item => item.Card.Key).Distinct(StringComparer.Ordinal).Count();
     internal bool IsChinese => _text.IsChinese;

@@ -103,6 +103,9 @@ public sealed record WindowInspection(
     public string? TaskbarLastDetachReason { get; init; }
     public DateTimeOffset? TaskbarLastDetachAt { get; init; }
     public string? TaskbarLastDetachDetail { get; init; }
+    public DateTimeOffset? LastHealthCheckAt { get; init; }
+    public IReadOnlyList<string> HealthIssues { get; init; } = [];
+    public int? IntakeProcessingCount { get; init; }
     public bool RemoteSession { get; init; }
     public double? ObservedOutputTokensPerSecond { get; init; }
     public DateTimeOffset? OutputRateCapturedAt { get; init; }

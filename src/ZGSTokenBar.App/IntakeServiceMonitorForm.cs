@@ -24,6 +24,7 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
     private string _projectSignature = "";
     private readonly bool _observe;
     internal event EventHandler? WorkItemsRequested;
+    internal event Action<int?>? ProcessingObserved;
     internal (int Projects, int Recent, int History, int InFlight, string Status) Observation =>
         (_last.Values.SelectMany(r => r.Projects).Distinct().Count(), _history.RowCount, _history.RowCount,
             _last.Values.SelectMany(r => r.Progress).Count(r => r.InFlight), _headline.Text);
@@ -92,6 +93,7 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
             var readings = await _client.ReadAsync(operation.Token);
             operation.Token.ThrowIfCancellationRequested();
             if (IsDisposed) return;
+            ProcessingObserved?.Invoke(_client.ProcessingCount(readings));
             foreach (var result in readings)
             {
                 if (result.Reading is { } reading)
