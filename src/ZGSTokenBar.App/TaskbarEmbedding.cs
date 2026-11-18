@@ -46,6 +46,8 @@ internal static class TaskbarEmbedding
 
     internal static bool IsAlive(nint window) => window != 0 && IsWindow(window);
 
+    internal static bool IsVisible(nint window) => window != 0 && IsWindowVisible(window);
+
     internal static uint WindowThread(nint window, out uint processId) => GetWindowThreadProcessId(window, out processId);
     internal static int DpiOf(nint window) => window == 0 ? 0 : (int)GetDpiForWindow(window);
 
@@ -73,7 +75,8 @@ internal static class TaskbarEmbedding
     internal static (long Style, long ExStyle)? Attach(nint child, nint parent, out string failure)
     {
         failure = "";
-        if (child == 0 || !IsAlive(parent)) { failure = "taskbar-missing"; return null; }
+        if (!IsAlive(child)) { failure = "bar-window-missing"; return null; }
+        if (!IsAlive(parent)) { failure = "taskbar-missing"; return null; }
         if (!IsResponsive(parent)) { failure = "taskbar-unresponsive"; return null; }
         if (!SameDpiAwareness(child, parent)) { failure = "dpi-awareness-mismatch"; return null; }
         var style = GetWindowLongPtr(child, GwlStyle).ToInt64();

@@ -96,6 +96,8 @@ public sealed record WindowInspection(
     public string? DataDirectory { get; init; }
     public bool TaskbarDocked { get; init; }
     public bool Visible { get; init; }
+    public long? NativeWindowHandle { get; init; }
+    public bool? NativeVisible { get; init; }
     public bool EmbeddedInTaskbar { get; init; }
     public string? TaskbarEmbedStatus { get; init; }
     public string? TaskbarLastDetachReason { get; init; }

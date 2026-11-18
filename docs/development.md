@@ -322,10 +322,14 @@ total. Compare module IDs
 with the built DLLs instead of relying on a hash computed from a path after launch.
 It reports native screen bounds and topmost state, plus `visible`,
 `embeddedInTaskbar`, `taskbarEmbedStatus` and `remoteSession` for diagnosing taskbar
-occlusion and remote reconnects. The reported DPI is the dock's actual render
+occlusion and remote reconnects. `nativeWindowHandle` and `nativeVisible` report the
+Win32 handle and visibility independently of the Form. `embeddedInTaskbar` verifies
+the native parent and child style. The reported DPI is the dock's actual render
 DPI. Docked placement reads the target taskbar's current native DPI on every
 placement check, including reconnects without a DPI message; pixels, size and
-hit targets rescale together before checking the available gap.
+hit targets rescale together before checking the available gap. A DPI-only change
+keeps the same native child when its taskbar parent still matches, hiding the old
+frame until the new size is verified in the row.
 Floating windows use their live native DPI, with the last calibrated scale as
 the fallback before handle creation, rather than reverting to WinForms' cached DPI.
 `--taskbar-dpi-reconnect [capture-directory]` checks repeated 200% → 100% → 150%

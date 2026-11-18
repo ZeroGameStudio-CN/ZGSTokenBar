@@ -40,6 +40,12 @@ internal sealed partial class BarForm
 
     internal bool EmbeddedInTaskbar => _embedParent != 0 && IsHandleCreated;
 
+    internal bool NativeTaskbarParentVerified => HasNativeTaskbarParent(_embedParent);
+
+    private bool HasNativeTaskbarParent(nint parent) =>
+        EmbeddedInTaskbar && _embedParent == parent && TaskbarEmbedding.IsAlive(parent)
+        && TaskbarEmbedding.ParentOf(Handle) == parent && TaskbarEmbedding.IsChild(Handle);
+
     /// <summary>Last embed outcome, for logs and acceptance checks.</summary>
     internal string TaskbarEmbedStatus { get; private set; } = "off";
     internal string? TaskbarLastDetachReason { get; private set; }
@@ -135,6 +141,7 @@ internal sealed partial class BarForm
         // ordinary button change. An exact fit is usable only while it is verified.
         if (alreadyInRow && occupied is not null
             && (!followAnchor || awaitingLayout)
+            && currentBounds.Top == track.TaskbarBounds.Top + (track.TaskbarBounds.Height - size.Height) / 2
             && _taskbarRowStability.CanKeepCurrent(currentBounds.Size == size, now, observed.ReadAt)
             && TaskbarPlacement.CurrentRowLocationFits(track, size, currentBounds.Location, occupied,
                 awaitingLayout ? extraClearance : 0))
@@ -292,8 +299,7 @@ internal sealed partial class BarForm
         var onPrimary = tray != 0 && tray == track.TaskbarWindow && track.Primary;
         if (_embedParent != 0)
         {
-            if (_embedParent == tray && onPrimary && TaskbarEmbedding.ParentOf(Handle) == tray
-                && TaskbarEmbedding.IsChild(Handle)) return;
+            if (onPrimary && HasNativeTaskbarParent(tray)) return;
             DetachFromTaskbar(onPrimary ? "taskbar-changed" : "secondary-monitor");
             if (!onPrimary) return;
         }
@@ -376,7 +382,8 @@ internal sealed partial class BarForm
             if (!IsHandleCreated && !_hiddenToTray)
             {
                 Visible = false;
-                Visible = true;
+                // Recreate while hidden. Placement owns the first visible frame.
+                _ = Handle;
             }
             if (_taskbarDocked) SyncTaskbarPlacement();
             return;

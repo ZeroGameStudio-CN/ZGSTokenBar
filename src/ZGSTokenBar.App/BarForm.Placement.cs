@@ -65,7 +65,7 @@ internal sealed partial class BarForm
         {
             // A remote/display reconnect can leave WinForms' DeviceDpi at the old value.
             // The taskbar hosting this dock is the current authority for its visual scale.
-            if (ApplyTaskbarDpi(TaskbarEmbedding.DpiOf(track.TaskbarWindow)))
+            if (ApplyTaskbarDpi(TaskbarEmbedding.DpiOf(track.TaskbarWindow), track.TaskbarWindow))
             {
                 placementSize = Size;
                 if (!TaskbarPlacement.TryGetTrack(placementSize, preference.PreferredMonitorName, out track))
@@ -113,8 +113,7 @@ internal sealed partial class BarForm
             var rowOverlay = rowCandidate && remote;
             if (rowCandidate && !remote)
             {
-                if (!EmbeddedInTaskbar || _embedParent != track.TaskbarWindow
-                    || TaskbarEmbedding.ParentOf(Handle) != track.TaskbarWindow || !TaskbarEmbedding.IsChild(Handle))
+                if (!HasNativeTaskbarParent(track.TaskbarWindow))
                     using (PerfTrace.Measure("placement.embed")) EnsureTaskbarEmbedding(track);
                 if (!EmbeddedInTaskbar)
                 {
@@ -533,7 +532,20 @@ internal sealed partial class BarForm
 
     protected override void OnDpiChanged(DpiChangedEventArgs e)
     {
+        // The Form's suggested top-level rectangle is in the wrong coordinate space for a
+        // native child. Refit from the taskbar's own DPI and occupied bounds after it settles.
+        var nativeDock = _taskbarDocked && NativeTaskbarParentVerified;
+        if (nativeDock) e.Cancel = true;
         base.OnDpiChanged(e);
+        if (nativeDock)
+        {
+            if (!_embedTransition && !_placingTaskbar)
+            {
+                if (Visible) Hide();
+                RequestTopologyRefresh(topologyMayHaveChanged: false);
+            }
+            return;
+        }
         HidePopovers();
         UpdateDpiAndRegion();
         TaskbarPlacement.InvalidateCache();
@@ -635,7 +647,7 @@ internal sealed partial class BarForm
         if (!alreadyInRow && !intentionalEntry) return false;
         _taskbarDocked = true;
         _resolvedTaskbarMonitor = track.MonitorName;
-        if (intentionalEntry) ApplyTaskbarDpi(TaskbarEmbedding.DpiOf(track.TaskbarWindow));
+        if (intentionalEntry) ApplyTaskbarDpi(TaskbarEmbedding.DpiOf(track.TaskbarWindow), track.TaskbarWindow);
         var rowOverlay = !EmbeddedInTaskbar || _embedParent != track.TaskbarWindow;
         if (rowOverlay && TaskbarPlacement.ShouldHideForFullscreen(track.MonitorName)) return false;
         if (!TryGetSafeRowLocation(track, Size, requested, ScreenBounds, rowOverlay,
@@ -846,7 +858,7 @@ internal sealed partial class BarForm
         ?? (nativeWindowDpi >= 96 ? nativeWindowDpi : dockedDpi ?? frameworkDpi);
 
     /// <summary>Use one scale for dock geometry, pixels, hit targets and popover anchors.</summary>
-    internal bool ApplyTaskbarDpi(int dpi)
+    internal bool ApplyTaskbarDpi(int dpi, nint taskbarWindow = 0)
     {
         if (!_taskbarDocked || _renderDpi is not null || dpi < 96
             || _dockedRenderDpi == dpi && Math.Abs(_scale - dpi / 96f) < .001f) return false;
@@ -854,7 +866,7 @@ internal sealed partial class BarForm
         _embedIncompatibleTaskbar = 0;
         HidePopovers();
         if (Visible) Hide();
-        if (EmbeddedInTaskbar) DetachFromTaskbar("dpi-changed");
+        if (EmbeddedInTaskbar && !HasNativeTaskbarParent(taskbarWindow)) DetachFromTaskbar("dpi-changed");
         _taskbarRowOverlayFor = 0;
         TaskbarPlacement.InvalidateCache();
         InvalidateTaskbarRowSample();

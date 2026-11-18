@@ -27,8 +27,10 @@ internal static class TaskbarFullscreenTests
         using var parent = new Form { FormBorderStyle = FormBorderStyle.None, ShowInTaskbar = false,
             StartPosition = FormStartPosition.Manual, Bounds = new(-30000, -30000, 1920 * scale, 48 * scale), Opacity = 0 };
         parent.Show();
-        using var bar = new BarForm(new AppSettings { EnableAnimations = false }, QuotaSnapshot.Empty(DateTimeOffset.UtcNow),
-            renderOnly: true, renderDpi: dpi) { Location = new(-29000, -29000), Opacity = 0 };
+        using var bar = new BarForm(new AppSettings { TaskbarDocked = true, EnableAnimations = false },
+            QuotaSnapshot.Empty(DateTimeOffset.UtcNow), renderOnly: true)
+            { Location = new(-29000, -29000), Opacity = 0 };
+        bar.ApplyTaskbarDpi(dpi);
         bar.Show();
         var original = TaskbarEmbedding.Attach(bar.Handle, parent.Handle, out var reason);
         Check(original is not null, "Synthetic parent accepts the isolated bar: " + reason);
@@ -69,6 +71,25 @@ internal static class TaskbarFullscreenTests
                 "A verified free seat restores the same native child directly.");
             Check(TaskbarEmbedding.TryGetScreenBounds(bar.Handle, out var actual) && row.Contains(actual),
                 "Restoration stays within the taskbar row at each DPI.");
+        }
+
+        if (dpi == 192)
+        {
+            var originalHandle = bar.Handle;
+            foreach (var nextDpi in new[] { 96, 144, 192 })
+            {
+                Check(bar.ApplyTaskbarDpi(nextDpi, parent.Handle), "The current taskbar can change its rendering DPI.");
+                Check(!TaskbarEmbedding.IsVisible(originalHandle) && bar.NativeTaskbarParentVerified
+                    && bar.Handle == originalHandle && TaskbarEmbedding.ParentOf(originalHandle) == parent.Handle,
+                    "DPI refitting hides the unverified frame while retaining the same native child.");
+                Set("_taskbarRowSample", (new Rectangle[] { apps, tray }, Environment.TickCount64));
+                Place();
+                var bounds = bar.ScreenBounds;
+                Check(TaskbarEmbedding.IsVisible(originalHandle) && bar.NativeTaskbarParentVerified
+                    && row.Contains(bounds) && bounds.Height == (int)Math.Round(44 * nextDpi / 96d)
+                    && bounds.Y == row.Top + (row.Height - bounds.Height) / 2,
+                    "At the new scale the verified child returns centered in the same taskbar row.");
+            }
         }
 
         // A display switch can detach the child, and Windows can reject SetParent on that row.
