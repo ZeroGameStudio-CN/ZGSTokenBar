@@ -20,10 +20,20 @@ internal static class MonitorGlyph
         using var pen = new Pen(outline, Math.Max(1.3f, icon.Width / 12f))
         { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
         PointF At(float x, float y) => new(icon.Left + x * icon.Width, icon.Top + y * icon.Height);
-        graphics.DrawLines(pen, [At(.10f, .41f), At(.07f, .55f), At(.07f, .87f),
-            At(.93f, .87f), At(.93f, .55f), At(.90f, .41f)]);
-        if (state == IntakeGlyphState.Processing) pen.Color = light ? UiPalette.Emerald600 : UiTokens.Info;
-        graphics.DrawLine(pen, At(.5f, .10f), At(.5f, .62f));
-        graphics.DrawLines(pen, [At(.31f, .42f), At(.50f, .62f), At(.69f, .42f)]);
+        var lift = state == IntakeGlyphState.Idle ? .11f : 0f;
+        graphics.DrawLines(pen, [At(.10f, .41f - lift), At(.07f, .55f - lift), At(.07f, .87f - lift),
+            At(.93f, .87f - lift), At(.93f, .55f - lift), At(.90f, .41f - lift)]);
+        switch (state)
+        {
+            case IntakeGlyphState.Processing:
+                pen.Color = light ? UiPalette.Emerald600 : UiTokens.Info;
+                pen.Width = Math.Max(1.6f, icon.Width / 10f);
+                graphics.DrawLine(pen, At(.5f, .10f), At(.5f, .62f));
+                graphics.DrawLines(pen, [At(.31f, .42f), At(.50f, .62f), At(.69f, .42f)]);
+                break;
+            case IntakeGlyphState.Unconfirmed:
+                graphics.DrawLine(pen, At(.32f, .62f), At(.68f, .24f));
+                break;
+        }
     }
 }
