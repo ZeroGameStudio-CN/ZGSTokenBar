@@ -81,9 +81,10 @@ internal static class TaskbarEmbedding
         SetWindowLongPtr(child, GwlStyle, (nint)((style | WsChild) & ~WsPopup));
         SetWindowLongPtr(child, GwlExStyle, (nint)(exStyle | WsExNoParentNotify));
         _ = SetParent(child, parent);
+        var error = Marshal.GetLastWin32Error();
         if (ParentOf(child) != parent)
         {
-            failure = "setparent-failed:" + Marshal.GetLastWin32Error();
+            failure = "setparent-failed:" + error;
             _ = SetParent(child, 0);
             SetWindowLongPtr(child, GwlStyle, (nint)style);
             SetWindowLongPtr(child, GwlExStyle, (nint)exStyle);

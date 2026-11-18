@@ -70,6 +70,35 @@ internal static class TaskbarFullscreenTests
             Check(TaskbarEmbedding.TryGetScreenBounds(bar.Handle, out var actual) && row.Contains(actual),
                 "Restoration stays within the taskbar row at each DPI.");
         }
+
+        // A display switch can detach the child, and Windows can reject SetParent on that row.
+        // Start after that refusal, with a real top-level HWND and isolated Shell geometry.
+        typeof(BarForm).GetMethod("DetachFromTaskbar", Instance)!.Invoke(bar, ["dpi-changed"]);
+        Set("_embedIncompatibleTaskbar", parent.Handle);
+        Set("_reservedTaskbarRowProbe", (Func<TaskbarPlacement.PlacementTrack, bool>)(t =>
+            TaskbarPlacement.HasReservedRow(t, Rectangle.FromLTRB(screen.Left, screen.Top, screen.Right, row.Top))));
+        Set("_taskbarRowSample", (new Rectangle[] { apps, tray }, Environment.TickCount64 - TaskbarRowStability.ReturnDelayMs));
+        Place();
+        Check(!bar.Visible, "After loss of the native parent, a single read cannot show the bar beside the row.");
+        Set("_taskbarRowSample", (new Rectangle[] { apps, tray }, Environment.TickCount64));
+        Place();
+        Check(bar.Visible && !bar.EmbeddedInTaskbar && bar.TaskbarEmbedStatus == "overlay:embed-unavailable"
+            && bar.ScreenBounds.Size == bar.Size && row.Contains(bar.ScreenBounds),
+            "A reserved and verified row keeps the full-size top-level bar in place after attachment is refused.");
+        var overlayBounds = bar.ScreenBounds;
+        Place();
+        Check(bar.Visible && bar.ScreenBounds == overlayBounds, "A refresh retains the safe top-level seat.");
+        fullscreen = true; Place();
+        Check(!bar.Visible, "The verified top-level overlay also yields to fullscreen.");
+        fullscreen = false; Place();
+        Check(!bar.Visible, "The overlay stays hidden until its row has been checked again.");
+        Set("_taskbarRowSample", (new Rectangle[] { apps, tray }, Environment.TickCount64));
+        Place();
+        Check(bar.Visible && bar.ScreenBounds == overlayBounds, "The overlay returns directly to the same row.");
+        Set("_reservedTaskbarRowProbe", (Func<TaskbarPlacement.PlacementTrack, bool>)(_ => false));
+        Place();
+        Check(bar.Visible && !row.IntersectsWith(bar.ScreenBounds), "A top-level window cannot cover an unreserved row.");
+
         void Set(string field, object value) => typeof(BarForm).GetField(field, Instance)!.SetValue(bar, value);
         void Place() => typeof(BarForm).GetMethod("ApplyDockedTarget", Instance)!.Invoke(bar, [track, bar.Size, anchor, true]);
     }

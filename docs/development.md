@@ -338,11 +338,13 @@ A missing or crowded layout uses an adjacent overlay (`fallback:layout-unavailab
 or `fallback:no-clear-space`) without shrinking the bar. A verified position stays
 put while it fits. When returning from beside the taskbar, the same gap must
 be verified again after two seconds (`fallback:waiting-for-space` while waiting).
-On Remote Desktop, the same verified gap uses a top-level window instead of
-reparenting into Explorer (`overlay:remote-session`, `embeddedInTaskbar: false`).
-It yields when the taskbar does not reserve the row or is behind a fullscreen
-window. Placement does not modify the Shell layout. When the setting is off,
-docking uses the adjacent overlay.
+On Remote Desktop, the same verified gap uses a top-level window
+(`overlay:remote-session`, `embeddedInTaskbar: false`). If Windows rejects native
+attachment, a verified gap in a reserved row uses the same top-level placement
+(`overlay:embed-unavailable`). An incompatible parent is retried after a display,
+session or Shell change, keeping a usable row overlay steady between changes.
+Both modes require a reserved row and yield to fullscreen. Placement does not
+modify the Shell layout. When the setting is off, docking uses the adjacent overlay.
 
 Dragging an existing in-row dock horizontally keeps its native parent (or its
 remote-session row overlay) and follows the pointer inside verified clear

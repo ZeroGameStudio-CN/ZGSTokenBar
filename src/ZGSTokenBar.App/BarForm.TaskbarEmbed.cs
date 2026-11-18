@@ -28,7 +28,10 @@ internal sealed partial class BarForm
     private bool _embedRequested;
     private bool _embedTransition;
     private nint _embedParent;
+    private nint _embedIncompatibleTaskbar;
     private nint _taskbarRowOverlayFor;
+    private Func<TaskbarPlacement.PlacementTrack, bool> _reservedTaskbarRowProbe = static track =>
+        TaskbarPlacement.HasReservedRow(track, Screen.FromHandle(track.TaskbarWindow).WorkingArea);
     private (long Style, long ExStyle)? _embedOriginalStyle;
     private bool _embedHandleLost;
     private bool _embedClosing;
@@ -72,6 +75,7 @@ internal sealed partial class BarForm
                 _embedWatchdogWired = true;
             }
             _embedRetryAfter = DateTime.MinValue;
+            _embedIncompatibleTaskbar = 0;
             _embedWatchdog.Start();
             TaskbarEmbedStatus = "pending";
             if (_taskbarDocked) SyncTaskbarPlacement();
@@ -99,7 +103,7 @@ internal sealed partial class BarForm
         if (!track.Primary) reason = "secondary-monitor";
         else if (!track.Horizontal || track.TrayBounds.IsEmpty || !track.ScreenBounds.Contains(track.TaskbarBounds))
             reason = "layout-unavailable";
-        else if (rowOverlay && !TaskbarPlacement.HasReservedRow(track, Screen.FromHandle(track.TaskbarWindow).WorkingArea))
+        else if (rowOverlay && !_reservedTaskbarRowProbe(track))
             reason = "unreserved-row";
         if (reason.Length != 0)
         {
@@ -268,7 +272,7 @@ internal sealed partial class BarForm
     }
 
     /// <summary>Called from the docked placement path right before the bar is positioned.</summary>
-    private void EnsureTaskbarEmbedding(string? resolvedMonitor)
+    private void EnsureTaskbarEmbedding(TaskbarPlacement.PlacementTrack track)
     {
         if (_embedTransition) return;
         if (!_embedRequested || !_taskbarDocked || (_taskbarDragging && _taskbarDragMoved) || !IsHandleCreated || IsDisposed)
@@ -285,8 +289,7 @@ internal sealed partial class BarForm
             return;
         }
         var tray = TaskbarEmbedding.FindPrimaryTaskbar();
-        var onPrimary = tray != 0 && (resolvedMonitor is null
-            || string.Equals(Screen.FromHandle(tray).DeviceName, resolvedMonitor, StringComparison.OrdinalIgnoreCase));
+        var onPrimary = tray != 0 && tray == track.TaskbarWindow && track.Primary;
         if (_embedParent != 0)
         {
             if (_embedParent == tray && onPrimary && TaskbarEmbedding.ParentOf(Handle) == tray
@@ -299,7 +302,7 @@ internal sealed partial class BarForm
             TaskbarEmbedStatus = tray == 0 ? "fallback:taskbar-missing" : "fallback:secondary-monitor";
             return;
         }
-        if (_taskbarDragging || DateTime.UtcNow < _embedRetryAfter) return;
+        if (_taskbarDragging || tray == _embedIncompatibleTaskbar || DateTime.UtcNow < _embedRetryAfter) return;
         (long Style, long ExStyle)? original;
         string failure;
         _embedTransition = true;
@@ -319,6 +322,10 @@ internal sealed partial class BarForm
         {
             TaskbarEmbedStatus = "fallback:" + failure;
             _embedRetryAfter = DateTime.UtcNow + EmbedRetryAfterFailure;
+            // Keep a usable row overlay steady when this pair of native windows cannot attach.
+            // Display, session and Shell recreation events allow a new attempt.
+            if (failure == "dpi-awareness-mismatch" || failure.StartsWith("setparent-failed:", StringComparison.Ordinal))
+                _embedIncompatibleTaskbar = tray;
             System.Diagnostics.Trace.WriteLine("ZGSTokenBar: taskbar embed fallback: " + failure);
             return;
         }
@@ -410,7 +417,7 @@ internal sealed partial class BarForm
             if (GlassLayered && _glassFrameSize != ClientSize) RepushLayeredFrame();
             return;
         }
-        if (_taskbarDocked && !_hiddenToTray && (RemoteSession() || DateTime.UtcNow >= _embedRetryAfter))
+        if (_taskbarDocked && !_hiddenToTray && (_taskbarRowOverlayFor != 0 || RemoteSession() || DateTime.UtcNow >= _embedRetryAfter))
         {
             SyncTaskbarPlacement();
         }
@@ -426,6 +433,7 @@ internal sealed partial class BarForm
     {
         TaskbarPlacement.InvalidateCache();
         ResetTaskbarRowProbe();
+        _embedIncompatibleTaskbar = 0;
         _embedRetryAfter = DateTime.UtcNow + TimeSpan.FromSeconds(1);
         if (EmbeddedInTaskbar || _taskbarRowOverlayFor != 0 || _embedHandleLost) RequestTopologyRefresh(false);
     }
