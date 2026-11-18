@@ -79,7 +79,11 @@ public sealed class UsageCliFallback(UsageCliRunner? runner = null)
             && provider.Accounts.Any(account => account.Freshness == UsageFreshness.Current
                 && (account.Windows.Any(window => window.UsedPercent is not null) || account.Credits is not null)));
 
-    public static async Task<string?> RunProcessAsync(string executable, IReadOnlyList<string> arguments)
+    public static Task<string?> RunProcessAsync(string executable, IReadOnlyList<string> arguments) =>
+        RunProcessAsync(executable, arguments, CancellationToken.None);
+
+    internal static async Task<string?> RunProcessAsync(string executable, IReadOnlyList<string> arguments,
+        CancellationToken cancellationToken, Action<ProcessStartInfo>? configure = null)
     {
         try
         {
@@ -89,30 +93,56 @@ public sealed class UsageCliFallback(UsageCliRunner? runner = null)
                 {
                     UseShellExecute = false,
                     CreateNoWindow = true,
+                    RedirectStandardInput = true,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                 },
             };
+            configure?.Invoke(process.StartInfo);
             foreach (var argument in arguments) process.StartInfo.ArgumentList.Add(argument);
+            cancellationToken.ThrowIfCancellationRequested();
             if (!process.Start()) return null;
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(25));
             try
             {
-                await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+                process.StandardInput.Close();
+                var output = ReadStandardOutputAsync(process.StandardOutput, timeout.Token);
+                var errors = process.StandardError.BaseStream.CopyToAsync(Stream.Null, timeout.Token);
+                // On Windows a blocking pipe read may not observe cancellation until the
+                // writer exits. Bound the wait itself so cleanup can terminate that writer.
+                await Task.WhenAll(output, errors, process.WaitForExitAsync(timeout.Token))
+                    .WaitAsync(timeout.Token).ConfigureAwait(false);
+                return process.ExitCode == 0 ? await output.ConfigureAwait(false) : null;
             }
             catch (OperationCanceledException)
             {
-                process.Kill(entireProcessTree: true);
+                cancellationToken.ThrowIfCancellationRequested();
                 return null;
             }
-
-            if (process.ExitCode != 0) return null;
-            var output = await process.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
-            return output.Length <= 65_536 ? output : null;
+            finally
+            {
+                try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+                catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception) { }
+            }
         }
         catch (Exception error) when (error is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
             return null;
         }
+    }
+
+    private static async Task<string?> ReadStandardOutputAsync(StreamReader stream, CancellationToken cancellationToken)
+    {
+        const int limit = 65_536;
+        var output = new System.Text.StringBuilder();
+        var buffer = new char[4096];
+        var oversized = false;
+        while (await stream.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false) is > 0 and var count)
+        {
+            if (output.Length + count > limit) oversized = true;
+            if (!oversized) output.Append(buffer, 0, count);
+        }
+        return oversized ? null : output.ToString();
     }
 }

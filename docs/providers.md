@@ -31,14 +31,14 @@ Mainstream quota readers share one model in `ZGSTokenBar.Core/Providers`: a prov
 | Claude | Existing OAuth refresh for the primary login. Additional `~/.claude/accounts/*.json` files are read-only and are not refreshed. | `GET https://api.anthropic.com/api/oauth/usage` |
 | Codex | Existing per-account quota snapshots | `GET chatgpt.com/backend-api/wham/usage` |
 | Cursor | Cursor `state.vscdb` `cursorAuth/accessToken`, or an account file | `GET https://cursor.com/api/usage-summary` |
-| Antigravity / Gemini | Existing valid `~/.gemini/antigravity-cli/antigravity-oauth-token` | `POST https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary`. Expired, missing or failed reads stay unavailable; background refresh never launches `agy` or browser sign-in. |
+| Antigravity / Gemini | Current local AGY session (CLI 1.5.3+) or a valid legacy token file | The installed client runs the headless `/usage` quota command with closed input, no console and a fixed timeout. Only successful quota JSON with zero model turns supplies a reading. A failed read stays unavailable until the next poll. Without a supported CLI, the existing Cloud Code quota request still accepts a valid local token. |
 | GitHub Copilot | GitHub CLI `hosts.yml` | `GET https://api.github.com/copilot_internal/user` |
 | DeepSeek | `DEEPSEEK_API_KEY` or an account file. Harness balance still uses its process plugin. | `GET https://api.deepseek.com/user/balance` |
 | OpenCode | OpenCode `auth.json` | `GET https://opencode.ai/zen/go/v1/usage` |
 | xAI platform | `XAI_API_KEY` plus `XAI_TEAM_ID`, or `~/.xai/config.json` | `GET https://management-api.x.ai/v1/billing/teams/{team}/prepaid/balance` |
 | OpenRouter | `OPENROUTER_API_KEY` or an account file | `GET https://openrouter.ai/api/v1/credits` |
 
-Every provider accepts up to 16 accounts. Declared accounts live beside the app as `accounts.json` plus per-account credential files; those files are never written by TokenBar, copied into snapshots, or sent to the local API. Requests are allow-listed HTTPS reads. The only POST is Antigravity's quota summary. Tokens are not redeemed, refreshed, or logged.
+Every provider accepts up to 16 accounts. Declared accounts live beside the app as `accounts.json` plus per-account credential files; those files are never written by TokenBar, copied into snapshots, or sent to the local API. Direct requests are allow-listed HTTPS reads. The modern AGY client manages its own saved login. TokenBar uses its quota output without handling Windows keyring contents or requesting sign-in. See [AGY headless authentication](https://antigravity.google/docs/cli/headless/) and the [read-only print commands](https://antigravity.google/docs/changelog#v1111).
 
 The usage panel is a liquid-glass surface. On Windows 11 it asks DWM for acrylic (`DWMWA_SYSTEMBACKDROP_TYPE`) and rounded corners; older Windows falls back to the accent blur policy, and if both are unavailable the panel paints a tinted gradient. Provider groups are frosted cards. Accounts are rows inside those cards, with a collapsible ledger.
 

@@ -42,6 +42,9 @@ public interface IUsageProvider
 
     UsageCliSource? Cli { get; }
 
+    /// <summary>Current account from an installed native client. Null enables legacy discovery.</summary>
+    Task<UsageAccountSnapshot?> ReadLocalAccountAsync(UsageDetectContext context, DateTimeOffset now, CancellationToken cancellationToken);
+
     IReadOnlyList<UsageCredential> Detect(UsageDetectContext context);
 
     /// <summary>True when the tool is installed, so a loading card is shown before the first read.</summary>
@@ -69,6 +72,9 @@ public abstract class UsageProvider : IUsageProvider
     public virtual TimeSpan RefreshInterval => DefaultRefreshInterval;
     public virtual bool FetchesUsage => true;
     public virtual UsageCliSource? Cli => null;
+
+    public virtual Task<UsageAccountSnapshot?> ReadLocalAccountAsync(
+        UsageDetectContext context, DateTimeOffset now, CancellationToken cancellationToken) => Task.FromResult<UsageAccountSnapshot?>(null);
 
     public virtual IReadOnlyList<UsageCredential> Detect(UsageDetectContext context) => [];
 

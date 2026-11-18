@@ -154,7 +154,25 @@ public static partial class UsageParsers
     /// <c>remaining_fraction</c> buckets under <c>command.data.groups</c> plus the rounded text in
     /// <c>response</c>. The buckets win (agy rounds 3.6% to "4%"); the text is the fallback.
     /// </summary>
-    private static UsageParseResult? AntigravityEnvelope(JsonElement root)
+    internal static UsageParseResult? ParseAntigravityHeadless(string? output)
+    {
+        if (string.IsNullOrWhiteSpace(output)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(output);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || root.StringProperty("status") != "SUCCESS"
+                || !root.TryGetProperty("num_turns", out var turns) || turns.ValueKind != JsonValueKind.Number
+                || !turns.TryGetInt32(out var count) || count != 0
+                || root.ObjectProperty("command") is not { } command || command.StringProperty("name") is not ("usage" or "/usage")
+                || command.ObjectProperty("data") is not { } data || data.ArrayProperty("groups") is null)
+                return null;
+            return AntigravityEnvelope(root, allowText: false);
+        }
+        catch (JsonException) { return null; }
+    }
+
+    private static UsageParseResult? AntigravityEnvelope(JsonElement root, bool allowText = true)
     {
         var groups = root.ObjectProperty("command") is { } command && command.ObjectProperty("data") is { } data
             ? data.ArrayProperty("groups")
@@ -190,7 +208,7 @@ public static partial class UsageParsers
             if (windows.Count > 0) return new UsageParseResult(OrderAntigravity(windows).Take(8).ToArray(), null, [], null, null);
         }
 
-        return root.StringProperty("response") is { Length: > 0 } text && !text.TrimStart().StartsWith('{')
+        return allowText && root.StringProperty("response") is { Length: > 0 } text && !text.TrimStart().StartsWith('{')
             ? ParseAntigravity(text)
             : null;
     }

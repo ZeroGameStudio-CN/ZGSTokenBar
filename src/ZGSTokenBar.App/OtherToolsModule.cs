@@ -34,7 +34,7 @@ internal sealed class OtherToolsModule : IDisposable
         _scheduler = scheduler;
         _bar.PluginPopoverRequested += OnPopoverRequested;
         // First read one second after start, then every provider refresh interval (2 min by default).
-        // Per-provider failures and caches (e.g. Antigravity's 10-minute cache) stay in the providers.
+        // Per-provider failures and any CLI caches stay in the providers.
         _scheduler.Add(
             RefreshSource,
             () => UsageProviderRegistry.RefreshInterval,

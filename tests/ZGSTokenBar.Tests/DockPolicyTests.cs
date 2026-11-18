@@ -52,6 +52,12 @@ internal static class DockPolicyTests
         foreach (double? used in new double?[] { 0, 100, null, 67 })
         {
             Publish(bar, definition, [account with { Windows = [Window(used)], Freshness = UsageFreshness.Unavailable }]);
+            if (definition.Id == UsageProviderIds.Antigravity && used is null)
+            {
+                Check(Plan(bar).Visible.Count == 0 && Plan(bar).OverflowCount == 0,
+                    "AGY with no returned quota stays out of the dock until a real percentage is available.");
+                continue;
+            }
             Check(Plan(bar).Visible is [{ } ring] && ring.StableId == identity && ring.InUse,
                 "Zero, exhausted, unknown and changing quota readings cannot hide or replace an active account.");
         }

@@ -75,9 +75,12 @@ public static partial class UsageAccountDirectory
         ProviderDefinition provider,
         UsagePaths paths,
         IUsageEnvironment environment,
-        bool skipPrimaryClaude)
+        bool skipPrimaryClaude,
+        bool includeDetected = true)
     {
-        var discovered = UsageProviderRegistry.Find(provider.Id)?.Detect(new UsageDetectContext(paths, environment, skipPrimaryClaude)) ?? [];
+        var discovered = includeDetected
+            ? UsageProviderRegistry.Find(provider.Id)?.Detect(new UsageDetectContext(paths, environment, skipPrimaryClaude)) ?? []
+            : [];
         return discovered
             .Concat(Declared(provider.Id, paths))
             .GroupBy(account => account.AccountId, StringComparer.OrdinalIgnoreCase)

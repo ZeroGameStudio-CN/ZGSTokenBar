@@ -28,6 +28,8 @@ internal sealed partial class BarForm
             view ??= new(provider.ProviderId, provider.DisplayName, UsageProjection.MiniCard(provider, _text.IsChinese),
                 new Dictionary<string, string>());
             var accounts = provider.Accounts.Where(KnownUsageAccount)
+                .Where(account => provider.ProviderId != UsageProviderIds.Antigravity
+                    || account.Windows.Any(window => window.UsedPercent is not null))
                 .Where(account => account.SourceKind is not ("quota-card" or "codex-account"))
                 .OrderBy(account => account.AccountId, StringComparer.Ordinal).ToArray();
             var icon = GlassPluginIcon(view);

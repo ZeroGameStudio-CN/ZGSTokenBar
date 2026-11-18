@@ -1,0 +1,131 @@
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using ZGSTokenBar.Core;
+
+internal static class AntigravityLocalQuotaTests
+{
+    private const string Quota = """
+        {"status":"SUCCESS","num_turns":0,"command":{"name":"usage","data":{"groups":[
+          {"name":"Gemini 4 Argon","buckets":[{"name":"Gemini 4 Argon Weekly Limit","window":"weekly",
+            "remaining_fraction":0.364,"reset_time":"2026-11-24T00:00:00Z"}]}]}}}
+        """;
+
+    internal static void Run() => Task.Run(RunAsync).GetAwaiter().GetResult();
+
+    private static async Task RunAsync()
+    {
+        var root = Directory.CreateTempSubdirectory("zgs-agy-native-quota-");
+        var paths = new UsagePaths(root.FullName, root.FullName, root.FullName);
+        var bin = Directory.CreateDirectory(Path.Combine(root.FullName, "agy", "bin"));
+        var exe = Path.Combine(bin.FullName, "agy.exe");
+        var profile = Directory.CreateDirectory(Path.Combine(root.FullName, "Antigravity"));
+        var appStorage = Path.Combine(profile.FullName, "app_storage.json");
+        var now = DateTimeOffset.Parse("2026-11-18T10:00:00Z");
+        var calls = new List<string>();
+        var version = "1.2.9";
+        string? reply = Quota;
+        var switchProfile = false;
+        var source = new AntigravityLocalQuota((path, args, _) =>
+        {
+            Check(path == exe, "Only the registered local AGY executable is used.");
+            calls.Add(args[0]);
+            if (args.SequenceEqual(["--version"])) return Task.FromResult<string?>(version);
+            Check(args.SequenceEqual(["-p", "/usage", "--output-format", "json", "--print-timeout", "20s"]),
+                "Only the bounded read-only command is sent to AGY.");
+            if (switchProfile)
+                File.WriteAllText(appStorage, """{"agy.onboarding.lastLoginUsername":"second@example.test"}""");
+            return Task.FromResult<string?>(reply);
+        });
+        try
+        {
+            Check(await source.ReadAsync(paths, now, default) is null && calls.Count == 0,
+                "A missing executable leaves the legacy route available.");
+            File.WriteAllText(exe, "unqualified fixture");
+            Check(await source.ReadAsync(paths, now, default) is null && calls.SequenceEqual(["--version"]),
+                "An older CLI never receives a quota query.");
+
+            version = "1.5.3";
+            File.WriteAllText(exe, "updated fixture for a qualified executable");
+            var current = await source.ReadAsync(paths, now, default);
+            Check(current is { Freshness: UsageFreshness.Current, SourceKind: "agy-cli" }
+                && current.Windows.Single().UsedPercent is { } used && Math.Abs(used - 63.6) < .0001,
+                "The native route reads quota without any legacy credential file and retains exact fractions.");
+            foreach (var failure in new[] { null, Quota.Replace("\"num_turns\":0", "\"num_turns\":1"),
+                         Quota.Replace("\"usage\"", "\"other\""), Quota.Replace("\"SUCCESS\"", "\"ERROR\"") })
+            {
+                reply = failure;
+                var unavailable = await source.ReadAsync(paths, now.AddMinutes(2), default);
+                Check(unavailable is { Freshness: UsageFreshness.Unavailable, SampledAt: null, Windows.Count: 0 },
+                    "A transport failure or nonquota result cannot become a current percentage or re-enable the legacy account.");
+            }
+            reply = Quota;
+            switchProfile = true;
+            Check(await source.ReadAsync(paths, now, default) is { Freshness: UsageFreshness.Unavailable },
+                "A login change during the read discards the result.");
+            switchProfile = false;
+            Check(await source.ReadAsync(paths, now.AddMinutes(2), default) is { Freshness: UsageFreshness.Current }
+                && calls.Count(call => call == "--version") == 2,
+                "The next refresh recovers on the current account, reusing only the executable qualification.");
+            await VerifyDetachedChildAsync(root.FullName);
+        }
+        finally
+        {
+            File.Delete(exe);
+            File.Delete(appStorage);
+            File.Delete(Path.Combine(root.FullName, "pipe-started"));
+            profile.Delete();
+            bin.Delete();
+            Directory.Delete(Path.Combine(root.FullName, "agy"));
+            root.Delete();
+        }
+    }
+
+    private static async Task VerifyDetachedChildAsync(string root)
+    {
+        var output = await UsageCliFallback.RunProcessAsync(Environment.ProcessPath!, ["--quota-pipe-fixture"]);
+        Check(output == "no-console:true;stdin:eof", "The native child has no console and receives EOF while stderr is drained.");
+
+        var marker = Path.Combine(root, "pipe-started");
+        using var cancellation = new CancellationTokenSource();
+        var running = UsageCliFallback.RunProcessAsync(Environment.ProcessPath!, ["--quota-pipe-fixture", marker], cancellation.Token);
+        Process? child = null;
+        try
+        {
+            var deadline = Stopwatch.StartNew();
+            while (!File.Exists(marker) && !running.IsCompleted && deadline.Elapsed < TimeSpan.FromSeconds(8))
+                await Task.Delay(25);
+            Check(File.Exists(marker), "The fixture reached the blocked-pipe state.");
+            child = Process.GetProcessById(int.Parse(File.ReadAllText(marker)));
+            cancellation.Cancel();
+            try { await running.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+            Check(running.IsCanceled && child.WaitForExit(5000), "A cancelled quota request promptly terminates the blocked writer.");
+        }
+        finally { cancellation.Cancel(); child?.Dispose(); }
+    }
+
+    internal static int RunPipeFixture(string? marker)
+    {
+        if (GetConsoleWindow() != 0 || !Console.IsInputRedirected || Console.In.Read() != -1) return 1;
+        if (marker is not null)
+        {
+            if (!Path.GetFullPath(marker).StartsWith(Path.GetTempPath(), StringComparison.OrdinalIgnoreCase)
+                || Path.GetFileName(marker) != "pipe-started") return 1;
+            File.WriteAllText(marker + ".tmp", Environment.ProcessId.ToString());
+            File.Move(marker + ".tmp", marker);
+            Thread.Sleep(TimeSpan.FromSeconds(20));
+            return 1;
+        }
+        Console.Error.Write(new string('e', 70_000));
+        Console.Write("no-console:true;stdin:eof");
+        return 0;
+    }
+
+    [DllImport("kernel32.dll")]
+    private static extern nint GetConsoleWindow();
+
+    private static void Check(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException(message);
+    }
+}

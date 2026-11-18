@@ -2,15 +2,17 @@ namespace ZGSTokenBar.Core;
 
 public sealed class AntigravityUsageProvider : UsageProvider
 {
+    private readonly AntigravityLocalQuota _local = new();
+
     public override ProviderDefinition Definition { get; } = new(UsageProviderIds.Antigravity, "Antigravity", "#4285f4", 910, UsageSurface.Mini,
-        "Cloud Code retrieveUserQuotaSummary; background reads never start interactive sign-in")
+        "AGY headless quota command or legacy Cloud Code quota summary")
         { ActivityProcessNames = ["antigravity", "agy"] };
 
     public override string IconResource => "antigravity-official-icon.png";
     public override IReadOnlyList<string> Windows => ["weekly", "5h"];
 
-    // Even print-mode /usage can launch browser sign-in when the CLI cannot authenticate.
-    // A passive quota reader must never start that flow. Expired credentials stay unavailable.
+    public override Task<UsageAccountSnapshot?> ReadLocalAccountAsync(
+        UsageDetectContext context, DateTimeOffset now, CancellationToken cancellationToken) => _local.ReadAsync(context.Paths, now, cancellationToken);
 
     public override IReadOnlyList<UsageCredential> Detect(UsageDetectContext context) => UsageAccountDirectory.DetectAntigravity(context.Paths);
 

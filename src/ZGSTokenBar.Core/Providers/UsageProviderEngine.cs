@@ -150,17 +150,21 @@ public static class UsageProviderEngine
     public static async Task<UsageBoard> LoadAsync(UsageLoadRequest request, CancellationToken cancellationToken)
     {
         var providers = new List<UsageProviderSnapshot>();
+        var context = new UsageDetectContext(request.Paths, request.Environment, request.SkipPrimaryClaude);
         foreach (var provider in UsageProviderRegistry.All)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var definition = provider.Definition;
             if (!request.IsEnabled(definition.Id) || !provider.FetchesUsage) continue;
             var accounts = new List<UsageAccountSnapshot>();
+            var local = await provider.ReadLocalAccountAsync(context, request.Now, cancellationToken).ConfigureAwait(false);
+            if (local is not null) accounts.Add(local);
             foreach (var credential in UsageAccountDirectory.Discover(
                 definition,
                 request.Paths,
                 request.Environment,
-                request.SkipPrimaryClaude))
+                request.SkipPrimaryClaude,
+                includeDetected: local is null))
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 accounts.Add(await ReadAccountAsync(provider, credential, request, cancellationToken).ConfigureAwait(false));

@@ -19,6 +19,15 @@ using ZGSTokenBar.Plugin.AiGatewayObserver;
 
 if (HostJobLifetimeFixture.TryRun(args, out var hostJobExitCode)) return hostJobExitCode;
 
+if (args is ["--quota-pipe-fixture"]) return AntigravityLocalQuotaTests.RunPipeFixture(null);
+if (args is ["--quota-pipe-fixture", var quotaMarker]) return AntigravityLocalQuotaTests.RunPipeFixture(quotaMarker);
+if (args is ["--agy-quota"])
+{
+    AntigravityLocalQuotaTests.Run();
+    Console.WriteLine("PASS AGY quota version guard, disconnected recovery and detached I/O");
+    return 0;
+}
+
 if (args.Length == 1 && args[0] == "--dock-quota-order")
 {
     DockQuotaOrderTests.Run();
@@ -601,6 +610,7 @@ var tests = new (string Name, Action Run)[]
     ("Plugin refresh and disable lifecycle", PluginLifecycleRegressionTests.Run),
     ("Claude usage parser", TestClaudeParser),
     ("Unified usage providers", () => UsageProviderFixtureTests.Run()),
+    ("AGY quota uses the existing headless session and recovers after unavailability", AntigravityLocalQuotaTests.Run),
     ("Claude Retry-After backoff", TestClaudeRetryAfterBackoff),
     ("Claude explicit OAuth refresh", TestClaudeExplicitOAuthRefresh),
     ("Codex primary/secondary parser", TestCodexParser),
