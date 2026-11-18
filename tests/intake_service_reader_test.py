@@ -83,6 +83,9 @@ class ReaderTests(unittest.TestCase):
             archive_result = json.dumps(dict(MESSAGE=json.dumps(dict(event="intake_result", item_id=A, phase="archive_pending")), __REALTIME_TIMESTAMP="1700000000000000"))
             observed = reader.project(CONFIG, {}, store, archive_result)
             self.assertEqual(next(r for r in observed["history"] if r["phase"] == "archive_pending")["kind"], "archive")
+            terminal_archive = json.dumps(dict(MESSAGE=json.dumps(dict(event="intake_result", item_id=A, phase="archived", generation=1)), __REALTIME_TIMESTAMP="1700000001000000"))
+            archived = reader.project(CONFIG, {}, store, terminal_archive)
+            self.assertEqual(next(r for r in archived["history"] if r["phase"] == "archived")["kind"], "archive")
 
     def test_collector_child_is_readonly_and_service_user_scoped(self):
         with tempfile.TemporaryDirectory(prefix="zgstokenbar-intake-fixture-") as directory:

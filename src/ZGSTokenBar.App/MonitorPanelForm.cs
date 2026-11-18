@@ -111,7 +111,7 @@ internal abstract partial class MonitorPanelForm : Form, IPluginPopoverContent
         var surface = new RouterSurface { Dock = DockStyle.Fill, Input = true, Padding = new(8, 2, 8, 2),
             Margin = new(0, 0, 0, 4), AccessibleName = title };
         var row = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 2, RowCount = 1 };
-        row.ColumnStyles.Add(new(SizeType.Absolute, 44)); row.ColumnStyles.Add(new(SizeType.Percent, 100));
+        row.ColumnStyles.Add(new(SizeType.Absolute, 56)); row.ColumnStyles.Add(new(SizeType.Percent, 100));
         row.RowStyles.Add(new(SizeType.Percent, 100));
         row.Controls.Add(new Label { Text = title, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft,
             AutoEllipsis = true, UseCompatibleTextRendering = true }, 0, 0);

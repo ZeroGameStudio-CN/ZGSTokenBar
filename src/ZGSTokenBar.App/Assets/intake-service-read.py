@@ -117,7 +117,7 @@ def project(config, service, store, journal):
             at = datetime.datetime.fromtimestamp(stamp, datetime.timezone.utc).isoformat()
             kind = event["event"].removeprefix("intake_")
             phase = code(event.get("phase") or ("error" if kind == "error" else "needs_attention" if kind.endswith("attention") else "ready"))
-            if phase.startswith("archive_"):
+            if phase.startswith("archive_") or phase == "archived":
                 kind = "archive"
             # Startup backfill can repeat a confirmed archive; do not present it as another operation.
             key = (kind, identity, phase, str(event.get("generation", "")))

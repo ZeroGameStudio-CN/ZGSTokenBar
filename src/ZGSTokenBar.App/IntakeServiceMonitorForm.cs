@@ -10,7 +10,10 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 5000 };
     private readonly RouterButton _refresh = new() { Icon = RouterButtonIcon.Refresh }, _pin = new() { Icon = RouterButtonIcon.Pin },
         _close = new() { Icon = RouterButtonIcon.Close }, _workItems = new();
-    private readonly Label _headline = Label(), _task = Label(), _detail = Label(), _summary = Label(), _freshness = Label(), _status = Label();
+    private readonly RouterStatusBadge _headline = new() { Margin = Padding.Empty };
+    private readonly Label _task = Label(), _detail = Label(), _summary = Label(), _freshness = Label(), _status = Label();
+    private readonly MonitorBrandMark _brand;
+    private readonly ToolTip _tips = new() { AutoPopDelay = 15000, InitialDelay = 400, ReshowDelay = 100 };
     private readonly FlowLayoutPanel _projects = Flow();
     private readonly ContextMenuStrip _projectMenu = new() { ShowImageMargin = false };
     private readonly RouterGrid _progress = IntakeObserverForm.Grid(), _history = IntakeObserverForm.Grid();
@@ -33,14 +36,15 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
         Text = T("工单与分拣", "Work intake");
         SuspendLayout();
         var root = CreatePanelLayout(); Controls.Add(root);
-        var brand = new MonitorBrandMark(T("自动分拣", "Intake"), intake: true) { Width = 140, Height = 30 };
+        _brand = new MonitorBrandMark(T("自动分拣", "Intake"), intake: true) { Width = 140, Height = 30 };
         _summary.Width = 180; _freshness.Width = 140;
         _summary.Text = T("服务观测 · 只读", "Service observations · Read only");
-        root.Controls.Add(CreateNavigation(CreateHeader(Flow(brand, _summary), Flow(_freshness, _refresh, _pin, _close), 240),
+        root.Controls.Add(CreateNavigation(CreateHeader(Flow(_brand, _summary), Flow(_freshness, _refresh, _pin, _close), 240),
             _projects, T("项目", "Project")), 0, 0);
         _workItems.Text = T("工单详情", "Work items");
         _workItems.Click += (_, _) => { if (_pinned) WorkItemsRequested?.Invoke(this, EventArgs.Empty); };
         _refresh.AccessibleName = T("刷新", "Refresh"); _pin.AccessibleName = T("固定弹层", "Pin"); _close.AccessibleName = T("收起弹层", "Close");
+        foreach (var button in new[] { _refresh, _pin, _close }) _tips.SetToolTip(button, button.AccessibleName);
         var current = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 1, RowCount = 3 };
         current.ColumnStyles.Add(new(SizeType.Percent, 100));
         foreach (var height in new[] { 30, 28, 30 }) current.RowStyles.Add(new(SizeType.Absolute, height));
@@ -54,6 +58,9 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
         IntakeObserverForm.AddColumn(_history, T("工单／内容", "Item / title"), 0);
         IntakeObserverForm.AddColumn(_history, T("操作", "Operation"), 100);
         IntakeObserverForm.AddColumn(_history, T("结果／阶段", "Result / stage"), 180);
+        _progress.CellPainting += PaintStage;
+        _history.CellPainting += PaintStage;
+        _tips.SetToolTip(_history, T("记录时间来自服务观测；旧回执缺少时间时显示 —", "Times come from service observations; older receipts without timestamps show —"));
         _progress.EmptyTitle = T("暂无在途回执", "No in-flight receipts");
         _progress.EmptyDetail = T("有新反馈或返工时自动更新", "New feedback and rework appear here");
         _history.EmptyTitle = T("正在连接分拣服务…", "Connecting to intake service…");
@@ -73,7 +80,9 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
             if (!_observe) return;
             _timer.Start(); BeginInvoke(new Action(async () => { if (Visible && !IsDisposed) await RefreshAsync(); }));
         };
-        SetLogicalFont(_headline, "Segoe UI", UiTokens.FontBody, FontStyle.Bold);
+        SetLogicalFont(_headline, "Segoe UI", 10.5f, FontStyle.Bold);
+        SetLogicalFont(_task, "Microsoft YaHei UI", UiTokens.FontTitle, FontStyle.Bold);
+        foreach (var label in new[] { _detail, _freshness, _summary, _status }) SetLogicalFont(label, "Segoe UI", 10.5f);
         ApplyPalette(QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
         ApplyRows(); ResumeLayout(true);
     }
@@ -173,9 +182,17 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
             : (active > 0 ? "" : T("最近记录 · ", "Latest record · ")) + ItemTitle(task);
         if (_last.Count > 0) _freshness.Text = T("更新于 ", "Updated ") + _last.Values.Max(r => r.ObservedAt).ToLocalTime().ToString("HH:mm:ss");
         var partial = _unavailable.Count > 0 || current.Any(r => r.Gaps.Length > 0);
+        var tone = _client.ConfigurationError is not null || partial ? "warning"
+            : current.Any(r => !r.Active) ? "offline" : active > 0 ? "running" : "idle";
+        _headline.Accent = UiTokens.State(tone); _headline.Invalidate();
+        _brand.State = tone == "running" ? "running" : tone == "warning" ? "attention" : "idle";
+        _brand.Invalidate();
+        _tips.SetToolTip(_task, task?.Title ?? _task.Text);
+        _task.AccessibleDescription = task?.Title ?? _task.Text;
         _status.Text = _client.ConfigurationError is not null ? T("检查本机 intake-services.json；未请求登录或更改服务", "Check local intake-services.json; no sign-in or service changes requested")
             : partial ? T("部分服务记录不可用；不能据此判断没有任务", "Partial service observations; this does not establish an empty queue")
-            : T("只读 · 记录时间不等于业务验收时间 · 缺失时间显示 —", "Read only · Observation time is not business acceptance time · Missing timestamps show —");
+            : T("只读 · 服务运行记录", "Read only · Service observations");
+        _tips.SetToolTip(_status, T("记录时间不等于业务验收时间；缺失时间的旧回执显示 —", "Observation time is not business acceptance time; older receipts without timestamps show —"));
         _progress.EmptyTitle = partial ? T("在途状态暂不可确认", "In-flight state is unconfirmed") : T("暂无在途回执", "No in-flight receipts");
         _progress.EmptyDetail = partial ? T("部分记录未返回，不能据此判断没有任务", "Missing observations do not establish an empty queue") : T("有新反馈或返工时自动更新", "New feedback and rework appear here");
         _history.EmptyTitle = partial ? T("历史记录暂不可用", "Service history is unavailable")
@@ -187,10 +204,38 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
         var body = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 1, RowCount = 2 };
         body.ColumnStyles.Add(new(SizeType.Percent, 100)); body.RowStyles.Add(new(SizeType.Absolute, 30)); body.RowStyles.Add(new(SizeType.Percent, 100));
         var heading = Label(); heading.Text = title; heading.Width = 240;
+        SetLogicalFont(heading, "Segoe UI", UiTokens.FontBody, FontStyle.Bold);
         var pager = new MonitorTablePager(grid);
         body.Controls.Add(CreateHeader(heading, Flow(pager.Buttons), 200), 0, 0); body.Controls.Add(grid, 0, 1);
         var section = RouterSurface.Section(title); section.Controls.Add(body); return section;
     }
+    private void PaintStage(object? sender, DataGridViewCellPaintingEventArgs e)
+    {
+        if (sender is not RouterGrid grid || e.Graphics is not { } graphics || e.RowIndex < 0
+            || e.ColumnIndex != grid.ColumnCount - 1 || grid.Rows[e.RowIndex].Tag is not IntakeServiceRecord row) return;
+        e.PaintBackground(e.ClipBounds, true);
+        var scale = RouterVisualGeometry.Scale(grid);
+        var text = e.FormattedValue?.ToString() ?? "";
+        var size = UiPaint.PillSize(text, grid.Font, scale);
+        var width = Math.Min(e.CellBounds.Width - 8 * scale, size.Width);
+        var height = Math.Min(e.CellBounds.Height - 6 * scale, size.Height);
+        if (width > 0 && height > 0)
+        {
+            var bounds = new RectangleF(e.CellBounds.X + (e.CellBounds.Width - width) / 2,
+                e.CellBounds.Y + (e.CellBounds.Height - height) / 2, width, height);
+            UiPaint.Pill(graphics, bounds, text, grid.Font, StageColor(row.Phase), UiTokens.CardSurface, scale);
+        }
+        e.Handled = true;
+    }
+    private static Color StageColor(string phase) => phase switch
+    {
+        "confirmed" or "archived" or "related" or "reconciled_existing" => UiTokens.Positive,
+        "needs_attention" or "needs_review" or "indeterminate" or "waiting_upstream" => UiTokens.Warning,
+        "error" => UiTokens.Negative,
+        "sending" or "model_started" or "classified" or "waiting_original" or "submitting" or "submitted"
+            or "retry" or "archive_pending" or "archive_submitted" or "archive_observation_deferred" => UiTokens.Info,
+        _ => UiTokens.Muted,
+    };
     private static void Rows(RouterGrid grid, (object?[] Values, IntakeServiceRecord Record)[] rows)
     {
         grid.SuspendLayout();
@@ -218,6 +263,7 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
     {
         IntakeObserverForm.ApplyObservationPalette(this, _popoverScale, _task);
         var palette = new RouterVisualPalette(UiTokens.CardSurface);
+        _headline.Palette = palette;
         _headline.ForeColor = palette.Text;
         _projectMenu.Renderer = new DarkContextMenuRenderer(palette.Surface, palette.Input, palette.Border, palette.Text, palette.Muted);
         _projectMenu.Font = Font;
@@ -246,5 +292,5 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
     private static FlowLayoutPanel Flow(params Control[] controls)
     { var row = new FlowLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, WrapContents = false }; row.Controls.AddRange(controls); return row; }
     protected override void Dispose(bool disposing)
-    { if (disposing) { _request?.Cancel(); _timer.Dispose(); _projectMenu.Dispose(); } base.Dispose(disposing); }
+    { if (disposing) { _request?.Cancel(); _timer.Dispose(); _projectMenu.Dispose(); _tips.Dispose(); } base.Dispose(disposing); }
 }
