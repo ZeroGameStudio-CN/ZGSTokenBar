@@ -10,6 +10,7 @@ namespace ZGSTokenBar.App;
 /// <summary>Native presentation only. All execution, fairness and release decisions belong to Router.</summary>
 internal sealed class RouterMonitorForm : MonitorPanelForm
 {
+    private const string HistoryReadTimeout = "历史记录读取超时，稍后可刷新。";
     private readonly RouterMonitorClient _client;
     private readonly CancellationTokenSource _stop = new();
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 2000 };
@@ -31,6 +32,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
     private readonly Label _queuePage = Label("", 180);
     private readonly Label _historyPage = Label("", 180);
     private string _statistics = "";
+    private readonly RouterGrid _active = Grid();
     private readonly RouterGrid _queue = Grid();
     private readonly RouterGrid _history = Grid();
     private readonly ComboBox _kind = Combo(110), _outcome = Combo(110), _day = Combo(135);
@@ -39,6 +41,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
     private readonly Button _queueCancel, _top, _up, _down, _currentMenuButton, _filterToggle, _queuePrevious, _queueNext, _historyPrevious, _historyNext;
     private readonly ContextMenuStrip _currentMenu = new() { ShowImageMargin = false };
     private readonly TableLayoutPanel _root;
+    private readonly TableLayoutPanel _singleTask;
     private readonly FlowLayoutPanel _filters;
     private readonly Label _currentHeading = Label("当前", 52), _queueHeading = Label("排队", 120), _historyHeading = Label("历史", 70), _historySummary = Label("", 210);
     private readonly TableLayoutPanel _historyBody;
@@ -108,32 +111,56 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         _root.Controls.Add(navigation, 0, 0);
         SetLogicalFont(_headline, Font.FontFamily.Name, 10.5f, FontStyle.Bold);
         SetLogicalFont(_task, Font.FontFamily.Name, 12, FontStyle.Bold);
-        foreach (var label in new[] { _metrics, _detail, _source, _freshness, _overviewStats, _notice, _historySummary })
+        SetLogicalFont(_metrics, Font.FontFamily.Name, 12, FontStyle.Bold);
+        foreach (var label in new[] { _detail, _source, _freshness, _overviewStats, _notice, _historySummary })
             SetLogicalFont(label, Font.FontFamily.Name, 10.5f);
         foreach (var label in new[] { _currentHeading, _queueHeading, _historyHeading })
             SetLogicalFont(label, "Segoe UI", UiTokens.FontBody, FontStyle.Bold);
-        _currentHeading.Height = 24; _queueHeading.Height = _historyHeading.Height = _historySummary.Height = 30;
+        _currentHeading.Height = 25; _queueHeading.Height = _historyHeading.Height = _historySummary.Height = 30;
         _currentHeading.Margin = _queueHeading.Margin = _historyHeading.Margin = _historySummary.Margin = Padding.Empty;
         _metrics.TextAlign = ContentAlignment.MiddleRight;
         _task.Dock = _detail.Dock = _source.Dock = _notice.Dock = _metrics.Dock = DockStyle.Fill;
         _task.Margin = _detail.Margin = _source.Margin = _metrics.Margin = Padding.Empty;
-        var summary = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 1, RowCount = 4 };
+        var summary = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 1, RowCount = 2 };
         summary.ColumnStyles.Add(new(SizeType.Percent, 100));
-        summary.RowStyles.Add(new(SizeType.Absolute, 24)); summary.RowStyles.Add(new(SizeType.Absolute, 26)); summary.RowStyles.Add(new(SizeType.Absolute, 20)); summary.RowStyles.Add(new(SizeType.Percent, 100));
-        var status = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 3, RowCount = 1 };
-        status.RowStyles.Add(new(SizeType.Percent, 100));
-        status.ColumnStyles.Add(new(SizeType.Absolute, 200)); status.ColumnStyles.Add(new(SizeType.Percent, 100)); status.ColumnStyles.Add(new(SizeType.Absolute, 36));
+        summary.RowStyles.Add(new(SizeType.Absolute, 27)); summary.RowStyles.Add(new(SizeType.Percent, 100));
         _currentMenuButton = IconButton(RouterButtonIcon.More, "当前任务操作", () => { _currentMenu.Show(_currentMenuButton!, new Point(0, _currentMenuButton!.Height)); return Task.CompletedTask; });
+        _currentMenuButton.Visible = _project != RouterMonitorClient.AllProjects;
         _nativeStop = MenuItem("停止并收尾", () => CurrentControlAsync("stop"));
         _cancel = MenuItem("请求取消", () => CurrentControlAsync("cancel"));
         _release = MenuItem("复检清理", () => CurrentControlAsync("release"));
         _currentMenu.Items.AddRange([_nativeStop, _cancel, _release]);
-        status.Controls.Add(Flow(_currentHeading, _headline), 0, 0); status.Controls.Add(_metrics, 1, 0); status.Controls.Add(_currentMenuButton, 2, 0);
-        summary.Controls.Add(status, 0, 0); summary.Controls.Add(_task, 0, 1); summary.Controls.Add(_detail, 0, 2); summary.Controls.Add(_source, 0, 3);
-        var currentSection = Section("当前"); currentSection.Controls.Add(summary); _root.Controls.Add(currentSection, 0, 1);
+        _active.AccessibleName = "当前项目任务";
+        _active.Visible = _active.ColumnHeadersVisible = false;
+        _active.Columns.AddRange(Column("project", "项目", 105), Column("task", "任务", 330),
+            Column("state", "状态", 176), Column("elapsed", "用时", 98));
+        _active.Columns["project"]!.AutoSizeMode = _active.Columns["elapsed"]!.AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
+        _active.Columns["project"]!.DefaultCellStyle.ForeColor = UiTokens.Accent;
+        _active.Columns["elapsed"]!.DefaultCellStyle.ForeColor = UiTokens.Info;
+        Align(_active.Columns["elapsed"]!, DataGridViewContentAlignment.MiddleRight);
+        _active.CellPainting += PaintActiveStatus;
+        var activePager = new MonitorTablePager(_active, hideSinglePage: true);
+        var currentActions = Flow([_currentMenuButton, .. activePager.Buttons.Reverse()]);
+        currentActions.FlowDirection = FlowDirection.RightToLeft;
+        summary.Controls.Add(Header(Flow(_currentHeading, _headline), currentActions, 150), 0, 0);
+        _singleTask = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 1, RowCount = 3 };
+        _singleTask.ColumnStyles.Add(new(SizeType.Percent, 100));
+        _singleTask.RowStyles.Add(new(SizeType.Absolute, 23));
+        _singleTask.RowStyles.Add(new(SizeType.Absolute, 18));
+        _singleTask.RowStyles.Add(new(SizeType.Percent, 100));
+        _singleTask.Controls.Add(Header(_task, _metrics, 138), 0, 0);
+        _singleTask.Controls.Add(_detail, 0, 1);
+        _singleTask.Controls.Add(_source, 0, 2);
+        var currentBody = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty };
+        currentBody.Controls.AddRange([_singleTask, _active]);
+        summary.Controls.Add(currentBody, 0, 1);
+        var currentSection = RouterSurface.Section("当前", featured: true);
+        currentSection.Controls.Add(summary); _root.Controls.Add(currentSection, 0, 1);
 
         _queue.Columns.AddRange(Column("task", "任务", 270), Column("source", "来源对话", 210), Column("wait", "等待", 80));
         Align(_queue.Columns["wait"]!, DataGridViewContentAlignment.MiddleRight);
+        _queue.Columns["source"]!.DefaultCellStyle.ForeColor = UiTokens.TextSecondary;
+        _queue.Columns["wait"]!.DefaultCellStyle.ForeColor = UiTokens.Accent;
         _queue.SelectionChanged += (_, _) => { if (!_applyingQueue) UpdateControls(); };
         _top = IconButton(RouterButtonIcon.Top, "置顶", () => QueueControlAsync("move", 1));
         _up = IconButton(RouterButtonIcon.Up, "上移", () => QueueControlAsync("move", -1));
@@ -145,7 +172,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         _queuePage.Width = 64; _queuePage.TextAlign = ContentAlignment.MiddleCenter;
         var queueBody = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 1, RowCount = 2 };
         queueBody.ColumnStyles.Add(new(SizeType.Percent, 100)); queueBody.RowStyles.Add(new(SizeType.Absolute, 30)); queueBody.RowStyles.Add(new(SizeType.Percent, 100));
-        queueBody.Controls.Add(Header(Flow(_queueHeading), Flow(_top, _up, _down, _queueCancel, _queuePrevious, _queuePage, _queueNext), 280), 0, 0);
+        queueBody.Controls.Add(Header(Flow(_queueHeading), Flow(_top, _up, _down, _queueCancel, _queuePrevious, _queuePage, _queueNext), 244), 0, 0);
         _queue.Margin = Padding.Empty; queueBody.Controls.Add(_queue, 0, 1);
         var queueSection = Section("排队"); queueSection.Controls.Add(queueBody); _root.Controls.Add(queueSection, 0, 2);
 
@@ -162,7 +189,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
             ((RouterButton)_filterToggle!).Selected = _filtersVisible; _root.PerformLayout(); await RefreshViewAsync(); await HistoryAsync();
         });
         _historyPage.Width = 64; _historyPage.TextAlign = ContentAlignment.MiddleCenter;
-        _historyBody.Controls.Add(Header(Flow(_historyHeading, _historySummary), Flow(_filterToggle, IconButton(RouterButtonIcon.Export, "导出 CSV", ExportAsync), _historyPrevious, _historyPage, _historyNext), 208), 0, 0);
+        _historyBody.Controls.Add(Header(Flow(_historyHeading, _historySummary), Flow(_filterToggle, IconButton(RouterButtonIcon.Export, "导出 CSV", ExportAsync), _historyPrevious, _historyPage, _historyNext), 184), 0, 0);
         Options(_kind, [("all", "全部类型"), ("compile", "编译"), ("editmode", "EditMode"), ("playmode", "PlayMode"), ("script", "脚本")]);
         Options(_outcome, [("finished", "全部结果"), ("completed", "成功"), ("failed", "失败"), ("cancelled", "取消")]);
         Options(_day, [("all", "全部日期")]);
@@ -177,6 +204,8 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         Align(_history.Columns["state"]!, DataGridViewContentAlignment.MiddleCenter);
         Align(_history.Columns["executionSeconds"]!, DataGridViewContentAlignment.MiddleRight);
         Align(_history.Columns["cleanupVerified"]!, DataGridViewContentAlignment.MiddleCenter);
+        _history.Columns[0].DefaultCellStyle.ForeColor = UiTokens.Muted;
+        _history.Columns["source"]!.DefaultCellStyle.ForeColor = UiTokens.TextSecondary;
         _history.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0) ShowRecord(_history.Rows[e.RowIndex]); };
         _history.Margin = Padding.Empty; _historyBody.Controls.Add(_history, 0, 2);
         var historySection = Section("历史"); historySection.Controls.Add(_historyBody); _root.Controls.Add(historySection, 0, 3);
@@ -245,7 +274,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
     protected override void OnMouseWheel(MouseEventArgs e)
     {
         var point = PointToScreen(e.Location);
-        var grid = new[] { _queue, _history }.FirstOrDefault(table => table.RectangleToScreen(table.ClientRectangle).Contains(point));
+        var grid = new[] { _active, _queue, _history }.FirstOrDefault(table => table.Visible && table.RectangleToScreen(table.ClientRectangle).Contains(point));
         if (grid is null) { base.OnMouseWheel(e); return; }
         grid.PageFromWheel(e.Delta);
         if (e is HandledMouseEventArgs handled) handled.Handled = true;
@@ -254,50 +283,13 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
 
     protected override void ApplyPalette(QuotaBackgroundTheme theme)
     {
-        // One graphite surface for every hover/panel (UiTokens.CardSurface), whatever the bar theme.
-        _palette = new(UiTokens.CardSurface); BackColor = _palette.Background;
-        Color SurfaceFor(Control control)
-        {
-            for (var parent = control.Parent; parent is not null; parent = parent.Parent)
-                if (parent is RouterSurface surface) return surface.Input ? _palette.Input : _palette.Surface;
-            return _palette.Background;
-        }
-        foreach (var control in Children(this))
-        {
-            switch (control)
-            {
-                case RouterSurface surface:
-                    surface.Palette = _palette; surface.BackColor = surface.Input ? _palette.Input : _palette.Surface; surface.Invalidate(); break;
-                case RouterButton button:
-                    button.Palette = _palette; button.Invalidate(); break;
-                case RouterStatusBadge badge:
-                    badge.Palette = _palette with { Background = _palette.Surface }; badge.Invalidate(); break;
-                case RouterCombo combo:
-                    combo.Palette = _palette; combo.BackColor = _palette.Input; combo.ForeColor = _palette.Text; combo.Invalidate(); break;
-                case RouterGrid grid:
-                    var scale = RouterVisualGeometry.Scale(grid);
-                    grid.Palette = _palette; grid.BackgroundColor = SurfaceFor(grid); grid.GridColor = _palette.Border;
-                    grid.ColumnHeadersDefaultCellStyle.BackColor = _palette.Surface;
-                    grid.ColumnHeadersDefaultCellStyle.ForeColor = _palette.Muted;
-                    // Headers never take the selection colour (the current cell's column lit up blue).
-                    grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = _palette.Surface;
-                    grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = _palette.Muted;
-                    grid.ColumnHeadersDefaultCellStyle.Padding = new Padding((int)(4 * scale), (int)(6 * scale), (int)(4 * scale), (int)(6 * scale));
-                    grid.DefaultCellStyle.BackColor = _palette.Background; grid.DefaultCellStyle.ForeColor = _palette.Text;
-                    grid.DefaultCellStyle.SelectionBackColor = RouterVisualPalette.Mix(_palette.Background, _palette.Accent, .11f);
-                    grid.DefaultCellStyle.SelectionForeColor = _palette.Text;
-                    grid.DefaultCellStyle.Padding = new Padding((int)(8 * scale), (int)(4 * scale), (int)(8 * scale), (int)(4 * scale));
-                    grid.RowTemplate.Height = (int)Math.Round(26 * scale);
-                    foreach (DataGridViewRow row in grid.Rows) row.Height = grid.RowTemplate.Height;
-                    grid.Invalidate(); break;
-                case TextBox box: box.BackColor = _palette.Input; box.ForeColor = _palette.Text; break;
-                case System.Windows.Forms.Label label:
-                    label.BackColor = SurfaceFor(label);
-                    label.ForeColor = label == _task ? _palette.Text : label == _queueHeading || label == _historyHeading
-                        ? _palette.Text : _palette.Muted; break;
-                case Panel panel: panel.BackColor = SurfaceFor(panel); break;
-            }
-        }
+        _palette = new(UiTokens.CardSurface);
+        ApplyMonitorPalette(_palette, _task);
+        _metrics.ForeColor = UiTokens.Info;
+        _active.Columns["project"]!.Width = (int)Math.Round(92 * _popoverScale);
+        _active.Columns["task"]!.DefaultCellStyle.Font = _task.Font;
+        _active.Columns["elapsed"]!.Width = (int)Math.Round(110 * _popoverScale);
+        _active.Columns["elapsed"]!.DefaultCellStyle.Font = _metrics.Font;
         _currentMenu.Renderer = new DarkContextMenuRenderer(_palette.Surface, _palette.Input, _palette.Border, _palette.Text, _palette.Muted);
         _currentMenu.Font = Font;
         _projectMenu.Renderer = new DarkContextMenuRenderer(_palette.Surface, _palette.Input, _palette.Border, _palette.Text, _palette.Muted);
@@ -305,25 +297,26 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         if (!_available && _snapshot is not null) _freshness.ForeColor = RouterVisualPalette.State("warning");
     }
 
+    private void PaintActiveStatus(object? sender, DataGridViewCellPaintingEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.ColumnIndex != _active.Columns["state"]!.Index
+            || _active.Rows[e.RowIndex].Tag is not Color accent) return;
+        _active.PaintPill(e, accent);
+    }
+
     private void PaintHistoryStatus(object? sender, DataGridViewCellPaintingEventArgs e)
     {
         if (e.Graphics is not { } graphics || e.RowIndex < 0 || e.ColumnIndex < 0 || _history.Rows[e.RowIndex].Tag is not JsonElement row) return;
         var column = _history.Columns[e.ColumnIndex].Name;
         if (column is not ("state" or "cleanupVerified")) return;
-        e.PaintBackground(e.ClipBounds, true);
-        var s = RouterVisualGeometry.Scale(_history);
-        var text = e.FormattedValue?.ToString() ?? "";
-        var color = RouterVisualPalette.State(column == "state" ? RouterJson.Text(row, "outcome")
-            : RouterJson.Boolean(row, "cleanupVerified") ? "completed" : "warning");
         if (column == "state")
         {
-            var size = UiPaint.PillSize(text, _history.Font, s);
-            var w = Math.Min(e.CellBounds.Width - 8 * s, size.Width);
-            var h = Math.Min(e.CellBounds.Height - 6 * s, size.Height);
-            var bounds = new RectangleF(e.CellBounds.X + (e.CellBounds.Width - w) / 2, e.CellBounds.Y + (e.CellBounds.Height - h) / 2, w, h);
-            UiPaint.Pill(graphics, bounds, text, _history.Font, color, _palette.Background, s);
+            _history.PaintPill(e, RouterVisualPalette.State(RouterJson.Text(row, "outcome")));
+            return;
         }
-        else TextRenderer.DrawText(graphics, text, _history.Font, e.CellBounds, color,
+        e.Paint(e.ClipBounds, DataGridViewPaintParts.Background | DataGridViewPaintParts.SelectionBackground | DataGridViewPaintParts.Border);
+        var color = RouterJson.Boolean(row, "cleanupVerified") ? UiTokens.Positive : UiTokens.Warning;
+        TextRenderer.DrawText(graphics, e.FormattedValue?.ToString() ?? "", _history.Font, e.CellBounds, color,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
         e.Handled = true;
     }
@@ -334,32 +327,76 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         _snapshot = snapshot; _project = snapshot.ProjectKey;
         _available = true;
         ApplyProjectTabs(snapshot);
-        _headline.Text = RouterJson.Text(snapshot.View, "headline", "状态未确认");
-        _headline.Accent = RouterVisualPalette.State(RouterJson.Text(snapshot.View, "tone")); _headline.Invalidate();
-        _brand.State = RouterJson.Text(snapshot.View, "tone") switch
+        var fresh = snapshot.IsFresh(DateTimeOffset.UtcNow);
+        var tone = fresh ? RouterJson.Text(snapshot.View, "tone") : "warning";
+        _headline.Text = fresh ? RouterJson.Text(snapshot.View, "headline", "状态未确认") : "状态未确认";
+        _headline.Accent = RouterVisualPalette.State(tone); _headline.Invalidate();
+        _brand.State = tone switch
         {
-            "running" => "running", "warning" => "cleanup", "failed" => "attention", "waiting" => "waiting", _ => "idle",
+            "running" => "running", "warning" => "cleanup", "negative" or "failed" => "attention", "waiting" => "waiting", _ => "idle",
         };
         _brand.Invalidate();
-        var task = RouterJson.Text(snapshot.View, "task");
-        var heading = RouterTaskPresentation.Heading(task);
-        _task.Text = heading.Title;
-        _tips.SetToolTip(_task, heading.Original); _task.AccessibleDescription = heading.Original;
-        var owner = RouterJson.Text(RouterJson.Field(snapshot.View, "owner"), "label");
-        _metrics.Text = string.IsNullOrEmpty(RouterJson.Text(snapshot.View, "requestId")) ? ""
-            : "运行 " + RouterJson.Text(snapshot.View, "elapsed") + "    " + RouterJson.Text(snapshot.View, "progressClock");
-        _source.Text = string.IsNullOrWhiteSpace(owner) ? "" : "来源   " + RouterTaskPresentation.Source(owner);
-        _tips.SetToolTip(_source, owner); _source.AccessibleDescription = owner;
-        var observation = string.Join("  ·  ", new[] { RouterJson.Text(snapshot.View, "detail"), RouterJson.Text(snapshot.View, "error") }.Where(text => !string.IsNullOrWhiteSpace(text)));
-        _detail.Text = string.IsNullOrEmpty(observation) ? heading.Context : observation;
-        _tips.SetToolTip(_detail, heading.Context + (string.IsNullOrEmpty(observation) ? "" : "\n" + observation));
-        _tips.SetToolTip(_headline, observation); _tips.SetToolTip(_metrics, observation);
-        _queueHeading.Text = "排队  ·  " + RouterJson.Integer(snapshot.View, "queuedCount");
-        _freshness.Text = snapshot.IsFresh(DateTimeOffset.UtcNow) ? "更新于 " + snapshot.ReceivedAt.ToLocalTime().ToString("HH:mm:ss") : "数据过期 · 状态未确认";
-        _freshness.ForeColor = snapshot.IsFresh(DateTimeOffset.UtcNow) ? UiPalette.Slate400 : Color.Salmon;
+        ApplyCurrentTasks(snapshot, fresh);
+        _queueHeading.Text = $"排队  ·  {RouterJson.Integer(snapshot.View, "queuedCount"):N0}";
+        _freshness.Text = fresh ? "更新于 " + snapshot.ReceivedAt.ToLocalTime().ToString("HH:mm:ss") : "数据过期 · 状态未确认";
+        _freshness.ForeColor = fresh ? UiPalette.Slate400 : Color.Salmon;
         UpdateOverviewStats();
         UpdateControls();
     }
+
+    private void ApplyCurrentTasks(RouterSnapshot snapshot, bool fresh)
+    {
+        var all = snapshot.ProjectKey == RouterMonitorClient.AllProjects;
+        var projects = snapshot.ActiveProjects;
+        _active.Visible = projects.Count > 0;
+        _singleTask.Visible = projects.Count == 0;
+        _currentMenuButton.Visible = !all;
+        var hadSelection = _active.CurrentCell is not null;
+        for (var index = 0; index < projects.Count; index++)
+        {
+            var project = projects[index];
+            var view = project.View;
+            var heading = RouterTaskPresentation.Heading(RouterJson.Text(view, "task"));
+            var state = fresh ? RouterJson.Text(view, "headline", "状态未确认") : "状态未确认";
+            var elapsed = ElapsedText(view, fresh);
+            var row = _active.Rows[index < _active.RowCount ? index : _active.Rows.Add()];
+            row.Tag = RouterVisualPalette.State(fresh ? RouterJson.Text(view, "tone") : "warning");
+            row.SetValues(ProjectCaption(project.Name), heading.Title, state, elapsed);
+            row.Cells[0].ToolTipText = project.Name;
+            row.Cells[1].ToolTipText = JoinDetails(heading.Original, RouterJson.Text(RouterJson.Field(view, "owner"), "label"));
+            row.Cells[2].ToolTipText = JoinDetails(state, Observation(view));
+            row.Cells[3].ToolTipText = JoinDetails(elapsed, fresh ? RouterJson.Text(view, "progressClock") : "");
+            row.Cells[3].Style.ForeColor = elapsed == "用时 —" ? UiTokens.Muted : UiTokens.Info;
+        }
+        while (_active.RowCount > projects.Count) _active.Rows.RemoveAt(_active.RowCount - 1);
+        if (!hadSelection) { _active.ClearSelection(); _active.CurrentCell = null; }
+        _active.Invalidate();
+
+        var taskHeading = RouterTaskPresentation.Heading(RouterJson.Text(snapshot.View, "task"));
+        var active = RouterJson.IsHex(RouterJson.Text(snapshot.View, "requestId"), 32);
+        _task.Text = fresh || active ? taskHeading.Title : "";
+        _tips.SetToolTip(_task, taskHeading.Original); _task.AccessibleDescription = taskHeading.Original;
+        var owner = RouterJson.Text(RouterJson.Field(snapshot.View, "owner"), "label");
+        _metrics.Text = active ? ElapsedText(snapshot.View, fresh) : "";
+        _source.Text = string.IsNullOrWhiteSpace(owner) ? "" : "来源   " + RouterTaskPresentation.Source(owner);
+        _tips.SetToolTip(_source, owner); _source.AccessibleDescription = owner;
+        var observation = Observation(snapshot.View);
+        var progress = fresh ? RouterJson.Text(snapshot.View, "progressClock") : "";
+        _detail.Text = string.Join("  ·  ", new[] { progress, observation.Length == 0 ? taskHeading.Context : observation }
+            .Where(text => !string.IsNullOrWhiteSpace(text)));
+        _tips.SetToolTip(_detail, JoinDetails(taskHeading.Context, progress, observation));
+        _tips.SetToolTip(_headline, observation);
+        _tips.SetToolTip(_metrics, progress);
+    }
+
+    private static string ElapsedText(JsonElement view, bool fresh)
+    {
+        var elapsed = fresh ? RouterJson.Text(view, "elapsed").Trim() : "";
+        return "用时 " + (elapsed.Length == 0 ? "—" : elapsed);
+    }
+    private static string JoinDetails(params string[] lines) => string.Join(Environment.NewLine, lines.Where(text => !string.IsNullOrWhiteSpace(text)));
+    private static string Observation(JsonElement view) => string.Join("  ·  ",
+        new[] { RouterJson.Text(view, "detail"), RouterJson.Text(view, "error") }.Where(text => !string.IsNullOrWhiteSpace(text)));
 
     private void UpdateOverviewStats()
     {
@@ -372,8 +409,8 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
             : RouterJson.IsHex(RouterJson.Text(_snapshot.View, "requestId"), 32) ? 1 : 0;
         var queued = RouterJson.Integer(_snapshot.View, "queuedCount");
         _overviewStats.Text = _hasHistoryCounts
-            ? $"当前 {active}  ·  排队 {queued}  ·  成功 {_completedCount}  ·  失败 {_failedCount}"
-            : $"当前 {active}  ·  排队 {queued}";
+            ? $"当前 {active:N0}  ·  排队 {queued:N0}  ·  成功 {_completedCount:N0}  ·  失败 {_failedCount:N0}"
+            : $"当前 {active:N0}  ·  排队 {queued:N0}";
     }
 
     internal static JsonElement[] OrderedProjects(JsonElement projects) => projects.EnumerateArray()
@@ -381,6 +418,8 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         .ThenByDescending(row => RouterJson.Integer(row, "pending"))
         .ThenBy(row => RouterJson.Text(row, "name"), StringComparer.OrdinalIgnoreCase)
         .ThenBy(row => RouterJson.Text(row, "key"), StringComparer.Ordinal).ToArray();
+
+    private static string ProjectCaption(string name) => name switch { "ZGSProject_5" => "P5", "POB_Manual" => "Manual", _ => name };
 
     private void ApplyProjectTabs(RouterSnapshot snapshot)
     {
@@ -420,7 +459,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
             var key = RouterJson.Text(row, "key"); var name = RouterJson.Text(row, "name"); var pending = RouterJson.Integer(row, "pending");
             if (_projectButtons.TryGetValue(key, out var button))
             {
-                var caption = name switch { "ZGSProject_5" => "P5", "POB_Manual" => "Manual", _ => name };
+                var caption = ProjectCaption(name);
                 button.Text = caption + (pending > 0 ? "  " + pending : ""); button.Selected = key == snapshot.ProjectKey;
                 button.AccessibleName = "切换工程 " + name;
                 button.Width = Math.Min(maximum, button.GetPreferredSize(Size.Empty).Width); button.Height = (int)(26 * scale);
@@ -448,6 +487,8 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         if (!_pinned) RequestPinChange(true);
         _project = key; _generation++; _queueOffset = _historyOffset = 0; ResetHistory(); _queueRequest?.Cancel();
         _snapshot = null; _available = false; _hasHistoryCounts = false; _completedCount = 0; _failedCount = 0; _headline.Text = "读取中"; _task.Text = ""; _detail.Text = ""; _source.Text = ""; _metrics.Text = "";
+        _headline.Accent = UiTokens.Muted; _headline.Invalidate();
+        _active.Rows.Clear(); _active.Hide(); _singleTask.Show(); _currentMenuButton.Visible = key != RouterMonitorClient.AllProjects;
         UpdateOverviewStats();
         _queue.Rows.Clear(); _history.Rows.Clear();
         foreach (var item in _projectButtons) item.Value.Selected = item.Key == key;
@@ -467,6 +508,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         _freshness.Text = localQueueUnavailable ? "队列暂不可用 · 状态未确认" : "连接中断 · 状态未确认";
         _freshness.ForeColor = localQueueUnavailable ? Color.Goldenrod : Color.Salmon;
         _headline.Text = "状态未确认"; _headline.Accent = RouterVisualPalette.State("warning"); _headline.Invalidate();
+        if (_snapshot is { } snapshot) ApplyCurrentTasks(snapshot, fresh: false);
         _notice.Text = message;
         UpdateOverviewStats();
         UpdateControls();
@@ -650,14 +692,19 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
             _statistics = $"成功 {RouterJson.Integer(counts, "completed")} · 失败 {RouterJson.Integer(counts, "failed")} · 取消 {RouterJson.Integer(counts, "cancelled")}" + Environment.NewLine
                 + string.Join("   ", RouterJson.Rows(metadata, "groups").Where(g => RouterJson.Integer(g, "count") > 0)
                     .Select(g => $"{RouterJson.Text(g, "category")} P95 排队/占用/清理 {Seconds(g, "queueSecondsP95")}/{Seconds(g, "executionSecondsP95")}/{Seconds(g, "cleanupSecondsP95")}"));
-            _historySummary.Text = $"{total} 条  ·  {RouterJson.Integer(counts, "failed")} 失败";
+            _historySummary.Text = $"{total:N0} 条  ·  {RouterJson.Integer(counts, "failed"):N0} 失败";
             _historyReadAt = slice.CapturedAt;
             _statistics = "记录快照 " + _historyReadAt.ToLocalTime().ToString("HH:mm:ss") + Environment.NewLine + _statistics;
             _tips.SetToolTip(_historySummary, _statistics); _historySummary.AccessibleDescription = _statistics;
+            if (_notice.Text == HistoryReadTimeout) _notice.Text = "";
             UpdateControls();
         }
         catch (OperationCanceledException) when (_stop.IsCancellationRequested || generation != _generation || historyGeneration != _historyGeneration) { }
-        catch (Exception e) when (Expected(e)) { if (!IsDisposed && generation == _generation && historyGeneration == _historyGeneration) _notice.Text = e.Message; }
+        catch (Exception e) when (Expected(e))
+        {
+            if (!IsDisposed && generation == _generation && historyGeneration == _historyGeneration)
+                _notice.Text = e is OperationCanceledException ? HistoryReadTimeout : e.Message;
+        }
     }
 
     private async Task CurrentControlAsync(string action)
@@ -788,7 +835,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         AllowUserToResizeRows = false, RowHeadersVisible = false, MultiSelect = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect,
         AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, BorderStyle = BorderStyle.None,
         CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal, ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None,
-        ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize,
+        ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing,
         EnableHeadersVisualStyles = false, ColumnHeadersDefaultCellStyle = new() { BackColor = UiPalette.Slate800, ForeColor = UiPalette.Slate300, Padding = new Padding(4) },
         DefaultCellStyle = new() { BackColor = Color.FromArgb(22, 30, 42), ForeColor = Color.FromArgb(229, 234, 243), SelectionBackColor = Color.FromArgb(42, 62, 89), SelectionForeColor = Color.White, Padding = new Padding(4) },
         AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None, ScrollBars = ScrollBars.None,

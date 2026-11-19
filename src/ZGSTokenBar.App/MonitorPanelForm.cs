@@ -81,6 +81,56 @@ internal abstract partial class MonitorPanelForm : Form, IPluginPopoverContent
     protected static IEnumerable<Control> Children(Control parent) => parent.Controls.Cast<Control>()
         .SelectMany(child => new[] { child }.Concat(Children(child)));
 
+    protected void ApplyMonitorPalette(RouterVisualPalette palette, params Label[] primaryLabels)
+    {
+        BackColor = palette.Background;
+        foreach (var control in Children(this))
+        {
+            // Layout panels carry their nearest card's fill down to labels and buttons.
+            var background = control.Parent?.BackColor ?? BackColor;
+            switch (control)
+            {
+                case RouterSurface surface:
+                    surface.Palette = palette;
+                    surface.BackColor = surface.Fill;
+                    surface.Invalidate();
+                    break;
+                case RouterButton button:
+                    button.Palette = palette;
+                    button.Invalidate();
+                    break;
+                case RouterStatusBadge badge:
+                    badge.Palette = palette;
+                    badge.Invalidate();
+                    break;
+                case RouterCombo combo:
+                    combo.Palette = palette;
+                    combo.BackColor = palette.Input;
+                    combo.ForeColor = palette.Text;
+                    combo.Invalidate();
+                    break;
+                case RouterGrid grid:
+                    grid.ApplyPalette(palette, background, _popoverScale);
+                    break;
+                case Label label:
+                    label.BackColor = background;
+                    label.ForeColor = primaryLabels.Contains(label) || label.Font.Bold ? UiTokens.TextStrong : palette.Muted;
+                    break;
+                case CheckBox check:
+                    check.BackColor = background;
+                    check.ForeColor = palette.Text;
+                    break;
+                case Panel panel:
+                    panel.BackColor = background;
+                    break;
+                case TextBox box:
+                    box.BackColor = palette.Input;
+                    box.ForeColor = palette.Text;
+                    break;
+            }
+        }
+    }
+
     internal static TableLayoutPanel CreatePanelLayout()
     {
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new(12), ColumnCount = 1, RowCount = 5 };

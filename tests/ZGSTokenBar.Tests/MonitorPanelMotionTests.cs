@@ -139,13 +139,14 @@ internal static class MonitorPanelMotionTests
                     painted.Clear();
                     var start = Environment.TickCount64;
                     popup.ShowPrepared(owner, animate, immediate: true);
+                    var visibleGrids = grids.Where(grid => grid.Visible).ToArray();
                     frames.Add(new { panel = popup.GetType().Name, dpi, phase = "painted-handoff", animate,
-                        visibleOpacity, visibleAlpha, paintedGrids = painted.Count, grids = grids.Length,
+                        visibleOpacity, visibleAlpha, paintedGrids = painted.Count, grids = visibleGrids.Length,
                         milliseconds = Environment.TickCount64 - start });
                     Check(visibleOpacity == 0 && visibleAlpha == 0,
                         "A sibling's native window stays fully transparent while its first frame is unpainted.");
-                    Check(grids.Length > 0 && grids.All(painted.Contains),
-                        "Every native child grid is painted synchronously before a handoff exposes the replacement.");
+                    Check(visibleGrids.Length > 0 && visibleGrids.All(painted.Contains),
+                        "Every visible native child grid is painted synchronously before a handoff exposes the replacement.");
                     Check(popup.Visible && popup.Opacity == 1 && popup.Handle == handle,
                         "Cold and reused sibling panels become opaque without recreating their native handle.");
                     popup.HideImmediately();

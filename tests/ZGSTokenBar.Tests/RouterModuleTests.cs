@@ -91,9 +91,7 @@ internal static class RouterModuleTests
 
     private static void AllProjectPages()
     {
-        using var handler = new Fixture { ProjectCatalog = JsonSerializer.SerializeToElement(new[] {
-            new { key = Fixture.Project, name = "POB", pending = 2, recorded = 76 },
-            new { key = new string('e', 64), name = "P5", pending = 1, recorded = 76 } }) };
+        using var handler = TwoActiveProjects();
         using var client = new RouterMonitorClient(handler);
         var all = client.SnapshotAsync(RouterMonitorClient.AllProjects).GetAwaiter().GetResult();
         Check(all.ProjectKey == RouterMonitorClient.AllProjects && all.QueuedCount == 82
@@ -109,13 +107,53 @@ internal static class RouterModuleTests
             "Global history pages merge project prefixes without fabricating a merged P95");
         Throws<ArgumentException>(() => client.ControlAsync(all, new string('b', 32), "cancel").GetAwaiter().GetResult());
         Check(handler.Posts == 0, "An all-project observation cannot be used as execution authority");
-        using var form = new RouterMonitorForm(client, observe: false) { Opacity = 0 };
+        using var form = new RouterMonitorForm(client, observe: false)
+        { Opacity = 0, StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
+        form.Show();
         Pump(form.RefreshViewAsync());
         Check(form.Snapshot?.ProjectKey == RouterMonitorClient.AllProjects,
             "The native Router panel defaults to the complete project scope");
+        var active = AllControls(form).OfType<RouterGrid>().Single(grid => grid.AccessibleName == "当前项目任务");
+        Check(active.Visible && active.Rows.Count == 2
+            && Equals(active.Rows[0].Cells["project"].Value, "POB") && Equals(active.Rows[0].Cells["elapsed"].Value, "用时 1:25")
+            && Equals(active.Rows[1].Cells["project"].Value, "P5") && Equals(active.Rows[1].Cells["elapsed"].Value, "用时 2:46")
+            && active.Rows[1].Cells["elapsed"].ToolTipText.Contains("本次观察 0:14"),
+            "All projects shows each current task's clock and progress without merging their titles");
+        handler.ProjectViews[new string('e', 64)] = SecondActiveProject("2:49");
+        Pump(form.RefreshViewAsync());
+        Check(Equals(active.Rows[1].Cells["elapsed"].Value, "用时 2:49"), "A new observation advances the right project's clock");
+        handler.ProjectViews[new string('e', 64)] = SecondActiveProject(null);
+        Pump(form.RefreshViewAsync());
+        Check(Equals(active.Rows[0].Cells["elapsed"].Value, "用时 1:25") && Equals(active.Rows[1].Cells["elapsed"].Value, "用时 —"),
+            "A missing clock remains unknown independently of other projects");
+        form.ApplySnapshot(form.Snapshot! with { ReceivedAt = DateTimeOffset.UtcNow.AddMinutes(-1) });
+        Check(Equals(active.Rows[0].Cells["elapsed"].Value, "用时 —") && form.FreshnessText.Contains("未确认"),
+            "Stale observations cannot present cached values as live clocks");
         Pump(form.SelectProjectAsync(Fixture.Project));
-        Check(form.Snapshot?.ProjectKey == Fixture.Project, "A project filter restores the original exact-project route");
+        Check(form.Snapshot?.ProjectKey == Fixture.Project && !active.Visible
+            && AllControls(form).OfType<System.Windows.Forms.Label>().Any(label => label.Visible && label.Text == "用时 1:25"),
+            "A project filter restores the original exact-project route and clock");
     }
+
+    private static Fixture TwoActiveProjects()
+    {
+        var second = new string('e', 64);
+        var handler = new Fixture { ProjectCatalog = JsonSerializer.SerializeToElement(new[] {
+            new { key = Fixture.Project, name = "POB", pending = 2, recorded = 76 },
+            new { key = second, name = "ZGSProject_5", pending = 1, recorded = 76 },
+        }) };
+        handler.ProjectViews[second] = SecondActiveProject("2:46");
+        return handler;
+    }
+
+    private static JsonElement SecondActiveProject(string? elapsed) => JsonSerializer.SerializeToElement(new
+    {
+        projectKey = new string('e', 64),
+        requestId = new string('e', 32),
+        observedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000d,
+        headline = "执行中", tone = "running", task = "检验场景载入流程",
+        queuedCount = 41, elapsed, progressClock = "本次观察 0:14",
+    });
 
     private static void ExpandedSummary()
     {
@@ -472,8 +510,9 @@ internal static class RouterModuleTests
                 && taskTitle.AccessibleDescription!.Contains("DesktopAspectLockTemporaryVerification"), $"Readable current task retains the original identity at {dpi} DPI");
             Check(AllControls(form).OfType<System.Windows.Forms.Label>().Any(label => label.Text.StartsWith("来源   pro2")
                 && label.AccessibleDescription!.Length > label.Text.Length), "Source has its own line and a complete accessible description");
-            var metrics = AllControls(form).OfType<System.Windows.Forms.Label>().Single(label => label.Text.StartsWith("运行 "));
-            Check(metrics.Visible && metrics.Width > 180 * scale && metrics.Height >= metrics.Font.Height && metrics.Parent!.ClientRectangle.Contains(metrics.Bounds),
+            var metrics = AllControls(form).OfType<System.Windows.Forms.Label>().Single(label => label.Text.StartsWith("用时 "));
+            Check(metrics.Visible && System.Windows.Forms.TextRenderer.MeasureText(metrics.Text, metrics.Font).Width <= metrics.Width
+                && metrics.Height >= metrics.Font.Height && metrics.Parent!.ClientRectangle.Contains(metrics.Bounds),
                 $"Current execution timings remain visible at {dpi} DPI: {metrics.Bounds}, parent {metrics.Parent!.ClientSize}, text {metrics.Text}");
             var close = AllControls(form).OfType<System.Windows.Forms.Button>().Single(button => button.AccessibleName == "收起弹层");
             var closePosition = form.PointToClient(close.PointToScreen(Point.Empty));
@@ -487,7 +526,7 @@ internal static class RouterModuleTests
                 $"History columns fit native popup at {dpi} DPI: client {grid.ClientSize.Width}, columns {grid.Columns.Cast<System.Windows.Forms.DataGridViewColumn>().Sum(c => c.Width)}");
             var gridPosition = form.PointToClient(grid.PointToScreen(Point.Empty));
             Check(gridPosition.X + grid.Width <= form.ClientSize.Width, $"History viewport fits popup at {dpi} DPI");
-            foreach (var table in AllControls(form).OfType<System.Windows.Forms.DataGridView>())
+            foreach (var table in AllControls(form).OfType<RouterGrid>().Where(table => table.Visible))
             {
                 Check(table.Visible && table.ScrollBars == System.Windows.Forms.ScrollBars.None, "Queue and history share one scroll-free page");
                 Check(table.Rows.Cast<System.Windows.Forms.DataGridViewRow>().Sum(row => row.Height) <= table.ClientSize.Height - table.ColumnHeadersHeight,
@@ -496,8 +535,9 @@ internal static class RouterModuleTests
             var sections = AllControls(form).OfType<RouterSurface>().Where(surface => !surface.Input).ToArray();
             Check(sections.Select(section => section.AccessibleName).SequenceEqual(new[] { "当前", "排队", "历史" }), "Three named sections share one visible popup");
             Check(sections.Zip(sections.Skip(1)).All(pair => pair.First.Bottom < pair.Second.Top), "Current, queue and history have distinct gaps and do not overlap");
-            Check(AllControls(form).OfType<RouterGrid>().All(table => table.Rows.Count >= 7), $"Taller popup exposes at least seven queue/history rows at {dpi} DPI: "
-                + string.Join("; ", AllControls(form).OfType<RouterGrid>().Select(table => $"{table.Rows.Count} rows, height {table.ClientSize.Height}, header {table.ColumnHeadersHeight}")));
+            var visibleTables = AllControls(form).OfType<RouterGrid>().Where(table => table.Visible).ToArray();
+            Check(visibleTables.Length == 2 && visibleTables.All(table => table.Rows.Count >= 7), $"Taller popup exposes at least seven queue/history rows at {dpi} DPI: "
+                + string.Join("; ", visibleTables.Select(table => $"{table.Rows.Count} rows, height {table.ClientSize.Height}, header {table.ColumnHeadersHeight}")));
             Save(form, Path.Combine(directory, $"router-history-{dpi}.png"));
             var projectButtons = AllControls(form).OfType<RouterButton>().Where(button => button.AccessibleName?.StartsWith("切换工程 ") == true).ToArray();
             Check(projectButtons.Length == 3 && projectButtons.Count(button => button.Selected) == 1, "Registered projects use flat selected chips");
@@ -526,6 +566,22 @@ internal static class RouterModuleTests
             Check(form.FreshnessText.Contains("未确认"), "Unavailable is not idle");
             Save(form, Path.Combine(directory, $"router-unavailable-{dpi}.png"));
             form.Close();
+
+            using var all = new RouterMonitorForm(new RouterMonitorClient(TwoActiveProjects()), observe: false)
+            { StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
+            all.ConfigureFor(new Rectangle(400, (int)(600 * scale), 48, 44), true, scale,
+                QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), new Rectangle(0, 0, (int)(1280 * scale), (int)(800 * scale)));
+            all.Show();
+            Pump(all.RefreshViewAsync());
+            all.PerformLayout();
+            System.Windows.Forms.Application.DoEvents();
+            var current = AllControls(all).OfType<RouterGrid>().Single(table => table.AccessibleName == "当前项目任务");
+            Check(current.Rows.Cast<System.Windows.Forms.DataGridViewRow>().Count(row => row.Visible) == 2
+                && current.GetRowDisplayRectangle(1, cutOverflow: false).Bottom <= current.ClientSize.Height
+                && current.GetCellDisplayRectangle(3, 1, cutOverflow: false).Right <= current.ClientSize.Width,
+                $"Both project clocks fit the current section at {dpi} DPI");
+            Save(all, Path.Combine(directory, $"router-all-projects-{dpi}.png"));
+            all.Close();
 
             using var empty = new RouterMonitorForm(new RouterMonitorClient(new Fixture { Empty = true }), observe: false, initialProject: Fixture.Project)
             { StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };

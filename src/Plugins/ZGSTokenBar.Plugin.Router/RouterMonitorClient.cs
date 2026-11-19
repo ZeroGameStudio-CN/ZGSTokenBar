@@ -181,10 +181,13 @@ public sealed class RouterMonitorHttpException : HttpRequestException
     }
 }
 
+public sealed record RouterActiveProject(string Name, JsonElement View);
+
 public sealed record RouterSnapshot(string InstanceId, string ProjectKey, JsonElement Projects, JsonElement View, DateTimeOffset ReceivedAt)
 {
     public int QueuedCount { get; init; } = RouterJson.Integer(View, "queuedCount");
     public double? QueueObservedAt { get; init; }
+    public IReadOnlyList<RouterActiveProject> ActiveProjects { get; init; } = [];
     public bool IsFresh(DateTimeOffset now) => now >= ReceivedAt && now - ReceivedAt < TimeSpan.FromSeconds(10)
         && (QueueObservedAt ?? RouterJson.Number(View, "observedAt")) is { } observed
         && now.ToUnixTimeMilliseconds() / 1000d - observed is >= -5 and < 10;

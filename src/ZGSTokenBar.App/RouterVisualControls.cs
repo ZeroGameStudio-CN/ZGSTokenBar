@@ -3,7 +3,7 @@ using System.ComponentModel;
 
 namespace ZGSTokenBar.App;
 
-// Presentation primitives for the Router popup. No execution or transport state lives here.
+// Presentation primitives shared by the Router and work intake panels.
 internal sealed record RouterVisualPalette(Color Background)
 {
     internal Color Surface => UiTokens.Surface(Background);
@@ -59,11 +59,12 @@ internal sealed class RouterButton : Button
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics; var s = RouterVisualGeometry.Scale(this);
-        g.Clear(Parent?.BackColor ?? Palette.Background); g.SmoothingMode = SmoothingMode.AntiAlias;
+        var surface = Parent?.BackColor ?? Palette.Background;
+        g.Clear(surface); g.SmoothingMode = SmoothingMode.AntiAlias;
         var accent = Palette.Accent;
         var emphasized = _selected || Kind == RouterButtonKind.Primary;
-        var fill = _hovered && Enabled ? RouterVisualPalette.Mix(Palette.Background, accent, .14f)
-            : emphasized ? RouterVisualPalette.Mix(Palette.Background, accent, .11f) : Parent?.BackColor ?? Palette.Background;
+        var fill = _hovered && Enabled ? RouterVisualPalette.Mix(surface, accent, .16f)
+            : emphasized ? RouterVisualPalette.Mix(surface, accent, .12f) : surface;
         var ink = !Enabled ? Color.FromArgb(104, 117, 135) : emphasized ? accent : Palette.Text;
         using var shape = RouterVisualGeometry.Rounded(new RectangleF(.5f, .5f, Width - 1, Height - 1), 6 * s);
         using var background = new SolidBrush(fill); g.FillPath(background, shape);
@@ -119,8 +120,9 @@ internal sealed class RouterStatusBadge : Control
     protected override void OnPaint(PaintEventArgs e)
     {
         var s = RouterVisualGeometry.Scale(this);
-        e.Graphics.Clear(Parent?.BackColor ?? Palette.Background);
-        UiPaint.Pill(e.Graphics, new RectangleF(0, 0, Width - 1, Height - 1), Text, Font, Accent, Palette.Background, s, dot: true);
+        var surface = Parent?.BackColor ?? Palette.Background;
+        e.Graphics.Clear(surface);
+        UiPaint.Pill(e.Graphics, new RectangleF(0, 0, Width - 1, Height - 1), Text, Font, Accent, surface, s, dot: true);
     }
 }
 
@@ -162,18 +164,24 @@ internal sealed class RouterSurface : Panel
     internal bool Input { get; set; }
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     internal bool EmphasizedBorder { get; set; }
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    internal bool Featured { get; set; }
+    internal Color Fill => Input ? Palette.Input
+        : Featured ? RouterVisualPalette.Mix(Palette.Surface, Palette.Accent, .055f) : Palette.Surface;
+
     internal RouterSurface() { DoubleBuffered = true; }
-    internal static RouterSurface Section(string title) => new()
+    internal static RouterSurface Section(string title, bool featured = false) => new()
     {
         Dock = DockStyle.Fill, Margin = new(0, 0, 0, 10), Padding = new(10, 6, 10, 8),
-        EmphasizedBorder = true, AccessibleName = title, AccessibleRole = AccessibleRole.Grouping,
+        EmphasizedBorder = true, Featured = featured, AccessibleName = title, AccessibleRole = AccessibleRole.Grouping,
     };
     protected override void OnPaintBackground(PaintEventArgs e)
     {
         e.Graphics.Clear(Parent?.BackColor ?? Palette.Background);
         // Sections are the shared card shell: a raised surface with the same white hairline as the hover cards.
-        var border = EmphasizedBorder ? UiTokens.Hairline : Palette.Border;
-        UiPaint.CardShell(e.Graphics, new RectangleF(.5f, .5f, Width - 1, Height - 1), Input ? Palette.Input : Palette.Surface, border,
+        var border = Featured ? RouterVisualPalette.Mix(Fill, Palette.Accent, .24f)
+            : EmphasizedBorder ? UiTokens.Hairline : Palette.Border;
+        UiPaint.CardShell(e.Graphics, new RectangleF(.5f, .5f, Width - 1, Height - 1), Fill, border,
             UiTokens.RadiusCard * RouterVisualGeometry.Scale(this));
     }
 }
@@ -189,6 +197,48 @@ internal sealed class RouterGrid : DataGridView
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     internal RouterVisualPalette Palette { get; set; } = new(Color.FromArgb(9, 11, 15));
     internal RouterGrid() { DoubleBuffered = true; }
+
+    internal void ApplyPalette(RouterVisualPalette palette, Color surface, float scale)
+    {
+        Palette = palette;
+        BackgroundColor = surface;
+        GridColor = RouterVisualPalette.Mix(surface, Color.White, .065f);
+        var header = ColumnHeadersDefaultCellStyle;
+        header.BackColor = header.SelectionBackColor = RouterVisualPalette.Mix(surface, Color.White, .045f);
+        header.ForeColor = header.SelectionForeColor = UiTokens.TextSecondary;
+        header.Padding = new Padding((int)(3 * scale), (int)(4 * scale), (int)(3 * scale), (int)(4 * scale));
+        ColumnHeadersHeight = (int)Math.Round(28 * scale);
+        var cells = DefaultCellStyle;
+        cells.BackColor = RouterVisualPalette.Mix(surface, palette.Background, .5f);
+        cells.ForeColor = palette.Text;
+        cells.SelectionBackColor = RouterVisualPalette.Mix(surface, palette.Accent, .17f);
+        cells.SelectionForeColor = UiTokens.TextStrong;
+        cells.Padding = new Padding((int)(8 * scale), 0, (int)(8 * scale), 0);
+        AlternatingRowsDefaultCellStyle.BackColor = RouterVisualPalette.Mix(cells.BackColor, Color.White, .022f);
+        RowTemplate.Height = (int)Math.Round(UiTokens.RowHeight * scale);
+        foreach (DataGridViewRow row in Rows) row.Height = RowTemplate.Height;
+        Invalidate();
+    }
+
+    internal void PaintPill(DataGridViewCellPaintingEventArgs e, Color accent)
+    {
+        if (e.Graphics is not { } graphics) return;
+        e.Paint(e.ClipBounds, DataGridViewPaintParts.Background | DataGridViewPaintParts.SelectionBackground | DataGridViewPaintParts.Border);
+        var scale = RouterVisualGeometry.Scale(this);
+        var text = e.FormattedValue?.ToString() ?? "";
+        var size = UiPaint.PillSize(text, Font, scale);
+        var width = Math.Min(e.CellBounds.Width - 8 * scale, size.Width);
+        var height = Math.Min(e.CellBounds.Height - 6 * scale, size.Height);
+        if (width > 0 && height > 0)
+        {
+            var bounds = new RectangleF(e.CellBounds.X + (e.CellBounds.Width - width) / 2,
+                e.CellBounds.Y + (e.CellBounds.Height - height) / 2, width, height);
+            var style = e.CellStyle ?? DefaultCellStyle;
+            var background = (e.State & DataGridViewElementStates.Selected) != 0 ? style.SelectionBackColor : style.BackColor;
+            UiPaint.Pill(graphics, bounds, text, Font, accent, background, scale);
+        }
+        e.Handled = true;
+    }
     internal void PageFromWheel(int delta)
     {
         _wheelRemainder += delta;

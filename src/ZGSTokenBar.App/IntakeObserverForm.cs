@@ -72,7 +72,7 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
         current.Controls.Add(CreateHeader(heading, Flow(search, _search), 268), 0, 0);
         current.Controls.Add(_detail, 0, 1);
         current.Controls.Add(Flow(_open, _copy, _thread, _diagnose), 0, 2);
-        var currentSection = RouterSurface.Section(T("当前工单", "Current item")); currentSection.Controls.Add(current);
+        var currentSection = RouterSurface.Section(T("当前工单", "Current item"), featured: true); currentSection.Controls.Add(current);
         _root.Controls.Add(currentSection, 0, 1);
 
         AddColumn(_recent, T("工单", "Item"), 104); AddColumn(_recent, T("标题", "Title"), 0);
@@ -217,42 +217,10 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
 
     protected override void ApplyPalette(QuotaBackgroundTheme theme)
     {
-        ApplyObservationPalette(this, _popoverScale, _detail);
         var palette = new RouterVisualPalette(UiTokens.CardSurface);
+        ApplyMonitorPalette(palette, _detail);
         _projectMenu.Renderer = new DarkContextMenuRenderer(palette.Surface, palette.Input, palette.Border, palette.Text, palette.Muted);
         _projectMenu.Font = Font;
-    }
-
-    internal static void ApplyObservationPalette(Control root, float scale, Label primary)
-    {
-        var palette = new RouterVisualPalette(UiTokens.CardSurface);
-        foreach (var control in Children(root))
-        {
-            var parentSurface = control.Parent;
-            while (parentSurface is not null && parentSurface is not RouterSurface) parentSurface = parentSurface.Parent;
-            var background = parentSurface is RouterSurface { Input: true } ? palette.Input
-                : parentSurface is RouterSurface ? palette.Surface : palette.Background;
-            switch (control)
-            {
-                case RouterSurface surface: surface.Palette = palette; surface.BackColor = surface.Input ? palette.Input : palette.Surface; break;
-                case RouterButton button: button.Palette = palette; break;
-                case DataGridView grid:
-                    grid.BackgroundColor = palette.Background; grid.GridColor = palette.Border;
-                    grid.ColumnHeadersDefaultCellStyle.BackColor = grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = palette.Surface;
-                    grid.ColumnHeadersDefaultCellStyle.ForeColor = grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = palette.Muted;
-                    grid.ColumnHeadersDefaultCellStyle.Padding = new((int)(4 * scale), (int)(6 * scale),
-                        (int)(4 * scale), (int)(6 * scale));
-                    grid.ColumnHeadersHeight = (int)(30 * scale); grid.RowTemplate.Height = (int)(26 * scale);
-                    foreach (DataGridViewRow row in grid.Rows) row.Height = grid.RowTemplate.Height;
-                    grid.DefaultCellStyle.BackColor = palette.Background; grid.DefaultCellStyle.SelectionBackColor = UiTokens.Mix(palette.Background, palette.Accent, .11f);
-                    grid.DefaultCellStyle.Padding = new((int)(8 * scale), (int)(4 * scale), (int)(8 * scale), (int)(4 * scale));
-                    break;
-                case Label label: label.BackColor = background; label.ForeColor = label == primary ? palette.Text : palette.Muted; break;
-                case CheckBox check: check.BackColor = background; check.ForeColor = palette.Text; break;
-                case Panel panel: panel.BackColor = background; break;
-                case TextBox text: text.BackColor = palette.Input; text.ForeColor = palette.Text; break;
-            }
-        }
     }
     internal Task RefreshVisibleAsync() => ReadAsync(async token =>
     {

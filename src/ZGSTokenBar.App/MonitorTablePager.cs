@@ -6,14 +6,17 @@ internal sealed class MonitorTablePager
     private readonly RouterGrid _grid;
     private readonly RouterButton _previous = new() { Icon = RouterButtonIcon.Previous, AccessibleName = "上一页 / Previous page" };
     private readonly RouterButton _next = new() { Icon = RouterButtonIcon.Next, AccessibleName = "下一页 / Next page" };
-    private readonly Label _page = new() { Width = 64, Height = 26, TextAlign = ContentAlignment.MiddleCenter };
+    private readonly Label _page = new() { Width = 54, Height = 26, Margin = Padding.Empty, TextAlign = ContentAlignment.MiddleCenter };
+    private readonly bool _hideSinglePage;
     private int _offset;
     private bool _queued, _applying;
     internal Control[] Buttons => [_previous, _page, _next];
 
-    internal MonitorTablePager(RouterGrid grid)
+    internal MonitorTablePager(RouterGrid grid, bool hideSinglePage = false)
     {
         _grid = grid;
+        _hideSinglePage = hideSinglePage;
+        if (_hideSinglePage) _previous.Visible = _page.Visible = _next.Visible = false;
         _previous.Click += (_, _) => Move(-1);
         _next.Click += (_, _) => Move(1);
         _grid.PageRequested += (_, pages) => Move(pages);
@@ -23,7 +26,7 @@ internal sealed class MonitorTablePager
         _grid.HandleCreated += (_, _) => Queue();
     }
 
-    private int Capacity => Math.Max(1, (_grid.ClientSize.Height - _grid.ColumnHeadersHeight - 2)
+    private int Capacity => Math.Max(1, (_grid.ClientSize.Height - (_grid.ColumnHeadersVisible ? _grid.ColumnHeadersHeight : 0) - 2)
         / Math.Max(1, _grid.RowTemplate.Height));
 
     private void Move(int pages)
@@ -54,9 +57,10 @@ internal sealed class MonitorTablePager
             if (current?.OwningRow is { Visible: true } && current.DataGridView == _grid)
                 _grid.CurrentCell = current;
             var scale = RouterVisualGeometry.Scale(_grid);
-            _page.Width = (int)(64 * scale); _page.Height = (int)(26 * scale);
+            _page.Width = (int)(54 * scale); _page.Height = (int)(26 * scale);
             _previous.Enabled = _offset > 0; _next.Enabled = _offset + size < _grid.RowCount;
             _page.Text = _grid.RowCount == 0 ? "0/0" : $"{_offset / size + 1}/{(_grid.RowCount + size - 1) / size}";
+            if (_hideSinglePage) _previous.Visible = _page.Visible = _next.Visible = _grid.RowCount > size;
         }
         finally { _applying = false; }
     }

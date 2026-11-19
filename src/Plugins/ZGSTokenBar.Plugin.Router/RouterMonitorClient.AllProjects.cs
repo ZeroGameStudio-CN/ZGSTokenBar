@@ -14,17 +14,25 @@ public sealed partial class RouterMonitorClient
     {
         var views = await MapProjectsAsync(projects.EnumerateArray().ToArray(), async row =>
             (Project: row, View: await ProjectViewAsync(RouterJson.Text(row, "key"), token)), token);
-        var active = views.Where(row => RouterJson.IsHex(RouterJson.Text(row.View, "requestId"), 32)).ToArray();
+        var active = views.Where(row => RouterJson.IsHex(RouterJson.Text(row.View, "requestId"), 32))
+            .OrderBy(row => RouterJson.Text(row.Project, "name"), StringComparer.OrdinalIgnoreCase)
+            .ThenBy(row => RouterJson.Text(row.Project, "key"), StringComparer.Ordinal)
+            .Select(row => new RouterActiveProject(RouterJson.Text(row.Project, "name"), row.View)).ToArray();
         var queued = views.Sum(row => RouterJson.Integer(row.View, "queuedCount"));
         var observed = views.Select(row => RouterJson.Number(row.View, "observedAt")).DefaultIfEmpty(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000d).Min();
-        var warning = views.Any(row => RouterJson.Text(row.View, "tone") is "warning" or "failed");
+        var tones = views.Select(row => RouterJson.Text(row.View, "tone")).ToArray();
+        var tone = tones.Any(value => value is "negative" or "failed" or "attention" or "danger") ? "negative"
+            : tones.Any(value => value is "warning" or "cleanup") ? "warning"
+            : active.Length > 0 ? "running" : queued > 0 ? "waiting" : "idle";
         var view = Element(new JsonObject {
             ["projectKey"] = AllProjects, ["observedAt"] = observed, ["queuedCount"] = queued, ["activeCount"] = active.Length,
-            ["headline"] = $"全部项目 · {active.Length} 个当前任务", ["tone"] = warning ? "warning" : active.Length > 0 ? "running" : queued > 0 ? "waiting" : "idle",
-            ["task"] = active.Length == 0 ? "当前没有执行中的任务" : string.Join("；", active.Select(row => RouterJson.Text(row.Project, "name") + " · " + RouterJson.Text(row.View, "task"))),
-            ["detail"] = "跨项目只读汇总；队列按项目分组，保留各项目内顺序。选择单个项目后可操作原请求", ["requestId"] = "",
+            ["headline"] = active.Length > 0 ? $"{active.Length} 个任务" : queued > 0 ? "等待调度" : "空闲",
+            ["tone"] = tone, ["requestId"] = "",
         });
-        return new(instance, AllProjects, projects, view, DateTimeOffset.UtcNow) { QueuedCount = queued, QueueObservedAt = observed };
+        return new(instance, AllProjects, projects, view, DateTimeOffset.UtcNow)
+        {
+            QueuedCount = queued, QueueObservedAt = observed, ActiveProjects = active,
+        };
     }
 
     private async Task<JsonElement> AllPageAsync(bool history, string kind, string outcome, string day, string query,

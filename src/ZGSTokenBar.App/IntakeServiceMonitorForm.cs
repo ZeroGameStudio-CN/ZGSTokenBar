@@ -42,6 +42,7 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
         root.Controls.Add(CreateNavigation(CreateHeader(Flow(brand, _summary), Flow(_freshness, _refresh, _pin, _close), 240),
             _projects, T("项目", "Project")), 0, 0);
         _workItems.Text = T("工单详情", "Work items");
+        _workItems.Kind = RouterButtonKind.Primary;
         _workItems.Click += (_, _) => { if (_pinned) WorkItemsRequested?.Invoke(this, EventArgs.Empty); };
         _refresh.AccessibleName = T("刷新", "Refresh"); _pin.AccessibleName = T("固定弹层", "Pin"); _close.AccessibleName = T("收起弹层", "Close");
         foreach (var button in new[] { _refresh, _pin, _close }) _tips.SetToolTip(button, button.AccessibleName);
@@ -50,7 +51,7 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
         foreach (var height in new[] { 30, 28, 30 }) current.RowStyles.Add(new(SizeType.Absolute, height));
         current.Controls.Add(CreateHeader(_headline, _workItems, 100), 0, 0);
         current.Controls.Add(_task, 0, 1); current.Controls.Add(_detail, 0, 2);
-        var surface = RouterSurface.Section(T("当前", "Current")); surface.Controls.Add(current); root.Controls.Add(surface, 0, 1);
+        var surface = RouterSurface.Section(T("当前", "Current"), featured: true); surface.Controls.Add(current); root.Controls.Add(surface, 0, 1);
         IntakeObserverForm.AddColumn(_progress, T("工单／内容", "Item / title"), 0);
         IntakeObserverForm.AddColumn(_progress, T("项目／操作", "Project / operation"), 160);
         IntakeObserverForm.AddColumn(_progress, T("当前阶段", "Stage"), 180);
@@ -58,6 +59,10 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
         IntakeObserverForm.AddColumn(_history, T("工单／内容", "Item / title"), 0);
         IntakeObserverForm.AddColumn(_history, T("操作", "Operation"), 100);
         IntakeObserverForm.AddColumn(_history, T("结果／阶段", "Result / stage"), 180);
+        _progress.Columns[1].DefaultCellStyle.ForeColor = UiTokens.TextSecondary;
+        _history.Columns[0].DefaultCellStyle.ForeColor = UiTokens.Muted;
+        _history.Columns[2].DefaultCellStyle.ForeColor = UiTokens.TextSecondary;
+        _progress.Columns[2].HeaderCell.Style.Alignment = _history.Columns[3].HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
         _progress.CellPainting += PaintStage;
         _history.CellPainting += PaintStage;
         _tips.SetToolTip(_history, T("记录时间来自服务观测；旧回执缺少时间时显示 —", "Times come from service observations; older receipts without timestamps show —"));
@@ -219,26 +224,14 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
         var heading = Label(); heading.Text = title; heading.Width = 240;
         SetLogicalFont(heading, "Segoe UI", UiTokens.FontBody, FontStyle.Bold);
         var pager = new MonitorTablePager(grid);
-        body.Controls.Add(CreateHeader(heading, Flow(pager.Buttons), 200), 0, 0); body.Controls.Add(grid, 0, 1);
+        body.Controls.Add(CreateHeader(heading, Flow(pager.Buttons), 114), 0, 0); body.Controls.Add(grid, 0, 1);
         var section = RouterSurface.Section(title); section.Controls.Add(body); return section;
     }
     private void PaintStage(object? sender, DataGridViewCellPaintingEventArgs e)
     {
-        if (sender is not RouterGrid grid || e.Graphics is not { } graphics || e.RowIndex < 0
+        if (sender is not RouterGrid grid || e.RowIndex < 0
             || e.ColumnIndex != grid.ColumnCount - 1 || grid.Rows[e.RowIndex].Tag is not IntakeServiceRecord row) return;
-        e.PaintBackground(e.ClipBounds, true);
-        var scale = RouterVisualGeometry.Scale(grid);
-        var text = e.FormattedValue?.ToString() ?? "";
-        var size = UiPaint.PillSize(text, grid.Font, scale);
-        var width = Math.Min(e.CellBounds.Width - 8 * scale, size.Width);
-        var height = Math.Min(e.CellBounds.Height - 6 * scale, size.Height);
-        if (width > 0 && height > 0)
-        {
-            var bounds = new RectangleF(e.CellBounds.X + (e.CellBounds.Width - width) / 2,
-                e.CellBounds.Y + (e.CellBounds.Height - height) / 2, width, height);
-            UiPaint.Pill(graphics, bounds, text, grid.Font, StageColor(row.Phase), UiTokens.CardSurface, scale);
-        }
-        e.Handled = true;
+        grid.PaintPill(e, StageColor(row.Phase));
     }
     private static Color StageColor(string phase) => phase switch
     {
@@ -251,6 +244,7 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
     };
     private static void Rows(RouterGrid grid, IntakeServiceRecord[] rows, Func<IntakeServiceRecord, object[]> format)
     {
+        var hadSelection = grid.CurrentCell is not null;
         grid.SuspendLayout();
         try
         {
@@ -265,6 +259,7 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
                 foreach (DataGridViewCell cell in row.Cells) cell.ToolTipText = item.Title;
             }
             while (grid.RowCount > rows.Length) grid.Rows.RemoveAt(grid.RowCount - 1);
+            if (!hadSelection) { grid.ClearSelection(); grid.CurrentCell = null; }
         }
         finally { grid.ResumeLayout(true); }
     }
@@ -276,9 +271,8 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
     }
     protected override void ApplyPalette(QuotaBackgroundTheme theme)
     {
-        IntakeObserverForm.ApplyObservationPalette(this, _popoverScale, _task);
         var palette = new RouterVisualPalette(UiTokens.CardSurface);
-        _headline.Palette = palette;
+        ApplyMonitorPalette(palette, _task);
         _headline.ForeColor = palette.Text;
         _projectMenu.Renderer = new DarkContextMenuRenderer(palette.Surface, palette.Input, palette.Border, palette.Text, palette.Muted);
         _projectMenu.Font = Font;
