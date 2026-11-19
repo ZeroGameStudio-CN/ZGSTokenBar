@@ -1,6 +1,13 @@
+using System.Text.Json;
 using ZGSTokenBar.Core;
 
 namespace ZGSTokenBar.App;
+
+internal sealed record IntakeServiceObservation(int Projects, int History, int InFlight, string Status,
+    int? PendingReview, int? ProtectedArchive, int? Unconfirmed, int ClosedHistory, DateTimeOffset? ObservedAt)
+{
+    internal int Recent => History;
+}
 
 /// <summary>The same native monitor host and table controls as Router; no workflow actions.</summary>
 internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
@@ -24,12 +31,11 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
     private string? _project;
     private string _projectSignature = "";
     private readonly bool _observe;
+    private bool _recordOpen;
     internal event EventHandler? WorkItemsRequested;
     internal event Action<int?>? ProcessingObserved;
-    internal (int Projects, int Recent, int History, int InFlight, string Status) Observation =>
-        (_last.Values.SelectMany(r => r.Projects).Distinct().Count(), _history.RowCount, _history.RowCount,
-            _last.Values.SelectMany(r => r.Progress).Count(r => r.InFlight), _headline.Text);
-    public override bool InteractionOpen => _projectMenu.Visible;
+    internal IntakeServiceObservation Observation { get; private set; } = new(0, 0, 0, "", null, null, null, 0, null);
+    public override bool InteractionOpen => _recordOpen || _projectMenu.Visible;
 
     internal IntakeServiceMonitorForm(bool chinese, IntakeServiceMonitorClient client, bool observe = true)
     {
@@ -65,8 +71,15 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
         _progress.Columns[2].HeaderCell.Style.Alignment = _history.Columns[3].HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
         _progress.CellPainting += PaintStage;
         _history.CellPainting += PaintStage;
+        foreach (var grid in new[] { _progress, _history })
+        {
+            grid.CellDoubleClick += (_, e) =>
+            {
+                if (_pinned && e.RowIndex >= 0 && grid.Rows[e.RowIndex].Tag is IntakeServiceRecord record) ShowRecord(record);
+            };
+        }
         _tips.SetToolTip(_history, T("记录时间来自服务观测；旧回执缺少时间时显示 —", "Times come from service observations; older receipts without timestamps show —"));
-        _root.Controls.Add(Table(T("在途与待核对", "In flight and held"), _progress, _progressHeading), 0, 2);
+        _root.Controls.Add(Table(T("当前回执", "Current receipts"), _progress, _progressHeading), 0, 2);
         _root.Controls.Add(Table(T("运行历史", "Service history"), _history, _historyHeading), 0, 3);
         _refresh.Click += async (_, _) => await RefreshAsync();
         _pin.Click += (_, _) => RequestPinChange(!_pinned);
@@ -158,10 +171,12 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
             }
         }
         bool Match(IntakeServiceRecord row) => _project is null || row.Project == _project;
-        var progress = _last.Values.SelectMany(r => r.Progress).Where(Match).ToArray();
-        var history = _last.Values.SelectMany(r => r.History).Where(Match).OrderByDescending(r => r.ObservedAt).Take(160).ToArray();
-        Rows(_progress, progress, r => [ItemTitle(r), r.Project + " · " + Kind(r.Kind), Phase(r.Phase)]);
-        Rows(_history, history, r => [r.ObservedAt?.ToLocalTime().ToString("MM-dd HH:mm") ?? "—", ItemTitle(r), Kind(r.Kind), Phase(r.Phase)]);
+        var progress = _last.Values.SelectMany(r => r.Progress).Where(r => Match(r) && !r.IsSourceHistory).ToArray();
+        var history = _last.Values.SelectMany(r => r.History).Where(Match)
+            .OrderByDescending(r => r.IsSourceHistory).ThenByDescending(r => r.ObservedAt).Take(160)
+            .OrderByDescending(r => r.ObservedAt).ToArray();
+        Rows(_progress, progress, r => [ItemTitle(r), r.Project.Length > 0 ? r.Project + " · " + Kind(r.Kind) : Kind(r.Kind), Stage(r)]);
+        Rows(_history, history, r => [r.ObservedAt?.ToLocalTime().ToString("MM-dd HH:mm") ?? "—", ItemTitle(r), Kind(r.Kind), Stage(r)]);
         var active = progress.Count(r => r.InFlight);
         var current = _last.Where(pair => !_unavailable.Contains(pair.Key)).Select(pair => pair.Value).ToArray();
         var configurationUnavailable = _client.ConfigurationError is not null;
@@ -176,24 +191,38 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
             : partial ? T("服务在线 · 观测记录不完整", "Service online · Observations incomplete")
             : _last.Count > 0 ? T("服务在线", "Service online")
             : T("正在连接分拣服务…", "Connecting to intake service…");
-        if (_last.Count > 0)
+        var observedAt = _last.Count > 0 ? _last.Values.Max(r => r.ObservedAt) : (DateTimeOffset?)null;
+        if (observedAt is { } seen)
             _freshness.Text = (unavailable ? T("上次读取 ", "Last read ") : T("更新于 ", "Updated "))
-                + _last.Values.Max(r => r.ObservedAt).ToLocalTime().ToString("HH:mm:ss");
+                + seen.ToLocalTime().ToString("HH:mm:ss");
         var tone = unavailable ? "warning"
             : current.Any(r => !r.Active) ? "offline" : loading ? "idle" : "running";
         var accent = UiTokens.State(tone);
         if (_headline.Accent != accent) { _headline.Accent = accent; _headline.Invalidate(); }
         _tips.SetToolTip(_headline, configurationUnavailable
             ? T("检查本机分拣服务配置 intake-services.json", "Check the local intake-services.json configuration") : "");
-        var held = progress.Length - active;
-        _progressHeading.Text = progress.Length == 0 || unavailable ? T("在途与待核对", "In flight and held")
-            : T($"在途 {active:N0}  ·  待核对 {held:N0}", $"In flight {active:N0}  ·  Held {held:N0}");
+        var pending = progress.Count(r => r.Review == "attention");
+        var protectedArchive = progress.Count(r => r.Review == "archive_protected");
+        var unconfirmed = progress.Count(r => r.Review == "unconfirmed");
+        var countsKnown = !loading && !unavailable && current.All(r => r.Active);
+        var progressCounts = new List<string>();
+        if (active > 0 && countsKnown) progressCounts.Add(T($"在途 {active:N0}", $"In flight {active:N0}"));
+        if (countsKnown)
+        {
+            progressCounts.Add(unconfirmed > 0 ? T($"已知待核 {pending:N0}", $"Known review {pending:N0}") : T($"待核 {pending:N0}", $"Needs review {pending:N0}"));
+            progressCounts.Add(T($"归档保护 {protectedArchive:N0}", $"Archive protected {protectedArchive:N0}"));
+            if (unconfirmed > 0) progressCounts.Add(T($"待确认 {unconfirmed:N0}", $"Unconfirmed {unconfirmed:N0}"));
+        }
+        _progressHeading.Text = countsKnown ? string.Join("  ·  ", progressCounts) : T("当前回执", "Current receipts");
+        Observation = new(projects.Length, history.Length, _last.Values.SelectMany(r => r.Progress).Count(r => r.InFlight), _headline.Text,
+            countsKnown ? pending : null, countsKnown ? protectedArchive : null, countsKnown ? unconfirmed : null,
+            history.Count(r => r.Review == "source_closed"), observedAt);
         _historyHeading.Text = history.Length == 0 || unavailable ? T("运行历史", "Service history")
             : T($"运行历史  ·  {history.Length:N0}", $"Service history  ·  {history.Length:N0}");
         if (!unavailable && !loading) SetEmptyTopTable(_root, _progress, progress.Length == 0);
         else if (progress.Length > 0) SetEmptyTopTable(_root, _progress, false);
         SetEmptyState(_progress, unavailable ? T("在途状态暂不可确认", "In-flight state is unconfirmed")
-            : loading ? T("正在读取分拣进度…", "Reading intake progress…") : T("暂无在途或待核对记录", "No in-flight or held records"));
+            : loading ? T("正在读取分拣进度…", "Reading intake progress…") : T("暂无当前回执", "No current receipts"));
         SetEmptyState(_history, unavailable ? T("历史记录暂不可用", "Service history is unavailable")
             : loading ? T("正在读取运行历史…", "Reading service history…") : T("暂无服务历史记录", "No retained service history"));
     }
@@ -220,7 +249,13 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
     {
         if (sender is not RouterGrid grid || e.RowIndex < 0
             || e.ColumnIndex != grid.ColumnCount - 1 || grid.Rows[e.RowIndex].Tag is not IntakeServiceRecord row) return;
-        grid.PaintPill(e, StageColor(row.Phase));
+        grid.PaintPill(e, row.Review switch
+        {
+            "archive_protected" or "source_advanced" => UiTokens.Muted,
+            "source_closed" => UiTokens.Positive,
+            "attention" or "unconfirmed" => UiTokens.Warning,
+            _ => StageColor(row.Phase),
+        });
     }
     private static Color StageColor(string phase) => phase switch
     {
@@ -277,6 +312,32 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
     { "result" or "precheck" => T("分拣", "Triage"), "rework" => T("返工续办", "Rework"), "archive" => T("验收后归档", "Archive"),
       "related" => T("关联续办", "Related"), "original_continuation" => T("原对话补交", "Original delivery"),
       "ready" => T("服务启动", "Service start"), "error" => T("服务异常", "Service error"), _ => kind };
+
+    private string Stage(IntakeServiceRecord record) => record.Review switch
+    {
+        "archive_protected" => T("归档保护", "Archive protected"),
+        "source_closed" => T("原卡已结案", "Source item closed"),
+        "source_advanced" => T("原卡已进入后续阶段", "Source item advanced"),
+        "unconfirmed" => T("待确认", "Unconfirmed"),
+        "attention" => T("待核对", "Needs review"),
+        _ => Phase(record.Phase),
+    };
+
+    private void ShowRecord(IntakeServiceRecord record)
+    {
+        var lines = new List<string> { Kind(record.Kind), Stage(record) };
+        if (record.ObservedAt is { } at) lines.Add(at.ToLocalTime().ToString("MM-dd HH:mm:ss"));
+        if (record.Review == "archive_protected")
+            lines.Add(T("原对话有变化或仍在活动，已保留。", "The original conversation changed or is still active and was kept."));
+        else if (record.IsSourceHistory && record.ReasonCode == "need_evidence")
+            lines.Add(T("这条旧回执曾要求补充证据。", "This earlier receipt requested more evidence."));
+        using var dialog = new MonitorRecordDialog(T("分拣回执", "Intake receipt"), ItemTitle(record),
+            string.Join(Environment.NewLine, lines), JsonSerializer.Serialize(record), _zh);
+        _recordOpen = true;
+        try { dialog.ShowDialog(this); }
+        finally { _recordOpen = false; }
+    }
+
     private string Phase(string phase) => phase switch
     { "model_started" => T("分类请求已发出", "Classification requested"), "sending" => T("准备提交", "Preparing submission"),
       "waiting_upstream" => T("等待上游恢复", "Waiting for upstream"), "waiting_original" => T("等待原任务", "Waiting for original"),

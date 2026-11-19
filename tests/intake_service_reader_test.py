@@ -135,6 +135,62 @@ class ReaderTests(unittest.TestCase):
             for status, inputs in (({}, store), (online, dict(store, gaps=["receipts_capped"]))):
                 self.assertIsNone(reader.project(CONFIG, status, inputs, "", summary_only=True)["processingCount"])
 
+    def test_review_projection_keeps_closed_history_and_distinguishes_protection(self):
+        online = {"ActiveState": "active", "SubState": "running"}
+        with tempfile.TemporaryDirectory(prefix="zgstokenbar-intake-review-") as directory:
+            root = Path(directory).resolve()
+            path = root / "intake.sqlite3"
+
+            def add(db, index, kind, phase, status, **diagnostic):
+                item = f"00000000-0000-4000-8000-{index:012d}"
+                if status is not None:
+                    reference = dict(project_key="LAB", work_item_number=f"LAB-{index}", status=status)
+                    db.execute("INSERT INTO receipts VALUES(?,?,?,?)", ("reference:" + item, "{}", "confirmed", json.dumps(reference)))
+                receipt = dict(item_id=item, **diagnostic)
+                db.execute("INSERT INTO receipts VALUES(?,?,?,?)",
+                           (kind + ":" + item, json.dumps(dict(item_id=item)), phase, json.dumps(receipt)))
+
+            with closing(sqlite3.connect(path)) as db, db:
+                db.execute("CREATE TABLE receipts(key TEXT PRIMARY KEY,intent TEXT NOT NULL,phase TEXT NOT NULL,value TEXT)")
+                for index in range(1, 9):
+                    add(db, index, "archive", "needs_attention", "passed", reason="archive_thread_changed_or_active")
+                for index in range(9, 13):
+                    add(db, index, "precheck", "needs_review", "passed",
+                        decision=dict(action="need_evidence", reason="NEVER_EXPORT_PRIVATE_PROMPT"))
+
+            before = hashlib.sha256(path.read_bytes()).digest()
+            # Full journal capacity must still leave the closed receipts findable.
+            journal = "\n".join(json.dumps(dict(MESSAGE=json.dumps(dict(event="intake_ready", generation=i)),
+                                               __REALTIME_TIMESTAMP=str(1700000000000000 + i))) for i in range(160))
+            snapshot = reader.project(CONFIG, online, reader.read_store(root), journal)
+            self.assertEqual(len(snapshot["history"]), 160)
+            self.assertEqual([row["reviewState"] for row in snapshot["progress"]], ["archive_protected"] * 8)
+            closed = [row for row in snapshot["history"] if row["reviewState"] == "source_closed"]
+            self.assertEqual({row["number"] for row in closed}, {f"LAB-{i}" for i in range(9, 13)})
+            self.assertTrue(all(row["phase"] == "needs_review" and row["reasonCode"] == "need_evidence"
+                                and row["sourceStatus"] == "passed" and row["observedAt"] is None for row in closed))
+            self.assertNotIn("NEVER_EXPORT", json.dumps(snapshot))
+            self.assertEqual(hashlib.sha256(path.read_bytes()).digest(), before)
+
+            with closing(sqlite3.connect(path)) as db, db:
+                add(db, 13, "precheck", "needs_review", "pending_triage", decision=dict(action="need_evidence"))
+                add(db, 14, "precheck", "needs_review", None, decision=dict(action="need_evidence"))
+                add(db, 15, "archive", "needs_attention", "passed")
+                add(db, 16, "rework", "indeterminate", "rework")
+                add(db, 17, "archive", "needs_attention", "passed", reason="archive_operation_requires_review")
+                add(db, 18, "precheck", "needs_review", "pending_acceptance", decision=dict(action="need_evidence"))
+            snapshot = reader.project(CONFIG, online, reader.read_store(root), "")
+            states = {row["number"]: row["reviewState"] for row in snapshot["progress"] if row["number"].startswith("LAB-")}
+            self.assertEqual(states["LAB-13"], "attention")
+            self.assertEqual(states["LAB-17"], "attention")
+            self.assertEqual(states["LAB-15"], "unconfirmed")
+            self.assertEqual(states["LAB-16"], "unconfirmed")
+            self.assertIn(("needs_review", "", "unconfirmed"),
+                          [(row["phase"], row["sourceStatus"], row["reviewState"]) for row in snapshot["progress"]])
+            self.assertNotIn("LAB-18", states)
+            self.assertIn(("LAB-18", "source_advanced"),
+                          [(row["number"], row["reviewState"]) for row in snapshot["history"]])
+
     def test_invalid_targets_never_execute_commands(self):
         with patch.object(reader, "bounded", side_effect=AssertionError("must not execute")):
             for bad in (dict(CONFIG, unit="x.service;restart"), dict(CONFIG, stateDirectory="/var/lib/../etc")):

@@ -141,6 +141,11 @@ public sealed record WindowInspection(
     public int IntakeHistoryCount { get; init; }
     public int IntakeInFlightCount { get; init; }
     public string? IntakeServiceStatus { get; init; }
+    public int? IntakePendingReviewCount { get; init; }
+    public int? IntakeProtectedArchiveCount { get; init; }
+    public int? IntakeUnconfirmedCount { get; init; }
+    public int? IntakeClosedHistoryCount { get; init; }
+    public DateTimeOffset? IntakeObservedAt { get; init; }
     public long? DisplayedRouterQueuedCount { get; init; }
     public string? DisplayedRouterState { get; init; }
     public string? RouterProjectKey { get; init; }

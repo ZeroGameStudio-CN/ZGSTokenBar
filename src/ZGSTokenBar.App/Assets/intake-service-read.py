@@ -11,6 +11,9 @@ SCHEMA = "zgstokenbar.intake-monitor.v1"
 PROCESSING = {"sending", "model_started", "classified", "submitting", "submitted", "archive_pending", "archive_submitted"}
 ACTIVE = PROCESSING | {"waiting_upstream", "waiting_original", "retry"}
 ATTENTION = {"indeterminate", "needs_attention", "needs_review"}
+SOURCE_CLOSED = {"passed", "screened_no_issue"}
+SOURCE_ADVANCED = {"pending_acceptance", "rework"}
+SOURCE_PENDING = {"pending_triage", "pending_execution"}
 EVENTS = {"intake_ready", "intake_result", "intake_rework", "intake_archive", "intake_error",
           "intake_rework_attention", "intake_related_attention", "intake_archive_attention", "intake_resume_attention"}
 
@@ -24,6 +27,10 @@ def code(value):
     return text if re.fullmatch(r"[A-Za-z0-9_.:-]{0,100}", text) else "unavailable"
 
 
+def reason_code(value):
+    return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_]{1,80}", value) else ""
+
+
 def read_store(root, summary_only=False):
     """Only selected JSON fields leave SQLite; prompts, model results and credentials never do."""
     root = Path(root)
@@ -35,30 +42,35 @@ def read_store(root, summary_only=False):
     db = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=2)
     try:
         db.execute("PRAGMA query_only=ON")
+        db.execute("BEGIN")  # Bind receipt stage and original-card reference to one SQLite snapshot.
         deadline = time.monotonic() + 5
         db.set_progress_handler(lambda: int(time.monotonic() > deadline), 10000)
         references = {}
         query = """SELECT key, json_extract(value,'$.project_key'), json_extract(value,'$.work_item_number'),
-                   substr(json_extract(value,'$.title'),1,160)
-                   FROM receipts WHERE key LIKE 'reference:%' AND json_valid(value) LIMIT 1000"""
+                   substr(json_extract(value,'$.title'),1,160), json_extract(value,'$.status')
+                   FROM receipts WHERE key LIKE 'reference:%' AND phase='confirmed' AND json_valid(value) LIMIT 1000"""
         if not summary_only:
-            for key, project, number, title in db.execute(query):
-                references[key.removeprefix("reference:")] = (clean(project, 64), clean(number, 32), clean(title))
+            for key, project, number, title, status in db.execute(query):
+                references[key.removeprefix("reference:")] = (clean(project, 64), clean(number, 32), clean(title), code(status))
         rows = []
         # No payload column is returned. Newest intent per operation/item is used for the current view.
-        for key, phase, intent_id, value_id in db.execute("""SELECT key,phase,
+        for key, phase, intent_id, value_id, reason, decision in db.execute("""SELECT key,phase,
                 CASE WHEN json_valid(intent) THEN coalesce(json_extract(intent,'$.item_id'),
                     json_extract(intent,'$.work_item_id'),json_extract(intent,'$.reported_item_id'),json_extract(intent,'$.original_item_id')) END,
                 CASE WHEN json_valid(value) THEN coalesce(json_extract(value,'$.item_id'),
-                    json_extract(value,'$.work_item_id'),json_extract(value,'$.reported_item_id')) END FROM receipts
+                    json_extract(value,'$.work_item_id'),json_extract(value,'$.reported_item_id')) END,
+                CASE WHEN ? AND phase IN ('needs_attention','needs_review','indeterminate') AND json_valid(value)
+                    THEN substr(json_extract(value,'$.reason'),1,81) END,
+                CASE WHEN ? AND phase IN ('needs_attention','needs_review','indeterminate') AND json_valid(value)
+                    THEN substr(json_extract(value,'$.decision.action'),1,81) END FROM receipts
                 WHERE key LIKE 'precheck:%' OR key LIKE 'rework:%' OR key LIKE 'archive:%'
                 OR key LIKE 'related:%' OR key LIKE 'related-delivery:%' OR key LIKE 'original-blocked-continuation:%'
-                OR key LIKE 'new-user-evidence-continuation:%' ORDER BY rowid DESC LIMIT 1001"""):
+                OR key LIKE 'new-user-evidence-continuation:%' ORDER BY rowid DESC LIMIT 1001""", (not summary_only, not summary_only)):
             ids = re.findall(r"[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}", key)
             candidates = [intent_id, value_id, *ids]
             identity = next((v.lower() for v in candidates if isinstance(v, str)
                              and re.fullmatch(r"[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}", v)), "")
-            project, number, title = references.get(identity, ("", identity[:8], ""))
+            project, number, title, source = references.get(identity, ("", identity[:8], "", ""))
             kind = key.split(":", 1)[0]
             if kind == "precheck" and ":rework:" in key:
                 kind = "rework"
@@ -66,8 +78,11 @@ def read_store(root, summary_only=False):
                 kind = "related"
             if kind in ("original-blocked-continuation", "new-user-evidence-continuation"):
                 kind = "original_continuation"
+            if isinstance(value_id, str) and value_id.lower() != identity:
+                source = ""
             rows.append(dict(id=key[:256], itemId=identity, project=project, number=number, title=title,
-                             kind=kind, phase=code(phase), observedAt=None))
+                             kind=kind, phase=code(phase), observedAt=None, sourceStatus=source,
+                             reasonCode=reason_code(reason) or reason_code(decision)))
         return dict(records=rows[:1000], projects=sorted({v[0] for v in references.values() if v[0]}),
                     gaps=["receipts_capped"] if len(rows) > 1000 else [])
     finally:
@@ -103,6 +118,33 @@ def current_receipts(records):
     return latest.values()
 
 
+def review_state(row):
+    phase, kind = row["phase"], row["kind"]
+    reason = row.get("reasonCode", "")
+    source = row.get("sourceStatus", "")
+    if phase == "needs_attention" and kind == "archive":
+        if reason == "archive_thread_changed_or_active":
+            return "archive_protected"
+        return "attention" if reason else "unconfirmed"
+    if phase == "needs_review" and kind == "precheck":
+        if source in SOURCE_CLOSED:
+            return "source_closed"
+        if source in SOURCE_ADVANCED:
+            return "source_advanced"
+        return "attention" if source in SOURCE_PENDING else "unconfirmed"
+    if phase in ("indeterminate", "", "unavailable"):
+        return "unconfirmed"
+    return "attention" if phase in ATTENTION else ""
+
+
+def history_kind(kind):
+    return {"result": "precheck", "archive_attention": "archive"}.get(kind, kind)
+
+
+def observed_at(row):
+    return row["observedAt"] or ""
+
+
 def project(config, service, store, journal, summary_only=False):
     gaps = list(store.get("gaps", []))
     records = store.get("records", [])
@@ -115,6 +157,7 @@ def project(config, service, store, journal, summary_only=False):
                     processingCount=count, projects=[], progress=[], history=[], gaps=gaps)
     if summary_only:
         return snapshot
+    latest = [{**row, "reviewState": review_state(row)} for row in latest]
     lookup = {}
     for row in records:
         if row["itemId"]:
@@ -141,20 +184,30 @@ def project(config, service, store, journal, summary_only=False):
             key = (kind, identity, phase, str(event.get("generation", "")))
             history[key] = dict(id="|".join(key), itemId=identity, project=item.get("project", ""),
                                 number=item.get("number", identity[:8]), title=item.get("title", ""),
-                                kind=kind, phase=phase, observedAt=at)
+                                kind=kind, phase=phase, observedAt=at, reviewState="",
+                                reasonCode=reason_code(event.get("reason")), sourceStatus=item.get("sourceStatus", ""))
         except (ValueError, TypeError, KeyError, OverflowError, AttributeError):
             gaps.append("unparsed_event")
-    pending = [r for r in latest if r["phase"] in ACTIVE | ATTENTION]
-    pending.sort(key=lambda r: (r["phase"] not in ACTIVE, r["id"]))
+    stages = {"": 0, "attention": 1, "unconfirmed": 2, "archive_protected": 3}
+    pending = [r for r in latest if r["phase"] in ACTIVE or r["reviewState"] in ("attention", "unconfirmed", "archive_protected")]
+    pending.sort(key=lambda r: (stages[r["reviewState"]], r["id"]))
     if len(pending) > 64:
         gaps.append("progress_capped")
     # Receipt states fill older history when the journal no longer retains an event. No timestamp is invented.
-    seen = {(r["itemId"], r["phase"]) for r in history.values()}
+    seen = {(history_kind(r["kind"]), r["itemId"], r["phase"]): key
+            for key, r in sorted(history.items(), key=lambda entry: observed_at(entry[1]))}
     for row in latest:
-        if (row["itemId"], row["phase"]) not in seen:
+        match = seen.get((row["kind"], row["itemId"], row["phase"])) if row["itemId"] else None
+        if match is None:
             history[("receipt", row["id"])] = {**row, "kind": "receipt:" + row["kind"]}
+        elif row["reviewState"]:
+            history[match].update(reviewState=row["reviewState"], reasonCode=row.get("reasonCode", ""),
+                                  sourceStatus=row.get("sourceStatus", ""))
+    # Old reviewed receipts can lack a journal timestamp. Keep them in the bounded history.
+    ordered = sorted(history.values(), key=observed_at, reverse=True)
+    selected = sorted(ordered, key=lambda row: row["reviewState"] not in ("source_closed", "source_advanced"))[:160]
     return dict(snapshot, projects=store.get("projects", []), progress=pending[:64],
-                history=sorted(history.values(), key=lambda r: r["observedAt"] or "", reverse=True)[:160], gaps=sorted(set(gaps)))
+                history=sorted(selected, key=observed_at, reverse=True), gaps=sorted(set(gaps)))
 
 
 def collect(config, summary_only=False):

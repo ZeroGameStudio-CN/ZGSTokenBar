@@ -234,6 +234,17 @@ The profile has `schemaVersion: 1` and a `sources` array (1–8 entries), each w
 
 The collector does not return prompt bodies, model responses, credentials or raw log lines. It reads SQLite in `mode=ro` with `query_only`, limits metadata, caps oversized output and deadlines, and deduplicates startup replay by operation/item/phase/generation. Receipt rows are observations, not an executable queue or human acceptance. Stages without timestamps retain `—`; recorded journal time is observation time. Offline, partial, malformed and oversized reads remain visibly unavailable/partial and keep the last readable table. The visible panel refreshes every five seconds. When it is closed, the same registered service is read every thirty seconds for the processing count alone, without titles, project rows or journal history. Both paths share a single read slot. The badge counts latest operations in processing stages across all registered services; waiting for upstream or reconciliation, held and completed entries do not add to it. Missing, incomplete, offline and expired counts show the plain icon, as does a confirmed zero. No count is cached to disk. Without a service profile the existing work-item view remains available. Restart the app after changing service registration.
 
+The service view reads the receipt and the Worker's current original-card
+reference in one SQLite snapshot. Archive protection has its own count.
+Old triage reviews for closed or advanced source items remain in history.
+Missing source status on a triage review and indeterminate outcomes remain
+visible as unconfirmed. A partial read leaves the review counts unavailable.
+Double-click a receipt in the pinned panel to copy the bounded record as JSON,
+including its original phase, reason code and available source status.
+`window inspect --json` reports the visible service view's
+`intakePendingReviewCount`, `intakeProtectedArchiveCount`,
+`intakeUnconfirmedCount`, `intakeClosedHistoryCount` and `intakeObservedAt`.
+
 The intake taskbar icon follows that same observation. A positive count shows a highlighted arrow, a verified idle service shows an empty tray, and a configured service with an unavailable or stale observation shows a dim tray with a slash. Like Router, the slot contains an icon with an optional number; its width does not change with status.
 
 The local health check samples existing dock, Codex quota/log, Router and configured intake observations once a minute. It emits a tray warning only after three consecutive failures spanning at least two minutes. An old remote failure is counted only once. Recovery clears the issue silently. A continuing incident is reported once; separate warnings are grouped and spaced at least ten minutes apart. Fullscreen defers notification, and normal fullscreen hiding, a deliberate floating/hidden bar, a verified fallback seat and a progressing log backfill do not count as failures. Resume discards incomplete sequences. Inspect `lastHealthCheckAt`, `healthIssues` and `intakeProcessingCount` in `window inspect --json`; a null intake count means that there is no usable observation. The health check does not start a new provider or service read.

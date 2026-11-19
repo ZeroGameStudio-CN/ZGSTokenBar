@@ -28,6 +28,7 @@ internal static class IntakeServiceMonitorTests
                 "A global count requires fresh active readings from every registered source.");
             Check(client.ProcessingCount([a, b with { Source = Source with { Id = alternate.Id } }]) == 1,
                 "Duplicate profiles for the same service do not double-count its operations.");
+            ReviewProjection(captures);
             foreach (var dpi in new[] { 96, 144, 192 })
             {
                 CaptureCount(dpi, captures);
@@ -98,6 +99,50 @@ internal static class IntakeServiceMonitorTests
 
     internal static IntakeServiceMonitorForm UnobservedPanel() => new(true,
         new IntakeServiceMonitorClient([Source], (_, _) => Task.FromResult(Reading())), observe: false);
+
+    private static void ReviewProjection(string? captures)
+    {
+        static IntakeServiceRecord Receipt(int i, string kind, string phase, string review, string reason, string status) =>
+            new($"receipt-{i}", $"00000000-0000-4000-8000-{i:D12}", "LAB", $"LAB-{i}", "", kind, phase, null)
+            { ReviewState = review, ReasonCode = reason, SourceStatus = status };
+        var protection = Enumerable.Range(1, 8)
+            .Select(i => Receipt(i, "archive", "needs_attention", "archive_protected", "archive_thread_changed_or_active", "passed")).ToArray();
+        var closed = Enumerable.Range(9, 4)
+            .Select(i => Receipt(i, "precheck", "needs_review", "source_closed", "need_evidence", "passed")).ToArray();
+        var snapshot = Reading() with { Projects = ["LAB"], Progress = protection, History = [.. protection, .. closed], ProcessingCount = 0 };
+        var client = new IntakeServiceMonitorClient([Source], (_, _) => Task.FromResult(snapshot));
+        using var form = new IntakeServiceMonitorForm(true, client, observe: false) { Opacity = 0 };
+        form.ConfigureFor(new(-28500, -28000, 48, 44), true, 1.5f,
+            QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), new(-30000, -30000, 3840, 2160));
+        form.Show();
+        Pump(form.RefreshAsync());
+        var progress = Descendants(form).OfType<RouterGrid>().Single(grid => grid.ColumnCount == 3);
+        var history = Descendants(form).OfType<RouterGrid>().Single(grid => grid.ColumnCount == 4);
+        Check(form.Observation is { PendingReview: 0, ProtectedArchive: 8, Unconfirmed: 0, ClosedHistory: 4, InFlight: 0 }
+            && progress.RowCount == 8 && progress.Rows.Cast<DataGridViewRow>().All(r => Equals(r.Cells[2].Value, "归档保护"))
+            && history.Rows.Cast<DataGridViewRow>().Count(r => Equals(r.Cells[3].Value, "原卡已结案")) == 4,
+            "Archive guards have their own count and passed reviews remain in history with their original diagnostics.");
+        if (captures is not null)
+        {
+            Directory.CreateDirectory(captures);
+            Application.DoEvents();
+            using var bitmap = new Bitmap(form.Width, form.Height);
+            form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+            bitmap.Save(Path.Combine(captures, "intake-review-projection.png"));
+        }
+
+        var real = Receipt(13, "precheck", "needs_review", "attention", "need_evidence", "pending_triage");
+        var unknown = Receipt(14, "precheck", "needs_review", "unconfirmed", "need_evidence", "");
+        snapshot = snapshot with { Progress = [real, unknown, .. protection], History = [.. snapshot.History, real, unknown] };
+        Pump(form.RefreshAsync());
+        Check(form.Observation is { PendingReview: 1, ProtectedArchive: 8, Unconfirmed: 1, ClosedHistory: 4 }
+            && Equals(progress.Rows[0].Cells[2].Value, "待核对") && Equals(progress.Rows[1].Cells[2].Value, "待确认"),
+            "Known work and uncertain source state remain visible with distinct statuses.");
+        snapshot = snapshot with { Gaps = ["receipts_unavailable"], Progress = [], History = [], ProcessingCount = null };
+        Pump(form.RefreshAsync());
+        Check(form.Observation is { PendingReview: null, ProtectedArchive: null, Unconfirmed: null, ClosedHistory: 4 }
+            && progress.RowCount == 10, "A partial read keeps previous rows without asserting zero or complete totals.");
+    }
 
     private static void View(int dpi, bool chinese, string? captures)
     {

@@ -10,8 +10,15 @@ internal sealed record IntakeServiceSource(string Id, string Name, string SshTar
 internal sealed record IntakeServiceRecord(string Id, string ItemId, string Project, string Number, string Title,
     string Kind, string Phase, DateTimeOffset? ObservedAt)
 {
+    public string ReviewState { get; init; } = "";
+    public string ReasonCode { get; init; } = "";
+    public string SourceStatus { get; init; } = "";
+
     internal bool InFlight => Phase is "sending" or "model_started" or "classified" or "waiting_upstream"
         or "waiting_original" or "submitting" or "submitted" or "retry" or "archive_pending" or "archive_submitted";
+    internal string Review => ReviewState.Length > 0 ? ReviewState
+        : Phase is "needs_attention" or "needs_review" or "indeterminate" ? "unconfirmed" : "";
+    internal bool IsSourceHistory => Review is "source_closed" or "source_advanced";
 }
 internal sealed record IntakeServiceReading(string Schema, string SourceId, DateTimeOffset ObservedAt, bool Active,
     string ServiceState, string Invocation, string[] Projects, IntakeServiceRecord[] Progress,
@@ -133,7 +140,9 @@ internal sealed class IntakeServiceMonitorClient
             if (row is null || row.Id is null || row.Id.Length > 300 || row.Title is null || row.Title.Length > 160
                 || row.Phase is null || row.Phase.Length > 100 || row.Kind is null || row.Kind.Length > 80
                 || row.Project is null || row.Project.Length > 64 || row.Number is null || row.Number.Length > 32
-                || row.ItemId is null || row.ItemId.Length > 36 || row.ItemId.Length > 0 && !Guid.TryParseExact(row.ItemId, "D", out _))
+                || row.ItemId is null || row.ItemId.Length > 36 || row.ItemId.Length > 0 && !Guid.TryParseExact(row.ItemId, "D", out _)
+                || row.ReviewState is not ("" or "attention" or "unconfirmed" or "archive_protected" or "source_closed" or "source_advanced")
+                || row.ReasonCode is null || row.ReasonCode.Length > 80 || row.SourceStatus is null || row.SourceStatus.Length > 100)
                 throw new InvalidDataException("invalid_record");
     }
 
