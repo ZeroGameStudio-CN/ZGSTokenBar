@@ -171,9 +171,9 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
             }
         }
         bool Match(IntakeServiceRecord row) => _project is null || row.Project == _project;
-        var progress = _last.Values.SelectMany(r => r.Progress).Where(r => Match(r) && !r.IsSourceHistory).ToArray();
+        var progress = _last.Values.SelectMany(r => r.Progress).Where(r => Match(r) && !r.IsHistoryOnly).ToArray();
         var history = _last.Values.SelectMany(r => r.History).Where(Match)
-            .OrderByDescending(r => r.IsSourceHistory).ThenByDescending(r => r.ObservedAt).Take(160)
+            .OrderByDescending(r => r.IsHistoryOnly).ThenByDescending(r => r.ObservedAt).Take(160)
             .OrderByDescending(r => r.ObservedAt).ToArray();
         Rows(_progress, progress, r => [ItemTitle(r), r.Project.Length > 0 ? r.Project + " · " + Kind(r.Kind) : Kind(r.Kind), Stage(r)]);
         Rows(_history, history, r => [r.ObservedAt?.ToLocalTime().ToString("MM-dd HH:mm") ?? "—", ItemTitle(r), Kind(r.Kind), Stage(r)]);
@@ -251,7 +251,8 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
             || e.ColumnIndex != grid.ColumnCount - 1 || grid.Rows[e.RowIndex].Tag is not IntakeServiceRecord row) return;
         grid.PaintPill(e, row.Review switch
         {
-            "archive_protected" or "source_advanced" => UiTokens.Muted,
+            "archive_protected" or "archive_retained" or "source_advanced" => UiTokens.Muted,
+            "archive_waiting" => UiTokens.Info,
             "source_closed" => UiTokens.Positive,
             "attention" or "unconfirmed" => UiTokens.Warning,
             _ => StageColor(row.Phase),
@@ -316,6 +317,8 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
     private string Stage(IntakeServiceRecord record) => record.Review switch
     {
         "archive_protected" => T("归档保护", "Archive protected"),
+        "archive_waiting" => T("等待对话空闲", "Waiting for conversation to be idle"),
+        "archive_retained" => T("续聊已保留", "Conversation retained"),
         "source_closed" => T("原卡已结案", "Source item closed"),
         "source_advanced" => T("原卡已进入后续阶段", "Source item advanced"),
         "unconfirmed" => T("待确认", "Unconfirmed"),
@@ -329,7 +332,9 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
         if (record.ObservedAt is { } at) lines.Add(at.ToLocalTime().ToString("MM-dd HH:mm:ss"));
         if (record.Review == "archive_protected")
             lines.Add(T("原对话有变化或仍在活动，已保留。", "The original conversation changed or is still active and was kept."));
-        else if (record.IsSourceHistory && record.ReasonCode == "need_evidence")
+        else if (record.Review == "archive_retained")
+            lines.Add(T("已确认原对话有后续内容，保留该对话。", "Follow-up activity was confirmed and the conversation was kept."));
+        else if (record.IsHistoryOnly && record.ReasonCode == "need_evidence")
             lines.Add(T("这条旧回执曾要求补充证据。", "This earlier receipt requested more evidence."));
         using var dialog = new MonitorRecordDialog(T("分拣回执", "Intake receipt"), ItemTitle(record),
             string.Join(Environment.NewLine, lines), JsonSerializer.Serialize(record), _zh);
@@ -342,7 +347,7 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
     { "model_started" => T("分类请求已发出", "Classification requested"), "sending" => T("准备提交", "Preparing submission"),
       "waiting_upstream" => T("等待上游恢复", "Waiting for upstream"), "waiting_original" => T("等待原任务", "Waiting for original"),
       "submitting" => T("正在提交续办", "Submitting continuation"), "submitted" => T("已提交待回执", "Submitted; awaiting receipt"),
-      "retry" => T("等待重查", "Waiting for reconciliation"), "classified" => T("分类已记录", "Classification recorded"),
+      "retry" or "archive_retry" => T("等待重查", "Waiting for reconciliation"), "classified" => T("分类已记录", "Classification recorded"),
       "archive_pending" => T("等待归档回执", "Awaiting archive receipt"),
       "archive_submitted" => T("归档请求已提交", "Archive request submitted"),
       "archive_observation_deferred" => T("等待归档观测", "Deferred archive check"),

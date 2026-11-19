@@ -142,6 +142,19 @@ internal static class IntakeServiceMonitorTests
         Pump(form.RefreshAsync());
         Check(form.Observation is { PendingReview: null, ProtectedArchive: null, Unconfirmed: null, ClosedHistory: 4 }
             && progress.RowCount == 10, "A partial read keeps previous rows without asserting zero or complete totals.");
+
+        var waiting = protection[0] with { Phase = "retry", ReviewState = "archive_waiting", ReasonCode = "archive_thread_active" };
+        snapshot = snapshot with { Gaps = [], Progress = [waiting], History = [], ProcessingCount = 0 };
+        Pump(form.RefreshAsync());
+        Check(form.Observation is { PendingReview: 0, ProtectedArchive: 0 }
+            && Equals(progress.Rows[0].Cells[2].Value, "等待对话空闲"), "A verified busy conversation remains current without review.");
+        var retained = waiting with { Phase = "needs_attention", ReviewState = "archive_retained", ReasonCode = "archive_thread_retained" };
+        snapshot = snapshot with { Progress = [], History = [retained] };
+        Pump(form.RefreshAsync());
+        Check(form.Observation is { PendingReview: 0, ProtectedArchive: 0, InFlight: 0 }
+            && progress.RowCount == 0 && Equals(history.Rows[0].Cells[3].Value, "续聊已保留")
+            && ((IntakeServiceRecord)history.Rows[0].Tag!).Phase == "needs_attention",
+            "A retained conversation is terminal in the UI and keeps the original receipt phase.");
     }
 
     private static void View(int dpi, bool chinese, string? captures)

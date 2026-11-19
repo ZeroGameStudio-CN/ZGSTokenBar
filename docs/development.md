@@ -235,7 +235,10 @@ The profile has `schemaVersion: 1` and a `sources` array (1–8 entries), each w
 The collector does not return prompt bodies, model responses, credentials or raw log lines. It reads SQLite in `mode=ro` with `query_only`, limits metadata, caps oversized output and deadlines, and deduplicates startup replay by operation/item/phase/generation. Receipt rows are observations, not an executable queue or human acceptance. Stages without timestamps retain `—`; recorded journal time is observation time. Offline, partial, malformed and oversized reads remain visibly unavailable/partial and keep the last readable table. The visible panel refreshes every five seconds. When it is closed, the same registered service is read every thirty seconds for the processing count alone, without titles, project rows or journal history. Both paths share a single read slot. The badge counts latest operations in processing stages across all registered services; waiting for upstream or reconciliation, held and completed entries do not add to it. Missing, incomplete, offline and expired counts show the plain icon, as does a confirmed zero. No count is cached to disk. Without a service profile the existing work-item view remains available. Restart the app after changing service registration.
 
 The service view reads the receipt and the Worker's current original-card
-reference in one SQLite snapshot. Archive protection has its own count.
+reference in one SQLite snapshot. Legacy archive protection has its own count.
+A busy archive receipt waits for the conversation to become idle. A confirmed
+follow-up stays in history as a retained conversation, with its original
+receipt phase and reason. An observed archive outcome appears as archived.
 Old triage reviews for closed or advanced source items remain in history.
 Missing source status on a triage review and indeterminate outcomes remain
 visible as unconfirmed. A partial read leaves the review counts unavailable.

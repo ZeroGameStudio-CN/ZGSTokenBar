@@ -191,6 +191,59 @@ class ReaderTests(unittest.TestCase):
             self.assertIn(("LAB-18", "source_advanced"),
                           [(row["number"], row["reviewState"]) for row in snapshot["history"]])
 
+    def test_archive_lifecycle_uses_the_same_receipt_and_merges_the_retained_event(self):
+        with tempfile.TemporaryDirectory(prefix="zgstokenbar-archive-fixture-") as directory:
+            root = Path(directory).resolve()
+            ledger = self.fixture(root)
+            key = "archive:" + hashlib.sha256(A.encode()).hexdigest()
+            online = {"ActiveState": "active", "SubState": "running"}
+
+            def set_receipt(phase, reason=""):
+                with closing(sqlite3.connect(ledger)) as db, db:
+                    db.execute("UPDATE receipts SET value=? WHERE key=?",
+                               (json.dumps(dict(project_key="LAB", work_item_number="LAB-1", status="passed")), "reference:" + A))
+                    db.execute("UPDATE receipts SET intent=?,phase=?,value=? WHERE key=?",
+                               (json.dumps(dict(item_id=A, generation=7)), phase, json.dumps(dict(reason=reason)), key))
+
+            def event(phase, generation=7):
+                return json.dumps(dict(MESSAGE=json.dumps(dict(event="intake_result", item_id=A, phase=phase, generation=generation)),
+                                       __REALTIME_TIMESTAMP="1795000000000000"))
+
+            def read(journal=""):
+                before = hashlib.sha256(ledger.read_bytes()).digest()
+                result = reader.project(CONFIG, online, reader.read_store(root), journal)
+                self.assertEqual(before, hashlib.sha256(ledger.read_bytes()).digest())
+                return result
+
+            def archive_rows(snapshot, section):
+                return [row for row in snapshot[section] if row["itemId"] == A and "archive" in row["kind"]]
+
+            set_receipt("needs_attention", "archive_thread_changed_or_active")
+            self.assertEqual(archive_rows(read(), "progress")[0]["reviewState"], "archive_protected")
+            set_receipt("retry", "archive_thread_active")
+            waiting = read(event("archive_retry"))
+            self.assertEqual([(r["id"], r["reviewState"]) for r in archive_rows(waiting, "progress")], [(key, "archive_waiting")])
+            self.assertEqual(len(archive_rows(waiting, "history")), 1)
+
+            set_receipt("archived")
+            archived = read(event("archived"))
+            self.assertEqual(archive_rows(archived, "progress"), [])
+            self.assertEqual([r["phase"] for r in archive_rows(archived, "history")], ["archived"])
+
+            set_receipt("retry", "archive_thread_active")
+            self.assertEqual(archive_rows(read(), "progress")[0]["id"], key)
+            set_receipt("needs_attention", "archive_thread_retained")
+            retained = read(event("archive_retained"))
+            self.assertEqual(archive_rows(retained, "progress"), [])
+            [history] = archive_rows(retained, "history")
+            self.assertEqual((history["id"], history["phase"], history["reviewState"], history["reasonCode"], history["sourceStatus"]),
+                             (key, "needs_attention", "archive_retained", "archive_thread_retained", "passed"))
+            self.assertIsNotNone(history["observedAt"])
+            self.assertEqual(len(archive_rows(read(event("archive_retained", generation=8)), "history")), 2)
+
+            set_receipt("needs_attention")
+            self.assertEqual(archive_rows(read(), "progress")[0]["reviewState"], "unconfirmed")
+
     def test_invalid_targets_never_execute_commands(self):
         with patch.object(reader, "bounded", side_effect=AssertionError("must not execute")):
             for bad in (dict(CONFIG, unit="x.service;restart"), dict(CONFIG, stateDirectory="/var/lib/../etc")):
