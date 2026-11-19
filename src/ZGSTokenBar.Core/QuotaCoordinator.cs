@@ -276,6 +276,10 @@ public sealed class QuotaCoordinator : IDisposable
                 .Where(result => result.Provider == ProviderKind.Codex)
                 .SelectMany(result => result.CodexQuotaTokenCounters)
                 .ToArray(),
+            CodexPlanObservations = results
+                .Where(result => result.Provider == ProviderKind.Codex)
+                .SelectMany(result => result.CodexPlanObservations)
+                .ToArray(),
         };
         return snapshot;
     }

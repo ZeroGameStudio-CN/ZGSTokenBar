@@ -355,26 +355,32 @@ internal static class RouterModuleTests
         { StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
         form.Show();
         Pump(form.RefreshViewAsync());
-        var queue = AllControls(form).OfType<System.Windows.Forms.DataGridView>().Single(grid => grid.Columns.Count == 3);
+        var queue = AllControls(form).OfType<System.Windows.Forms.DataGridView>().Single(grid => grid.Columns.Contains("priority"));
         Check(queue.ShowCellToolTips, "Queue task cells support hover details");
-        var rows = queue.Rows.Cast<System.Windows.Forms.DataGridViewRow>().Take(3).ToArray();
-        Check(rows.Select(row => RouterJson.Integer((JsonElement)row.Tag!, "rank")).SequenceEqual([1, 2, 3]),
+        var rows = queue.Rows.Cast<System.Windows.Forms.DataGridViewRow>().Take(4).ToArray();
+        Check(rows.Select(row => RouterJson.Integer((JsonElement)row.Tag!, "rank")).SequenceEqual([1, 2, 3, 4]),
             "Priority decoration retains the server's queue order");
-        var labels = new[] { "↑ ", "↓ ", "" };
-        var reasons = new[] { "解除共享编译阻塞", "可推迟的对比", "" };
+        var labels = new[] { "高", "低", "普通", "—" };
+        var tones = new[] { "high", "low", "normal", "missing" };
+        var reasons = new[] { "解除共享编译阻塞", "可推迟的对比", "", "" };
         for (var index = 0; index < rows.Length; index++)
         {
             var row = rows[index];
             var title = RouterJson.Text((JsonElement)row.Tag!, "task");
-            Check(row.Cells[0].Value is string text && text == labels[index] + title, "Queue priority arrow");
-            var tip = row.Cells[0].ToolTipText;
-            Check(index == 2 ? tip.Length == 0 : tip.Contains(title) && tip.Contains(reasons[index]), "Queue priority hover reason");
+            Check(Equals(row.Cells["task"]!.Value, title), "Queue task title stays undecorated");
+            Check(Equals(row.Cells["priority"]!.Value, labels[index]), "Queue priority label");
+            Check(Equals(row.Cells["priority"]!.Tag, tones[index]), "Queue priority tone");
+            var tip = row.Cells["priority"]!.ToolTipText;
+            Check(index >= 2 ? tip == (index == 2 ? "普通优先级" : "") : tip.Contains(labels[index]) && tip.Contains(reasons[index]),
+                "Queue priority hover reason");
         }
         handler.QueuePriorities = false;
         Pump(form.RefreshQueueAsync(userInitiated: true));
-        Check(queue.Rows.Cast<System.Windows.Forms.DataGridViewRow>().All(row => row.Cells[0].ToolTipText.Length == 0
-            && Equals(row.Cells[0].Value, RouterJson.Text((JsonElement)row.Tag!, "task"))),
-            "Queue pages with no priority data render normally");
+        Check(queue.Rows.Cast<System.Windows.Forms.DataGridViewRow>().All(row =>
+            Equals(row.Cells["priority"]!.Value, "—")
+            && row.Cells["priority"]!.ToolTipText.Length == 0
+            && Equals(row.Cells["task"]!.Value, RouterJson.Text((JsonElement)row.Tag!, "task"))),
+            "Queue pages with no priority data render a missing marker");
         Check(handler.Posts == 0, "Priority display never changes the queue");
         form.Close();
     }
@@ -446,7 +452,7 @@ internal static class RouterModuleTests
         Check(handler.Routes.Count == requests + 1, "Server instance changes invalidate the history window");
 
         Pump(form.RefreshViewAsync());
-        var queue = AllControls(form).OfType<System.Windows.Forms.DataGridView>().Single(grid => grid.Columns.Count == 3);
+        var queue = AllControls(form).OfType<System.Windows.Forms.DataGridView>().Single(grid => grid.Columns.Contains("priority"));
         var queueNext = AllControls(form).OfType<System.Windows.Forms.Button>().Single(button => button.AccessibleName == "队列下一页");
         handler.HoldHealth = new(TaskCreationOptions.RunContinuationsAsynchronously);
         var background = form.RefreshViewAsync();
@@ -479,7 +485,7 @@ internal static class RouterModuleTests
         { ShowInTaskbar = false, StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
         form.Show(); Pump(form.RefreshViewAsync());
         var grids = AllControls(form).OfType<RouterGrid>().ToArray();
-        var queue = grids.Single(grid => grid.Columns.Count == 3); var history = grids.Single(grid => grid.Columns.Count == 6);
+        var queue = grids.Single(grid => grid.Columns.Contains("priority")); var history = grids.Single(grid => grid.Columns.Count == 6);
         string First(RouterGrid grid) => RouterJson.Text((JsonElement)grid.Rows[0].Tag!, "id");
         void Wheel(RouterGrid grid, int delta)
         {

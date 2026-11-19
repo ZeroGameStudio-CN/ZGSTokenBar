@@ -123,15 +123,13 @@ public static class CodexConversationDisplay
             {
                 card = codexCards.FirstOrDefault(c => string.Equals(c.Key, cardKey, StringComparison.Ordinal));
             }
-            if (card is null && normalizedHome is not null && string.Equals(normalizedHome, defaultHome, StringComparison.OrdinalIgnoreCase))
+            if (card is null
+                && accountId is null
+                && normalizedHome is not null
+                && string.Equals(normalizedHome, defaultHome, StringComparison.OrdinalIgnoreCase))
             {
                 var nativeKey = CodexQuotaService.StableCardKey("active");
-                card = codexCards.FirstOrDefault(c => string.Equals(c.Key, nativeKey, StringComparison.Ordinal))
-                    ?? (codexCards.Length == 1 ? codexCards[0] : null);
-            }
-            if (card is null && codexCards.Length == 1 && accountId is null)
-            {
-                card = codexCards[0];
+                card = codexCards.FirstOrDefault(c => string.Equals(c.Key, nativeKey, StringComparison.Ordinal));
             }
             if (card is not null)
             {
@@ -153,6 +151,61 @@ public static class CodexConversationDisplay
         }
         return result;
     }
+
+    public static IReadOnlyList<CodexConversationTurn> ActivityRows(
+        IReadOnlyList<CodexConversationTurn> conversations,
+        int maximumRows = 10)
+    {
+        if (conversations.Count == 0 || maximumRows <= 0) return [];
+        var ranked = conversations
+            .Where(turn => turn.LiveRate is { Total: > 0 } || turn.State == "running")
+            .OrderByDescending(turn => turn.State == "running")
+            .ThenByDescending(ActivitySpeed)
+            .ThenByDescending(turn => turn.ObservedAt)
+            .ToArray();
+        var selected = new List<CodexConversationTurn>(Math.Min(maximumRows, Math.Max(ranked.Length, 1)));
+        var seenInstances = new HashSet<int>();
+        foreach (var turn in ranked)
+        {
+            if (turn.InstanceNumber > 0 && seenInstances.Add(turn.InstanceNumber)) selected.Add(turn);
+            if (selected.Count == maximumRows) break;
+        }
+
+        if (selected.Count < maximumRows)
+        {
+            var chosen = new HashSet<CodexConversationTurn>(selected);
+            foreach (var turn in ranked)
+            {
+                if (chosen.Add(turn)) selected.Add(turn);
+                if (selected.Count == maximumRows) break;
+            }
+        }
+
+        selected.Sort(CompareActivity);
+        if (selected.Count < maximumRows)
+        {
+            var chosen = new HashSet<CodexConversationTurn>(selected);
+            foreach (var turn in conversations.OrderByDescending(turn => turn.ObservedAt))
+            {
+                if (!chosen.Add(turn)) continue;
+                selected.Add(turn);
+                if (selected.Count == maximumRows) break;
+            }
+        }
+
+        return selected;
+    }
+
+    private static int CompareActivity(CodexConversationTurn left, CodexConversationTurn right)
+    {
+        var running = (right.State == "running").CompareTo(left.State == "running");
+        if (running != 0) return running;
+        var speed = ActivitySpeed(right).CompareTo(ActivitySpeed(left));
+        if (speed != 0) return speed;
+        return right.ObservedAt.CompareTo(left.ObservedAt);
+    }
+
+    private static double ActivitySpeed(CodexConversationTurn turn) => turn.LiveRate?.Measured ?? 0;
 
     private static bool HasMetrics(CodexConversationTurn turn) => turn.LiveRate is not null || turn.NewInputTokens is not null
         || turn.UsageComplete || turn.OutputTokens > 0 || turn.CachedInputTokens is not null

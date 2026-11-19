@@ -169,35 +169,11 @@ internal sealed class SystemUsagePopoverForm : Form
         }
         _sessionsVisible = content.LiveRates && content.Conversations is not null;
         var conversations = content.Conversations ?? [];
-        var allActive = conversations
-            .Where(turn => turn.LiveRate is { Total: > 0 } || turn.State == "running")
-            .OrderByDescending(turn => turn.State == "running")
-            .ThenByDescending(turn => turn.LiveRate?.Measured ?? 0)
-            .ThenByDescending(turn => turn.ObservedAt)
-            .ToArray();
-        // Reserve one row per known instance before filling the remaining activity slots.
-        var representatives = allActive.Where(turn => turn.InstanceNumber > 0)
-            .GroupBy(turn => turn.InstanceNumber).Select(group => group.First()).Take(MaximumSessionRows).ToArray();
-        var active = representatives.Concat(allActive.Except(representatives)).Take(MaximumSessionRows).ToArray();
-        _activeSessionCount = active.Length;
-        _sessionsRecent = active.Length == 0;
-        if (!_sessionsVisible)
-        {
-            _sessions = [];
-        }
-        else if (active.Length >= MaximumSessionRows)
-        {
-            _sessions = active;
-        }
-        else
-        {
-            var activeSet = active.ToHashSet();
-            var recent = conversations
-                .Where(turn => !activeSet.Contains(turn))
-                .OrderByDescending(turn => turn.ObservedAt)
-                .Take(MaximumSessionRows - active.Length);
-            _sessions = [.. active, .. recent];
-        }
+        var rows = CodexConversationDisplay.ActivityRows(conversations, MaximumSessionRows);
+        var activeCount = rows.Count(turn => turn.LiveRate is { Total: > 0 } || turn.State == "running");
+        _activeSessionCount = activeCount;
+        _sessionsRecent = activeCount == 0;
+        _sessions = _sessionsVisible ? rows.ToArray() : [];
         if (!content.LiveRates)
         {
             _grainToggleBounds = RectangleF.Empty;

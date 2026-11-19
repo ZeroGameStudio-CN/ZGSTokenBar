@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\ZGSTokenBar.ProviderTests\UsageProviderFixtureTests.cs" Link="UsageProviderFixtureTests.cs" />
+    <Compile Include="..\ZGSTokenBar.ProviderTests\ReviewFixTests.cs" Link="ReviewFixTests.cs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\ProcessPlugins\ZGSTokenBar.Plugin.AiGatewayObserver\ZGSTokenBar.Plugin.AiGatewayObserver.csproj" />

@@ -15,6 +15,7 @@ public static class UsageProviderFixtureTests
         VerifyAccounts();
         VerifyEndpoints();
         VerifyEngine().GetAwaiter().GetResult();
+        ReviewFixTests.Run();
         VerifyProjectionAndSvg();
         VerifyGlassDock();
         VerifyRegistry().GetAwaiter().GetResult();
