@@ -625,9 +625,13 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
                 _queue.Rows.Clear();
                 foreach (var row in items)
                 {
-                    var n = _queue.Rows.Add(RouterJson.Text(row, "task"), RouterTaskPresentation.Source(RouterJson.Text(row, "source")), RouterJson.Text(row, "wait"));
-                    _queue.Rows[n].Tag = row;
-                    _queue.Rows[n].Selected = RouterJson.Text(row, "id") == selected;
+                    var task = RouterTaskPresentation.QueuedTask(RouterJson.Text(row, "task"),
+                        RouterJson.Text(row, "queuePriority"), RouterJson.Text(row, "queuePriorityReason"));
+                    var index = _queue.Rows.Add(task.Title, RouterTaskPresentation.Source(RouterJson.Text(row, "source")), RouterJson.Text(row, "wait"));
+                    var displayed = _queue.Rows[index];
+                    displayed.Cells[0].ToolTipText = task.ToolTip;
+                    displayed.Tag = row;
+                    displayed.Selected = RouterJson.Text(row, "id") == selected;
                 }
             }
             finally { _queue.ResumeLayout(); _applyingQueue = false; }

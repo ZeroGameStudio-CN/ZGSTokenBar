@@ -21,6 +21,7 @@ internal static class RouterModuleTests
         HistoryBuffer();
         FinishedHistory();
         PagingReads();
+        QueuePriorityRows();
         IndependentPaneRefresh();
         WheelPaging();
         RefusalTiming();
@@ -344,6 +345,37 @@ internal static class RouterModuleTests
             && controls.OfType<System.Windows.Forms.Label>().Any(label => label.Text == "0 条"),
             "An active-only queue produces empty history with zero counts and no extra pages");
         Check(handler.Posts == 0, "History filtering never controls live requests");
+        form.Close();
+    }
+
+    private static void QueuePriorityRows()
+    {
+        using var handler = new Fixture { QueuePriorities = true };
+        using var form = new RouterMonitorForm(new RouterMonitorClient(handler), observe: false, initialProject: Fixture.Project)
+        { StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
+        form.Show();
+        Pump(form.RefreshViewAsync());
+        var queue = AllControls(form).OfType<System.Windows.Forms.DataGridView>().Single(grid => grid.Columns.Count == 3);
+        Check(queue.ShowCellToolTips, "Queue task cells support hover details");
+        var rows = queue.Rows.Cast<System.Windows.Forms.DataGridViewRow>().Take(3).ToArray();
+        Check(rows.Select(row => RouterJson.Integer((JsonElement)row.Tag!, "rank")).SequenceEqual([1, 2, 3]),
+            "Priority decoration retains the server's queue order");
+        var labels = new[] { "↑ ", "↓ ", "" };
+        var reasons = new[] { "解除共享编译阻塞", "可推迟的对比", "" };
+        for (var index = 0; index < rows.Length; index++)
+        {
+            var row = rows[index];
+            var title = RouterJson.Text((JsonElement)row.Tag!, "task");
+            Check(row.Cells[0].Value is string text && text == labels[index] + title, "Queue priority arrow");
+            var tip = row.Cells[0].ToolTipText;
+            Check(index == 2 ? tip.Length == 0 : tip.Contains(title) && tip.Contains(reasons[index]), "Queue priority hover reason");
+        }
+        handler.QueuePriorities = false;
+        Pump(form.RefreshQueueAsync(userInitiated: true));
+        Check(queue.Rows.Cast<System.Windows.Forms.DataGridViewRow>().All(row => row.Cells[0].ToolTipText.Length == 0
+            && Equals(row.Cells[0].Value, RouterJson.Text((JsonElement)row.Tag!, "task"))),
+            "Queue pages with no priority data render normally");
+        Check(handler.Posts == 0, "Priority display never changes the queue");
         form.Close();
     }
 
@@ -910,7 +942,7 @@ internal static class RouterModuleTests
     internal static void CaptureMonitor(string directory)
     {
         Directory.CreateDirectory(directory);
-        using var handler = new Fixture();
+        using var handler = new Fixture { QueuePriorities = true };
         using var form = new RouterMonitorForm(new RouterMonitorClient(handler), observe: false, initialProject: Fixture.Project)
         {
             ShowInTaskbar = false,
@@ -964,7 +996,7 @@ internal static class RouterModuleTests
         internal readonly Dictionary<string, JsonElement> ProjectViews = new(StringComparer.Ordinal);
         internal string? UnavailableProject;
         internal string Elapsed = "1:25";
-        internal bool FailQueue, EmptyQueue;
+        internal bool FailQueue, EmptyQueue, QueuePriorities;
         internal bool LoseControlReply, OldApi, WrongProject, Stale, Oversized, Empty, NativeError, PreflightRefusal, LocalQueueUnavailable;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -1017,7 +1049,13 @@ internal static class RouterModuleTests
             if (route == "/api/queue") return Json(new
             {
                 offset, total = Empty || EmptyQueue ? 0 : 41,
-                items = Enumerable.Range(offset, Empty || EmptyQueue ? 0 : Math.Min(limit, Math.Max(0, 41 - offset))).Select(i => new { id = i.ToString("x32"), task = "合成测试 · " + i + " · " + new string('长', 28), source = "原对话 " + i, wait = "2:10", rank = i + 1, last = false, version = new string('b', 64) }),
+                items = Enumerable.Range(offset, Empty || EmptyQueue ? 0 : Math.Min(limit, Math.Max(0, 41 - offset))).Select(i => new
+                {
+                    id = i.ToString("x32"), task = "合成测试 · " + i + " · " + new string('长', 28),
+                    source = "原对话 " + i, wait = "2:10", rank = i + 1, last = false, version = new string('b', 64),
+                    queuePriority = QueuePriorities ? i switch { 0 => "high", 1 => "low", 2 => "normal", _ => null } : null,
+                    queuePriorityReason = QueuePriorities ? i switch { 0 => "解除共享编译阻塞", 1 => "可推迟的对比", _ => null } : null,
+                }),
             });
             if (route == "/api/history" && HistoryItems is { } historyItems)
             {
