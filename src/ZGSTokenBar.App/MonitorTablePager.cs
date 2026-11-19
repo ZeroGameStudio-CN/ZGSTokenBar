@@ -59,7 +59,7 @@ internal sealed class MonitorTablePager
             var scale = RouterVisualGeometry.Scale(_grid);
             _page.Width = (int)(54 * scale); _page.Height = (int)(26 * scale);
             _previous.Enabled = _offset > 0; _next.Enabled = _offset + size < _grid.RowCount;
-            _page.Text = _grid.RowCount == 0 ? "0/0" : $"{_offset / size + 1}/{(_grid.RowCount + size - 1) / size}";
+            _page.Text = _grid.RowCount == 0 ? "" : $"{_offset / size + 1}/{(_grid.RowCount + size - 1) / size}";
             if (_hideSinglePage) _previous.Visible = _page.Visible = _next.Visible = _grid.RowCount > size;
         }
         finally { _applying = false; }

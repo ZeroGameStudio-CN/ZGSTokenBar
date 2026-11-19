@@ -1,5 +1,7 @@
 using System.Text;
+using System.Text.Json;
 using ZGSTokenBar.Core;
+using ZGSTokenBar.Plugin.Router;
 
 namespace ZGSTokenBar.App;
 
@@ -11,7 +13,9 @@ namespace ZGSTokenBar.App;
 internal static class AppDiagnostics
 {
     private const long MaximumLogBytes = 512 * 1024;
+    private static readonly Encoding Utf8 = new UTF8Encoding(false);
     private static readonly object Gate = new();
+    private static readonly Dictionary<(string Path, string Component, string Operation, string Target, string Code), DateTimeOffset> MonitorFailures = [];
     private static int _uiFaults;
 
     internal static string LogPath { get; set; } = Path.Combine(
@@ -49,16 +53,7 @@ internal static class AppDiagnostics
                 .AppendLine()
                 .ToString();
             lock (Gate)
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
-                var info = new FileInfo(LogPath);
-                if (info.Exists && info.Length > MaximumLogBytes)
-                {
-                    File.Move(LogPath, LogPath + ".previous", true);
-                }
-
-                File.AppendAllText(LogPath, line, Encoding.UTF8);
-            }
+                AppendBounded(LogPath, line);
 
             System.Diagnostics.Trace.WriteLine("ZGSTokenBar " + source + ": " + SecretRedactor.Redact(error?.ToString()));
         }
@@ -66,5 +61,47 @@ internal static class AppDiagnostics
         {
             // Diagnostics must never throw from an exception handler.
         }
+    }
+
+    internal static string MonitorFailureCode(Exception error) => error switch
+    {
+        OperationCanceledException => "timeout",
+        RouterMonitorHttpException { IsLocalDataUnavailable: true } => "queue_unavailable",
+        RouterMonitorHttpException => "http_error",
+        RouterCompatibilityException => "api_incompatible",
+        HttpRequestException => "connection_failed",
+        UnauthorizedAccessException => "access_denied",
+        System.ComponentModel.Win32Exception => "process_start_failed",
+        JsonException or InvalidDataException => "invalid_response",
+        _ => "read_failed",
+    };
+
+    internal static void RecordMonitorFailure(string component, string operation, string target, string code, int? status = null)
+    {
+        try
+        {
+            var path = Path.Combine(Path.GetDirectoryName(LogPath)!, "monitor-reads.jsonl");
+            var now = DateTimeOffset.UtcNow;
+            var key = (path, component, operation, target, code);
+            lock (Gate)
+            {
+                if (MonitorFailures.TryGetValue(key, out var previous) && now - previous < TimeSpan.FromMinutes(1)) return;
+                if (MonitorFailures.Count >= 256) MonitorFailures.Clear();
+                AppendBounded(path, JsonSerializer.Serialize(new { at = now, component, operation, target, code, status }) + Environment.NewLine);
+                MonitorFailures[key] = now;
+            }
+        }
+        catch
+        {
+            // Diagnostics are best effort and never own the observation.
+        }
+    }
+
+    private static void AppendBounded(string path, string line)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var info = new FileInfo(path);
+        if (info.Exists && info.Length > MaximumLogBytes) File.Move(path, path + ".previous", true);
+        File.AppendAllText(path, line, Utf8);
     }
 }

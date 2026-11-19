@@ -26,14 +26,16 @@ internal sealed class IntakeServiceMonitorClient
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly Func<IntakeServiceSource, bool, CancellationToken, Task<IntakeServiceReading>> _read;
+    private readonly bool _recordReadFailures;
     private readonly SemaphoreSlim _batch = new(1);
     internal IReadOnlyList<IntakeServiceSource> Sources { get; }
     internal string? ConfigurationError { get; }
     internal static string ProfilePath(string dataDirectory) => Path.Combine(dataDirectory, "intake-services.json");
 
-    internal IntakeServiceMonitorClient(string dataDirectory)
+    internal IntakeServiceMonitorClient(string dataDirectory, bool recordReadFailures = false)
     {
         _read = ReadSourceAsync;
+        _recordReadFailures = recordReadFailures;
         try
         {
             using var stream = File.OpenRead(ProfilePath(dataDirectory));
@@ -51,6 +53,8 @@ internal sealed class IntakeServiceMonitorClient
         {
             Sources = [];
             ConfigurationError = "configuration_unavailable";
+            if (_recordReadFailures)
+                AppDiagnostics.RecordMonitorFailure("intake", "profile", "", AppDiagnostics.MonitorFailureCode(e));
         }
     }
 
@@ -92,7 +96,15 @@ internal sealed class IntakeServiceMonitorClient
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
                 catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException or JsonException
                     or InvalidOperationException or System.ComponentModel.Win32Exception or OperationCanceledException or ArgumentException)
-                { return new IntakeServiceResult(source, null, "unavailable"); }
+                {
+                    var code = e is CollectorExitException exit ? (exit.ExitCode == 255 ? "ssh_failed" : "collector_exit")
+                        : e is InvalidDataException { Message: "output_limit" } ? "output_limit"
+                        : AppDiagnostics.MonitorFailureCode(e);
+                    if (_recordReadFailures)
+                        AppDiagnostics.RecordMonitorFailure("intake", summaryOnly ? "count" : "observations", source.Id,
+                            code, (e as CollectorExitException)?.ExitCode);
+                    return new IntakeServiceResult(source, null, code);
+                }
                 finally { gate.Release(); }
             })).ConfigureAwait(false);
         }
@@ -153,7 +165,7 @@ internal sealed class IntakeServiceMonitorClient
             await process.StandardInput.WriteAsync($"import base64,json\nCONFIG=json.loads(base64.b64decode('{config}'))\nSUMMARY_ONLY={mode}\nSOURCE_BASE64='{encoded}'\n{script}".AsMemory(), deadline.Token);
             process.StandardInput.Close();
             await Task.WhenAll(output, errors, process.WaitForExitAsync(deadline.Token)).WaitAsync(deadline.Token);
-            if (process.ExitCode != 0) throw new IOException("collector_unavailable");
+            if (process.ExitCode != 0) throw new CollectorExitException(process.ExitCode);
             return JsonSerializer.Deserialize<IntakeServiceReading>(await output, Json) ?? throw new InvalidDataException();
         }
         finally { Stop(process); }
@@ -175,5 +187,9 @@ internal sealed class IntakeServiceMonitorClient
             data.Write(buffer, 0, count);
         }
         return data.ToArray();
+    }
+    private sealed class CollectorExitException(int exitCode) : IOException
+    {
+        internal int ExitCode { get; } = exitCode;
     }
 }

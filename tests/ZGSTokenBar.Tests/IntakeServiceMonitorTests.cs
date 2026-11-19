@@ -132,6 +132,11 @@ internal static class IntakeServiceMonitorTests
         buttons.Single(b => b.Text == "LAB").PerformClick();
         Check(form.Observation.History == 1 && reads == 2, "Project selection filters the observation, without another business read.");
         buttons = Descendants(form).OfType<RouterButton>().ToArray();
+        var normalHeight = progress.Height;
+        buttons.Single(b => b.Text == "OTHER").PerformClick();
+        Check(progress.Height < normalHeight && form.Observation.History == 1 && reads == 2,
+            "Confirmed empty progress leaves room for history without another service read.");
+        buttons = Descendants(form).OfType<RouterButton>().ToArray();
         buttons.Single(b => b.Text == (chinese ? "全部项目" : "All projects")).PerformClick();
         Check(form.Observation.History == 2, "All projects remains available and is the default.");
         var switched = 0; form.WorkItemsRequested += (_, _) => switched++;

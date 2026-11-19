@@ -19,6 +19,8 @@ internal static class Program
         // Before any window exists: log faults instead of showing the stock .NET exception dialog.
         AppDiagnostics.Install();
         var dataDirectory = ResolveDataDirectoryOverride(args);
+        if (dataDirectory is not null)
+            AppDiagnostics.LogPath = Path.Combine(dataDirectory, "diagnostics", "errors.log");
         var allowGlobalStartupRegistration = dataDirectory is null;
         if (HostJobLifetimeIsolation.TryRelaunchOutsideTerminatingJob(
                 hasIsolatedDataRoot: !allowGlobalStartupRegistration,

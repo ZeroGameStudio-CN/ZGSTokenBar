@@ -67,7 +67,7 @@ internal sealed partial class QuotaApplicationContext
     {
         var configured = File.Exists(IntakeServiceMonitorClient.ProfilePath(_store.DataDirectory));
         _bar.SetIntakeServiceConfigured(configured);
-        return configured ? _intakeServiceClient ??= new(_store.DataDirectory) : null;
+        return configured ? _intakeServiceClient ??= new(_store.DataDirectory, recordReadFailures: true) : null;
     }
 
     private void RegisterIntakeSummary() => _refreshScheduler.Add("intake-summary", () => IntakeSummaryInterval,

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using ZGSTokenBar.Core;
 
 namespace ZGSTokenBar.App;
@@ -6,6 +7,7 @@ namespace ZGSTokenBar.App;
 internal sealed partial class IntakeObserverForm : MonitorPanelForm
 {
     private readonly IntakeObserverClient _client;
+    private readonly bool _recordReadFailures;
     private readonly bool _zh;
     private readonly FlowLayoutPanel _projects = Flow();
     private readonly ContextMenuStrip _projectMenu = new() { ShowImageMargin = false };
@@ -32,10 +34,12 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
     private readonly TableLayoutPanel _root;
     internal (int Projects, int Recent, int Timeline, bool ItemLoaded, string Status) Observation =>
         (_projectCatalog.Count, _recent.RowCount, _timeline.RowCount, _detailFresh, _status.Text);
-    public override bool InteractionOpen => _projectMenu.Visible || _reference.Focused;
+    private bool _diagnosticsOpen;
+    public override bool InteractionOpen => _diagnosticsOpen || _projectMenu.Visible || _reference.Focused;
     internal IntakeObserverForm(bool chinese, IntakeObserverClient? client = null, bool observeOnShow = true)
     {
         _zh = chinese;
+        _recordReadFailures = client is null && observeOnShow;
         _client = client ?? new();
         _observeOnShow = observeOnShow;
         Text = T("工单与分拣", "Work intake");
@@ -80,7 +84,7 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
         AddColumn(_timeline, T("时间", "Time"), 112); AddColumn(_timeline, T("记录", "Event"), 0);
         AddColumn(_timeline, T("结果", "Result"), 114);
         _recent.AccessibleName = T("近期工单", "Recent work items");
-        _timeline.AccessibleName = T("工单时间线和诊断", "Timeline and diagnostics");
+        _timeline.AccessibleName = T("工单时间线", "Work item timeline");
         _root.Controls.Add(TableSection(T("工单", "Items"), _recent, Flow(_blocked)), 0, 2);
         _root.Controls.Add(TableSection(T("工单时间线", "Item timeline"), _timeline, Flow()), 0, 3);
         _root.Controls.Add(_status, 0, 4);
@@ -122,7 +126,7 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
         {
             if (_detailFresh && _item?.Thread is { } id) OpenLink(new Uri("codex://threads/" + id.ToString("D")));
         };
-        _diagnose.Click += async (_, _) => await LoadDiagnosticsAsync();
+        _diagnose.Click += async (_, _) => await ShowDiagnosticsAsync();
         _timer.Tick += async (_, _) =>
         {
             if (!Visible || _request is not null || InteractionOpen) return;
@@ -299,7 +303,6 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
         if (!access.Projects.Any(project => project.Key == item.Project)) throw new IntakeReadException("denied");
         var history = await _client.HistoryAsync(item.Id, token);
         token.ThrowIfCancellationRequested();
-        var keepDiagnostics = _item?.Id == item.Id && _item.UpdatedAt == item.UpdatedAt;
         var rows = new List<(object?[] Values, object? Tag)>
         {
             (new object?[] { At(item.UpdatedAt), T("原卡当前", "Current item"), ItemState(item) }, null),
@@ -308,11 +311,10 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
             rows.Add((new object?[] { "—", T("原对话补交已记录", "Original conversation delivery recorded"), "" }, null));
         foreach (var row in history)
             rows.Add((new object?[] { At(row.Timestamp), Command(row.Command), State(row.Status) }, null));
-        if (keepDiagnostics)
-            rows.AddRange(_timeline.Rows.Cast<DataGridViewRow>().Where(row => row.Tag is true)
-                .Select(row => (row.Cells.Cast<DataGridViewCell>().Select(cell => cell.Value).ToArray(), (object?)true)));
         _item = item;
         _detail.Text = $"{item.Number} · {item.Project} · {item.Title}";
+        _tips.SetToolTip(_detail, _detail.Text);
+        _detail.AccessibleDescription = _detail.Text;
         SetGridRows(_timeline, rows);
         _detailFresh = true;
         return history.Count == IntakeObserverClient.HistoryLimit;
@@ -351,30 +353,46 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
         }
         finally { grid.ResumeLayout(true); }
     }
-    internal Task LoadDiagnosticsAsync()
+    private async Task ShowDiagnosticsAsync()
     {
-        if (!_detailFresh || _item is not { } selected) return Task.CompletedTask;
-        return ReadAsync(async token =>
+        if (_item is not { } selected) return;
+        var bundle = await LoadDiagnosticsAsync();
+        if (bundle is null || IsDisposed || !Visible || !_pinned || !_detailFresh || _item?.Id != selected.Id) return;
+        var record = JsonSerializer.Serialize(new { workItemId = selected.Id, diagnostics = bundle });
+        _diagnosticsOpen = true;
+        try
+        {
+            using var dialog = new MonitorRecordDialog(T("工单诊断", "Work item diagnostics"), selected.Number + " · " + selected.Title,
+                DiagnosticSummary(bundle), record, _zh);
+            dialog.ShowDialog(this);
+        }
+        finally { _diagnosticsOpen = false; }
+    }
+
+    internal async Task<IntakeDiagnostics?> LoadDiagnosticsAsync()
+    {
+        if (!_detailFresh || _item is not { } selected) return null;
+        IntakeDiagnostics? result = null;
+        await ReadAsync(async token =>
         {
             var access = await RefreshAccessAsync(token);
             if (_item?.Id != selected.Id || !access.Projects.Any(project => project.Key == selected.Project))
                 throw new IntakeReadException("account_changed");
             var bundle = await _client.DiagnosticsAsync(selected.Id, token);
             token.ThrowIfCancellationRequested();
-            // Replace the previous diagnostic rows without duplicating the underlying business history.
-            for (var i = _timeline.RowCount - 1; i >= 0; i--)
-                if (_timeline.Rows[i].Tag is true) _timeline.Rows.RemoveAt(i);
-            foreach (var row in bundle.Events)
-                _timeline.Rows[_timeline.Rows.Add(At(row.Timestamp), row.Name + (row.Phase.Length == 0 ? "" : " · " + row.Phase),
-                    row.Error.Length == 0 ? row.Outcome : row.Error)].Tag = true;
-            var detail = bundle.Status == "partial" || bundle.HasMore
-                ? T("诊断有部分记录，不能据此确认派发", "Diagnostics are partial; dispatch is unconfirmed")
-                : bundle.Events.Count == 0
-                    ? T("此工单未返回诊断事件；派发回执未确认", "No diagnostic events for this item; dispatch is unconfirmed")
-                    : T($"诊断事件 {bundle.Events.Count} 条", $"{bundle.Events.Count} diagnostic events");
-            _status.Text = detail + "  ·  " + At(DateTimeOffset.Now);
+            result = bundle;
+            _status.Text = DiagnosticStatus(bundle);
         }, diagnosticOnly: true);
+        return result;
     }
+
+    private string DiagnosticStatus(IntakeDiagnostics bundle) => bundle.Status == "partial" || bundle.HasMore
+        ? T("仅有部分记录，派发尚未确认", "Partial records. Dispatch is unconfirmed.")
+        : bundle.Events.Count == 0 ? T("暂无诊断事件，派发尚未确认", "No diagnostic events. Dispatch is unconfirmed.")
+        : T($"已读取 {bundle.Events.Count} 条诊断事件", $"Read {bundle.Events.Count} diagnostic events");
+
+    private string DiagnosticSummary(IntakeDiagnostics bundle) => DiagnosticStatus(bundle) + Environment.NewLine
+        + T($"核实记录  {bundle.FactCount} 条", $"Verified facts  {bundle.FactCount}");
 
     private async Task<IntakeAccess> RefreshAccessAsync(CancellationToken token)
     {
@@ -409,12 +427,11 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
         catch (IntakeReadException error)
         {
             if (operation.IsCancellationRequested || IsDisposed) return;
+            if (_recordReadFailures)
+                AppDiagnostics.RecordMonitorFailure("intake", diagnosticOnly ? "diagnostics" : "work-items", _projectKey ?? "all", error.Code);
             if (error.Code is "signed_out" or "not_installed" or "install_invalid"
                 || error.Code == "denied" && !diagnosticOnly || _access?.ExpiresAt <= DateTimeOffset.UtcNow)
                 ClearSensitive();
-            else if (diagnosticOnly && error.Code == "denied")
-                for (var i = _timeline.RowCount - 1; i >= 0; i--)
-                    if (_timeline.Rows[i].Tag is true) _timeline.Rows.RemoveAt(i);
             _status.Text = error.Code switch
             {
                 "denied" when diagnosticOnly => T("当前账号无诊断权限；工单记录仍可查看", "Diagnostics are restricted; item history is still available"),
@@ -426,9 +443,10 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
                 "invalid" => T("返回数据不完整，请刷新", "Incomplete response; try refreshing"),
                 "not_installed" => T("请先安装 Zero OS CLI", "Install the Zero OS CLI first"),
                 "install_invalid" => T("Zero OS CLI 安装不可读", "The Zero OS CLI installation could not be verified"),
-                _ => _observed is { } seen ? T($"暂不可用 · 上次更新 {At(seen)}", $"Unavailable · Last read {At(seen)}")
-                    : T("暂不可用，稍后刷新", "Unavailable. Try refreshing later"),
+                _ => T("暂不可用，稍后刷新", "Unavailable. Try refreshing later"),
             };
+            if (!diagnosticOnly && _observed is { } seen)
+                _freshness.Text = T("上次更新 ", "Last updated ") + seen.ToString("HH:mm:ss");
             if (!diagnosticOnly && (!preserveRecent || refreshingRecent)) SetRecentEmpty(T("工单暂不可用", "Work items unavailable"), _status.Text);
             else if (!diagnosticOnly) SetTimelineEmpty(T("时间线暂不可用", "Timeline unavailable"), _status.Text);
         }
@@ -446,7 +464,7 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
     {
         _observed = DateTimeOffset.Now;
         _freshness.Text = T("更新于 ", "Updated ") + _observed.Value.ToString("HH:mm:ss");
-        _status.Text = message + "  ·  " + At(_observed);
+        _status.Text = message;
     }
 
     private void ClearSensitive()
@@ -456,6 +474,7 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
         _projectCatalog = []; _projectKey = null; ApplyProjects();
         _access = null;
         _observed = null;
+        _freshness.Text = "";
         ClearItem();
     }
 
@@ -465,6 +484,8 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
         _detailFresh = false;
         _timeline.Rows.Clear();
         _detail.Text = T("单击工单查看时间线", "Select a work item to view its timeline");
+        _tips.SetToolTip(_detail, "");
+        _detail.AccessibleDescription = "";
         SetTimelineEmpty();
         UpdateButtons();
     }

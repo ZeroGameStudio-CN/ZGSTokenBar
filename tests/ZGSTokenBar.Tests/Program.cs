@@ -13123,18 +13123,30 @@ static void TestPopoverOwnerNeverCyclic()
     Check(popover.Visible && popover.Owner is null, "the popover still shows, owned by the hidden owner");
     popover.Hide();
     Check(BarForm.PopoverOwnerFor(null) == PopoverOwnerWindow.Instance, "embedded or ownerless popovers get the hidden owner");
-    var log = Path.Combine(Path.GetTempPath(), "zgs-errors-" + Guid.NewGuid().ToString("N") + ".log");
+    var diagnostics = Directory.CreateTempSubdirectory("zgs-errors-");
+    var log = Path.Combine(diagnostics.FullName, "errors.log");
+    var monitorLog = Path.Combine(diagnostics.FullName, "monitor-reads.jsonl");
     var previous = AppDiagnostics.LogPath;
     AppDiagnostics.LogPath = log;
     try
     {
         AppDiagnostics.Record("test", new InvalidOperationException("boom"));
         Check(File.ReadAllText(log).Contains("[test] System.InvalidOperationException: boom", StringComparison.Ordinal), "faults are logged instead of shown");
+        var reason = AppDiagnostics.MonitorFailureCode(new OperationCanceledException("a raw exception message"));
+        AppDiagnostics.RecordMonitorFailure("router", "queue", "all", reason);
+        AppDiagnostics.RecordMonitorFailure("router", "queue", "all", reason);
+        using var monitorEntry = JsonDocument.Parse(File.ReadLines(monitorLog).Single());
+        Check(monitorEntry.RootElement.GetProperty("code").GetString() == "timeout"
+            && monitorEntry.RootElement.GetProperty("operation").GetString() == "queue"
+            && !monitorEntry.RootElement.GetRawText().Contains("raw exception", StringComparison.Ordinal),
+            "Monitor read failures are bounded, structured, and omit raw exceptions");
     }
     finally
     {
         AppDiagnostics.LogPath = previous;
         File.Delete(log);
+        File.Delete(monitorLog);
+        diagnostics.Delete();
     }
 }
 

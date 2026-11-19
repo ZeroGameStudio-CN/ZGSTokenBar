@@ -2,6 +2,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.Diagnostics;
 using System.Net;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using ZGSTokenBar.App;
@@ -20,6 +21,7 @@ internal static class RouterModuleTests
         HistoryBuffer();
         FinishedHistory();
         PagingReads();
+        IndependentPaneRefresh();
         WheelPaging();
         RefusalTiming();
         ExpandedSummary();
@@ -75,6 +77,14 @@ internal static class RouterModuleTests
         Check(RouterTaskPresentation.Heading("D:/scripts/author-install-r2.py").Title == "author-install-r2.py", "Script file names are not treated as namespaces");
         Check(RouterTaskPresentation.Heading("编译").Title == "编译" && RouterTaskPresentation.Heading("—").Title == "暂无正在执行的任务", "Plain and idle task headings");
         Check(RouterTaskPresentation.Source("pro2 · \n" + new string('长', 100)).Length == 72, "Long source is one bounded line");
+        const string versionTitle = "校对 v0.8.0.8 读档表现";
+        Check(RouterTaskPresentation.Heading(versionTitle).Title == versionTitle
+            && RouterTaskPresentation.Heading("UI 1.5 倍下对齐").Title == "UI 1.5 倍下对齐",
+            "Dots in ordinary titles do not truncate the task");
+        Check(RouterTaskPresentation.Source("pro1 · [$sample](C:/tools/SKILL.md) 校对读档表现") == "pro1 · 校对读档表现"
+            && RouterTaskPresentation.Source("pro2 · ## Referenced chats with Codex: [partial") == "pro2 · 引用对话"
+            && RouterTaskPresentation.Source("pro2 · [$sample](C:/truncated") == "pro2 · 技能引用",
+            "Source captions conceal harness metadata and retain the conversation label");
     }
 
     private static void RefusalTiming()
@@ -331,9 +341,45 @@ internal static class RouterModuleTests
         handler.HistoryItems = rows.Where(row => RouterJson.Text(row, "outcome") == "pending").ToArray();
         Pump(form.HistoryAsync(forceRefresh: true));
         Check(history.Rows.Count == 0 && !previous.Enabled && !next.Enabled
-            && controls.OfType<System.Windows.Forms.Label>().Any(label => label.Text == "0 条  ·  0 失败"),
+            && controls.OfType<System.Windows.Forms.Label>().Any(label => label.Text == "0 条"),
             "An active-only queue produces empty history with zero counts and no extra pages");
         Check(handler.Posts == 0, "History filtering never controls live requests");
+        form.Close();
+    }
+
+    private static void IndependentPaneRefresh()
+    {
+        using var handler = new Fixture { HoldHistory = new(TaskCreationOptions.RunContinuationsAsynchronously) };
+        using var form = new RouterMonitorForm(new RouterMonitorClient(handler), observe: false, initialProject: Fixture.Project)
+        { StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
+        form.Show();
+        var initial = form.RefreshViewAsync();
+        Check(!initial.IsCompleted, "History can remain in flight after the first current-state observation");
+        handler.FailQueue = true;
+        handler.Elapsed = "1:31";
+        Pump(form.RefreshViewAsync());
+        var labels = AllControls(form).OfType<System.Windows.Forms.Label>().ToArray();
+        Check(labels.Any(label => label.Text == "用时 1:31") && form.FreshnessText.StartsWith("更新于 ")
+            && labels.Any(label => label.Text == "排队 · 暂不可用"),
+            "A queue failure and slow history leave the new current clock visible");
+        var manual = form.RefreshViewAsync(forceHistory: true);
+        Check(!manual.IsCompleted && handler.Routes.Count(uri => uri.AbsolutePath == "/api/history") == 1,
+            "Manual refresh shares a matching in-flight history read");
+        handler.HoldHistory.SetResult();
+        Pump(Task.WhenAll(initial, manual));
+        handler.HoldHistory = null;
+        handler.FailQueue = false;
+        var history = AllControls(form).OfType<RouterGrid>().Single(grid => grid.ColumnCount == 6);
+        using var dialog = RouterMonitorForm.CreateRecordDialog((JsonElement)history.Rows[0].Tag!);
+        var body = AllControls(dialog).OfType<System.Windows.Forms.RichTextBox>().Single().Text;
+        Check(body.Contains("资源释放  已确认") && body.Contains("结果  测试失败")
+            && !body.Contains("\"outcome\"") && AllControls(dialog).OfType<RouterButton>().Any(button => button.Text == "复制 JSON"),
+            "The task detail shows a readable summary with an explicit JSON copy action");
+        var priorHistoryHeight = history.Height;
+        handler.EmptyQueue = true;
+        Pump(form.RefreshViewAsync());
+        Check(history.Height > priorHistoryHeight && labels.Any(label => label.Text == "排队"),
+            "A confirmed empty queue releases space for history");
         form.Close();
     }
 
@@ -539,6 +585,14 @@ internal static class RouterModuleTests
             Check(visibleTables.Length == 2 && visibleTables.All(table => table.Rows.Count >= 7), $"Taller popup exposes at least seven queue/history rows at {dpi} DPI: "
                 + string.Join("; ", visibleTables.Select(table => $"{table.Rows.Count} rows, height {table.ClientSize.Height}, header {table.ColumnHeadersHeight}")));
             Save(form, Path.Combine(directory, $"router-history-{dpi}.png"));
+            if (dpi == 144)
+            {
+                using var dialog = RouterMonitorForm.CreateRecordDialog((JsonElement)grid.Rows[0].Tag!);
+                dialog.StartPosition = System.Windows.Forms.FormStartPosition.Manual;
+                dialog.Location = new(-30000, -30000);
+                dialog.Show();
+                SaveRecordDialog(dialog, Path.Combine(directory, "router-record.png"));
+            }
             var projectButtons = AllControls(form).OfType<RouterButton>().Where(button => button.AccessibleName?.StartsWith("切换工程 ") == true).ToArray();
             Check(projectButtons.Length == 3 && projectButtons.Count(button => button.Selected) == 1, "Registered projects use flat selected chips");
             Check(projectButtons[0].AccessibleName == "切换工程 全部项目", "All projects stays first while concrete project filters remain available");
@@ -585,10 +639,14 @@ internal static class RouterModuleTests
 
             using var empty = new RouterMonitorForm(new RouterMonitorClient(new Fixture { Empty = true }), observe: false, initialProject: Fixture.Project)
             { StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
-            empty.SetPinned(true); empty.Show(); empty.RefreshViewAsync().GetAwaiter().GetResult();
+            empty.SetPinned(true);
             empty.ConfigureFor(new Rectangle(400, (int)(600 * scale), 48, 44), true, scale,
                 QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), new Rectangle(0, 0, (int)(1280 * scale), (int)(800 * scale)));
+            empty.Show(); Pump(empty.RefreshViewAsync());
             empty.PerformLayout(); System.Windows.Forms.Application.DoEvents();
+            var emptyHistory = AllControls(empty).OfType<RouterGrid>().Single(table => table.ColumnCount == 6);
+            Check(emptyHistory.Rows.Cast<System.Windows.Forms.DataGridViewRow>().Sum(row => row.Height)
+                <= emptyHistory.ClientSize.Height - emptyHistory.ColumnHeadersHeight, "History uses whole rows after empty queue compaction");
             Save(empty, Path.Combine(directory, $"router-empty-{dpi}.png"));
             if (dpi == 144)
             {
@@ -876,6 +934,20 @@ internal static class RouterModuleTests
         form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
         bitmap.Save(path, ImageFormat.Png);
     }
+
+    private static void SaveRecordDialog(System.Windows.Forms.Form form, string path)
+    {
+        System.Windows.Forms.Application.DoEvents();
+        using var bitmap = new Bitmap(form.ClientSize.Width, form.ClientSize.Height);
+        using var graphics = Graphics.FromImage(bitmap);
+        var hdc = graphics.GetHdc();
+        try { Check(PrintWindow(form.Handle, hdc, 1), "Record detail renders its native client"); }
+        finally { graphics.ReleaseHdc(hdc); }
+        bitmap.Save(path, ImageFormat.Png);
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool PrintWindow(nint window, nint hdc, uint flags);
     private static void Check(bool condition, string name) { if (!condition) throw new InvalidOperationException(name); }
     private static void Throws<T>(Action action) where T : Exception
     { try { action(); } catch (T) { return; } throw new InvalidOperationException("Expected " + typeof(T).Name); }
@@ -891,6 +963,8 @@ internal static class RouterModuleTests
         internal JsonElement[]? HistoryItems;
         internal readonly Dictionary<string, JsonElement> ProjectViews = new(StringComparer.Ordinal);
         internal string? UnavailableProject;
+        internal string Elapsed = "1:25";
+        internal bool FailQueue, EmptyQueue;
         internal bool LoseControlReply, OldApi, WrongProject, Stale, Oversized, Empty, NativeError, PreflightRefusal, LocalQueueUnavailable;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -929,7 +1003,7 @@ internal static class RouterModuleTests
                 projectKey = WrongProject ? new string('d', 64) : selectedProject,
                 observedAt = DateTimeOffset.UtcNow.AddMinutes(Stale ? -1 : 0).ToUnixTimeMilliseconds() / 1000d,
                 requestId = Empty ? "" : new string('a', 32), headline = Empty ? "空闲" : "清理中", task = Empty ? "—" : "POB.Tests.Runtime.DesktopAspectLockTemporaryVerification.BootToBase_ThenVerifyScenario",
-                queuedCount = Empty ? 0 : 41, elapsed = "1:25", progressClock = Empty ? "" : "距原生变化 0:08", detail = Empty ? "" : "等待原生清理证据；当前任务输入保留。", tone = Empty ? "idle" : "warning",
+                queuedCount = Empty || EmptyQueue ? 0 : 41, elapsed = Elapsed, progressClock = Empty ? "" : "距原生变化 0:08", detail = Empty ? "" : "等待原生清理证据；当前任务输入保留。", tone = Empty ? "idle" : "warning",
                 currentExecution = Empty ? null : new { phase = NativeError ? "running" : "settling", kind = "test" },
                 progressState = NativeError ? "native_error" : "observing",
                 owner = new { label = Empty ? "" : "pro2 · 现在问题在于 · 桌面宽高比与初始化流程验证 · " + new string('长', 80) }, resourceRecovery = new { primary = new { action = "stop", label = "停止并收尾" } },
@@ -938,10 +1012,12 @@ internal static class RouterModuleTests
                 .Select(part => part.Split('=', 2)).ToDictionary(part => part[0], part => part.Length == 2 ? part[1] : "");
             var offset = parameters.TryGetValue("offset", out var offsetText) ? int.Parse(offsetText) : 0;
             var limit = parameters.TryGetValue("limit", out var limitText) ? int.Parse(limitText) : 25;
+            if (route == "/api/queue" && FailQueue)
+                return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{\"error\":\"Local queue unavailable\"}", Encoding.UTF8, "application/json") };
             if (route == "/api/queue") return Json(new
             {
-                offset, total = Empty ? 0 : 41,
-                items = Enumerable.Range(offset, Empty ? 0 : Math.Min(limit, Math.Max(0, 41 - offset))).Select(i => new { id = i.ToString("x32"), task = "合成测试 · " + i + " · " + new string('长', 28), source = "原对话 " + i, wait = "2:10", rank = i + 1, last = false, version = new string('b', 64) }),
+                offset, total = Empty || EmptyQueue ? 0 : 41,
+                items = Enumerable.Range(offset, Empty || EmptyQueue ? 0 : Math.Min(limit, Math.Max(0, 41 - offset))).Select(i => new { id = i.ToString("x32"), task = "合成测试 · " + i + " · " + new string('长', 28), source = "原对话 " + i, wait = "2:10", rank = i + 1, last = false, version = new string('b', 64) }),
             });
             if (route == "/api/history" && HistoryItems is { } historyItems)
             {

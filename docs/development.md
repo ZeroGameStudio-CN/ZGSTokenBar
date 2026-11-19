@@ -142,9 +142,9 @@ partial result before further action. Verify with
 The optional `zgstokenbar.monitor.router` module is a client of the separately
 installed Router monitor at `127.0.0.1:18761`. It is disabled by default and has
 no project/journal/Unity dependency. An enabled module refreshes its compact card
-every two seconds; the native popup reads viewport-sized queue pages while visible
-and refreshes recent records at most every ten seconds outside text/menu interaction.
-Explicit paging/filtering remains on demand. The monitor caches observations across clients. Closing
+every two seconds. The native popup refreshes the current observation independently
+of its viewport-sized queue pages and recent history. Explicit paging and filtering
+remain on demand. The monitor caches observations across clients. Closing
 Token Bar or disabling this module does not stop the monitor or any Editor job.
 Enable it in Settings or with `ZGSTokenBar.Cli plugin enable zgstokenbar.monitor.router --json`.
 
@@ -172,16 +172,20 @@ date groups, statistics and paging are calculated. Its result filter uses the
 monitor's `finished` outcome rather than the full request journal's `all` scope.
 History reads one bounded 100-record window and slices visible
 pages locally, keyed by server instance, project and filters. Obsolete read requests
-are cancelled; matching in-flight history reads are shared. The first history page
-refreshes every ten seconds, while older pages retain their snapshot until explicit
-refresh or context change. The snapshot time is available with history statistics.
+are cancelled; matching in-flight history reads are shared. Outside text or menu
+interaction, the first history page refreshes when project counts change or after
+60 seconds, with at least ten seconds between automatic attempts. Older pages
+retain their snapshot until explicit refresh or context change. The snapshot time
+is available with history statistics. Double-click a history row for its result,
+timings and resource release status. The detail dialog can copy the original JSON.
 History is never used as execution or release authority. Current execution
 actions use the existing dark context-menu renderer. Filters are collapsed by
 default; full timestamps and waiting/cleanup durations remain in row hover/details.
 Wheel gestures page the table under the pointer, including hover previews;
 high-resolution partial deltas accumulate and page boundaries do not reread.
-The preferred popup body is 760 by 796 logical pixels, with equal queue/history
-height. Short desktops clamp it to their working area and retain whole-row pages.
+The preferred popup body is 760 by 796 logical pixels. A confirmed empty queue
+leaves more of the viewport for history. Short desktops clamp the popup to their
+working area and retain whole-row pages.
 Current, queue and history each have a named rounded surface with consistent
 headings and spacing. The bar defaults to the compact icon; the existing expand
 control reveals project/phase/elapsed metadata. Router text uses an 11-pixel
@@ -214,7 +218,8 @@ and cached native page rendering without execution controls or production settin
 
 The **Work intake** (工单与分拣) inbox icon sits beside Router in the Mini. Left-click it
 to pin the same anchored panel host used by Router, with shared screen/DPI
-geometry, header, project row, current-item section and equally sized tables.
+geometry, header and project row. The tables share available space, with a
+compact progress section when the confirmed queue is empty.
 Pin, close, outside click and Escape use the same popover lifecycle.
 Its switch in Settings → Modules is
 independent of Router. The two monitors share the same icon slot, highlight
@@ -240,7 +245,15 @@ the default; the blocked-only switch composes with the selected view. These are
 read-only work-item projections, not a dispatcher service queue. Single-click an
 item or enter its number to view its original status and transition history. Diagnostics are requested
 only for the selected item and keep the server's authorization and evidence
-limits. An empty diagnosis does not establish dispatch, failure, or inactivity.
+limits. The diagnosis dialog can copy the bounded, selected-item diagnostics as
+JSON. The Zero OS diagnostic-bundle command remains the source of the original
+evidence. The timeline presents work-item transitions and current state.
+
+Handled monitor read failures append timestamp, component, operation, target
+identifier, failure code and any HTTP status or collector exit code to
+`%LOCALAPPDATA%/ZGSTokenBar/diagnostics/monitor-reads.jsonl`. Repeated identical
+failures are limited to one entry per minute. The log rotates to
+`monitor-reads.jsonl.previous`. Isolated instances use their explicit data root.
 The two tables distinguish connecting/loading, no matching work items, no selected
 item and unavailable responses. The timeline never labels an unselected item as
 an empty queue. Missing list/history arrays are invalid responses, not empty

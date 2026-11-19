@@ -131,14 +131,24 @@ internal abstract partial class MonitorPanelForm : Form, IPluginPopoverContent
         }
     }
 
-    internal static TableLayoutPanel CreatePanelLayout()
+    internal static TableLayoutPanel CreatePanelLayout(int currentHeight = 110, int footerHeight = 24)
     {
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new(12), ColumnCount = 1, RowCount = 5 };
         root.ColumnStyles.Add(new(SizeType.Percent, 100));
-        foreach (var row in new[] { new RowStyle(SizeType.Absolute, 64), new RowStyle(SizeType.Absolute, 110),
-            new RowStyle(SizeType.Percent, 50), new RowStyle(SizeType.Percent, 50), new RowStyle(SizeType.Absolute, 24) })
+        foreach (var row in new[] { new RowStyle(SizeType.Absolute, 64), new RowStyle(SizeType.Absolute, currentHeight),
+            new RowStyle(SizeType.Percent, 50), new RowStyle(SizeType.Percent, 50), new RowStyle(SizeType.Absolute, footerHeight) })
             root.RowStyles.Add(row);
         return root;
+    }
+
+    protected void SetEmptyTopTable(TableLayoutPanel root, RouterGrid grid, bool empty)
+    {
+        grid.ColumnHeadersVisible = !empty;
+        var row = root.RowStyles[2];
+        var sizeType = empty ? SizeType.Absolute : SizeType.Percent;
+        if (row.SizeType == sizeType) return;
+        row.SizeType = sizeType;
+        row.Height = empty ? (int)Math.Round(82 * _popoverScale) : 50;
     }
 
     internal static TableLayoutPanel CreateHeader(Control left, Control right, int rightWidth)

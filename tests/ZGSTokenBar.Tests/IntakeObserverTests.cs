@@ -100,9 +100,11 @@ internal static class IntakeObserverTests
             "Projects use read permissions and cross-project rows do not appear");
         RunOnUi(form.LoadItemAsync("ZOS-27"));
         Check(form.Observation is { Timeline: 4, ItemLoaded: true }, "Current state, verified recovery, and two transitions");
-        RunOnUi(form.LoadDiagnosticsAsync());
-        Check(form.Observation.Timeline == 5 && form.Observation.Status.Contains("部分记录"),
-            "Only the selected item's diagnostic rows appear and partial is visible");
+        var diagnosis = form.LoadDiagnosticsAsync();
+        RunOnUi(diagnosis);
+        Check(form.Observation.Timeline == 4 && form.Observation.Status.Contains("部分记录")
+            && diagnosis.Result is { Events.Count: 1 } bundle && bundle.Events[0].Name == "http.request.completed",
+            "The original timeline stays readable while only the selected item's diagnostic evidence can be copied");
         if (captures is not null)
         {
             form.PerformLayout();
@@ -350,9 +352,10 @@ internal static class IntakeObserverTests
             var first = intake.Controls.OfType<System.Windows.Forms.TableLayoutPanel>().Single();
             var second = router.Controls.OfType<System.Windows.Forms.TableLayoutPanel>().Single();
             Check(first.RowCount == second.RowCount && first.RowStyles.Cast<System.Windows.Forms.RowStyle>()
-                .Zip(second.RowStyles.Cast<System.Windows.Forms.RowStyle>()).All(rows =>
-                    rows.First.SizeType == rows.Second.SizeType && Math.Abs(rows.First.Height - rows.Second.Height) < 1),
-                "Navigation, current item, tables and footer use one layout at every DPI");
+                .Zip(second.RowStyles.Cast<System.Windows.Forms.RowStyle>()).Take(4).All(rows =>
+                    rows.First.SizeType == rows.Second.SizeType && Math.Abs(rows.First.Height - rows.Second.Height) < 1)
+                && second.RowStyles[4].Height == 0,
+                "Navigation and tables share the same DPI layout while an empty Router footer takes no space");
         }
     }
 

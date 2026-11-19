@@ -257,11 +257,13 @@ internal sealed class RouterGrid : DataGridView
         if (Rows.Count != 0) return;
         var s = RouterVisualGeometry.Scale(this);
         var top = ColumnHeadersVisible ? ColumnHeadersHeight : 0;
-        var y = top + Math.Max(0, Height - top - 55 * s) / 2;
+        var height = (EmptyDetail.Length == 0 ? 23 : 50) * s;
+        var y = top + Math.Max(0, Height - top - height) / 2;
         using var title = new SolidBrush(Palette.Text); using var detail = new SolidBrush(Palette.Muted);
-        using var format = new StringFormat { Alignment = StringAlignment.Center };
+        using var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
         e.Graphics.DrawString(EmptyTitle, Font, title, new RectangleF(0, y, Width, 23 * s), format);
-        e.Graphics.DrawString(EmptyDetail, Font, detail, new RectangleF(0, y + 25 * s, Width, 25 * s), format);
+        if (EmptyDetail.Length > 0)
+            e.Graphics.DrawString(EmptyDetail, Font, detail, new RectangleF(0, y + 25 * s, Width, 25 * s), format);
     }
 }
 
