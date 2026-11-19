@@ -23,6 +23,21 @@ CONFIG = dict(id="fixture", unit="intake-fixture.service", stateDirectory="/var/
 
 
 class ReaderTests(unittest.TestCase):
+    def test_old_evidence_review_waits_for_the_desktop_receipt(self):
+        ref = dict(itemId=A, number="LAB-1", title="Fixture", project="LAB", kind="precheck",
+                   sourceStatus="pending_execution", observedAt=None)
+        newer = dict(ref, id="newer", phase="confirmed", reasonCode="")
+        older = dict(ref, id="review", phase="needs_review", reasonCode="need_evidence")
+        active = {"ActiveState": "active", "SubState": "running"}
+        before = reader.project(CONFIG, active, {"records": [newer, older]}, "")
+        self.assertEqual([r["id"] for r in before["progress"]], ["review"])
+        older["phase"] = "reconciled_existing"
+        event = json.dumps(dict(MESSAGE=json.dumps(dict(event="intake_result", phase="reconciled_existing", item_id=A)),
+                                __REALTIME_TIMESTAMP="1700000000000000"))
+        after = reader.project(CONFIG, active, {"records": [newer, older]}, event)
+        self.assertEqual(after["progress"], [])
+        self.assertTrue(any(r["phase"] == "reconciled_existing" for r in after["history"]))
+
     def fixture(self, root):
         path = root / "intake.sqlite3"
         with closing(sqlite3.connect(path)) as db, db:

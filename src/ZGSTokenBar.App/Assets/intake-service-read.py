@@ -123,7 +123,14 @@ def bounded(command, *, input_text=None, limit=2 * 1024 * 1024):
 def current_receipts(records):
     latest = {}
     for row in records:
-        latest.setdefault((row["kind"], row["itemId"] or row["id"]), row)
+        key = (row["kind"], row["itemId"] or row["id"])
+        current = latest.setdefault(key, row)
+        if (row is not current and row["kind"] == "precheck" and row["itemId"]
+                and row["phase"] == "needs_review" and row.get("reasonCode") == "need_evidence"
+                and row.get("sourceStatus") in SOURCE_PENDING and current["phase"] == "confirmed"):
+            # Confirmed dispatch can precede opening the original desktop turn.
+            # Only the intake ledger may retire this review as reconciled.
+            latest[key] = row
     return latest.values()
 
 
