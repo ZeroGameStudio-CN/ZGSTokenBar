@@ -13229,12 +13229,13 @@ static void TestGlassDockStableSlots()
     var rateSlot = GlassDockLayout.RateBounds;
     Check(rateSlot.Y == bars.Y && rateSlot.Height == bars.Height && rateSlot.Left >= bars.Right,
         "the tok/s slot shares the system rows and sits to their right");
-    Check(readout.Unit.Left >= readout.Number.Right - .5f && readout.Number.Left >= rateSlot.Left - .5f && readout.Unit.Right <= rateSlot.Right + .5f,
-        "tok/s sits beside the number inside the rate slot");
+    Check(GlassDockLayout.RateWidth <= 40
+        && readout.Unit.Top >= readout.Number.Top + readout.Number.Height * .5f
+        && readout.Number.Left >= rateSlot.Left - .5f && readout.Unit.Right <= rateSlot.Right + .5f,
+        "tok/s stays under the number inside the narrow rate column");
     var numberMid = readout.Number.Top + readout.Number.Height / 2f;
-    var unitMid = readout.Unit.Top + readout.Unit.Height / 2f;
-    Check(Math.Abs(numberMid - unitMid) < 1f && numberMid > bars.Top + bars.Height * .25f && numberMid < bars.Top + bars.Height * .75f,
-        "the rate line is centred on the stack, off the CPU and GPU rows");
+    Check(Math.Abs(numberMid - (bars.Top + bars.Height / 2f)) < 1f,
+        "the rate number is centred on the system rows");
     foreach (var value in new double?[] { null, 0, 8.4, 106.2, 888.8, 1234, 88_800 })
     {
         var width = graphics.MeasureString(GlassDockPainter.FixedRateText(value), font, PointF.Empty, StringFormat.GenericTypographic).Width;

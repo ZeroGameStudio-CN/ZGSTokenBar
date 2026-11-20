@@ -82,8 +82,8 @@ public static class GlassDockLayout
     public const int ModuleGap = 7;
     public const int MetricsWidth = 54;
     public const int MetricsRows = 4;
-    /// <summary>Room for the widest rate ("88.8K") and "tok/s" on the same line.</summary>
-    public const int RateWidth = 64;
+    /// <summary>Narrow column: the widest rate ("88.8K") with "tok/s" under it.</summary>
+    public const int RateWidth = 36;
     private const int MetricsClusterWidth = MetricsWidth + ModuleGap + RateWidth;
     public const int SystemWidth = MonitorSize + ModuleGap + MetricsClusterWidth;
     public const int FlyoutWidth = 316;
