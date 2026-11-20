@@ -23,6 +23,28 @@ CONFIG = dict(id="fixture", unit="intake-fixture.service", stateDirectory="/var/
 
 
 class ReaderTests(unittest.TestCase):
+    def test_current_missing_evidence_is_visible_in_background_and_drops_on_progress(self):
+        active = {"ActiveState": "active", "SubState": "running"}
+        with tempfile.TemporaryDirectory(prefix="zgstokenbar-intake-evidence-") as directory:
+            root = Path(directory).resolve()
+            path = self.fixture(root)
+            key = "precheck:" + A + ":evidence"
+            with closing(sqlite3.connect(path)) as db, db:
+                db.execute("UPDATE receipts SET value=json_set(value,'$.status','pending_execution') WHERE key=?",
+                           ("reference:" + A,))
+                value = dict(item_id=A, decision=dict(action="need_evidence", missing_evidence=[
+                    "请描述在哪个场景看到问题？", "Never export the second question"]))
+                db.execute("INSERT INTO receipts VALUES(?,?,?,?)", (key, "{}", "needs_review", json.dumps(value)))
+            reading = reader.project(CONFIG, active, reader.read_store(root, summary_only=True), "", summary_only=True)
+            self.assertEqual(reading["evidenceRequests"], [dict(itemId=A, number="LAB-1", question="请描述在哪个场景看到问题？")])
+            detail = reader.project(CONFIG, active, reader.read_store(root), "")
+            self.assertEqual(next(r for r in detail["progress"] if r["itemId"] == A)["reviewQuestion"],
+                             reading["evidenceRequests"][0]["question"])
+            self.assertNotIn("Never export", json.dumps(detail))
+            with closing(sqlite3.connect(path)) as db, db:
+                db.execute("INSERT INTO receipts VALUES(?,?,?,?)", ("precheck:" + A + ":sent", "{}", "confirmed", "{}"))
+            self.assertEqual(reader.read_store(root, summary_only=True)["evidenceRequests"], [])
+
     def test_old_evidence_review_waits_for_the_desktop_receipt(self):
         ref = dict(itemId=A, number="LAB-1", title="Fixture", project="LAB", kind="precheck",
                    sourceStatus="pending_execution", observedAt=None)

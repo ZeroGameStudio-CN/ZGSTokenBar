@@ -34,6 +34,7 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
     private bool _recordOpen;
     internal event EventHandler? WorkItemsRequested;
     internal event Action<int?>? ProcessingObserved;
+    internal event Action<IReadOnlyList<IntakeServiceResult>>? EvidenceObserved;
     internal IntakeServiceObservation Observation { get; private set; } = new(0, 0, 0, "", null, null, null, 0, null);
     public override bool InteractionOpen => _recordOpen || _projectMenu.Visible;
 
@@ -109,6 +110,7 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
             operation.Token.ThrowIfCancellationRequested();
             if (IsDisposed) return;
             ProcessingObserved?.Invoke(_client.ProcessingCount(readings));
+            EvidenceObserved?.Invoke(readings);
             foreach (var result in readings)
             {
                 if (result.Reading is { } reading)
@@ -281,7 +283,8 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
                 if (row.Tag is IntakeServiceRecord previous && previous == item) continue;
                 row.Tag = item;
                 row.SetValues(format(item));
-                foreach (DataGridViewCell cell in row.Cells) cell.ToolTipText = item.Title;
+                var tooltip = item.ReviewQuestion.Length > 0 ? item.Title + Environment.NewLine + item.ReviewQuestion : item.Title;
+                foreach (DataGridViewCell cell in row.Cells) cell.ToolTipText = tooltip;
             }
             while (grid.RowCount > rows.Length) grid.Rows.RemoveAt(grid.RowCount - 1);
             if (!hadSelection) { grid.ClearSelection(); grid.CurrentCell = null; }
@@ -322,6 +325,7 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
         "source_closed" => T("原卡已结案", "Source item closed"),
         "source_advanced" => T("原卡已进入后续阶段", "Source item advanced"),
         "unconfirmed" => T("待确认", "Unconfirmed"),
+        "attention" when record.ReviewQuestion.Length > 0 => T("待补证据", "Evidence requested"),
         "attention" => T("待核对", "Needs review"),
         _ => Phase(record.Phase),
     };
@@ -330,6 +334,7 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
     {
         var lines = new List<string> { Kind(record.Kind), Stage(record) };
         if (record.ObservedAt is { } at) lines.Add(at.ToLocalTime().ToString("MM-dd HH:mm:ss"));
+        if (record.ReviewQuestion.Length > 0) lines.Add(record.ReviewQuestion);
         if (record.Review == "archive_protected")
             lines.Add(T("原对话有变化或仍在活动，已保留。", "The original conversation changed or is still active and was kept."));
         else if (record.Review == "archive_retained")

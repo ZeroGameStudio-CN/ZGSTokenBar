@@ -11,6 +11,8 @@ internal sealed partial class QuotaApplicationContext
     private CancellationTokenSource? _intakeSummaryRead;
     private bool? _intakeSummaryHealthy;
     private long _intakeSummaryObservedAt;
+    private long _nextIntakeEvidenceNoticeAt;
+    private IntakeEvidenceNotices? _intakeEvidenceNotices;
     private IntakeServiceMonitorForm? _intakeServiceObserver;
     private bool _intakeShowWorkItems;
     private MonitorPanelForm? ActiveIntakePanel => _intakeObserver is { Visible: true, IsDisposed: false } ? _intakeObserver
@@ -42,6 +44,7 @@ internal sealed partial class QuotaApplicationContext
             {
                 _intakeServiceObserver = new(_text.IsChinese, client);
                 _intakeServiceObserver.ProcessingObserved += PublishIntakeCount;
+                _intakeServiceObserver.EvidenceObserved += ObserveIntakeEvidence;
                 _intakeServiceObserver.PinChanged += (_, pinned) => _bar.PinPluginPopover(pinned);
                 _intakeServiceObserver.CloseRequested += (_, _) => _bar.HidePluginPopover(MiniAreaIds.Intake);
                 _intakeServiceObserver.WorkItemsRequested += (_, _) =>
@@ -87,7 +90,10 @@ internal sealed partial class QuotaApplicationContext
         {
             var results = await client.ReadAsync(operation.Token, summaryOnly: true);
             if (!operation.IsCancellationRequested && !_quitting && IntakeEnabled)
+            {
                 PublishIntakeCount(client.ProcessingCount(results));
+                ObserveIntakeEvidence(results);
+            }
         }
         catch (OperationCanceledException) when (operation.IsCancellationRequested) { }
         finally { _intakeSummaryRead = null; }
@@ -99,6 +105,27 @@ internal sealed partial class QuotaApplicationContext
         _intakeSummaryHealthy = count.HasValue;
         _intakeSummaryObservedAt = Environment.TickCount64;
         _bar.SetIntakeProcessingCount(count);
+    }
+
+    private void ObserveIntakeEvidence(IReadOnlyList<IntakeServiceResult> readings)
+    {
+        var now = Environment.TickCount64;
+        if (_quitting || !IntakeEnabled || !_tray.Visible || now < _nextIntakeEvidenceNoticeAt) return;
+        var requests = readings.Where(result => result.Reading is { Active: true })
+            .SelectMany(result => result.Reading!.EvidenceRequests);
+        try
+        {
+            _intakeEvidenceNotices ??= new IntakeEvidenceNotices(_store.DataDirectory);
+            if (_intakeEvidenceNotices.TakeNext(requests) is not { } request) return;
+            _nextIntakeEvidenceNoticeAt = now + (long)IntakeSummaryInterval.TotalMilliseconds;
+            _updateBalloonActive = false;
+            var title = _text.IsChinese ? $"{request.Number} 待补证据" : $"{request.Number} evidence requested";
+            _tray.ShowBalloonTip(8_000, title, NativeText.TruncateTextElements(request.Question, 180), ToolTipIcon.Info);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            AppDiagnostics.RecordMonitorFailure("intake", "evidence-notice", "", AppDiagnostics.MonitorFailureCode(error));
+        }
     }
 
     private void ResetIntakeSummary()

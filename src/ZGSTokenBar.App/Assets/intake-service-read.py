@@ -36,6 +36,33 @@ def archive_generation(value):
     return str(value) if type(value) is int and 0 <= value <= 2**63 - 1 else ""
 
 
+def evidence_requests(db):
+    """Return the first question from each current, still actionable review."""
+    rows = db.execute("""SELECT json_extract(r.value,'$.item_id'),
+          json_extract(ref.value,'$.work_item_number'),
+          substr(json_extract(r.value,'$.decision.missing_evidence[0]'),1,200)
+        FROM receipts r JOIN receipts ref ON ref.key='reference:'||
+          CASE WHEN json_valid(r.value) THEN json_extract(r.value,'$.item_id') END
+        WHERE r.key LIKE 'precheck:%' AND r.key NOT LIKE '%:rework:%'
+          AND r.phase='needs_review' AND json_valid(r.value)
+          AND json_extract(r.value,'$.decision.action')='need_evidence'
+          AND ref.phase='confirmed' AND json_valid(ref.value)
+          AND json_extract(ref.value,'$.status') IN ('pending_triage','pending_execution')
+          AND r.rowid=(SELECT max(newest.rowid) FROM receipts newest
+              WHERE newest.key LIKE 'precheck:'||json_extract(r.value,'$.item_id')||':%')
+        ORDER BY r.rowid LIMIT 64""")
+    result = []
+    for identity, number, text in rows:
+        if (not isinstance(identity, str) or not re.fullmatch(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}", identity)
+                or not isinstance(number, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,18}-[0-9]{1,12}", number)
+                or not isinstance(text, str)):
+            continue
+        question = clean(" ".join(re.sub(r"https?://\S+", "", text).split()))
+        if question:
+            result.append(dict(itemId=identity, number=number, question=question))
+    return result
+
+
 def read_store(root, summary_only=False):
     """Only selected JSON fields leave SQLite; prompts, model results and credentials never do."""
     root = Path(root)
@@ -93,6 +120,7 @@ def read_store(root, summary_only=False):
                              reasonCode=reason_code(reason) or reason_code(decision),
                              archiveGeneration=archive_generation(generation)))
         return dict(records=rows[:1000], projects=sorted({v[0] for v in references.values() if v[0]}),
+                    evidenceRequests=evidence_requests(db),
                     gaps=["receipts_capped"] if len(rows) > 1000 else [])
     finally:
         db.close()
@@ -199,12 +227,16 @@ def project(config, service, store, journal, summary_only=False):
     active = service.get("ActiveState") == "active" and service.get("SubState") == "running"
     processing = [row for row in latest if row["phase"] in PROCESSING]
     count = len(processing) if active and not gaps and all(row["itemId"] for row in processing) else None
+    requests = store.get("evidenceRequests", []) if active and not gaps else []
     snapshot = dict(schema=SCHEMA, sourceId=config["id"], observedAt=datetime.datetime.now(datetime.timezone.utc).isoformat(),
                     active=active, serviceState=code(service.get("SubState")), invocation=code(service.get("InvocationID")),
-                    processingCount=count, projects=[], progress=[], history=[], gaps=gaps)
+                    processingCount=count, projects=[], progress=[], history=[], gaps=gaps, evidenceRequests=requests)
     if summary_only:
         return snapshot
-    latest = [{**row, "reviewState": review_state(row)} for row in latest]
+    questions = {request["itemId"]: request["question"] for request in requests}
+    latest = [{**row, "reviewState": review_state(row),
+               "reviewQuestion": questions.get(row["itemId"], "") if row["kind"] == "precheck" and
+               row["phase"] == "needs_review" and row["reasonCode"] == "need_evidence" else ""} for row in latest]
     lookup = {}
     for row in records:
         if row["itemId"]:

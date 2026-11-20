@@ -14,6 +14,7 @@ internal static class IntakeServiceMonitorTests
         try
         {
             CheckInvalidConfigurations();
+            CheckEvidenceNotices();
             Throws(() => IntakeServiceMonitorClient.ValidateSources([Source with { SshTarget = "-oProxyCommand=bad" }]));
             Throws(() => IntakeServiceMonitorClient.ValidateSources([Source with { StateDirectory = "/var/lib/../etc" }]));
             Throws(() => IntakeServiceMonitorClient.ValidateSources([Source with { Unit = "x.service;touch x" }]));
@@ -36,6 +37,28 @@ internal static class IntakeServiceMonitorTests
             }
         }
         finally { SynchronizationContext.SetSynchronizationContext(context); }
+    }
+
+    private static void CheckEvidenceNotices()
+    {
+        var folder = Directory.CreateTempSubdirectory("tokenbar-intake-review-");
+        try
+        {
+            var item = new IntakeEvidenceRequest(Guid.NewGuid().ToString("D"), "LAB-1", "Which room showed the issue?");
+            IntakeServiceMonitorClient.ValidateReading(Source, Reading() with { EvidenceRequests = [item] });
+            Throws(() => IntakeServiceMonitorClient.ValidateReading(Source,
+                Reading() with { EvidenceRequests = [item with { Question = "invalid\nmessage" }] }));
+            Check(new IntakeEvidenceNotices(folder.FullName).TakeNext([item]) == item, "A new question is reported.");
+            var afterRestart = new IntakeEvidenceNotices(folder.FullName);
+            Check(afterRestart.TakeNext([item]) is null, "The same question is suppressed after app restart.");
+            var changed = item with { Question = "Which build was affected?" };
+            Check(afterRestart.TakeNext([item, changed]) == changed, "A different evidence request can be reported.");
+        }
+        finally
+        {
+            File.Delete(Path.Combine(folder.FullName, "intake-evidence-notices.v1"));
+            folder.Delete();
+        }
     }
 
     private static void CaptureCount(int dpi, string? captures)
