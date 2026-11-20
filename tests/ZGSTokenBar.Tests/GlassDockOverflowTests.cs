@@ -25,6 +25,7 @@ internal static class GlassDockOverflowTests
             "An all-unused set still has a visible non-overlapping +N entry");
         Check(GlassDockLayout.Plan(rings, maxVisible: 1).OverflowUrgent,
             "An unknown authenticated account in overflow keeps an attention indicator");
+        UrgentChipIsDistinct(captures);
         var activeCodex = Ring("active Codex", 99) with { InUse = true };
         Check(GlassDockLayout.Plan([exhausted, activeCodex], maxVisible: 1).Visible.SequenceEqual([activeCodex]),
             "A running account wins a primary slot over an idle low-quota reading.");
@@ -71,6 +72,53 @@ internal static class GlassDockOverflowTests
 
     private static void Check(bool value, string message)
     { if (!value) throw new InvalidOperationException(message); }
+
+    private static void UrgentChipIsDistinct(string? captures)
+    {
+        var shown = new GlassDockRing("a", "A", "a", 1, 80, null, null, "#10a37f") { StableId = "a" };
+        var calm = GlassDockLayout.Plan([shown, shown with { StableId = "z", RemainingPercent = 80 }], maxVisible: 1);
+        var urgent = GlassDockLayout.Plan([shown, shown with { StableId = "z", RemainingPercent = 5 }], maxVisible: 1);
+        Check(!calm.OverflowUrgent && urgent.OverflowUrgent && calm.OverflowCount == 1 && urgent.OverflowCount == 1
+            && calm.Slots.Single(slot => slot.Chip).Bounds == urgent.Slots.Single(slot => slot.Chip).Bounds,
+            "only a hidden low quota turns the same +N chip urgent");
+        var calmRed = RedPixels(Paint(calm, captures, "calm"));
+        var urgentRed = RedPixels(Paint(urgent, captures, "urgent"));
+        Check(urgentRed > calmRed + 12, "the urgent +N chip uses the low-quota red");
+
+        static Bitmap Paint(GlassDockPlan plan, string? directory, string name)
+        {
+            var image = new Bitmap(plan.Width, plan.Height);
+            using var graphics = Graphics.FromImage(image);
+            graphics.Clear(Color.Black);
+            using var badge = new Font("Segoe UI", 8f, FontStyle.Bold, GraphicsUnit.Pixel);
+            GlassDockPainter.Draw(graphics, new GlassDockScene(
+                false, plan.Width, 1f, plan, [], false, false, null, false,
+                12, 86, 64, 8, false, 390.9, false, false), badge);
+            if (directory is not null)
+            {
+                Directory.CreateDirectory(directory);
+                image.Save(Path.Combine(directory, $"overflow-chip-{name}.png"));
+            }
+
+            return image;
+        }
+
+        static int RedPixels(Bitmap image)
+        {
+            using (image)
+            {
+                var count = 0;
+                for (var y = 0; y < image.Height; y++)
+                for (var x = 0; x < image.Width; x++)
+                {
+                    var pixel = image.GetPixel(x, y);
+                    if (pixel.R > pixel.G + 30 && pixel.R > pixel.B + 20 && pixel.R > 100) count++;
+                }
+
+                return count;
+            }
+        }
+    }
 
     private static void ActiveAccountsAndIdleGrok(string? captures)
     {

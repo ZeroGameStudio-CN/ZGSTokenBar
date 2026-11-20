@@ -13222,11 +13222,23 @@ static void TestGlassDockStableSlots()
     using var bitmap = new Bitmap(80, 40);
     using var graphics = Graphics.FromImage(bitmap);
     using var font = new Font("Segoe UI", GlassDockPainter.RateFontSize, FontStyle.Bold, GraphicsUnit.Pixel);
+    using var unitFont = new Font("Segoe UI", GlassDockPainter.RateUnitSize, FontStyle.Regular, GraphicsUnit.Pixel);
     var box = GlassDockPainter.RateNumberBox(graphics, GlassDockLayout.RateBounds, font);
+    var readout = GlassDockPainter.RateReadoutBoxes(graphics, GlassDockLayout.RateBounds, font, unitFont);
+    var bars = GlassDockLayout.BarsBounds;
+    var rateSlot = GlassDockLayout.RateBounds;
+    Check(rateSlot.Y == bars.Y && rateSlot.Height == bars.Height && rateSlot.Left >= bars.Right,
+        "the tok/s slot shares the system rows and sits to their right");
+    Check(readout.Unit.Left >= readout.Number.Right - .5f && readout.Number.Left >= rateSlot.Left - .5f && readout.Unit.Right <= rateSlot.Right + .5f,
+        "tok/s sits beside the number inside the rate slot");
+    var numberMid = readout.Number.Top + readout.Number.Height / 2f;
+    var unitMid = readout.Unit.Top + readout.Unit.Height / 2f;
+    Check(Math.Abs(numberMid - unitMid) < 1f && numberMid > bars.Top + bars.Height * .25f && numberMid < bars.Top + bars.Height * .75f,
+        "the rate line is centred on the stack, off the CPU and GPU rows");
     foreach (var value in new double?[] { null, 0, 8.4, 106.2, 888.8, 1234, 88_800 })
     {
         var width = graphics.MeasureString(GlassDockPainter.FixedRateText(value), font, PointF.Empty, StringFormat.GenericTypographic).Width;
-        Check(width <= box.Width + .5f, $"rate {value} fits the fixed number box");
+        Check(width <= box.Width + .5f && Math.Abs(box.Width - readout.Number.Width) < .1f, $"rate {value} fits the fixed number box");
     }
     // Router icon must not move with the queue count: the count is the ring-style chip on the
     // icon's lower-left, so compare the icon's upper part (above the chip) across counts.
