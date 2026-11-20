@@ -21,7 +21,7 @@ public static class GlassDockSvg
         {
             if (slot.Chip)
             {
-                Chip(svg, x + slot.Bounds.X, y + slot.Bounds.Y, slot.Bounds.Width, slot.Bounds.Height, "+" + plan.OverflowCount.ToString(CultureInfo.InvariantCulture), light);
+                Chip(svg, x + slot.Bounds.X, y + slot.Bounds.Y, slot.Bounds.Width, slot.Bounds.Height, "+" + plan.OverflowCount.ToString(CultureInfo.InvariantCulture), light, plan.OverflowUrgent);
                 continue;
             }
 
@@ -37,10 +37,10 @@ public static class GlassDockSvg
         Router(svg, x + GlassDockLayout.RouterBounds.X, y + GlassDockLayout.RouterBounds.Y, routerWarning);
         Bars(svg, x + GlassDockLayout.BarsBounds.X, y + GlassDockLayout.BarsBounds.Y, bars);
         var rate = tokensPerSecond is { } value ? value.ToString("0", CultureInfo.InvariantCulture) : "—";
-        var rateX = x + GlassDockLayout.RateBounds.X;
-        var rateY = y + GlassDockLayout.RateBounds.Y + 13;
+        var rateX = x + GlassDockLayout.RateBounds.X + 4;
+        var rateY = y + GlassDockLayout.RateBounds.Y + GlassDockLayout.RateBounds.Height / 2 + 4;
         svg.Append("<text x=\"").Append(rateX).Append("\" y=\"").Append(rateY).Append("\" fill=\"").Append(light ? "#1c2430" : "rgba(255,255,255,.92)").Append("\" font-family=\"Segoe UI, sans-serif\" font-size=\"13\" font-weight=\"650\">").Append(rate).Append("</text>");
-        svg.Append("<text x=\"").Append(rateX).Append("\" y=\"").Append(rateY + 11).Append("\" fill=\"").Append(light ? "rgba(28,36,48,.55)" : "rgba(255,255,255,.55)").Append("\" font-family=\"Segoe UI, sans-serif\" font-size=\"8\">tok/s</text>");
+        svg.Append("<text x=\"").Append(rateX + 28).Append("\" y=\"").Append(rateY).Append("\" fill=\"").Append(light ? "rgba(28,36,48,.55)" : "rgba(255,255,255,.55)").Append("\" font-family=\"Segoe UI, sans-serif\" font-size=\"9\">tok/s</text>");
         svg.Append("</svg>");
         return svg.ToString();
     }
@@ -135,12 +135,14 @@ public static class GlassDockSvg
         }
     }
 
-    private static void Chip(StringBuilder svg, int x, int y, int width, int height, string text, bool light)
+    private static void Chip(StringBuilder svg, int x, int y, int width, int height, string text, bool light, bool urgent = false)
     {
+        var fill = urgent ? "rgba(242,119,122,.28)" : light ? "rgba(20,24,32,.08)" : "rgba(255,255,255,.1)";
+        var ink = urgent ? "#F2777A" : light ? "#1c2430" : "rgba(255,255,255,.86)";
         svg.Append("<rect x=\"").Append(x).Append("\" y=\"").Append(y).Append("\" width=\"").Append(width).Append("\" height=\"").Append(height)
-            .Append("\" rx=\"9\" fill=\"").Append(light ? "rgba(20,24,32,.08)" : "rgba(255,255,255,.1)").Append("\"/>");
+            .Append("\" rx=\"9\" fill=\"").Append(fill).Append("\"/>");
         svg.Append("<text x=\"").Append(x + width / 2).Append("\" y=\"").Append(y + 12).Append("\" text-anchor=\"middle\" fill=\"")
-            .Append(light ? "#1c2430" : "rgba(255,255,255,.86)").Append("\" font-family=\"Segoe UI, sans-serif\" font-size=\"9\" font-weight=\"700\">")
+            .Append(ink).Append("\" font-family=\"Segoe UI, sans-serif\" font-size=\"9\" font-weight=\"700\">")
             .Append(Escape(text)).Append("</text>");
     }
 

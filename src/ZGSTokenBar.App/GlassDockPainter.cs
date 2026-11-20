@@ -611,13 +611,27 @@ internal static class GlassDockPainter
     private static void DrawChip(Graphics graphics, Rectangle bounds, GlassDockScene scene)
     {
         var light = scene.Light;
+        var urgent = scene.Plan.OverflowUrgent && !scene.Expanded;
         var rect = new RectangleF(bounds.X, bounds.Y, bounds.Width, bounds.Height);
         using var path = Rounded(rect, rect.Height / 2);
-        using var fill = new SolidBrush(scene.ChipHovered
-            ? light ? UiPalette.Slate900.WithAlpha(70) : Color.FromArgb(70, 255, 255, 255)
-            : light ? UiPalette.Slate900.WithAlpha(34) : Color.FromArgb(36, 255, 255, 255));
+        var alert = light ? Color.FromArgb(200, 38, 48) : ChipStyle.CriticalText;
+        using var fill = new SolidBrush(urgent
+            ? light
+                ? Color.FromArgb(scene.ChipHovered ? 188 : 150, 255, 228, 228)
+                : Color.FromArgb(scene.ChipHovered ? 188 : 150, 48, 16, 20)
+            : scene.ChipHovered
+                ? light ? UiPalette.Slate900.WithAlpha(70) : Color.FromArgb(70, 255, 255, 255)
+                : light ? UiPalette.Slate900.WithAlpha(34) : Color.FromArgb(36, 255, 255, 255));
         graphics.FillPath(fill, path);
-        using var text = new SolidBrush(light ? UiPalette.Slate900.WithAlpha(235) : Color.FromArgb(240, 255, 255, 255));
+        if (urgent)
+        {
+            using var edge = new Pen(Color.FromArgb(ChipStyle.CriticalOutlineAlpha, alert), 1f);
+            graphics.DrawPath(edge, path);
+        }
+
+        using var text = new SolidBrush(urgent
+            ? alert
+            : light ? UiPalette.Slate900.WithAlpha(235) : Color.FromArgb(240, 255, 255, 255));
         using var font = new Font("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Pixel);
         var label = scene.Expanded ? "‹" : "+" + scene.Plan.OverflowCount.ToString(CultureInfo.InvariantCulture);
         DrawCentered(graphics, label, font, text, rect);
@@ -648,22 +662,22 @@ internal static class GlassDockPainter
     }
 
     /// <summary>
-    /// tok/s in a fixed slot: the number (constant size, one fixed decimal, right-aligned in a box sized
-    /// for the widest value so the decimal point never moves) over a small "tok/s" caption, the pair
-    /// centred vertically. The displayed total sums recorded response rates for the active sessions.
+    /// tok/s on one line with the four system rows: a fixed-width number (one decimal, so the point
+    /// does not move) and the unit beside it, centred on the stack rather than on the GPU row.
+    /// The displayed total sums recorded response rates for the active sessions.
     /// </summary>
     private static void DrawRate(Graphics graphics, Rectangle bounds, GlassDockScene scene)
     {
         var rate = FixedRateText(scene.TokensPerSecond);
         using var font = new Font("Segoe UI", RateFontSize, FontStyle.Bold, GraphicsUnit.Pixel);
-        using var small = new Font("Segoe UI", RateCaptionSize, FontStyle.Regular, GraphicsUnit.Pixel);
+        using var small = new Font("Segoe UI", RateUnitSize, FontStyle.Regular, GraphicsUnit.Pixel);
         var active = scene.TokensPerSecond is > 0;
         var color = scene.TokensPerSecond is null
             ? Muted(scene.Light)
             : scene.Light ? UiPalette.Slate900 : UiPalette.Slate50;
         using var text = new SolidBrush(active ? color : Color.FromArgb(scene.TokensPerSecond is null ? color.A : 170, color));
         using var muted = new SolidBrush(Muted(scene.Light));
-        var box = RateNumberBox(graphics, bounds, font);
+        var readout = RateReadoutBoxes(graphics, bounds, font, small);
         using (var numberFormat = new StringFormat(StringFormat.GenericTypographic)
         {
             Alignment = rate == "—" ? StringAlignment.Center : StringAlignment.Far,
@@ -671,27 +685,45 @@ internal static class GlassDockPainter
             FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.NoClip,
         })
         {
-            graphics.DrawString(rate, font, text, box, numberFormat);
+            graphics.DrawString(rate, font, text, readout.Number, numberFormat);
         }
-        var label = new RectangleF(box.X - 2, box.Bottom + RateCaptionGap, box.Width + 4, RateCaptionHeight);
-        graphics.DrawString("tok/s", small, muted, label, Format(StringAlignment.Center));
+
+        using var unitFormat = new StringFormat(StringFormat.GenericTypographic)
+        {
+            Alignment = StringAlignment.Near,
+            LineAlignment = StringAlignment.Center,
+            FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.NoClip,
+        };
+        graphics.DrawString("tok/s", small, muted, readout.Unit, unitFormat);
     }
 
-    internal const float RateCaptionSize = 8f;
+    internal const float RateUnitSize = 9f;
     private const float RateNumberHeight = 14f;
-    private const float RateCaptionGap = 1f;
-    private const float RateCaptionHeight = 10f;
+    private const float RateUnitGap = 3f;
 
     internal const float RateFontSize = 12.5f;
 
-    /// <summary>Fixed number box for the rate: the widest value ("888.8" / "88.8K") at the rate font, centred in the slot.</summary>
+    internal readonly record struct RateReadout(RectangleF Number, RectangleF Unit);
+
+    /// <summary>Number and unit boxes for the rate line. The number box fits "888.8" and "88.8K".</summary>
+    internal static RateReadout RateReadoutBoxes(Graphics graphics, Rectangle bounds, Font numberFont, Font unitFont)
+    {
+        using var format = new StringFormat(StringFormat.GenericTypographic) { FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces };
+        var numberWidth = Math.Max(graphics.MeasureString("888.8", numberFont, PointF.Empty, format).Width,
+            graphics.MeasureString("88.8K", numberFont, PointF.Empty, format).Width) + 1f;
+        var unitWidth = graphics.MeasureString("tok/s", unitFont, PointF.Empty, format).Width + 1f;
+        var left = bounds.Right - (numberWidth + RateUnitGap + unitWidth);
+        if (left < bounds.Left) left = bounds.Left;
+        var top = bounds.Y + (bounds.Height - RateNumberHeight) / 2f;
+        var number = new RectangleF(left, top, numberWidth, RateNumberHeight);
+        return new(number, new RectangleF(number.Right + RateUnitGap, top, unitWidth, RateNumberHeight));
+    }
+
+    /// <summary>Fixed number box for the rate, right-aligned ahead of the unit.</summary>
     internal static RectangleF RateNumberBox(Graphics graphics, Rectangle bounds, Font font)
     {
-        var widest = Math.Max(graphics.MeasureString("888.8", font, PointF.Empty, StringFormat.GenericTypographic).Width,
-            graphics.MeasureString("88.8K", font, PointF.Empty, StringFormat.GenericTypographic).Width);
-        var width = Math.Min(bounds.Width + 4f, widest + 1f);
-        var top = bounds.Y + (bounds.Height - (RateNumberHeight + RateCaptionGap + RateCaptionHeight)) / 2f;
-        return new RectangleF(bounds.X + (bounds.Width - width) / 2f, top, width, RateNumberHeight);
+        using var unit = new Font(font.FontFamily, RateUnitSize, FontStyle.Regular, GraphicsUnit.Pixel);
+        return RateReadoutBoxes(graphics, bounds, font, unit).Number;
     }
 
     /// <summary>One fixed decimal (and K/M/G above 1000) so the text length only changes with magnitude.</summary>

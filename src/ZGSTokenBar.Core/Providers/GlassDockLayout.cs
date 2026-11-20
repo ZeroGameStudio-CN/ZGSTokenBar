@@ -82,7 +82,8 @@ public static class GlassDockLayout
     public const int ModuleGap = 7;
     public const int MetricsWidth = 54;
     public const int MetricsRows = 4;
-    public const int RateWidth = 36;
+    /// <summary>Room for the widest rate ("88.8K") and "tok/s" on the same line.</summary>
+    public const int RateWidth = 64;
     private const int MetricsClusterWidth = MetricsWidth + ModuleGap + RateWidth;
     public const int SystemWidth = MonitorSize + ModuleGap + MetricsClusterWidth;
     public const int FlyoutWidth = 316;
@@ -113,11 +114,12 @@ public static class GlassDockLayout
 
     public static Rectangle BarsBounds => BarsBoundsFor(Width);
 
-    public static Rectangle RateBoundsFor(int width) => new(
-        width - PadRight - RateWidth,
-        (Height - 26) / 2,
-        RateWidth,
-        26);
+    /// <summary>The tok/s line occupies the same vertical span as the four system rows, to their right.</summary>
+    public static Rectangle RateBoundsFor(int width)
+    {
+        var bars = BarsBoundsFor(width);
+        return new(width - PadRight - RateWidth, bars.Y, RateWidth, bars.Height);
+    }
 
     public static Rectangle RateBounds => RateBoundsFor(Width);
 
