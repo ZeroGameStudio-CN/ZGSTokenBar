@@ -249,6 +249,10 @@ public sealed record QuotaSnapshot(
     public IReadOnlyList<CodexAccountQuota> CodexAccounts { get; init; } = [];
     public IReadOnlyList<CodexQuotaTokenCounter> CodexQuotaTokenCounters { get; init; } = [];
 
+    /// <summary>Latest Codex plan samples. Ignored by the quota cache; the plan history file is the record.</summary>
+    [JsonIgnore]
+    public IReadOnlyList<CodexPlanObservation> CodexPlanObservations { get; init; } = [];
+
     public static QuotaSnapshot Empty(DateTimeOffset now) => new([], [], now);
 }
 
@@ -328,6 +332,7 @@ public sealed record ProviderResult(
 {
     public IReadOnlyList<CodexAccountQuota> CodexAccounts { get; init; } = [];
     public IReadOnlyList<CodexQuotaTokenCounter> CodexQuotaTokenCounters { get; init; } = [];
+    public IReadOnlyList<CodexPlanObservation> CodexPlanObservations { get; init; } = [];
     public bool ReplaceCachedCards { get; init; }
 }
 

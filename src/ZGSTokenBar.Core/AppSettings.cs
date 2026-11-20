@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -587,6 +588,7 @@ public sealed class AppSettingsStore
     public string CodexTokenUsageIndexPath => Path.Combine(DataDirectory, "codex-token-usage-index.json");
     public string CodexConversationCheckpointDirectory => Path.Combine(DataDirectory, "conversation-checkpoints-v1");
     public string CodexQuotaTokenHistoryPath => Path.Combine(DataDirectory, "codex-quota-token-history.json");
+    public string CodexPlanChangeHistoryPath => Path.Combine(DataDirectory, "codex-plan-change-history.json");
 
     public bool SettingsReadPending
     {
@@ -1077,6 +1079,64 @@ public sealed class AppSettingsStore
         {
             throw new IOException("Codex quota token history file is busy. Please retry.");
         }
+    }
+
+    public CodexPlanChangeHistoryDocument LoadCodexPlanChangeHistory()
+    {
+        try
+        {
+            var json = ReadTextWithRetry(CodexPlanChangeHistoryPath);
+            using var document = JsonDocument.Parse(json);
+            var schemaVersion = document.RootElement.TryGetProperty("schemaVersion", out var schema)
+                && schema.TryGetInt32(out var parsedSchema)
+                    ? parsedSchema
+                    : 0;
+            if (schemaVersion != CodexPlanChangeHistoryDocument.CurrentSchemaVersion)
+                throw new JsonException("Unsupported Codex plan change history schema.");
+            var history = JsonSerializer.Deserialize<CodexPlanChangeHistoryDocument>(json, JsonOptions)
+                ?? throw new JsonException("Invalid Codex plan change history.");
+            ClearWriteProtection(CodexPlanChangeHistoryPath);
+            return history;
+        }
+        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+        {
+            ClearWriteProtection(CodexPlanChangeHistoryPath);
+            return new CodexPlanChangeHistoryDocument();
+        }
+        catch (IOException)
+        {
+            ProtectWritePath(CodexPlanChangeHistoryPath);
+            return new CodexPlanChangeHistoryDocument();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            ProtectWritePath(CodexPlanChangeHistoryPath);
+            return new CodexPlanChangeHistoryDocument();
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException)
+        {
+            PreserveCorruptFile(CodexPlanChangeHistoryPath);
+            return new CodexPlanChangeHistoryDocument();
+        }
+    }
+
+    public void SaveCodexPlanChangeHistory(CodexPlanChangeHistoryDocument history)
+    {
+        ArgumentNullException.ThrowIfNull(history);
+        EnsureWritable(CodexPlanChangeHistoryPath, "Codex plan change history is busy. Please retry.");
+        Directory.CreateDirectory(DataDirectory);
+        history.SchemaVersion = CodexPlanChangeHistoryDocument.CurrentSchemaVersion;
+        var json = JsonSerializer.Serialize(history, JsonOptions);
+        while (Encoding.UTF8.GetByteCount(json) > CodexPlanChangeHistory.MaximumFileBytes
+            && CodexPlanChangeHistory.DropOldest(history))
+        {
+            json = JsonSerializer.Serialize(history, JsonOptions);
+        }
+
+        if (Encoding.UTF8.GetByteCount(json) > CodexPlanChangeHistory.MaximumFileBytes)
+            throw new IOException("Codex plan change history exceeds its size limit.");
+        if (!CredentialSupport.AtomicWrite(CodexPlanChangeHistoryPath, json))
+            throw new IOException("Codex plan change history file is busy. Please retry.");
     }
 
     private static string ReadTextWithRetry(string path)

@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using ZGSTokenBar.Core;
 
 namespace ZGSTokenBar.App;
 
@@ -6,19 +7,8 @@ internal sealed record RouterTaskHeading(string Title, string Context, string Or
 
 internal static class RouterTaskPresentation
 {
-    internal static (string Title, string ToolTip) QueuedTask(string title, string priority, string reason)
-    {
-        var (arrow, label) = priority switch
-        {
-            "high" => ("↑", "高优先级"),
-            "low" => ("↓", "低优先级"),
-            _ => ("", ""),
-        };
-        if (arrow.Length == 0) return (title, "");
-
-        var detail = string.IsNullOrWhiteSpace(reason) ? label : label + " · " + reason;
-        return (arrow + " " + title, title + Environment.NewLine + detail);
-    }
+    internal static RouterQueuePriority.Display Priority(string? priority, string? reason) =>
+        RouterQueuePriority.Describe(priority, reason);
 
     internal static RouterTaskHeading Heading(string value)
     {

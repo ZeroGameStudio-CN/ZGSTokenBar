@@ -81,6 +81,19 @@ internal sealed partial class QuotaApplicationContext
                 }
             }
             if (!stabilization.ConfirmationRequired
+                && _activeProviders.Contains(ProviderKind.Codex)
+                && _planChanges.Observe(next.CodexPlanObservations))
+            {
+                try
+                {
+                    _store.SaveCodexPlanChangeHistory(_planChanges.Export());
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    // The in-memory interval remains available when the history file is busy.
+                }
+            }
+            if (!stabilization.ConfirmationRequired
                 && _activeProviders.Contains(ProviderKind.Codex))
             {
                 // Refresh the non-persistent Profile activity reference even when
@@ -332,6 +345,9 @@ internal sealed partial class QuotaApplicationContext
             CodexQuotaTokenCounters = activeProviders.Contains(ProviderKind.Codex)
                 ? activeResult.CodexQuotaTokenCounters
                 : previous.CodexQuotaTokenCounters,
+            CodexPlanObservations = activeProviders.Contains(ProviderKind.Codex)
+                ? activeResult.CodexPlanObservations
+                : previous.CodexPlanObservations,
         };
     }
 

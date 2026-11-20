@@ -31,6 +31,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
     private readonly QuotaSnapshotStabilizer _snapshotStabilizer = new();
     private readonly QuotaPaceTracker _quotaPaceTracker;
     private readonly CodexQuotaTokenTracker _codexQuotaTokenTracker;
+    private readonly CodexPlanChangeHistory _planChanges;
     private readonly CodexTokenUsageLedger _codexTokenUsageLedger;
     private readonly SystemUsageSampler _systemUsageSampler = new();
     private readonly NetworkTrafficLedger _networkTraffic;
@@ -102,6 +103,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _codexAccounts = CockpitCodexAccountDirectory.Read();
         _quotaPaceTracker = new QuotaPaceTracker(_store.LoadQuotaRateHistory(now));
         _codexQuotaTokenTracker = new CodexQuotaTokenTracker(_store.LoadCodexQuotaTokenHistory());
+        _planChanges = CodexPlanChangeHistory.Load(_store.LoadCodexPlanChangeHistory());
         _codexTokenUsageLedger = new CodexTokenUsageLedger(_store);
         _cachedCodexTokenUsage = _codexTokenUsageLedger.Snapshot(now);
         if (_allowGlobalStartupRegistration && !_store.SettingsReadPending)
