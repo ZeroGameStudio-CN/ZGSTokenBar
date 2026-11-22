@@ -207,6 +207,7 @@ public sealed class CodexTokenUsageReader
     private const string UnknownSpendModel = "unknown";
 
     private readonly Dictionary<string, CodexTokenUsageFileIndex> _files;
+    private readonly CodexSessionFileDiscovery _sessionFiles = new();
     private readonly List<CodexConversationTurn> _conversationHistory;
     private readonly long? _historicalBaselineTokens;
     private readonly DateTimeOffset? _historicalBaselineAt;
@@ -292,7 +293,7 @@ public sealed class CodexTokenUsageReader
         DateTimeOffset now,
         CancellationToken cancellationToken = default)
     {
-        var candidates = CandidateFiles(codexHomes);
+        var candidates = _sessionFiles.Collect(codexHomes);
         var forkBaselines = ResolveForkBaselines(candidates, now, cancellationToken);
         var next = new Dictionary<string, CodexTokenUsageFileIndex>(_files, StringComparer.Ordinal);
         var changed = false;
@@ -876,47 +877,8 @@ public sealed class CodexTokenUsageReader
         return Guid.TryParse(candidate, out _) ? candidate : null;
     }
 
-    private static Dictionary<string, FileInfo> CandidateFiles(IReadOnlyList<string> codexHomes)
-    {
-        var files = new Dictionary<string, FileInfo>(StringComparer.Ordinal);
-        var enumeratedFiles = 0;
-        foreach (var codexHome in codexHomes.Distinct(StringComparer.OrdinalIgnoreCase))
-        foreach (var directoryName in new[] { "sessions", "archived_sessions" })
-        {
-            var directory = Path.Combine(codexHome, directoryName);
-            if (!Directory.Exists(directory)) continue;
-            try
-            {
-                foreach (var path in Directory.EnumerateFiles(directory, "*.jsonl", SearchOption.AllDirectories))
-                {
-                    if (++enumeratedFiles > MaximumCandidateFiles) break;
-                    if (files.Count >= MaximumCandidateFiles) break;
-                    try
-                    {
-                        var file = new FileInfo(path);
-                        if (!file.Exists || file.Length <= 0) continue;
-                        var key = FileKey(file.Name);
-                        if (!files.TryGetValue(key, out var existing)
-                            || file.Length > existing.Length
-                            || file.Length == existing.Length
-                            && file.LastWriteTimeUtc > existing.LastWriteTimeUtc)
-                        {
-                            files[key] = file;
-                        }
-                    }
-                    catch
-                    {
-                        // One disappearing session file must not block the local aggregate.
-                    }
-                }
-            }
-            catch
-            {
-                // Missing or unreadable Codex session directories are a normal fallback state.
-            }
-        }
-        return files;
-    }
+    internal static string SessionFileKey(string fileName) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(fileName))).ToLowerInvariant();
 
     private static CodexTokenUsageFileIndex RefreshFile(
         FileInfo file,
@@ -2073,8 +2035,7 @@ public sealed class CodexTokenUsageReader
                 LegacyLifetimeOnly = false,
             };
 
-    private static string FileKey(string fileName) =>
-        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(fileName))).ToLowerInvariant();
+    private static string FileKey(string fileName) => SessionFileKey(fileName);
 
     internal static DateOnly LocalCalendarDate(DateTimeOffset value, TimeZoneInfo timeZone)
     {

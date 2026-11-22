@@ -142,8 +142,15 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         currentSection.Controls.Add(summary); _root.Controls.Add(currentSection, 0, 1);
 
         _queue.EmptyTitle = "正在读取队列…"; _queue.EmptyDetail = "";
-        _queue.Columns.AddRange(Column("task", "任务", 270), Column("source", "来源对话", 210), Column("wait", "等待", 80));
+        _queue.Columns.AddRange(
+            Column("task", "任务", 230),
+            Column("priority", "优先级", 72),
+            Column("source", "来源对话", 190),
+            Column("wait", "等待", 80));
+        _queue.Columns["priority"]!.MinimumWidth = 56;
+        Align(_queue.Columns["priority"]!, DataGridViewContentAlignment.MiddleCenter);
         Align(_queue.Columns["wait"]!, DataGridViewContentAlignment.MiddleRight);
+        _queue.CellPainting += PaintQueuePriority;
         _queue.Columns["source"]!.DefaultCellStyle.ForeColor = UiTokens.TextSecondary;
         _queue.Columns["wait"]!.DefaultCellStyle.ForeColor = UiTokens.Accent;
         _queue.SelectionChanged += (_, _) => { if (!_applyingQueue) UpdateControls(); };
@@ -286,6 +293,20 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         _projectMenu.Renderer = new DarkContextMenuRenderer(_palette.Surface, _palette.Input, _palette.Border, _palette.Text, _palette.Muted);
         _projectMenu.Font = Font;
         if (!_available && _snapshot is not null) _freshness.ForeColor = RouterVisualPalette.State("warning");
+    }
+
+    private void PaintQueuePriority(object? sender, DataGridViewCellPaintingEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.ColumnIndex != _queue.Columns["priority"]!.Index) return;
+        var tone = _queue.Rows[e.RowIndex].Cells[e.ColumnIndex].Tag as string;
+        _queue.PaintPill(e, tone switch
+        {
+            "high" => UiTokens.Warning,
+            "low" => UiTokens.Muted,
+            "missing" => UiTokens.Disabled,
+            "unknown" => UiTokens.TextSecondary,
+            _ => UiTokens.Accent,
+        });
     }
 
     private void PaintActiveStatus(object? sender, DataGridViewCellPaintingEventArgs e)
@@ -625,11 +646,16 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
                 _queue.Rows.Clear();
                 foreach (var row in items)
                 {
-                    var task = RouterTaskPresentation.QueuedTask(RouterJson.Text(row, "task"),
+                    var priority = RouterTaskPresentation.Priority(
                         RouterJson.Text(row, "queuePriority"), RouterJson.Text(row, "queuePriorityReason"));
-                    var index = _queue.Rows.Add(task.Title, RouterTaskPresentation.Source(RouterJson.Text(row, "source")), RouterJson.Text(row, "wait"));
+                    var index = _queue.Rows.Add(
+                        RouterJson.Text(row, "task"),
+                        priority.Label,
+                        RouterTaskPresentation.Source(RouterJson.Text(row, "source")),
+                        RouterJson.Text(row, "wait"));
                     var displayed = _queue.Rows[index];
-                    displayed.Cells[0].ToolTipText = task.ToolTip;
+                    displayed.Cells["priority"]!.Tag = priority.Tone;
+                    displayed.Cells["priority"]!.ToolTipText = priority.ToolTip;
                     displayed.Tag = row;
                     displayed.Selected = RouterJson.Text(row, "id") == selected;
                 }

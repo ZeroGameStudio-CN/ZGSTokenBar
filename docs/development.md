@@ -522,7 +522,10 @@ or reconstructed historical invoices.
 
 `codex-token-usage-index.json` is the local per-session ledger. It retains accounted
 sessions after source files move or disappear. Default and registered Cockpit
-homes are combined before deduplication; unchanged files are not reparsed, and
+homes are combined before deduplication. Each refresh keeps at most 4096 unique
+session filenames, newest first, with a fresh slice per home and a rotating pass
+over older files so one home or repeated names cannot permanently hide a new log.
+Unchanged files are not reparsed, and
 appends resume from the last complete JSONL line. The total no longer uses an old
 account-wide Profile counter as a floor. Keep this ledger with the app's data
 directory when moving machines; do not add totals from separate copies together.

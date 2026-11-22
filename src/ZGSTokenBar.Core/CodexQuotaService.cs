@@ -196,6 +196,7 @@ public sealed class CodexQuotaService
                 .GroupBy(counter => counter.CardKey, StringComparer.Ordinal)
                 .Select(group => group.First())
                 .ToArray(),
+            CodexPlanObservations = BuildPlanObservations(visibleAccounts, now),
             ReplaceCachedCards = visibleAccounts.All(account => !account.Credential.Active)
                 && accounts.All(account => !account.Credential.Active),
         };
@@ -819,6 +820,33 @@ public sealed class CodexQuotaService
             }
         }
         return merged;
+    }
+
+    private static IReadOnlyList<CodexPlanObservation> BuildPlanObservations(
+        IReadOnlyList<AccountResult> accounts,
+        DateTimeOffset now)
+    {
+        var byAccount = new Dictionary<string, CodexPlanObservation>(StringComparer.Ordinal);
+        foreach (var account in accounts)
+        {
+            var accountId = account.Credential.AccountId;
+            if (!CodexPlanChangeHistory.IsStableAccountId(accountId)) continue;
+            var plan = CodexPlanNormalization.Normalize(account.Usage?.Plan)
+                ?? CodexPlanNormalization.Normalize(account.Credential.Plan);
+            var observation = new CodexPlanObservation(
+                accountId!.Trim(),
+                account.CapturedAt ?? now,
+                plan,
+                account.Usage?.Windows);
+            if (!byAccount.TryGetValue(observation.AccountId, out var existing)
+                || existing.Plan is null && plan is not null
+                || plan is not null && observation.ObservedAt >= existing.ObservedAt)
+            {
+                byAccount[observation.AccountId] = observation;
+            }
+        }
+
+        return byAccount.Values.ToArray();
     }
 
     private static IReadOnlyList<CodexAccountQuota> BuildAccountQuotas(
