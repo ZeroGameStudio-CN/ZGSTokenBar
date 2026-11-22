@@ -28,7 +28,7 @@ internal sealed partial class BarForm
         {
             _snapshotAnimating = false;
             _animatedWindowKeys.Clear();
-            if (!_refreshing && !_glassMotion.IsAnimating) _animationTimer.Stop();
+            if (!NeedsAnyAnimation(false)) _animationTimer.Stop();
             return;
         }
         _animatedWindowKeys = changedKeys;
@@ -36,6 +36,12 @@ internal sealed partial class BarForm
         _snapshotAnimating = true;
         EnsureAnimationTimer();
     }
+
+    private bool NeedsFastAnimation(bool hoverAnimating) =>
+        _refreshing || _snapshotAnimating || hoverAnimating || _glassMotion.IsAnimating;
+
+    private bool NeedsAnyAnimation(bool hoverAnimating) =>
+        NeedsFastAnimation(hoverAnimating) || _dockAmbientPulseActive;
 
     private void AdvanceAnimation()
     {
@@ -55,12 +61,21 @@ internal sealed partial class BarForm
             ApplySnapshotLayout();
             Invalidate();
         }
-        if (!_refreshing && !_snapshotAnimating && !hoverAnimating && !_glassMotion.IsAnimating) _animationTimer.Stop();
+        if (!NeedsAnyAnimation(hoverAnimating))
+        {
+            _animationTimer.Stop();
+        }
+        else
+        {
+            _animationTimer.Interval = NeedsFastAnimation(hoverAnimating) ? 16 : 50;
+        }
     }
 
     private void EnsureAnimationTimer()
     {
-        if (_animationsEnabled && !_animationTimer.Enabled) _animationTimer.Start();
+        if (!_animationsEnabled) return;
+        _animationTimer.Interval = (!_dockAmbientPulseActive || NeedsFastAnimation(false) || _hoverTarget != HoverTarget.None) ? 16 : 50;
+        if (!_animationTimer.Enabled) _animationTimer.Start();
     }
 
     private bool AdvanceHoverAnimation()

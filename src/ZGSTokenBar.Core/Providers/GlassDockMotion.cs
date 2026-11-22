@@ -2,13 +2,33 @@ using System.Drawing;
 
 namespace ZGSTokenBar.Core;
 
+public sealed record GlassDockInteraction(
+    string? HoveredRingKey,
+    bool ChipHovered,
+    bool RouterHovered,
+    bool IntakeHovered,
+    bool SystemHovered,
+    bool RateHovered,
+    double? Cpu,
+    double? Memory,
+    double? Disk,
+    double? Gpu);
+
 /// <summary>
 /// Pure-geometry 60 FPS motion controller for GlassDock pill width, chip glides, ring
-/// reordering, and overflow enter/exit transitions with mid-flight retargeting.
+/// reordering, quota arc & system bar tweening, and hover glow fades with mid-flight retargeting.
 /// </summary>
 public sealed class GlassDockMotion
 {
     public const int DurationMilliseconds = 240;
+    public const int HoverInMilliseconds = 140;
+    public const int HoverOutMilliseconds = 110;
+
+    private const string ChipHoverKey = "\0chip";
+    private const string RouterHoverKey = "\0router";
+    private const string IntakeHoverKey = "\0intake";
+    private const string SystemHoverKey = "\0system";
+    private const string RateHoverKey = "\0rate";
 
     public sealed record VisualRing(
         GlassDockRing Ring,
@@ -17,14 +37,25 @@ public sealed class GlassDockMotion
         float Width,
         float Height,
         float Alpha,
-        bool Exiting);
+        bool Exiting,
+        double? DisplayedRemaining = null,
+        float HoverAmount = 0f);
 
     public sealed record Frame(
         float Width,
         RectangleF? ChipBounds,
         float ChipAlpha,
         IReadOnlyList<VisualRing> Rings,
-        bool Animating);
+        bool Animating,
+        float ChipHover = 0f,
+        float RouterHover = 0f,
+        float IntakeHover = 0f,
+        float SystemHover = 0f,
+        float RateHover = 0f,
+        double? Cpu = null,
+        double? Memory = null,
+        double? Disk = null,
+        double? Gpu = null);
 
     private sealed class RingTrack
     {
@@ -64,9 +95,27 @@ public sealed class GlassDockMotion
         public bool Exiting { get; set; }
     }
 
+    private sealed class ScalarTween
+    {
+        public double From { get; set; }
+        public double To { get; set; }
+        public double Current { get; set; }
+        public long StartTick { get; set; }
+        public bool Active { get; set; }
+    }
+
+    private readonly record struct HoverTrack(float From, float To, long StartTick, int DurationMs);
+
     private readonly int _durationMs;
     private readonly List<RingTrack> _tracks = [];
+    private readonly Dictionary<string, ScalarTween> _ringValueTweens = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, HoverTrack> _hoverTracks = new(StringComparer.Ordinal);
+    private ScalarTween? _cpuTween;
+    private ScalarTween? _memoryTween;
+    private ScalarTween? _diskTween;
+    private ScalarTween? _gpuTween;
     private bool _initialized;
+    private bool _layoutAnimating;
     private long _startTick;
     private float _fromWidth;
     private float _toWidth;
@@ -89,7 +138,14 @@ public sealed class GlassDockMotion
     public void Reset()
     {
         _tracks.Clear();
+        _ringValueTweens.Clear();
+        _hoverTracks.Clear();
+        _cpuTween = null;
+        _memoryTween = null;
+        _diskTween = null;
+        _gpuTween = null;
         _initialized = false;
+        _layoutAnimating = false;
         IsAnimating = false;
         _startTick = 0;
         _fromWidth = 0f;
@@ -101,134 +157,204 @@ public sealed class GlassDockMotion
         _toChipAlpha = 0f;
     }
 
-    public Frame Update(GlassDockPlan plan, long nowTick, bool animate)
+    public Frame Update(GlassDockPlan plan, long nowTick, bool animate) =>
+        Update(plan, nowTick, animate, interaction: null);
+
+    public Frame Update(GlassDockPlan plan, long nowTick, bool animate, GlassDockInteraction? interaction)
     {
         ExtractTargets(plan, out var targetRings, out var targetChipBounds);
 
+        float layoutEased;
         if (!animate || !_initialized)
         {
             SnapToTarget(plan.Width, targetRings, targetChipBounds);
-            return BuildFrame(1f, animating: false);
+            layoutEased = 1f;
         }
-
-        var progress = IsAnimating
-            ? Math.Clamp((nowTick - _startTick) / (float)_durationMs, 0f, 1f)
-            : 1f;
-        var eased = IsAnimating ? EaseOutCubic(progress) : 1f;
-
-        if (HasTargetChanged(plan.Width, targetRings, targetChipBounds))
+        else
         {
-            var curWidth = Lerp(_fromWidth, _toWidth, eased);
-            var curChip = InterpolateChip(eased);
-            var curChipAlpha = Lerp(_fromChipAlpha, _toChipAlpha, eased);
-            var enterAnchorX = curChip?.X ?? targetChipBounds?.X ?? FallbackAnchorX(curWidth);
-            var exitAnchorX = targetChipBounds?.X ?? curChip?.X ?? FallbackAnchorX(plan.Width);
+            var progress = _layoutAnimating
+                ? Math.Clamp((nowTick - _startTick) / (float)_durationMs, 0f, 1f)
+                : 1f;
+            var eased = _layoutAnimating ? EaseOutCubic(progress) : 1f;
 
-            var currentByKey = new Dictionary<string, (RingTrack Track, float X, float Alpha)>(_tracks.Count, StringComparer.Ordinal);
-            foreach (var track in _tracks)
+            if (HasTargetChanged(plan.Width, targetRings, targetChipBounds))
             {
-                currentByKey[track.Key] = (track, Lerp(track.FromX, track.ToX, eased), Lerp(track.FromAlpha, track.ToAlpha, eased));
-            }
+                var curWidth = Lerp(_fromWidth, _toWidth, eased);
+                var curChip = InterpolateChip(eased);
+                var curChipAlpha = Lerp(_fromChipAlpha, _toChipAlpha, eased);
+                var enterAnchorX = curChip?.X ?? targetChipBounds?.X ?? FallbackAnchorX(curWidth);
+                var exitAnchorX = targetChipBounds?.X ?? curChip?.X ?? FallbackAnchorX(plan.Width);
 
-            var nextTracks = new List<RingTrack>(Math.Max(targetRings.Count, _tracks.Count));
-            var targetKeys = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var (key, ring, slot) in targetRings)
-            {
-                targetKeys.Add(key);
-                if (currentByKey.TryGetValue(key, out var existing))
+                var currentByKey = new Dictionary<string, (RingTrack Track, float X, float Alpha)>(_tracks.Count, StringComparer.Ordinal);
+                foreach (var track in _tracks)
                 {
+                    currentByKey[track.Key] = (track, Lerp(track.FromX, track.ToX, eased), Lerp(track.FromAlpha, track.ToAlpha, eased));
+                }
+
+                var nextTracks = new List<RingTrack>(Math.Max(targetRings.Count, _tracks.Count));
+                var targetKeys = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var (key, ring, slot) in targetRings)
+                {
+                    targetKeys.Add(key);
+                    if (currentByKey.TryGetValue(key, out var existing))
+                    {
+                        nextTracks.Add(new RingTrack(
+                            key,
+                            ring,
+                            existing.X,
+                            slot.X,
+                            slot.Y,
+                            slot.Width,
+                            slot.Height,
+                            existing.Alpha,
+                            1f,
+                            exiting: false));
+                    }
+                    else
+                    {
+                        nextTracks.Add(new RingTrack(
+                            key,
+                            ring,
+                            enterAnchorX,
+                            slot.X,
+                            slot.Y,
+                            slot.Width,
+                            slot.Height,
+                            0f,
+                            1f,
+                            exiting: false));
+                    }
+                }
+
+                foreach (var track in _tracks)
+                {
+                    if (targetKeys.Contains(track.Key)) continue;
+                    var current = currentByKey[track.Key];
+                    if (current.Alpha <= 0.01f) continue;
                     nextTracks.Add(new RingTrack(
-                        key,
-                        ring,
-                        existing.X,
-                        slot.X,
-                        slot.Y,
-                        slot.Width,
-                        slot.Height,
-                        existing.Alpha,
-                        1f,
-                        exiting: false));
+                        track.Key,
+                        track.Ring,
+                        current.X,
+                        exitAnchorX,
+                        track.Y,
+                        track.Width,
+                        track.Height,
+                        current.Alpha,
+                        0f,
+                        exiting: true));
+                }
+
+                _tracks.Clear();
+                _tracks.AddRange(nextTracks);
+
+                _fromWidth = curWidth;
+                _toWidth = plan.Width;
+                _fromChip = targetChipBounds is null ? curChip : (curChip ?? targetChipBounds);
+                _toChip = targetChipBounds ?? curChip;
+                _fromChipAlpha = curChip.HasValue ? curChipAlpha : 0f;
+                _toChipAlpha = targetChipBounds.HasValue ? 1f : 0f;
+
+                if (HasMotionDelta())
+                {
+                    _startTick = nowTick;
+                    _layoutAnimating = true;
+                    layoutEased = 0f;
                 }
                 else
                 {
-                    nextTracks.Add(new RingTrack(
-                        key,
-                        ring,
-                        enterAnchorX,
-                        slot.X,
-                        slot.Y,
-                        slot.Width,
-                        slot.Height,
-                        0f,
-                        1f,
-                        exiting: false));
+                    _tracks.RemoveAll(track => track.Exiting);
+                    SnapToTarget(plan.Width, targetRings, targetChipBounds);
+                    layoutEased = 1f;
                 }
             }
-
-            foreach (var track in _tracks)
+            else
             {
-                if (targetKeys.Contains(track.Key)) continue;
-                var current = currentByKey[track.Key];
-                if (current.Alpha <= 0.01f) continue;
-                nextTracks.Add(new RingTrack(
-                    track.Key,
-                    track.Ring,
-                    current.X,
-                    exitAnchorX,
-                    track.Y,
-                    track.Width,
-                    track.Height,
-                    current.Alpha,
-                    0f,
-                    exiting: true));
+                RefreshTargetPayloads(targetRings);
+                if (!_layoutAnimating || progress >= 1f)
+                {
+                    _tracks.RemoveAll(track => track.Exiting);
+                    SnapToTarget(plan.Width, targetRings, targetChipBounds);
+                    layoutEased = 1f;
+                }
+                else
+                {
+                    layoutEased = eased;
+                }
             }
-
-            _tracks.Clear();
-            _tracks.AddRange(nextTracks);
-
-            _fromWidth = curWidth;
-            _toWidth = plan.Width;
-            _fromChip = targetChipBounds is null ? curChip : (curChip ?? targetChipBounds);
-            _toChip = targetChipBounds ?? curChip;
-            _fromChipAlpha = curChip.HasValue ? curChipAlpha : 0f;
-            _toChipAlpha = targetChipBounds.HasValue ? 1f : 0f;
-
-            if (HasMotionDelta())
-            {
-                _startTick = nowTick;
-                IsAnimating = true;
-                return BuildFrame(0f, animating: true);
-            }
-
-            _tracks.RemoveAll(track => track.Exiting);
-            SnapToTarget(plan.Width, targetRings, targetChipBounds);
-            return BuildFrame(1f, animating: false);
         }
 
-        RefreshTargetPayloads(targetRings);
+        var anyValueAnimating = UpdateRingValueTweens(nowTick, animate);
+        var anyMetricAnimating = false;
+        var cpu = AdvanceScalarTween(ref _cpuTween, interaction?.Cpu, nowTick, animate, threshold: 0.25, ref anyMetricAnimating);
+        var memory = AdvanceScalarTween(ref _memoryTween, interaction?.Memory, nowTick, animate, threshold: 0.25, ref anyMetricAnimating);
+        var disk = AdvanceScalarTween(ref _diskTween, interaction?.Disk, nowTick, animate, threshold: 0.25, ref anyMetricAnimating);
+        var gpu = AdvanceScalarTween(ref _gpuTween, interaction?.Gpu, nowTick, animate, threshold: 0.25, ref anyMetricAnimating);
 
-        if (!IsAnimating || progress >= 1f)
-        {
-            _tracks.RemoveAll(track => track.Exiting);
-            SnapToTarget(plan.Width, targetRings, targetChipBounds);
-            return BuildFrame(1f, animating: false);
-        }
+        var anyHoverAnimating = false;
+        var chipHover = AdvanceHover(ChipHoverKey, interaction?.ChipHovered == true, nowTick, animate, ref anyHoverAnimating);
+        var routerHover = AdvanceHover(RouterHoverKey, interaction?.RouterHovered == true, nowTick, animate, ref anyHoverAnimating);
+        var intakeHover = AdvanceHover(IntakeHoverKey, interaction?.IntakeHovered == true, nowTick, animate, ref anyHoverAnimating);
+        var systemHover = AdvanceHover(SystemHoverKey, interaction?.SystemHovered == true, nowTick, animate, ref anyHoverAnimating);
+        var rateHover = AdvanceHover(RateHoverKey, interaction?.RateHovered == true, nowTick, animate, ref anyHoverAnimating);
 
-        return BuildFrame(eased, animating: true);
+        IsAnimating = _layoutAnimating || anyValueAnimating || anyMetricAnimating || anyHoverAnimating;
+        return BuildFrame(
+            layoutEased,
+            nowTick,
+            animate,
+            interaction,
+            ref anyHoverAnimating,
+            chipHover,
+            routerHover,
+            intakeHover,
+            systemHover,
+            rateHover,
+            cpu,
+            memory,
+            disk,
+            gpu);
     }
 
-    private Frame BuildFrame(float eased, bool animating)
+    private Frame BuildFrame(
+        float layoutEased,
+        long nowTick,
+        bool animate,
+        GlassDockInteraction? interaction,
+        ref bool anyHoverAnimating,
+        float chipHover,
+        float routerHover,
+        float intakeHover,
+        float systemHover,
+        float rateHover,
+        double? cpu,
+        double? memory,
+        double? disk,
+        double? gpu)
     {
-        _currentWidth = animating ? Lerp(_fromWidth, _toWidth, eased) : _toWidth;
-        var chipBounds = animating ? InterpolateChip(eased) : _toChip;
-        var chipAlpha = animating ? Lerp(_fromChipAlpha, _toChipAlpha, eased) : _toChipAlpha;
+        _currentWidth = _layoutAnimating ? Lerp(_fromWidth, _toWidth, layoutEased) : _toWidth;
+        var chipBounds = _layoutAnimating ? InterpolateChip(layoutEased) : _toChip;
+        var chipAlpha = _layoutAnimating ? Lerp(_fromChipAlpha, _toChipAlpha, layoutEased) : _toChipAlpha;
         if (chipAlpha <= 0.01f) chipBounds = null;
 
+        var activeRingKeys = new HashSet<string>(_tracks.Count + 5, StringComparer.Ordinal)
+        {
+            ChipHoverKey,
+            RouterHoverKey,
+            IntakeHoverKey,
+            SystemHoverKey,
+            RateHoverKey,
+        };
         var visualRings = new List<VisualRing>(_tracks.Count);
         foreach (var track in _tracks)
         {
-            var x = animating ? Lerp(track.FromX, track.ToX, eased) : track.ToX;
-            var alpha = animating ? Lerp(track.FromAlpha, track.ToAlpha, eased) : track.ToAlpha;
+            activeRingKeys.Add(track.Key);
+            var x = _layoutAnimating ? Lerp(track.FromX, track.ToX, layoutEased) : track.ToX;
+            var alpha = _layoutAnimating ? Lerp(track.FromAlpha, track.ToAlpha, layoutEased) : track.ToAlpha;
+            var displayedRemaining = _ringValueTweens.TryGetValue(track.Key, out var valueTween)
+                ? valueTween.Current
+                : track.Ring.RemainingPercent;
+            var hovered = !track.Exiting && string.Equals(interaction?.HoveredRingKey, track.Key, StringComparison.Ordinal);
+            var hoverAmount = AdvanceHover(track.Key, hovered, nowTick, animate, ref anyHoverAnimating);
             visualRings.Add(new VisualRing(
                 track.Ring,
                 x,
@@ -236,10 +362,166 @@ public sealed class GlassDockMotion
                 track.Width,
                 track.Height,
                 alpha,
-                track.Exiting));
+                track.Exiting,
+                displayedRemaining,
+                hoverAmount));
         }
 
-        return new Frame(_currentWidth, chipBounds, chipAlpha, visualRings, animating);
+        if (_hoverTracks.Count > activeRingKeys.Count)
+        {
+            foreach (var staleKey in _hoverTracks.Keys.Where(key => !activeRingKeys.Contains(key)).ToArray())
+            {
+                _hoverTracks.Remove(staleKey);
+            }
+        }
+
+        IsAnimating = IsAnimating || anyHoverAnimating;
+        return new Frame(
+            _currentWidth,
+            chipBounds,
+            chipAlpha,
+            visualRings,
+            IsAnimating,
+            chipHover,
+            routerHover,
+            intakeHover,
+            systemHover,
+            rateHover,
+            cpu,
+            memory,
+            disk,
+            gpu);
+    }
+
+    private bool UpdateRingValueTweens(long nowTick, bool animate)
+    {
+        var anyAnimating = false;
+        var activeKeys = new HashSet<string>(_tracks.Count, StringComparer.Ordinal);
+        foreach (var track in _tracks)
+        {
+            activeKeys.Add(track.Key);
+            if (track.Exiting) continue;
+            var tween = _ringValueTweens.GetValueOrDefault(track.Key);
+            AdvanceScalarTween(ref tween, track.Ring.RemainingPercent, nowTick, animate, threshold: 0.05, ref anyAnimating);
+            if (tween is null) _ringValueTweens.Remove(track.Key);
+            else _ringValueTweens[track.Key] = tween;
+        }
+
+        if (_ringValueTweens.Count > activeKeys.Count)
+        {
+            foreach (var staleKey in _ringValueTweens.Keys.Where(key => !activeKeys.Contains(key)).ToArray())
+            {
+                _ringValueTweens.Remove(staleKey);
+            }
+        }
+
+        return anyAnimating;
+    }
+
+    private double? AdvanceScalarTween(
+        ref ScalarTween? tween,
+        double? target,
+        long nowTick,
+        bool animate,
+        double threshold,
+        ref bool anyAnimating)
+    {
+        if (target is not { } value || !double.IsFinite(value))
+        {
+            tween = null;
+            return null;
+        }
+
+        if (!animate || tween is null)
+        {
+            tween = new ScalarTween { From = value, To = value, Current = value, StartTick = nowTick, Active = false };
+            return value;
+        }
+
+        if (Math.Abs(value - tween.To) >= threshold)
+        {
+            var startValue = tween.Current;
+            if (Math.Abs(value - startValue) >= threshold)
+            {
+                tween.From = startValue;
+                tween.To = value;
+                tween.StartTick = nowTick;
+                tween.Active = true;
+            }
+            else
+            {
+                tween.From = value;
+                tween.To = value;
+                tween.Current = value;
+                tween.Active = false;
+            }
+        }
+
+        if (!tween.Active) return tween.Current;
+
+        var progress = Math.Clamp((nowTick - tween.StartTick) / (float)_durationMs, 0f, 1f);
+        if (progress >= 1f)
+        {
+            tween.From = tween.To;
+            tween.Current = tween.To;
+            tween.Active = false;
+            return tween.Current;
+        }
+
+        var eased = EaseOutCubic(progress);
+        tween.Current = tween.From + (tween.To - tween.From) * eased;
+        anyAnimating = true;
+        return tween.Current;
+    }
+
+    private float AdvanceHover(string key, bool hovered, long nowTick, bool animate, ref bool anyAnimating)
+    {
+        var desired = hovered ? 1f : 0f;
+        if (!animate)
+        {
+            if (hovered) _hoverTracks[key] = new HoverTrack(1f, 1f, nowTick, HoverInMilliseconds);
+            else _hoverTracks.Remove(key);
+            return desired;
+        }
+
+        if (!_hoverTracks.TryGetValue(key, out var track))
+        {
+            if (!hovered) return 0f;
+            _hoverTracks[key] = new HoverTrack(0f, 1f, nowTick, HoverInMilliseconds);
+            anyAnimating = true;
+            return 0f;
+        }
+
+        var current = SampleHover(track, nowTick);
+        if (MathF.Abs(desired - track.To) > 0.01f)
+        {
+            var duration = desired > current ? HoverInMilliseconds : HoverOutMilliseconds;
+            track = new HoverTrack(current, desired, nowTick, duration);
+            _hoverTracks[key] = track;
+        }
+
+        var progress = Math.Clamp((nowTick - track.StartTick) / (float)track.DurationMs, 0f, 1f);
+        if (progress >= 1f)
+        {
+            if (track.To <= 0.01f)
+            {
+                _hoverTracks.Remove(key);
+                return 0f;
+            }
+
+            _hoverTracks[key] = new HoverTrack(track.To, track.To, nowTick, track.DurationMs);
+            return track.To;
+        }
+
+        anyAnimating = true;
+        return Lerp(track.From, track.To, EaseOutCubic(progress));
+    }
+
+    private static float SampleHover(HoverTrack track, long nowTick)
+    {
+        if (track.DurationMs <= 0 || MathF.Abs(track.From - track.To) <= 0.01f) return track.To;
+        var progress = Math.Clamp((nowTick - track.StartTick) / (float)track.DurationMs, 0f, 1f);
+        return Lerp(track.From, track.To, EaseOutCubic(progress));
     }
 
     private void SnapToTarget(
@@ -254,7 +536,7 @@ public sealed class GlassDockMotion
         }
 
         _initialized = true;
-        IsAnimating = false;
+        _layoutAnimating = false;
         _fromWidth = width;
         _toWidth = width;
         _currentWidth = width;

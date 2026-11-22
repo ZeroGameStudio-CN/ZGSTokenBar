@@ -15,6 +15,7 @@ internal sealed partial class BarForm
     private readonly GlassDockMotion _glassMotion = new();
     private readonly Dictionary<string, GlassItem> _glassMotionItems = new(StringComparer.Ordinal);
     private bool _pendingCollapseLayout;
+    private bool _dockAmbientPulseActive;
     private HashSet<ProviderKind> _enabledQuotaProviders = Enum.GetValues<ProviderKind>().ToHashSet();
     private readonly bool _explicitQuotaEnablement;
     private int _glassMaxRings = GlassDockLayout.MaxVisibleRings;
@@ -295,7 +296,48 @@ internal sealed partial class BarForm
         var light = false;
         var (plan, items) = CurrentGlassLayout();
         var animateDock = !_renderOnly && _animationsEnabled;
-        var motion = _glassMotion.Update(plan, Environment.TickCount64, animateDock);
+        var router = _pluginMiniCards.FirstOrDefault(card => card.PluginId == MiniAreaIds.Router);
+        var intake = _pluginMiniCards.FirstOrDefault(card => card.PluginId == MiniAreaIds.Intake);
+        var routerHovered = router is not null && _hoverPluginTarget?.Card.PluginId == MiniAreaIds.Router;
+        var intakeHovered = intake is not null && _hoverPluginTarget?.Card.PluginId == MiniAreaIds.Intake;
+        var systemHovered = _hoverSystemUsage && !_systemAnchorIsLive;
+        var rateHovered = _hoverSystemUsage && _systemAnchorIsLive;
+
+        string? hoveredRingKey = null;
+        var activeByKey = new Dictionary<string, GlassItem>(items.Count, StringComparer.Ordinal);
+        foreach (var item in items)
+        {
+            var key = GlassDockMotion.KeyOf(item.Ring);
+            activeByKey[key] = item;
+            _glassMotionItems[key] = item;
+            if (hoveredRingKey is null)
+            {
+                if (item.Card is { } hc && item.Window is { } hw
+                    && string.Equals(_hoverQuotaTarget?.Id, WindowKey(hc.Key, hw.Label), StringComparison.Ordinal))
+                {
+                    hoveredRingKey = key;
+                }
+                else if (item.Plugin is { } hp
+                    && string.Equals(_hoverPluginTarget?.Card.PluginId, hp.PluginId, StringComparison.Ordinal))
+                {
+                    hoveredRingKey = key;
+                }
+            }
+        }
+
+        var nowTick = Environment.TickCount64;
+        var interaction = new GlassDockInteraction(
+            hoveredRingKey,
+            _glassChipHovered,
+            routerHovered,
+            intakeHovered,
+            systemHovered,
+            rateHovered,
+            _systemUsage.CpuPercent,
+            _systemUsage.MemoryPercent,
+            _systemUsage.DiskActivePercent,
+            _systemUsage.GpuPercent);
+        var motion = _glassMotion.Update(plan, nowTick, animateDock, interaction);
         _cardBounds.Clear();
         _taskbarWindowBounds.Clear();
         _taskbarPluginBounds.Clear();
@@ -303,14 +345,6 @@ internal sealed partial class BarForm
         _glassChipBounds = RectangleF.Empty;
         var width = plan.Width;
         var deltaX = motion.Width - width;
-
-        var activeByKey = new Dictionary<string, GlassItem>(items.Count, StringComparer.Ordinal);
-        foreach (var item in items)
-        {
-            var key = GlassDockMotion.KeyOf(item.Ring);
-            activeByKey[key] = item;
-            _glassMotionItems[key] = item;
-        }
 
         var motionKeys = new HashSet<string>(motion.Rings.Count, StringComparer.Ordinal);
         var visuals = new List<GlassDockItemVisual>(items.Count);
@@ -331,7 +365,9 @@ internal sealed partial class BarForm
                     false,
                     bounds,
                     motionRing.Alpha,
-                    true));
+                    true,
+                    motionRing.HoverAmount,
+                    motionRing.DisplayedRemaining));
                 continue;
             }
 
@@ -356,7 +392,9 @@ internal sealed partial class BarForm
                 hovered,
                 animateDock ? bounds : null,
                 motionRing.Alpha,
-                false));
+                false,
+                animateDock ? motionRing.HoverAmount : null,
+                animateDock ? motionRing.DisplayedRemaining : null));
         }
 
         if (_glassMotionItems.Count > motionKeys.Count)
@@ -372,14 +410,18 @@ internal sealed partial class BarForm
             _glassChipBounds = RectangleF.Inflate(chipBounds, 2, 6);
         }
 
-        var router = _pluginMiniCards.FirstOrDefault(card => card.PluginId == MiniAreaIds.Router);
-        var intake = _pluginMiniCards.FirstOrDefault(card => card.PluginId == MiniAreaIds.Intake);
         if (router is not null) _taskbarPluginBounds.Add((ShiftX(plan.RouterBounds, deltaX), router));
         if (intake is not null) _taskbarPluginBounds.Add((ShiftX(plan.IntakeBounds, deltaX), intake));
         var bars = ShiftX(GlassDockLayout.BarsBoundsFor(width), deltaX);
         _systemUsageBounds = _showSystemMetrics ? RectangleF.Inflate(bars, 4, 3) : RectangleF.Empty;
         var rate = ShiftX(GlassDockLayout.RateBoundsFor(width), deltaX);
         _liveMetricsBounds = RectangleF.Inflate(rate, 3, 3);
+        var ambientPulse = animateDock && (_systemUsage.CurrentOutputRate is > 0 || (plan.OverflowUrgent && !_glassExpanded));
+        _dockAmbientPulseActive = ambientPulse;
+        var pulseCycleMs = ((nowTick % 2600) + 2600) % 2600;
+        var pulsePhase = ambientPulse
+            ? (float)(0.5 - 0.5 * Math.Cos(pulseCycleMs * (2.0 * Math.PI / 2600.0)))
+            : 0f;
         var scene = new GlassDockScene(
             light,
             width,
@@ -389,30 +431,36 @@ internal sealed partial class BarForm
             _glassExpanded,
             _glassChipHovered,
             router?.Card,
-            router is not null && _hoverPluginTarget?.Card.PluginId == MiniAreaIds.Router,
-            _systemUsage.CpuPercent,
-            _systemUsage.MemoryPercent,
-            _systemUsage.DiskActivePercent,
-            _systemUsage.GpuPercent,
-            _hoverSystemUsage && !_systemAnchorIsLive,
+            routerHovered,
+            motion.Cpu,
+            motion.Memory,
+            motion.Disk,
+            motion.Gpu,
+            systemHovered,
             _systemUsage.CurrentOutputRate,
             false, // Main tok/s is recorded output; the estimate has its own field in the activity panel.
-            _hoverSystemUsage && _systemAnchorIsLive)
+            rateHovered)
         {
             ItemPainted = GlassItemPainted,
-            IntakeHovered = intake is not null && _hoverPluginTarget?.Card.PluginId == MiniAreaIds.Intake,
+            IntakeHovered = intakeHovered,
             IntakeProcessingCount = DisplayedIntakeProcessingCount,
             IntakeServiceConfigured = _intakeServiceConfigured,
             AnimatedWidth = animateDock ? motion.Width : null,
             AnimatedChipBounds = animateDock ? motion.ChipBounds : null,
             ChipAlpha = animateDock ? motion.ChipAlpha : 1f,
             ExitingItems = exitingVisuals,
+            ChipHover = animateDock ? motion.ChipHover : null,
+            RouterHover = animateDock ? motion.RouterHover : null,
+            IntakeHover = animateDock ? motion.IntakeHover : null,
+            SystemHover = animateDock ? motion.SystemHover : null,
+            RateHover = animateDock ? motion.RateHover : null,
+            PulsePhase = pulsePhase,
         };
         _glassFailedThisPaint.Clear();
         GlassDockPainter.Draw(graphics, scene, _badgeFont);
         // A ring that painted cleanly this time rejoins (its earlier fault is forgotten).
         _taskbarRenderFailureAreaIds.RemoveWhere(id => id != "bar" && !_glassFailedThisPaint.Contains(id));
-        if (motion.Animating) EnsureAnimationTimer();
+        if (animateDock && (motion.Animating || ambientPulse)) EnsureAnimationTimer();
         QueueHoverRecovery();
     }
 
@@ -537,6 +585,14 @@ internal sealed partial class BarForm
         _glassMenu ??= new ContextMenuStrip();
         _glassMenu.Items.Clear();
         _glassMenu.Items.Add(_text.IsChinese ? "刷新" : "Refresh", null, (_, _) => RefreshRequested?.Invoke(this, EventArgs.Empty));
+        var strategyItem = new ToolStripMenuItem(
+            CodexStrategyPopoverForm.TitleFor(_text),
+            null,
+            (_, _) => ShowCodexStrategyPopover(pinned: true))
+        {
+            Enabled = HasCodexStrategy,
+        };
+        _glassMenu.Items.Add(strategyItem);
         _glassMenu.Items.Add(_text.IsChinese ? "设置" : "Settings", null, (_, _) => SettingsRequested?.Invoke(this, EventArgs.Empty));
         _glassMenu.Items.Add(_text.IsChinese ? "用量面板" : "Usage panel", null, (_, _) => OverviewRequested?.Invoke(this, EventArgs.Empty));
         _glassMenu.Items.Add(_text.IsChinese ? "显示/隐藏项目（设置）…" : "Show/hide items (Settings)…", null, (_, _) => SettingsRequested?.Invoke(this, EventArgs.Empty));

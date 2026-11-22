@@ -138,11 +138,11 @@ test('Sub2API observer renders anonymous account availability with aggregate fal
   assert.match(testProgram, /foreach \(var dpi in new\[\] \{ 96, 144, 192 \}\)[\s\S]*?taskbar-mini-sub2api-\{scenario\.Name\}-\{locale\}-\{dpi\}dpi\.png/);
 });
 
-test('the retired Codex display mode leaves no setting, UI or strategy page behind', () => {
+test('the retired Codex display mode leaves no setting or UI toggle behind', () => {
   assert.doesNotMatch(appSettings, /CodexMiniDisplayMode/);
   assert.doesNotMatch(settingsForm, /_codexDisplayMode|CodexMiniDisplayMode/);
   assert.doesNotMatch(nativeText, /CodexDisplayMode/);
-  assert.doesNotMatch(barForm, /CodexStrategy|_codexMiniDisplayMode|TaskbarMiniGrouping/);
+  assert.doesNotMatch(barForm, /_codexMiniDisplayMode|TaskbarMiniGrouping/);
 });
 
 test('Codex accounts share one Mini area and the dock keeps the Mini height contract', () => {

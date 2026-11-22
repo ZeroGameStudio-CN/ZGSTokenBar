@@ -15,7 +15,9 @@ internal sealed record GlassDockItemVisual(
     bool Hovered,
     RectangleF? AnimatedBounds = null,
     float Alpha = 1f,
-    bool Exiting = false);
+    bool Exiting = false,
+    float? HoverAmount = null,
+    double? DisplayedRemaining = null);
 
 /// <summary>How a ring shows its provider: a large translucent watermark under the % (default) or alternatives for comparison.</summary>
 internal enum GlassRingStyle
@@ -72,6 +74,12 @@ internal sealed record GlassDockScene(
     public RectangleF? AnimatedChipBounds { get; init; }
     public float ChipAlpha { get; init; } = 1f;
     public IReadOnlyList<GlassDockItemVisual>? ExitingItems { get; init; }
+    public float? ChipHover { get; init; }
+    public float? RouterHover { get; init; }
+    public float? IntakeHover { get; init; }
+    public float? SystemHover { get; init; }
+    public float? RateHover { get; init; }
+    public float PulsePhase { get; init; }
 }
 
 internal static class GlassDockPainter
@@ -192,10 +200,15 @@ internal static class GlassDockPainter
                 graphics.FillRectangle(divider, dividerX - .5f, 8, 1f, GlassDockLayout.Height - 16);
             }
 
+            var routerHover = Math.Clamp(scene.RouterHover ?? (scene.RouterHovered ? 1f : 0f), 0f, 1f);
+            var intakeHover = Math.Clamp(scene.IntakeHover ?? (scene.IntakeHovered ? 1f : 0f), 0f, 1f);
+            var systemHover = Math.Clamp(scene.SystemHover ?? (scene.SystemHovered ? 1f : 0f), 0f, 1f);
+            var rateHover = Math.Clamp(scene.RateHover ?? (scene.RateHovered ? 1f : 0f), 0f, 1f);
+
             if (scene.Router is { } router && !scene.Plan.RouterBounds.IsEmpty)
             {
                 var routerBounds = scene.Plan.RouterBounds;
-                DrawMonitorHover(graphics, routerBounds, scene.RouterHovered, scene.Light);
+                DrawMonitorHover(graphics, routerBounds, routerHover, scene.Light);
                 // The queue count is the same chip as the ring %: same size, and in the corner layout the
                 // same baseline as the ring chips, on the Router icon's lower-left.
                 var corner = scene.RingStyle == GlassRingStyle.IconPercentBelow && scene.PercentPosition == GlassPercentPosition.BottomLeft;
@@ -206,7 +219,7 @@ internal static class GlassDockPainter
             if (!scene.Plan.IntakeBounds.IsEmpty)
             {
                 var bounds = scene.Plan.IntakeBounds;
-                DrawMonitorHover(graphics, bounds, scene.IntakeHovered, scene.Light);
+                DrawMonitorHover(graphics, bounds, intakeHover, scene.Light);
                 var icon = MonitorGlyph.Centered(bounds);
                 var state = scene.IntakeProcessingCount switch
                 {
@@ -220,10 +233,10 @@ internal static class GlassDockPainter
             }
 
             var barsBounds = GlassDockLayout.BarsBoundsFor(scene.Width);
-            if (scene.SystemHovered) DrawHover(graphics, RectangleF.Inflate(barsBounds, 4, 3), scene.Light);
+            if (systemHover > 0.01f) DrawHover(graphics, RectangleF.Inflate(barsBounds, 4, 3), scene.Light, systemHover);
             DrawMetrics(graphics, barsBounds, scene);
             var rateBounds = GlassDockLayout.RateBoundsFor(scene.Width);
-            if (scene.RateHovered) DrawHover(graphics, RectangleF.Inflate(rateBounds, 3, 3), scene.Light);
+            if (rateHover > 0.01f) DrawHover(graphics, RectangleF.Inflate(rateBounds, 3, 3), scene.Light, rateHover);
             DrawRate(graphics, rateBounds, scene);
         }
         finally
@@ -232,9 +245,9 @@ internal static class GlassDockPainter
         }
     }
 
-    private static void DrawMonitorHover(Graphics graphics, RectangleF bounds, bool hovered, bool light)
+    private static void DrawMonitorHover(Graphics graphics, RectangleF bounds, float hoverAmount, bool light)
     {
-        if (hovered) DrawHover(graphics, RectangleF.Inflate(bounds, 3, 3), light);
+        if (hoverAmount > 0.01f) DrawHover(graphics, RectangleF.Inflate(bounds, 3, 3), light, hoverAmount);
     }
 
     internal static void DrawMonitorCount(Graphics graphics, RectangleF icon, long count, float fontSize, float bottom, bool light)
@@ -255,26 +268,39 @@ internal static class GlassDockPainter
     {
         var hairline = scene.DevicePixel;
         var card = CardBounds(scene);
-        for (var layer = 3; layer >= 1; layer--)
+        for (var layer = 4; layer >= 1; layer--)
         {
-            using var shadowPath = Rounded(new RectangleF(card.X + .5f, card.Y + layer * .9f, card.Width - 1f, card.Height), GlassDockLayout.Corner);
-            using var shadow = new SolidBrush(Color.FromArgb(layer switch { 3 => 22, 2 => 38, _ => 60 }, 0, 0, 0));
+            using var shadowPath = Rounded(new RectangleF(card.X + .4f, card.Y + layer * .85f, card.Width - .8f, card.Height), GlassDockLayout.Corner);
+            using var shadow = new SolidBrush(Color.FromArgb(layer switch { 4 => 14, 3 => 24, 2 => 40, _ => 62 }, 0, 0, 0));
             graphics.FillPath(shadow, shadowPath);
         }
 
         using var path = Rounded(card, GlassDockLayout.Corner);
         using (var body = new LinearGradientBrush(
                    RectangleF.Inflate(card, 0, 1),
-                   Color.FromArgb(250, 30, 32, 39),
-                   Color.FromArgb(250, 19, 20, 25),
+                   Color.FromArgb(250, 32, 35, 43),
+                   Color.FromArgb(250, 18, 20, 26),
                    LinearGradientMode.Vertical))
         {
             graphics.FillPath(body, path);
         }
 
+        // Subtle top inner specular sheen gives the dark glass card physical bevel depth.
+        var sheenState = graphics.Save();
+        graphics.SetClip(path, CombineMode.Intersect);
+        using (var sheen = new LinearGradientBrush(
+                   new RectangleF(card.X, card.Y, Math.Max(4f, card.Width), 12f),
+                   Color.FromArgb(22, 255, 255, 255),
+                   Color.FromArgb(0, 255, 255, 255),
+                   LinearGradientMode.Vertical))
+        {
+            graphics.FillRectangle(sheen, card.X, card.Y, card.Width, 12f);
+        }
+        graphics.Restore(sheenState);
+
         var edge = RectangleF.Inflate(card, -hairline / 2, -hairline / 2);
         using var edgePath = Rounded(edge, GlassDockLayout.Corner - hairline / 2);
-        using var border = new Pen(Color.FromArgb(34, 255, 255, 255), hairline);
+        using var border = new Pen(Color.FromArgb(40, 255, 255, 255), hairline);
         graphics.DrawPath(border, edgePath);
     }
 
@@ -405,9 +431,16 @@ internal static class GlassDockPainter
             ? (GlassDockLayout.Height - size) / 2f
             : position == GlassPercentPosition.Above ? stackTop + labelHeight - 1.5f : stackTop;
         var ringBounds = new RectangleF(slot.X + (slot.Width - size) / 2f, ringTop, size, size);
-        if (item.Hovered)
+        var hoverAmount = Math.Clamp(item.HoverAmount ?? (item.Hovered ? 1f : 0f), 0f, 1f);
+        var arcRemaining = item.DisplayedRemaining ?? ring.RemainingPercent;
+        var accentColor = Accent(ring.Accent, light);
+        if (hoverAmount > 0.01f)
         {
-            using var hover = new SolidBrush(light ? UiPalette.Slate900.WithAlpha(34) : Color.FromArgb(34, 255, 255, 255));
+            var haloAlpha = Math.Clamp((int)MathF.Round(34 * hoverAmount), 0, 255);
+            using var halo = new Pen(Color.FromArgb(haloAlpha, accentColor), 2.2f);
+            graphics.DrawEllipse(halo, RectangleF.Inflate(ringBounds, 1.5f * hoverAmount, 1.5f * hoverAmount));
+            var fillAlpha = Math.Clamp((int)MathF.Round(32 * hoverAmount), 0, 255);
+            using var hover = new SolidBrush(light ? UiPalette.Slate900.WithAlpha(fillAlpha) : Color.FromArgb(fillAlpha, 255, 255, 255));
             graphics.FillEllipse(hover, RectangleF.Inflate(ringBounds, 1, 1));
         }
 
@@ -420,13 +453,13 @@ internal static class GlassDockPainter
         }
 
         var balanceOnly = ring.BalanceText is not null && ring.RemainingPercent is null;
-        var sweep = balanceOnly ? 360f : GlassDockLayout.RingSweep(ring.RemainingPercent);
-        if (balanceOnly) color = Accent(ring.Accent, light);
+        var sweep = balanceOnly ? 360f : GlassDockLayout.RingSweep(arcRemaining);
+        if (balanceOnly) color = accentColor;
         if (sweep > 0)
         {
             using var ink = new Pen(color, stroke) { StartCap = LineCap.Round, EndCap = LineCap.Round };
             if (sweep >= 360f) graphics.DrawEllipse(ink, ellipse);
-            else graphics.DrawArc(ink, ellipse, GlassDockLayout.RingStart(ring.RemainingPercent), sweep);
+            else graphics.DrawArc(ink, ellipse, GlassDockLayout.RingStart(arcRemaining), sweep);
         }
 
         // Pace tick sits on the ring under the % chip and text, exactly like the arc it marks.
@@ -443,7 +476,7 @@ internal static class GlassDockPainter
             if (!stacked)
             {
                 DrawChip(graphics, Math.Max(8f, slot.X - 1.5f), ringBounds.Bottom + 2.5f, text, labelSize,
-                    !balanceOnly && GlassDockLayout.Band(ring.RemainingPercent) == "red", light);
+                    !balanceOnly && GlassDockLayout.Band(ring.RemainingPercent) == "red", light, hoverAmount);
             }
             else
             {
@@ -526,7 +559,7 @@ internal static class GlassDockPainter
     /// is the chip's lower edge; the chip grows with its text from <paramref name="left"/>.
     /// </summary>
     internal static RectangleF DrawChip(Graphics graphics, float left, float bottom, string text,
-        float labelSize, bool critical, bool light)
+        float labelSize, bool critical, bool light, float hoverAmount = 0f)
     {
         var style = ChipStyle;
         var number = text.EndsWith('%') ? text[..^1] : text;
@@ -539,15 +572,17 @@ internal static class GlassDockPainter
         var height = Math.Max(11.5f, labelSize + 1.5f);
         var width = numberWidth + signWidth + 4.5f;
         var pill = new RectangleF(left, bottom - height, width, height);
+        var clampedHover = Math.Clamp(hoverAmount, 0f, 1f);
         using (var path = Rounded(pill, height / 2f))
         {
             var fill = critical && style.CriticalFill is { } criticalFill
                 ? criticalFill
                 : light ? Color.FromArgb(style.FillAlpha, 255, 255, 255) : Color.FromArgb(style.FillAlpha, 10, 12, 17);
             using (var brush = new SolidBrush(fill)) graphics.FillPath(brush, path);
+            var neutralEdgeAlpha = 70 + (int)MathF.Round(42 * clampedHover);
             var outline = critical && style.CriticalOutlineAlpha > 0
                 ? Color.FromArgb(style.CriticalOutlineAlpha, style.CriticalText)
-                : light ? UiPalette.Slate900.WithAlpha(70) : Color.FromArgb(70, 255, 255, 255);
+                : light ? UiPalette.Slate900.WithAlpha(neutralEdgeAlpha) : Color.FromArgb(neutralEdgeAlpha, 255, 255, 255);
             if (!(critical && style.CriticalFill is not null))
             {
                 using var edge = new Pen(outline, 1f);
@@ -769,19 +804,32 @@ internal static class GlassDockPainter
         var light = scene.Light;
         var urgent = scene.Plan.OverflowUrgent && !scene.Expanded;
         var rect = bounds;
+        var chipHover = Math.Clamp(scene.ChipHover ?? (scene.ChipHovered ? 1f : 0f), 0f, 1f);
+        var pulse = Math.Clamp(scene.PulsePhase, 0f, 1f);
         using var path = Rounded(rect, rect.Height / 2);
         var alert = light ? Color.FromArgb(200, 38, 48) : ChipStyle.CriticalText;
+        if (urgent && pulse > 0.01f)
+        {
+            var haloRect = RectangleF.Inflate(rect, 1.4f, 1.4f);
+            using var haloPath = Rounded(haloRect, haloRect.Height / 2);
+            using var halo = new Pen(Color.FromArgb((int)MathF.Round(48 * pulse), alert), 1.4f);
+            graphics.DrawPath(halo, haloPath);
+        }
+
+        var urgentAlpha = (int)MathF.Round(150 + 38 * chipHover);
+        var calmAlpha = (int)MathF.Round((light ? 34 : 36) + (70 - (light ? 34 : 36)) * chipHover);
         using var fill = new SolidBrush(urgent
             ? light
-                ? Color.FromArgb(scene.ChipHovered ? 188 : 150, 255, 228, 228)
-                : Color.FromArgb(scene.ChipHovered ? 188 : 150, 48, 16, 20)
-            : scene.ChipHovered
-                ? light ? UiPalette.Slate900.WithAlpha(70) : Color.FromArgb(70, 255, 255, 255)
-                : light ? UiPalette.Slate900.WithAlpha(34) : Color.FromArgb(36, 255, 255, 255));
+                ? Color.FromArgb(urgentAlpha, 255, 228, 228)
+                : Color.FromArgb(urgentAlpha, 48, 16, 20)
+            : light
+                ? UiPalette.Slate900.WithAlpha(calmAlpha)
+                : Color.FromArgb(calmAlpha, 255, 255, 255));
         graphics.FillPath(fill, path);
         if (urgent)
         {
-            using var edge = new Pen(Color.FromArgb(ChipStyle.CriticalOutlineAlpha, alert), 1f);
+            var outlineAlpha = Math.Clamp(ChipStyle.CriticalOutlineAlpha + (int)MathF.Round(65 * pulse), 0, 255);
+            using var edge = new Pen(Color.FromArgb(outlineAlpha, alert), 1f);
             graphics.DrawPath(edge, path);
         }
 
@@ -828,12 +876,21 @@ internal static class GlassDockPainter
         using var font = new Font("Segoe UI", RateFontSize, FontStyle.Bold, GraphicsUnit.Pixel);
         using var small = new Font("Segoe UI", RateUnitSize, FontStyle.Regular, GraphicsUnit.Pixel);
         var active = scene.TokensPerSecond is > 0;
+        var pulse = active ? Math.Clamp(scene.PulsePhase, 0f, 1f) : 0f;
         var color = scene.TokensPerSecond is null
             ? Muted(scene.Light)
             : scene.Light ? UiPalette.Slate900 : UiPalette.Slate50;
         using var text = new SolidBrush(active ? color : Color.FromArgb(scene.TokensPerSecond is null ? color.A : 170, color));
         using var muted = new SolidBrush(Muted(scene.Light));
         var readout = RateReadoutBoxes(graphics, bounds, font, small);
+        if (active)
+        {
+            var glowBounds = RectangleF.Inflate(readout.Number, 3f, 2f);
+            using var glowPath = Rounded(glowBounds, glowBounds.Height / 2f);
+            using var glowBrush = new SolidBrush(Color.FromArgb((int)MathF.Round(18 + 22 * pulse), 52, 220, 150));
+            graphics.FillPath(glowBrush, glowPath);
+        }
+
         using (var numberFormat = new StringFormat(StringFormat.GenericTypographic)
         {
             Alignment = StringAlignment.Center,
@@ -842,6 +899,20 @@ internal static class GlassDockPainter
         })
         {
             graphics.DrawString(rate, font, text, readout.Number, numberFormat);
+        }
+
+        if (active)
+        {
+            using var unitFormat = new StringFormat(StringFormat.GenericTypographic) { FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces };
+            var unitWidth = graphics.MeasureString("tok/s", small, PointF.Empty, unitFormat).Width;
+            var dotSize = 2.6f;
+            var dotX = readout.Unit.X + (readout.Unit.Width - unitWidth) / 2f - dotSize - 2.2f;
+            var dotY = readout.Unit.Y + (readout.Unit.Height - dotSize) / 2f + 0.3f;
+            if (dotX >= bounds.X + 1f)
+            {
+                using var dot = new SolidBrush(Color.FromArgb((int)MathF.Round(165 + 90 * pulse), 52, 220, 150));
+                graphics.FillEllipse(dot, dotX, dotY, dotSize, dotSize);
+            }
         }
 
         graphics.DrawString("tok/s", small, muted, readout.Unit, Format(StringAlignment.Center));
@@ -891,10 +962,13 @@ internal static class GlassDockPainter
             : scaled.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)) + suffix;
     }
 
-    private static void DrawHover(Graphics graphics, RectangleF bounds, bool light)
+    private static void DrawHover(Graphics graphics, RectangleF bounds, bool light, float hoverAmount = 1f)
     {
+        var clamped = Math.Clamp(hoverAmount, 0f, 1f);
+        if (clamped <= 0.01f) return;
+        var alpha = Math.Clamp((int)MathF.Round((light ? 30 : 34) * clamped), 0, 255);
         using var path = Rounded(bounds, Math.Min(10, bounds.Height / 2));
-        using var fill = new SolidBrush(light ? UiPalette.Slate900.WithAlpha(30) : Color.FromArgb(30, 255, 255, 255));
+        using var fill = new SolidBrush(light ? UiPalette.Slate900.WithAlpha(alpha) : Color.FromArgb(alpha, 255, 255, 255));
         graphics.FillPath(fill, path);
     }
 
