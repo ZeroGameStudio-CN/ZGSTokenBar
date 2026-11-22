@@ -13,7 +13,7 @@ public sealed partial class RouterMonitorClient
     private async Task<RouterSnapshot> AllSnapshotAsync(string instance, JsonElement projects, CancellationToken token)
     {
         var views = await MapProjectsAsync(projects.EnumerateArray().ToArray(), async row =>
-            (Project: row, View: await ProjectViewAsync(RouterJson.Text(row, "key"), token)), token);
+            (Project: row, View: await ProjectViewAsync(RouterJson.Text(row, "key"), token).ConfigureAwait(false)), token).ConfigureAwait(false);
         var active = views.Where(row => RouterJson.IsHex(RouterJson.Text(row.View, "requestId"), 32))
             .OrderBy(row => RouterJson.Text(row.Project, "name"), StringComparer.OrdinalIgnoreCase)
             .ThenBy(row => RouterJson.Text(row.Project, "key"), StringComparer.Ordinal)
@@ -41,7 +41,7 @@ public sealed partial class RouterMonitorClient
         offset = Math.Max(0, offset);
         var cached = _allCatalog;
         var projects = cached is not null && DateTimeOffset.UtcNow - cached.At < TimeSpan.FromSeconds(10)
-            ? cached.Projects : await ReadAsync("api/projects", token);
+            ? cached.Projects : await ReadAsync("api/projects", token).ConfigureAwait(false);
         if (projects.ValueKind != JsonValueKind.Array || projects.GetArrayLength() > 128) throw new InvalidDataException("Invalid project catalog.");
         var pages = await MapProjectsAsync(projects.EnumerateArray().ToArray(), async project =>
         {
@@ -53,8 +53,8 @@ public sealed partial class RouterMonitorClient
             do
             {
                 var size = Math.Min(100, target - prefix.Count);
-                var page = history ? await HistoryAsync(key, kind, outcome, day, query, prefix.Count, token, size)
-                    : await QueueAsync(key, prefix.Count, token, size);
+                var page = history ? await HistoryAsync(key, kind, outcome, day, query, prefix.Count, token, size).ConfigureAwait(false)
+                    : await QueueAsync(key, prefix.Count, token, size).ConfigureAwait(false);
                 total = RouterJson.Integer(page, "total");
                 metadata = page;
                 var rows = RouterJson.Rows(page, "items").ToArray();
@@ -62,7 +62,7 @@ public sealed partial class RouterMonitorClient
                 if (rows.Length == 0) break;
             } while (prefix.Count < target && prefix.Count < total);
             return (Project: project, Rows: prefix, Total: total, Metadata: metadata);
-        }, token);
+        }, token).ConfigureAwait(false);
         var entries = pages.SelectMany(page =>
         {
             var projectKey = RouterJson.Text(page.Project, "key");
@@ -87,63 +87,93 @@ public sealed partial class RouterMonitorClient
             : entries.OrderBy(entry => entry.ProjectName, StringComparer.Ordinal)
                 .ThenBy(entry => entry.ProjectKey, StringComparer.Ordinal)
                 .ThenBy(entry => entry.Rank);
-        var items = ordered.Skip(offset).Take(limit).Select(entry =>
+
+        using var buffer = new MemoryStream(16384);
+        using (var writer = new Utf8JsonWriter(buffer))
         {
-            var copy = JsonNode.Parse(entry.Row.GetRawText())!.AsObject();
-            copy["projectKey"] = entry.ProjectKey;
-            copy["projectName"] = entry.ProjectName;
-            copy["task"] = entry.ProjectName + " · " + RouterJson.Text(entry.Row, "task");
-            return (JsonNode)copy;
-        }).ToArray();
-        var counts = new JsonObject { ["completed"] = pages.Sum(page => RouterJson.Integer(RouterJson.Field(page.Metadata, "counts"), "completed")),
-            ["failed"] = pages.Sum(page => RouterJson.Integer(RouterJson.Field(page.Metadata, "counts"), "failed")),
-            ["cancelled"] = pages.Sum(page => RouterJson.Integer(RouterJson.Field(page.Metadata, "counts"), "cancelled")) };
-        var days = pages.SelectMany(page => RouterJson.Rows(page.Metadata, "days"))
-            .Select(row => (Row: row, Date: RouterJson.Text(row, "date")))
-            .Where(entry => entry.Date.Length > 0)
-            .GroupBy(entry => entry.Date, StringComparer.Ordinal)
-            .OrderByDescending(group => group.Key, StringComparer.Ordinal)
-            .Select(group =>
+            writer.WriteStartObject();
+
+            writer.WriteStartArray("items");
+            foreach (var entry in ordered.Skip(offset).Take(limit))
             {
-                var item = new JsonObject { ["date"] = group.Key };
+                writer.WriteStartObject();
+                if (entry.Row.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var prop in entry.Row.EnumerateObject())
+                    {
+                        if (prop.Name is "projectKey" or "projectName" or "task") continue;
+                        prop.WriteTo(writer);
+                    }
+                }
+                writer.WriteString("projectKey", entry.ProjectKey);
+                writer.WriteString("projectName", entry.ProjectName);
+                writer.WriteString("task", entry.ProjectName + " · " + RouterJson.Text(entry.Row, "task"));
+                writer.WriteEndObject();
+            }
+            writer.WriteEndArray();
+
+            writer.WriteNumber("total", pages.Sum(page => page.Total));
+            writer.WriteNumber("offset", offset);
+            writer.WriteNumber("limit", limit);
+
+            writer.WriteStartObject("counts");
+            writer.WriteNumber("completed", pages.Sum(page => RouterJson.Integer(RouterJson.Field(page.Metadata, "counts"), "completed")));
+            writer.WriteNumber("failed", pages.Sum(page => RouterJson.Integer(RouterJson.Field(page.Metadata, "counts"), "failed")));
+            writer.WriteNumber("cancelled", pages.Sum(page => RouterJson.Integer(RouterJson.Field(page.Metadata, "counts"), "cancelled")));
+            writer.WriteEndObject();
+
+            writer.WriteStartArray("days");
+            foreach (var group in pages.SelectMany(page => RouterJson.Rows(page.Metadata, "days"))
+                .Select(row => (Row: row, Date: RouterJson.Text(row, "date")))
+                .Where(entry => entry.Date.Length > 0)
+                .GroupBy(entry => entry.Date, StringComparer.Ordinal)
+                .OrderByDescending(group => group.Key, StringComparer.Ordinal))
+            {
+                writer.WriteStartObject();
+                writer.WriteString("date", group.Key);
                 var hasTotal = group.Any(entry => entry.Row.ValueKind == JsonValueKind.Object
                     && entry.Row.TryGetProperty("total", out var totalProp)
                     && totalProp.ValueKind == JsonValueKind.Number);
-                if (hasTotal) item["total"] = group.Sum(entry => RouterJson.Integer(entry.Row, "total"));
+                if (hasTotal) writer.WriteNumber("total", group.Sum(entry => RouterJson.Integer(entry.Row, "total")));
 
                 var hasCounts = group.Any(entry => RouterJson.Field(entry.Row, "counts").ValueKind == JsonValueKind.Object);
                 if (hasCounts)
                 {
-                    item["counts"] = new JsonObject
-                    {
-                        ["completed"] = group.Sum(entry => RouterJson.Integer(RouterJson.Field(entry.Row, "counts"), "completed")),
-                        ["failed"] = group.Sum(entry => RouterJson.Integer(RouterJson.Field(entry.Row, "counts"), "failed")),
-                        ["cancelled"] = group.Sum(entry => RouterJson.Integer(RouterJson.Field(entry.Row, "counts"), "cancelled")),
-                        ["pending"] = group.Sum(entry => RouterJson.Integer(RouterJson.Field(entry.Row, "counts"), "pending")),
-                    };
+                    writer.WriteStartObject("counts");
+                    writer.WriteNumber("completed", group.Sum(entry => RouterJson.Integer(RouterJson.Field(entry.Row, "counts"), "completed")));
+                    writer.WriteNumber("failed", group.Sum(entry => RouterJson.Integer(RouterJson.Field(entry.Row, "counts"), "failed")));
+                    writer.WriteNumber("cancelled", group.Sum(entry => RouterJson.Integer(RouterJson.Field(entry.Row, "counts"), "cancelled")));
+                    writer.WriteNumber("pending", group.Sum(entry => RouterJson.Integer(RouterJson.Field(entry.Row, "counts"), "pending")));
+                    writer.WriteEndObject();
                 }
+
                 var hasDurations = group.Any(entry => RouterJson.Field(entry.Row, "durations").ValueKind == JsonValueKind.Object);
                 if (hasDurations)
                 {
-                    item["durations"] = new JsonObject
-                    {
-                        ["dispatchedCount"] = group.Sum(entry => RouterJson.Integer(RouterJson.Field(entry.Row, "durations"), "dispatchedCount")),
-                        ["measuredCount"] = group.Sum(entry => RouterJson.Integer(RouterJson.Field(entry.Row, "durations"), "measuredCount")),
-                        ["occupiedSeconds"] = Math.Round(group.Sum(entry => RouterJson.Number(RouterJson.Field(entry.Row, "durations"), "occupiedSeconds") ?? 0d), 3),
-                        ["executionSeconds"] = Math.Round(group.Sum(entry => RouterJson.Number(RouterJson.Field(entry.Row, "durations"), "executionSeconds") ?? 0d), 3),
-                        ["cleanupSeconds"] = Math.Round(group.Sum(entry => RouterJson.Number(RouterJson.Field(entry.Row, "durations"), "cleanupSeconds") ?? 0d), 3),
-                        ["editorActiveSeconds"] = Math.Round(group.Sum(entry => RouterJson.Number(RouterJson.Field(entry.Row, "durations"), "editorActiveSeconds") ?? 0d), 3),
-                        ["routerOverheadSeconds"] = Math.Round(group.Sum(entry => RouterJson.Number(RouterJson.Field(entry.Row, "durations"), "routerOverheadSeconds") ?? 0d), 3),
-                        ["nonEditorScriptSeconds"] = Math.Round(group.Sum(entry => RouterJson.Number(RouterJson.Field(entry.Row, "durations"), "nonEditorScriptSeconds") ?? 0d), 3),
-                        ["unmeasuredSeconds"] = Math.Round(group.Sum(entry => RouterJson.Number(RouterJson.Field(entry.Row, "durations"), "unmeasuredSeconds") ?? 0d), 3),
-                        ["zeroEditorScriptCount"] = group.Sum(entry => RouterJson.Integer(RouterJson.Field(entry.Row, "durations"), "zeroEditorScriptCount")),
-                    };
+                    writer.WriteStartObject("durations");
+                    writer.WriteNumber("dispatchedCount", group.Sum(entry => RouterJson.Integer(RouterJson.Field(entry.Row, "durations"), "dispatchedCount")));
+                    writer.WriteNumber("measuredCount", group.Sum(entry => RouterJson.Integer(RouterJson.Field(entry.Row, "durations"), "measuredCount")));
+                    writer.WriteNumber("occupiedSeconds", Math.Round(group.Sum(entry => RouterJson.Number(RouterJson.Field(entry.Row, "durations"), "occupiedSeconds") ?? 0d), 3));
+                    writer.WriteNumber("executionSeconds", Math.Round(group.Sum(entry => RouterJson.Number(RouterJson.Field(entry.Row, "durations"), "executionSeconds") ?? 0d), 3));
+                    writer.WriteNumber("cleanupSeconds", Math.Round(group.Sum(entry => RouterJson.Number(RouterJson.Field(entry.Row, "durations"), "cleanupSeconds") ?? 0d), 3));
+                    writer.WriteNumber("editorActiveSeconds", Math.Round(group.Sum(entry => RouterJson.Number(RouterJson.Field(entry.Row, "durations"), "editorActiveSeconds") ?? 0d), 3));
+                    writer.WriteNumber("routerOverheadSeconds", Math.Round(group.Sum(entry => RouterJson.Number(RouterJson.Field(entry.Row, "durations"), "routerOverheadSeconds") ?? 0d), 3));
+                    writer.WriteNumber("nonEditorScriptSeconds", Math.Round(group.Sum(entry => RouterJson.Number(RouterJson.Field(entry.Row, "durations"), "nonEditorScriptSeconds") ?? 0d), 3));
+                    writer.WriteNumber("unmeasuredSeconds", Math.Round(group.Sum(entry => RouterJson.Number(RouterJson.Field(entry.Row, "durations"), "unmeasuredSeconds") ?? 0d), 3));
+                    writer.WriteNumber("zeroEditorScriptCount", group.Sum(entry => RouterJson.Integer(RouterJson.Field(entry.Row, "durations"), "zeroEditorScriptCount")));
+                    writer.WriteEndObject();
                 }
-                return (JsonNode)item;
-            }).ToArray();
-        return Element(new JsonObject { ["items"] = new JsonArray(items),
-            ["total"] = pages.Sum(page => page.Total), ["offset"] = offset, ["limit"] = limit,
-            ["counts"] = counts, ["days"] = new JsonArray(days), ["groups"] = new JsonArray() });
+                writer.WriteEndObject();
+            }
+            writer.WriteEndArray();
+
+            writer.WriteStartArray("groups");
+            writer.WriteEndArray();
+
+            writer.WriteEndObject();
+        }
+        using var document = JsonDocument.Parse(buffer.GetBuffer().AsMemory(0, (int)buffer.Length));
+        return document.RootElement.Clone();
     }
 
     private static JsonElement Element(JsonNode node)
@@ -154,12 +184,12 @@ public sealed partial class RouterMonitorClient
 
     private static async Task<T[]> MapProjectsAsync<T>(JsonElement[] projects, Func<JsonElement, Task<T>> read, CancellationToken token)
     {
-        using var gate = new SemaphoreSlim(4);
+        using var gate = new SemaphoreSlim(6);
         return await Task.WhenAll(projects.Select(async project =>
         {
-            await gate.WaitAsync(token);
-            try { return await read(project); }
+            await gate.WaitAsync(token).ConfigureAwait(false);
+            try { return await read(project).ConfigureAwait(false); }
             finally { gate.Release(); }
-        }));
+        })).ConfigureAwait(false);
     }
 }

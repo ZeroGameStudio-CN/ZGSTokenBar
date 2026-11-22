@@ -211,10 +211,14 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
         bool Match(IntakeServiceRecord row) => _project is null || row.Project == _project;
         var today = DateOnly.FromDateTime(DateTime.Now);
         var showHistoryProject = _project is null && projects.Length > 1;
-        _history.Columns[1].FillWeight = showHistoryProject ? 300 : 330;
-        _history.Columns[2].HeaderText = showHistoryProject ? T("项目 · 操作", "Project · Action") : T("操作", "Action");
-        _history.Columns[2].FillWeight = showHistoryProject ? 135 : 105;
+        var targetHistoryHeader = showHistoryProject ? T("项目 · 操作", "Project · Action") : T("操作", "Action");
         var historyFormatChanged = _lastHistoryShowProject != showHistoryProject;
+        if (historyFormatChanged || _history.Columns[2].HeaderText != targetHistoryHeader)
+        {
+            _history.Columns[1].FillWeight = showHistoryProject ? 300 : 330;
+            _history.Columns[2].HeaderText = targetHistoryHeader;
+            _history.Columns[2].FillWeight = showHistoryProject ? 135 : 105;
+        }
         _lastHistoryShowProject = showHistoryProject;
         var progress = _last.Values.SelectMany(r => r.Progress).Where(r => Match(r) && !r.IsHistoryOnly).ToArray();
         var history = _last.Values.SelectMany(r => r.History).Where(Match)

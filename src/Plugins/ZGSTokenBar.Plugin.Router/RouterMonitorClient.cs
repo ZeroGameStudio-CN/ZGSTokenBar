@@ -19,13 +19,13 @@ public sealed partial class RouterMonitorClient : IDisposable
     public async Task<JsonElement> ReadAsync(string route, CancellationToken cancellationToken = default)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(TimeSpan.FromSeconds(4));
+        deadline.CancelAfter(TimeSpan.FromSeconds(route.StartsWith("api/history", StringComparison.Ordinal) ? 12 : 4));
         cancellationToken = deadline.Token;
         if (!route.StartsWith("api/", StringComparison.Ordinal) && route != "health")
             throw new ArgumentException("Use a fixed monitor route.", nameof(route));
         using var request = new HttpRequestMessage(HttpMethod.Get, route);
-        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        var bytes = await ReadBodyAsync(response, 1024 * 1024, cancellationToken);
+        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        var bytes = await ReadBodyAsync(response, 1024 * 1024, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
             throw RouterMonitorHttpException.From(response.StatusCode, bytes);
         using var json = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 32 });
@@ -35,28 +35,28 @@ public sealed partial class RouterMonitorClient : IDisposable
     public async Task<RouterSnapshot> SnapshotAsync(string? projectKey = null, CancellationToken cancellationToken = default,
         bool aggregateQueuedCount = false)
     {
-        var health = await ReadAsync("health", cancellationToken);
+        var health = await ReadAsync("health", cancellationToken).ConfigureAwait(false);
         if (RouterJson.Integer(health, "apiVersion") != 1 || RouterJson.Text(health, "instanceId").Length != 32)
             throw new RouterCompatibilityException();
-        var projects = await ReadAsync("api/projects", cancellationToken);
+        var projects = await ReadAsync("api/projects", cancellationToken).ConfigureAwait(false);
         if (projects.ValueKind != JsonValueKind.Array || projects.GetArrayLength() > 128)
             throw new InvalidDataException("Invalid project catalog.");
         _allCatalog = new(projects, DateTimeOffset.UtcNow);
-        if (projectKey == AllProjects) return await AllSnapshotAsync(RouterJson.Text(health, "instanceId"), projects, cancellationToken);
+        if (projectKey == AllProjects) return await AllSnapshotAsync(RouterJson.Text(health, "instanceId"), projects, cancellationToken).ConfigureAwait(false);
         var selected = projects.EnumerateArray().FirstOrDefault(row => RouterJson.Text(row, "key") == projectKey);
         if (selected.ValueKind == JsonValueKind.Undefined)
             selected = projects.EnumerateArray().FirstOrDefault(row => RouterJson.Integer(row, "pending") > 0);
         if (selected.ValueKind == JsonValueKind.Undefined) selected = projects.EnumerateArray().FirstOrDefault();
         if (selected.ValueKind == JsonValueKind.Undefined) throw new InvalidDataException("No registered projects.");
         var key = RouterJson.Text(selected, "key");
-        var view = await ProjectViewAsync(key, cancellationToken);
+        var view = await ProjectViewAsync(key, cancellationToken).ConfigureAwait(false);
         var snapshot = new RouterSnapshot(RouterJson.Text(health, "instanceId"), key, projects, view, DateTimeOffset.UtcNow);
         if (!aggregateQueuedCount) return snapshot;
         // Pending includes running/blocked work; only each public view's queuedCount is a queue total.
         var otherViews = await Task.WhenAll(projects.EnumerateArray()
             .Where(row => RouterJson.Integer(row, "pending") > 0)
             .Select(row => RouterJson.Text(row, "key")).Where(other => other != key).Distinct(StringComparer.Ordinal)
-            .Select(other => ProjectViewAsync(other, cancellationToken)));
+            .Select(other => ProjectViewAsync(other, cancellationToken))).ConfigureAwait(false);
         return snapshot with
         {
             QueuedCount = snapshot.QueuedCount + otherViews.Sum(other => RouterJson.Integer(other, "queuedCount")),
@@ -68,7 +68,7 @@ public sealed partial class RouterMonitorClient : IDisposable
     private async Task<JsonElement> ProjectViewAsync(string key, CancellationToken cancellationToken)
     {
         if (!RouterJson.IsHex(key, 64)) throw new InvalidDataException("Invalid project identity.");
-        var view = await ReadAsync("api/view?project=" + key, cancellationToken);
+        var view = await ReadAsync("api/view?project=" + key, cancellationToken).ConfigureAwait(false);
         if (RouterJson.Text(view, "projectKey") != key || RouterJson.Number(view, "observedAt") is not { } observed
             || observed > DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 5)
             throw new InvalidDataException("Invalid observation binding.");
@@ -87,8 +87,8 @@ public sealed partial class RouterMonitorClient : IDisposable
 
     public async Task<string> ExportAsync(string project, CancellationToken cancellationToken = default)
     {
-        using var response = await _http.GetAsync("api/export?project=" + Project(project), HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        var bytes = await ReadBodyAsync(response, 16 * 1024 * 1024, cancellationToken);
+        using var response = await _http.GetAsync("api/export?project=" + Project(project), HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        var bytes = await ReadBodyAsync(response, 16 * 1024 * 1024, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
         return Encoding.UTF8.GetString(bytes);
     }
@@ -110,8 +110,8 @@ public sealed partial class RouterMonitorClient : IDisposable
         using var request = new HttpRequestMessage(HttpMethod.Post, "api/control");
         request.Headers.Add("X-Router-Control", "1");
         request.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
-        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        var bytes = await ReadBodyAsync(response, 1024 * 1024, cancellationToken);
+        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        var bytes = await ReadBodyAsync(response, 1024 * 1024, cancellationToken).ConfigureAwait(false);
         using var json = JsonDocument.Parse(bytes);
         var value = json.RootElement.Clone();
         if (!response.IsSuccessStatusCode || !RouterJson.Boolean(value, "ok"))
@@ -125,11 +125,11 @@ public sealed partial class RouterMonitorClient : IDisposable
         if (response.Content.Headers.ContentLength > maximum) throw new InvalidDataException("Monitor response exceeds its bound.");
         if (response.StatusCode is >= HttpStatusCode.MultipleChoices and < HttpStatusCode.BadRequest)
             throw new InvalidDataException("Monitor redirects are not accepted.");
-        await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
+        await using var input = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         using var output = new MemoryStream();
-        var buffer = new byte[8192];
+        var buffer = new byte[32768];
         int count;
-        while ((count = await input.ReadAsync(buffer, cancellationToken)) != 0)
+        while ((count = await input.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) != 0)
         {
             if (output.Length + count > maximum) throw new InvalidDataException("Monitor response exceeds its bound.");
             output.Write(buffer, 0, count);
