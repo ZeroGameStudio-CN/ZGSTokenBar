@@ -1,4 +1,5 @@
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.Globalization;
 using ZGSTokenBar.Core;
@@ -7,7 +8,14 @@ using ZGSTokenBar.PluginSdk;
 namespace ZGSTokenBar.App;
 
 /// <summary>One visible ring item: the ring, its official icon badge and the account name (hover only).</summary>
-internal sealed record GlassDockItemVisual(GlassDockRing Ring, Image? Icon, string Name, bool Hovered);
+internal sealed record GlassDockItemVisual(
+    GlassDockRing Ring,
+    Image? Icon,
+    string Name,
+    bool Hovered,
+    RectangleF? AnimatedBounds = null,
+    float Alpha = 1f,
+    bool Exiting = false);
 
 /// <summary>How a ring shows its provider: a large translucent watermark under the % (default) or alternatives for comparison.</summary>
 internal enum GlassRingStyle
@@ -60,6 +68,10 @@ internal sealed record GlassDockScene(
     public bool IntakeHovered { get; init; }
     public int? IntakeProcessingCount { get; init; }
     public bool IntakeServiceConfigured { get; init; }
+    public float? AnimatedWidth { get; init; }
+    public RectangleF? AnimatedChipBounds { get; init; }
+    public float ChipAlpha { get; init; } = 1f;
+    public IReadOnlyList<GlassDockItemVisual>? ExitingItems { get; init; }
 }
 
 internal static class GlassDockPainter
@@ -81,82 +93,143 @@ internal static class GlassDockPainter
         // Content is laid out against the full dock height; lift it so it centres on the card.
         graphics.TranslateTransform(0, -ShadowDepth / 2f);
 
-        // Chips sit between rings (the "‹" chip keeps the collapsed chip's spot), so rings use their own index.
-        var itemIndex = 0;
-        for (var index = 0; index < scene.Plan.Slots.Count; index++)
-        {
-            var slot = scene.Plan.Slots[index];
-            if (slot.Chip)
-            {
-                DrawChip(graphics, slot.Bounds, scene);
-                continue;
-            }
-
-            if (itemIndex < scene.Items.Count)
-            {
-                var item = scene.Items[itemIndex];
-                var state = graphics.Save();
-                try
-                {
-                    DrawItem(graphics, slot.Bounds, item, scene.Light, scene.RingStyle, scene.IconRingSize, scene.LabelSize, scene.PercentPosition);
-                    scene.ItemPainted?.Invoke(item.Ring.ProviderId, null);
-                }
-                catch (Exception error) when (scene.ItemPainted?.Invoke(item.Ring.ProviderId, error) == true)
-                {
-                }
-                finally
-                {
-                    graphics.Restore(state);
-                }
-            }
-            itemIndex++;
-        }
-
+        var drawWidth = scene.AnimatedWidth ?? scene.Width;
+        var deltaX = drawWidth - scene.Width;
+        var animated = scene.AnimatedWidth is not null
+            || scene.AnimatedChipBounds is not null
+            || scene.ExitingItems is { Count: > 0 }
+            || scene.ChipAlpha < 0.995f;
         var systemLeft = GlassDockLayout.SystemLeftFor(scene.Width, !scene.Plan.IntakeBounds.IsEmpty, !scene.Plan.RouterBounds.IsEmpty);
         var dividerX = systemLeft - GlassDockLayout.DividerGap / 2f;
-        using (var divider = new LinearGradientBrush(
-                   new RectangleF(dividerX, 8, 1, GlassDockLayout.Height - 16),
-                   Color.FromArgb(0, Ink(scene.Light)),
-                   Color.FromArgb(scene.Light ? 60 : 70, Ink(scene.Light)),
-                   LinearGradientMode.Vertical))
+
+        var ringClipState = animated ? graphics.Save() : null;
+        if (ringClipState is not null)
         {
-            divider.SetBlendTriangularShape(.5f);
-            graphics.FillRectangle(divider, dividerX - .5f, 8, 1f, GlassDockLayout.Height - 16);
+            var clipRight = Math.Max(0f, dividerX + deltaX - 1f);
+            graphics.SetClip(new RectangleF(0f, 0f, clipRight, GlassDockLayout.Height + ShadowDepth), CombineMode.Intersect);
         }
 
-        if (scene.Router is { } router && !scene.Plan.RouterBounds.IsEmpty)
+        try
         {
-            var routerBounds = scene.Plan.RouterBounds;
-            DrawMonitorHover(graphics, routerBounds, scene.RouterHovered, scene.Light);
-            // The queue count is the same chip as the ring %: same size, and in the corner layout the
-            // same baseline as the ring chips, on the Router icon's lower-left.
-            var corner = scene.RingStyle == GlassRingStyle.IconPercentBelow && scene.PercentPosition == GlassPercentPosition.BottomLeft;
-            var chip = new RouterQueueChip(scene.LabelSize, corner ? (GlassDockLayout.Height + scene.IconRingSize) / 2f + 2.5f : null, scene.Light);
-            RouterCardRenderer.Draw(graphics, routerBounds, router, badgeFont, collapsed: true, queueChip: chip);
-        }
-
-        if (!scene.Plan.IntakeBounds.IsEmpty)
-        {
-            var bounds = scene.Plan.IntakeBounds;
-            DrawMonitorHover(graphics, bounds, scene.IntakeHovered, scene.Light);
-            var icon = MonitorGlyph.Centered(bounds);
-            var state = scene.IntakeProcessingCount switch
+            if (scene.ExitingItems is { Count: > 0 } exitingItems)
             {
-                > 0 => IntakeGlyphState.Processing,
-                null when scene.IntakeServiceConfigured => IntakeGlyphState.Unconfirmed,
-                _ => IntakeGlyphState.Idle,
-            };
-            MonitorGlyph.DrawIntake(graphics, icon, scene.Light, state);
-            if (scene.IntakeProcessingCount is > 0 and var processing)
-                DrawMonitorCount(graphics, icon, processing, scene.LabelSize, (GlassDockLayout.Height + scene.IconRingSize) / 2f + 2.5f, scene.Light);
+                foreach (var exiting in exitingItems)
+                {
+                    if (exiting.AnimatedBounds is not { } exitBounds) continue;
+                    var state = graphics.Save();
+                    try
+                    {
+                        DrawRingItem(graphics, exitBounds, exiting, scene);
+                    }
+                    catch (Exception error) when (scene.ItemPainted?.Invoke(exiting.Ring.ProviderId, error) == true)
+                    {
+                    }
+                    finally
+                    {
+                        graphics.Restore(state);
+                    }
+                }
+            }
+
+            // Chips sit between rings (the "‹" chip keeps the collapsed chip's spot), so rings use their own index.
+            var itemIndex = 0;
+            var chipDrawn = false;
+            for (var index = 0; index < scene.Plan.Slots.Count; index++)
+            {
+                var slot = scene.Plan.Slots[index];
+                if (slot.Chip)
+                {
+                    if (scene.AnimatedChipBounds is null && scene.ChipAlpha >= 0.995f)
+                    {
+                        DrawChip(graphics, slot.Bounds, scene);
+                        chipDrawn = true;
+                    }
+                    continue;
+                }
+
+                if (itemIndex < scene.Items.Count)
+                {
+                    var item = scene.Items[itemIndex];
+                    var slotBounds = item.AnimatedBounds ?? slot.Bounds;
+                    var state = graphics.Save();
+                    try
+                    {
+                        DrawRingItem(graphics, slotBounds, item, scene);
+                        scene.ItemPainted?.Invoke(item.Ring.ProviderId, null);
+                    }
+                    catch (Exception error) when (scene.ItemPainted?.Invoke(item.Ring.ProviderId, error) == true)
+                    {
+                    }
+                    finally
+                    {
+                        graphics.Restore(state);
+                    }
+                }
+                itemIndex++;
+            }
+
+            if (!chipDrawn && scene.AnimatedChipBounds is { } animatedChip && scene.ChipAlpha > 0.01f)
+            {
+                DrawChipWithAlpha(graphics, animatedChip, scene, scene.ChipAlpha);
+            }
+        }
+        finally
+        {
+            if (ringClipState is not null) graphics.Restore(ringClipState);
         }
 
-        var barsBounds = GlassDockLayout.BarsBoundsFor(scene.Width);
-        if (scene.SystemHovered) DrawHover(graphics, RectangleF.Inflate(barsBounds, 4, 3), scene.Light);
-        DrawMetrics(graphics, barsBounds, scene);
-        var rateBounds = GlassDockLayout.RateBoundsFor(scene.Width);
-        if (scene.RateHovered) DrawHover(graphics, RectangleF.Inflate(rateBounds, 3, 3), scene.Light);
-        DrawRate(graphics, rateBounds, scene);
+        var rightState = MathF.Abs(deltaX) > 0.01f ? graphics.Save() : null;
+        if (rightState is not null) graphics.TranslateTransform(deltaX, 0f);
+        try
+        {
+            using (var divider = new LinearGradientBrush(
+                       new RectangleF(dividerX, 8, 1, GlassDockLayout.Height - 16),
+                       Color.FromArgb(0, Ink(scene.Light)),
+                       Color.FromArgb(scene.Light ? 60 : 70, Ink(scene.Light)),
+                       LinearGradientMode.Vertical))
+            {
+                divider.SetBlendTriangularShape(.5f);
+                graphics.FillRectangle(divider, dividerX - .5f, 8, 1f, GlassDockLayout.Height - 16);
+            }
+
+            if (scene.Router is { } router && !scene.Plan.RouterBounds.IsEmpty)
+            {
+                var routerBounds = scene.Plan.RouterBounds;
+                DrawMonitorHover(graphics, routerBounds, scene.RouterHovered, scene.Light);
+                // The queue count is the same chip as the ring %: same size, and in the corner layout the
+                // same baseline as the ring chips, on the Router icon's lower-left.
+                var corner = scene.RingStyle == GlassRingStyle.IconPercentBelow && scene.PercentPosition == GlassPercentPosition.BottomLeft;
+                var chip = new RouterQueueChip(scene.LabelSize, corner ? (GlassDockLayout.Height + scene.IconRingSize) / 2f + 2.5f : null, scene.Light);
+                RouterCardRenderer.Draw(graphics, routerBounds, router, badgeFont, collapsed: true, queueChip: chip);
+            }
+
+            if (!scene.Plan.IntakeBounds.IsEmpty)
+            {
+                var bounds = scene.Plan.IntakeBounds;
+                DrawMonitorHover(graphics, bounds, scene.IntakeHovered, scene.Light);
+                var icon = MonitorGlyph.Centered(bounds);
+                var state = scene.IntakeProcessingCount switch
+                {
+                    > 0 => IntakeGlyphState.Processing,
+                    null when scene.IntakeServiceConfigured => IntakeGlyphState.Unconfirmed,
+                    _ => IntakeGlyphState.Idle,
+                };
+                MonitorGlyph.DrawIntake(graphics, icon, scene.Light, state);
+                if (scene.IntakeProcessingCount is > 0 and var processing)
+                    DrawMonitorCount(graphics, icon, processing, scene.LabelSize, (GlassDockLayout.Height + scene.IconRingSize) / 2f + 2.5f, scene.Light);
+            }
+
+            var barsBounds = GlassDockLayout.BarsBoundsFor(scene.Width);
+            if (scene.SystemHovered) DrawHover(graphics, RectangleF.Inflate(barsBounds, 4, 3), scene.Light);
+            DrawMetrics(graphics, barsBounds, scene);
+            var rateBounds = GlassDockLayout.RateBoundsFor(scene.Width);
+            if (scene.RateHovered) DrawHover(graphics, RectangleF.Inflate(rateBounds, 3, 3), scene.Light);
+            DrawRate(graphics, rateBounds, scene);
+        }
+        finally
+        {
+            if (rightState is not null) graphics.Restore(rightState);
+        }
     }
 
     private static void DrawMonitorHover(Graphics graphics, RectangleF bounds, bool hovered, bool light)
@@ -206,8 +279,11 @@ internal static class GlassDockPainter
     }
 
     /// <summary>The card itself: full width, leaving <see cref="ShadowDepth"/> underneath for the shadow.</summary>
-    private static RectangleF CardBounds(GlassDockScene scene) =>
-        new(scene.DevicePixel, scene.DevicePixel, scene.Width - scene.DevicePixel * 2, GlassDockLayout.Height - ShadowDepth - scene.DevicePixel);
+    private static RectangleF CardBounds(GlassDockScene scene)
+    {
+        var width = scene.AnimatedWidth ?? scene.Width;
+        return new(scene.DevicePixel, scene.DevicePixel, Math.Max(4f, width - scene.DevicePixel * 2), GlassDockLayout.Height - ShadowDepth - scene.DevicePixel);
+    }
 
     /// <summary>
     /// Compact ring: the official provider icon sits large and translucent in the middle of the ring
@@ -235,7 +311,87 @@ internal static class GlassDockPainter
         graphics.DrawLine(tick, new PointF(cx + dx * (inner + .4f), cy + dy * (inner + .4f)), new PointF(cx + dx * (outer - .4f), cy + dy * (outer - .4f)));
     }
 
-    private static void DrawItem(Graphics graphics, Rectangle slot, GlassDockItemVisual item, bool light, GlassRingStyle style,
+    private static void DrawRingItem(Graphics graphics, RectangleF slot, GlassDockItemVisual item, GlassDockScene scene)
+    {
+        var alpha = Math.Clamp(item.Alpha, 0f, 1f);
+        if (alpha <= 0.01f) return;
+        if (alpha >= 0.995f)
+        {
+            DrawItem(graphics, slot, item, scene.Light, scene.RingStyle, scene.IconRingSize, scene.LabelSize, scene.PercentPosition);
+            return;
+        }
+
+        const float padLeft = 10f;
+        const float padRight = 12f;
+        var scale = 1f / Math.Max(0.25f, scene.DevicePixel);
+        var originX = slot.X - padLeft;
+        var logicalWidth = slot.Width + padLeft + padRight;
+        float logicalHeight = GlassDockLayout.Height;
+        var pixelWidth = Math.Max(1, (int)Math.Ceiling(logicalWidth * scale));
+        var pixelHeight = Math.Max(1, (int)Math.Ceiling(logicalHeight * scale));
+        using var offscreen = new Bitmap(pixelWidth, pixelHeight, PixelFormat.Format32bppArgb);
+        using (var layer = Graphics.FromImage(offscreen))
+        {
+            layer.Clear(Color.Transparent);
+            layer.SmoothingMode = SmoothingMode.AntiAlias;
+            layer.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            layer.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            layer.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+            layer.ScaleTransform(scale, scale);
+            layer.TranslateTransform(-originX, 0f);
+            DrawItem(layer, slot, item, scene.Light, scene.RingStyle, scene.IconRingSize, scene.LabelSize, scene.PercentPosition);
+        }
+
+        DrawAlphaBitmap(graphics, offscreen, originX, 0f, pixelWidth / scale, pixelHeight / scale, alpha);
+    }
+
+    private static void DrawChipWithAlpha(Graphics graphics, RectangleF bounds, GlassDockScene scene, float alpha)
+    {
+        var clamped = Math.Clamp(alpha, 0f, 1f);
+        if (clamped <= 0.01f) return;
+        if (clamped >= 0.995f)
+        {
+            DrawChip(graphics, bounds, scene);
+            return;
+        }
+
+        const float pad = 4f;
+        var scale = 1f / Math.Max(0.25f, scene.DevicePixel);
+        var originX = bounds.X - pad;
+        var originY = bounds.Y - pad;
+        var logicalWidth = bounds.Width + pad * 2f;
+        var logicalHeight = bounds.Height + pad * 2f;
+        var pixelWidth = Math.Max(1, (int)Math.Ceiling(logicalWidth * scale));
+        var pixelHeight = Math.Max(1, (int)Math.Ceiling(logicalHeight * scale));
+        using var offscreen = new Bitmap(pixelWidth, pixelHeight, PixelFormat.Format32bppArgb);
+        using (var layer = Graphics.FromImage(offscreen))
+        {
+            layer.Clear(Color.Transparent);
+            layer.SmoothingMode = SmoothingMode.AntiAlias;
+            layer.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            layer.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            layer.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+            layer.ScaleTransform(scale, scale);
+            layer.TranslateTransform(-originX, -originY);
+            DrawChip(layer, bounds, scene);
+        }
+
+        DrawAlphaBitmap(graphics, offscreen, originX, originY, pixelWidth / scale, pixelHeight / scale, clamped);
+    }
+
+    private static void DrawAlphaBitmap(Graphics graphics, Bitmap bitmap, float x, float y, float width, float height, float alpha)
+    {
+        using var attributes = new ImageAttributes();
+        attributes.SetColorMatrix(new ColorMatrix { Matrix33 = alpha }, ColorMatrixFlag.Default, ColorAdjustType.Bitmap);
+        graphics.DrawImage(
+            bitmap,
+            [new PointF(x, y), new PointF(x + width, y), new PointF(x, y + height)],
+            new RectangleF(0f, 0f, bitmap.Width, bitmap.Height),
+            GraphicsUnit.Pixel,
+            attributes);
+    }
+
+    private static void DrawItem(Graphics graphics, RectangleF slot, GlassDockItemVisual item, bool light, GlassRingStyle style,
         float iconRingSize, float labelSize, GlassPercentPosition position = GlassPercentPosition.BottomLeft)
     {
         var ring = item.Ring;
@@ -608,11 +764,11 @@ internal static class GlassDockPainter
         return glyph;
     }
 
-    private static void DrawChip(Graphics graphics, Rectangle bounds, GlassDockScene scene)
+    private static void DrawChip(Graphics graphics, RectangleF bounds, GlassDockScene scene)
     {
         var light = scene.Light;
         var urgent = scene.Plan.OverflowUrgent && !scene.Expanded;
-        var rect = new RectangleF(bounds.X, bounds.Y, bounds.Width, bounds.Height);
+        var rect = bounds;
         using var path = Rounded(rect, rect.Height / 2);
         var alert = light ? Color.FromArgb(200, 38, 48) : ChipStyle.CriticalText;
         using var fill = new SolidBrush(urgent

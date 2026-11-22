@@ -68,6 +68,7 @@ internal static class InteractiveQuotaTests
             Check(InteractiveCodexHomes.Read(registry).Count == 0, "Relative registry paths are never probed");
             File.WriteAllText(registry, "invalid");
             Check(InteractiveCodexHomes.Read(registry).Count == 0, "Malformed registries fail closed");
+            InactiveExhaustedHomeStaysInOverflow();
         }
         finally
         {
@@ -81,6 +82,123 @@ internal static class InteractiveQuotaTests
             File.WriteAllText(Path.Combine(home, "auth.json"), JsonSerializer.Serialize(new {
                 tokens = new { access_token = "fixture-" + account, account_id = account } }));
             return home;
+        }
+    }
+
+    private static void InactiveExhaustedHomeStaysInOverflow()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "zgstokenbar-interactive-activity-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            var cmdHome = Home("cmd-active", "account-cmd");
+            var sessHome = Home("sess-active", "account-sess");
+            var idleHome = Home("idle-exhausted", "account-idle");
+
+            var freshRolloutDir = Path.Combine(sessHome, "sessions", "2026", "11", "22");
+            Directory.CreateDirectory(freshRolloutDir);
+            var freshRollout = Path.Combine(freshRolloutDir, "rollout-active.jsonl");
+            File.WriteAllText(freshRollout, "{}");
+            File.SetLastWriteTimeUtc(freshRollout, now.UtcDateTime.AddMinutes(-3));
+
+            var staleRolloutDir = Path.Combine(idleHome, "sessions", "2026", "11", "16");
+            Directory.CreateDirectory(staleRolloutDir);
+            var staleRollout = Path.Combine(staleRolloutDir, "rollout-stale.jsonl");
+            File.WriteAllText(staleRollout, "{}");
+            File.SetLastWriteTimeUtc(staleRollout, now.UtcDateTime.AddDays(-6));
+
+            Check(!InteractiveCodexHomes.ContainsPathBoundary("\"C:\\Program Files\\WindowsApps\\OpenAI.Codex_26\\app\\ChatGPT.exe\"", cmdHome),
+                "App installation path never false-matches a Codex home");
+            Check(!InteractiveCodexHomes.ContainsPathBoundary($"codex.exe --home \"{cmdHome}-other\"", cmdHome),
+                "Sibling directory suffix never false-matches a Codex home");
+            Check(InteractiveCodexHomes.ContainsPathBoundary($"codex.exe --cua_repl \"{cmdHome}\"", cmdHome),
+                "Quoted command-line home argument matches on path boundaries");
+
+            string[] commandLines =
+            [
+                "\"C:\\Program Files\\WindowsApps\\OpenAI.Codex_26\\app\\ChatGPT.exe\" --type=renderer",
+                $"\"codex.exe\" --plugin-mcp-launch-cwd cua_repl \"{cmdHome}\"",
+            ];
+            var activeHomes = InteractiveCodexHomes.ActiveHomes([cmdHome, sessHome, idleHome], now, commandLines);
+            Check(activeHomes.Contains(cmdHome) && activeHomes.Contains(sessHome) && !activeHomes.Contains(idleHome),
+                "ActiveHomes selects running command-line and recent-session homes while excluding stopped homes");
+
+            var registry = Path.Combine(root, "instances.json");
+            File.WriteAllText(registry, JsonSerializer.Serialize(new
+            {
+                instances = new[] { new { codexHome = cmdHome }, new { codexHome = sessHome }, new { codexHome = idleHome } },
+            }));
+            File.WriteAllText(Path.Combine(root, "codex_instances.json"),
+                """{"defaultSettings":{"bindAccountId":"account-idle","lastPid":1}}""");
+
+            using var handler = new MultiAccountHandler();
+            using var http = new HttpClient(handler);
+            var service = new CodexQuotaService(http, root, registry, (homes, t) => InteractiveCodexHomes.ActiveHomes(homes, t, commandLines));
+            var result = service.FetchAsync(default).GetAwaiter().GetResult();
+            Check(result.Cards.Count == 3, "Stopped registered interactive account still fetches live quota for overflow");
+            var activeCards = result.Cards.Where(card => card.Active).ToArray();
+            var inactiveCards = result.Cards.Where(card => !card.Active).ToArray();
+            Check(activeCards.Length == 2 && inactiveCards.Length == 1
+                && inactiveCards[0].Windows.Single().UsedPercent == 100,
+                "Stale codex_instances binding cannot reactivate a stopped 0% interactive account");
+
+            var snapshot = QuotaCoordinator.MergeResults([result], null, now);
+            using var bar = new BarForm(new AppSettings { EnableAnimations = false }, snapshot,
+                renderOnly: true, renderDpi: 96, activeProviders: new HashSet<ProviderKind> { ProviderKind.Codex });
+            using var collapsedBitmap = new Bitmap(bar.Width, bar.Height);
+            bar.DrawToBitmap(collapsedBitmap, new Rectangle(Point.Empty, collapsedBitmap.Size));
+            Check(bar.VisibleCodexAccountCount == 2, "Collapsed dock hides stopped 0% Codex account in overflow");
+            bar.SetGlassExpandedForAcceptance(true);
+            using var expandedBitmap = new Bitmap(bar.Width, bar.Height);
+            bar.DrawToBitmap(expandedBitmap, new Rectangle(Point.Empty, expandedBitmap.Size));
+            Check(bar.VisibleCodexAccountCount == 3, "Expanded dock reveals the stopped 0% Codex account");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+
+        string Home(string name, string account)
+        {
+            var home = Path.Combine(root, name);
+            Directory.CreateDirectory(home);
+            File.WriteAllText(Path.Combine(home, "auth.json"), JsonSerializer.Serialize(new
+            {
+                tokens = new { access_token = "fixture-" + account, account_id = account },
+            }));
+            return home;
+        }
+    }
+
+    private sealed class MultiAccountHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+        {
+            var account = request.Headers.GetValues("ChatGPT-Account-Id").Single();
+            var used = account switch
+            {
+                "account-cmd" => 57,
+                "account-sess" => 88,
+                _ => 100,
+            };
+            var body = JsonSerializer.Serialize(new
+            {
+                plan_type = "pro",
+                rate_limit = new
+                {
+                    primary_window = new
+                    {
+                        used_percent = used,
+                        limit_window_seconds = 604800,
+                        reset_at = DateTimeOffset.UtcNow.AddDays(3).ToUnixTimeSeconds(),
+                    },
+                },
+            });
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+            });
         }
     }
 

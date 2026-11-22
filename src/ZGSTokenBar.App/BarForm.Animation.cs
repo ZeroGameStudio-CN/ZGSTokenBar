@@ -28,7 +28,7 @@ internal sealed partial class BarForm
         {
             _snapshotAnimating = false;
             _animatedWindowKeys.Clear();
-            if (!_refreshing) _animationTimer.Stop();
+            if (!_refreshing && !_glassMotion.IsAnimating) _animationTimer.Stop();
             return;
         }
         _animatedWindowKeys = changedKeys;
@@ -49,7 +49,13 @@ internal sealed partial class BarForm
         var hoverAnimating = AdvanceHoverAnimation();
 
         Invalidate();
-        if (!_refreshing && !_snapshotAnimating && !hoverAnimating) _animationTimer.Stop();
+        if (_pendingCollapseLayout && !_glassMotion.IsAnimating)
+        {
+            _pendingCollapseLayout = false;
+            ApplySnapshotLayout();
+            Invalidate();
+        }
+        if (!_refreshing && !_snapshotAnimating && !hoverAnimating && !_glassMotion.IsAnimating) _animationTimer.Stop();
     }
 
     private void EnsureAnimationTimer()

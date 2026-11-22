@@ -544,7 +544,7 @@ internal sealed partial class BarForm : Form
         else if (!refreshing)
         {
             _refreshRotation = 0;
-            if (!_snapshotAnimating) _animationTimer.Stop();
+            if (!_snapshotAnimating && !_glassMotion.IsAnimating) _animationTimer.Stop();
         }
         Invalidate();
     }
@@ -594,6 +594,8 @@ internal sealed partial class BarForm : Form
             _snapshotAnimating = false;
             _animatedWindowKeys.Clear();
             _hoverProgress.Clear();
+            _glassMotion.Reset();
+            _pendingCollapseLayout = false;
             _animationTimer.Stop();
             _refreshRotation = 0;
         }
