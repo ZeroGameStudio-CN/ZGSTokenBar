@@ -40,14 +40,15 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
     private readonly TableLayoutPanel _root;
     private readonly TableLayoutPanel _singleTask;
     private readonly FlowLayoutPanel _filters;
-    private readonly Label _currentHeading = Label("当前", 52), _queueHeading = Label("排队", 120), _historyHeading = Label("历史", 42), _historySummary = Label("", 136), _historyThroughput = Label("", 334);
+    private readonly Label _currentHeading = Label("当前", 52), _queueHeading = Label("排队", 120), _historyHeading = Label("历史", 40), _historySummary = Label("", 260);
+    private readonly RouterHistoryMetricsStrip _historyMetrics = new() { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 4), Visible = false };
     private readonly TableLayoutPanel _historyBody;
     private readonly Button _pin;
     private readonly ToolTip _tips = new() { InitialDelay = 450, ReshowDelay = 150, AutoPopDelay = 12000 };
     private RouterVisualPalette _palette = new(UiTokens.CardSurface);
     private RouterSnapshot? _snapshot;
     private bool _refreshing, _refreshHistoryRequested, _controlling, _available, _disposed;
-    private int _queueOffset, _historyOffset, _generation, _historyGeneration, _queuePageSize = 3, _historyPageSize = 5, _queueTotal, _historyTotal;
+    private int _queueOffset, _historyOffset, _generation, _historyGeneration, _queuePageSize = 3, _historyPageSize = 5, _queueTotal, _historyTotal, _metricsLogicalHeight;
     private bool _modal, _filtersVisible;
     private DateTimeOffset _historyReadAt, _historyAttemptAt;
     private readonly RouterHistoryBuffer _historyBuffer = new();
@@ -86,7 +87,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         _root = CreatePanelLayout(footerHeight: 0);
         Controls.Add(_root);
         _projects.AccessibleName = "工程切换"; _freshness.Width = 140;
-        _kind.Width = _outcome.Width = 92; _day.Width = 172; _query.Width = 152;
+        _kind.Width = _outcome.Width = 92; _day.Width = 184; _query.Width = 152;
         _kind.AccessibleName = "任务类型"; _outcome.AccessibleName = "结果"; _day.AccessibleName = "日期"; _query.AccessibleName = "搜索任务或对话";
         _pin = IconButton(RouterButtonIcon.Pin, "固定弹层", () => { RequestPinChange(!_pinned); return Task.CompletedTask; });
         var header = Header(Flow(_brand), Flow(_freshness, IconButton(RouterButtonIcon.Refresh, "刷新", () => RefreshViewAsync(forceHistory: true)), _pin,
@@ -96,12 +97,12 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         SetLogicalFont(_headline, Font.FontFamily.Name, 10.5f, FontStyle.Bold);
         SetLogicalFont(_task, Font.FontFamily.Name, 12, FontStyle.Bold);
         SetLogicalFont(_metrics, Font.FontFamily.Name, 12, FontStyle.Bold);
-        foreach (var label in new[] { _detail, _source, _freshness, _notice, _historySummary, _historyThroughput })
+        foreach (var label in new[] { _detail, _source, _freshness, _notice, _historySummary })
             SetLogicalFont(label, Font.FontFamily.Name, 10.5f);
         foreach (var label in new[] { _currentHeading, _queueHeading, _historyHeading })
             SetLogicalFont(label, "Segoe UI", UiTokens.FontBody, FontStyle.Bold);
-        _currentHeading.Height = 25; _queueHeading.Height = _historyHeading.Height = _historySummary.Height = _historyThroughput.Height = 30;
-        _currentHeading.Margin = _queueHeading.Margin = _historyHeading.Margin = _historySummary.Margin = _historyThroughput.Margin = Padding.Empty;
+        _currentHeading.Height = 25; _queueHeading.Height = 30; _historyHeading.Height = _historySummary.Height = 28;
+        _currentHeading.Margin = _queueHeading.Margin = _historyHeading.Margin = _historySummary.Margin = Padding.Empty;
         _metrics.TextAlign = ContentAlignment.MiddleRight;
         _task.Dock = _detail.Dock = _source.Dock = _notice.Dock = _metrics.Dock = DockStyle.Fill;
         _task.Margin = _detail.Margin = _source.Margin = _metrics.Margin = Padding.Empty;
@@ -170,29 +171,30 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         _queue.Margin = Padding.Empty; queueBody.Controls.Add(_queue, 0, 1);
         var queueSection = Section("排队"); queueSection.Controls.Add(queueBody); _root.Controls.Add(queueSection, 0, 2);
 
-        _historyBody = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 1, RowCount = 3 };
-        _historyBody.ColumnStyles.Add(new(SizeType.Percent, 100)); _historyBody.RowStyles.Add(new(SizeType.Absolute, 30));
-        _historyBody.RowStyles.Add(new(SizeType.Absolute, 0)); _historyBody.RowStyles.Add(new(SizeType.Percent, 100));
+        _historyBody = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 1, RowCount = 4 };
+        _historyBody.ColumnStyles.Add(new(SizeType.Percent, 100)); _historyBody.RowStyles.Add(new(SizeType.Absolute, 28));
+        _historyBody.RowStyles.Add(new(SizeType.Absolute, 0)); _historyBody.RowStyles.Add(new(SizeType.Absolute, 0)); _historyBody.RowStyles.Add(new(SizeType.Percent, 100));
 
         _historyPrevious = IconButton(RouterButtonIcon.Previous, "历史上一页", () => PageHistoryAsync(-1));
         _historyNext = IconButton(RouterButtonIcon.Next, "历史下一页", () => PageHistoryAsync(1));
         _history.PageRequested += async (_, pages) => await PageHistoryAsync(pages);
         _filterToggle = IconButton(RouterButtonIcon.Filter, "筛选记录", async () =>
         {
-            _filtersVisible = !_filtersVisible; _filters!.Visible = _filtersVisible; _historyBody.RowStyles[1].Height = _filtersVisible ? 34 * _popoverScale : 0;
+            _filtersVisible = !_filtersVisible; _filters!.Visible = _filtersVisible; _historyBody.RowStyles[2].Height = _filtersVisible ? 34 * _popoverScale : 0;
             ((RouterButton)_filterToggle!).Selected = _filtersVisible;
             _root.PerformLayout();
             await HistoryAsync();
         });
         _historyPage.Width = 64; _historyPage.TextAlign = ContentAlignment.MiddleCenter;
-        _historyBody.Controls.Add(Header(Flow(_historyHeading, _historySummary, _historyThroughput), Flow(_filterToggle, IconButton(RouterButtonIcon.Export, "导出 CSV", ExportAsync), _historyPrevious, _historyPage, _historyNext), 184), 0, 0);
+        _historyBody.Controls.Add(Header(Flow(_historyHeading, _historySummary), Flow(_filterToggle, IconButton(RouterButtonIcon.Export, "导出 CSV", ExportAsync), _historyPrevious, _historyPage, _historyNext), 184), 0, 0);
+        _historyBody.Controls.Add(_historyMetrics, 0, 1);
         Options(_kind, [("all", "全部类型"), ("compile", "编译"), ("editmode", "EditMode"), ("playmode", "PlayMode"), ("script", "脚本")]);
         Options(_outcome, [("finished", "全部结果"), ("completed", "成功"), ("failed", "失败"), ("cancelled", "取消")]);
         Options(_day, [("all", "全部日期")]);
-        var search = new RouterSurface { Input = true, Width = 160, Height = 30, Padding = new Padding(8, 6, 8, 6) };
+        var search = new RouterSurface { Input = true, Width = 176, Height = 30, Padding = new Padding(8, 6, 8, 6) };
         _query.Dock = DockStyle.Fill; _query.BorderStyle = BorderStyle.None; search.Controls.Add(_query);
         _filters = Flow(_kind, _outcome, _day, search, Button("筛选", async () => { _historyOffset = 0; await HistoryAsync(); }, RouterButtonKind.Primary));
-        _filters.Visible = false; _historyBody.Controls.Add(_filters, 0, 1);
+        _filters.Visible = false; _historyBody.Controls.Add(_filters, 0, 2);
         _history.EmptyTitle = "正在读取历史…"; _history.EmptyDetail = "";
         _history.Columns.AddRange(Column("createdLocal", "提交时间", 115), Column("task", "任务", 240), Column("source", "来源对话", 150),
             Column("state", "结果", 90), Column("executionSeconds", "占用", 70), Column("cleanupVerified", "释放", 70));
@@ -203,8 +205,8 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         _history.Columns[0].DefaultCellStyle.ForeColor = UiTokens.Muted;
         _history.Columns["source"]!.DefaultCellStyle.ForeColor = UiTokens.TextSecondary;
         _history.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0) ShowRecord(_history.Rows[e.RowIndex]); };
-        _history.Margin = Padding.Empty; _historyBody.Controls.Add(_history, 0, 2);
-        var historySection = Section("历史"); historySection.Controls.Add(_historyBody); _root.Controls.Add(historySection, 0, 3);
+        _history.Margin = Padding.Empty; _historyBody.Controls.Add(_history, 0, 3);
+        var historySection = Section("历史"); historySection.Margin = Padding.Empty; historySection.Controls.Add(_historyBody); _root.Controls.Add(historySection, 0, 3);
         _root.Controls.Add(_notice, 0, 4);
         _timer.Tick += async (_, _) => { if (Visible) await RefreshViewAsync(); };
         _notice.TextChanged += (_, _) =>
@@ -284,7 +286,15 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         _palette = new(UiTokens.CardSurface);
         ApplyMonitorPalette(_palette, _task);
         _metrics.ForeColor = UiTokens.Info;
-        _historyThroughput.ForeColor = UiTokens.Info;
+        _historyMetrics.ApplyPalette(_palette);
+        if (_historyMetrics.Data.ActiveDays > 0)
+        {
+            var compact = IsCompactMetricsViewport();
+            _historyMetrics.Update(_historyMetrics.Data, compact, _historyMetrics.AccessibleDescription ?? "");
+            _metricsLogicalHeight = _historyMetrics.DesiredLogicalHeight;
+        }
+        _historyBody.RowStyles[1].Height = _metricsLogicalHeight * _popoverScale;
+        _historyBody.RowStyles[2].Height = _filtersVisible ? 34 * _popoverScale : 0;
         _active.Columns["project"]!.Width = (int)Math.Round(92 * _popoverScale);
         _active.Columns["task"]!.DefaultCellStyle.Font = _task.Font;
         _active.Columns["elapsed"]!.Width = (int)Math.Round(110 * _popoverScale);
@@ -295,6 +305,8 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         _projectMenu.Font = Font;
         if (!_available && _snapshot is not null) _freshness.ForeColor = RouterVisualPalette.State("warning");
     }
+
+    private bool IsCompactMetricsViewport() => ClientSize.Height / Math.Max(1f, _popoverScale) < 620f;
 
     private void PaintQueuePriority(object? sender, DataGridViewCellPaintingEventArgs e)
     {
@@ -498,13 +510,23 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
     {
         _queueGeneration++; _queueRequest?.Cancel(); _queueLoading = _queueReady = false;
         _queueOffset = _historyOffset = _queueTotal = _historyTotal = 0;
-        _queueHeading.Text = "排队"; _historySummary.Text = ""; _historyThroughput.Text = "";
+        _queueHeading.Text = "排队"; _historySummary.Text = "";
+        ClearHistoryMetrics();
         _queuePage.Text = _historyPage.Text = "";
         _queue.EmptyTitle = "正在读取队列…"; _history.EmptyTitle = "正在读取历史…";
         _queue.Rows.Clear(); _history.Rows.Clear();
         SetEmptyTopTable(_root, _queue, false);
         _historyGeneration++; _historyBuffer.Clear(); _historyReadAt = _historyAttemptAt = default; _historySignature = "";
         _historyRequest?.Cancel(); _historyLoad = null; _historyLoadKey = "";
+    }
+
+    private void ClearHistoryMetrics()
+    {
+        _metricsLogicalHeight = 0;
+        _historyMetrics.Visible = false;
+        _historyMetrics.Update(new(0, 0, 0, null, "", ""), false, "");
+        _tips.SetToolTip(_historyMetrics, "");
+        _historyBody.RowStyles[1].Height = 0;
     }
 
     internal void ApplyUnavailable(string message)
@@ -721,47 +743,51 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
             if (!_historyBuffer.TryRead(key, offset, _historyPageSize, out var slice) || slice is null)
                 throw new InvalidDataException("History window does not cover the requested page.");
             var selectedHistory = Selected(_history);
-            _history.SuspendLayout();
-            try
-            {
-                _history.Rows.Clear();
-                foreach (var row in slice.Items)
-                {
-                    var n = _history.Rows.Add(SubmittedTime(RouterJson.Text(row, "createdLocal")), RouterJson.Text(row, "task"),
-                        RouterTaskPresentation.Source(RouterJson.Text(row, "source", RouterJson.Text(row, "threadId"))), ResultName(row),
-                        Seconds(row, "executionSeconds"), RouterJson.Boolean(row, "cleanupVerified") ? "✓" : "待确认");
-                    _history.Rows[n].Tag = row;
-                    _history.Rows[n].Cells[0].ToolTipText = RouterJson.Text(row, "createdLocal");
-                    _history.Rows[n].Cells[4].ToolTipText = TimingDetails(row);
-                    _history.Rows[n].Selected = selectedHistory.Length > 0 && RouterJson.Text(row, "id") == selectedHistory;
-                }
-                // A refresh keeps the user's pick; otherwise no row is pre-highlighted.
-                if (selectedHistory.Length == 0) { _history.ClearSelection(); _history.CurrentCell = null; }
-            }
-            finally { _history.ResumeLayout(); }
+            PopulateHistoryRows(slice.Items, selectedHistory);
             var metadata = slice.Metadata; var total = slice.Total; _historyOffset = slice.Offset;
-            _historyTotal = total; _historyPage.Text = PageLabel(_historyOffset, total, _historyPageSize);
+            _historyTotal = total;
             var selectedDay = Key(_day);
             Options(_day, new[] { ("all", "全部日期") }.Concat(RouterJson.Rows(metadata, "days").Select(d => (RouterJson.Text(d, "date"), RouterTaskPresentation.DayOptionLabel(d)))).ToArray());
             _day.SelectedItem = _day.Items.Cast<Choice>().FirstOrDefault(c => c.Key == selectedDay) ?? _day.Items[0];
             var counts = RouterJson.Field(metadata, "counts");
             var failed = RouterJson.Integer(counts, "failed");
-            var statistics = $"成功 {RouterJson.Integer(counts, "completed")} · 失败 {failed} · 取消 {RouterJson.Integer(counts, "cancelled")}" + Environment.NewLine
+            var statistics = $"结果合计：成功 {RouterJson.Integer(counts, "completed")} · 失败 {failed} · 取消 {RouterJson.Integer(counts, "cancelled")}" + Environment.NewLine
                 + string.Join(Environment.NewLine, RouterJson.Rows(metadata, "groups").Where(g => RouterJson.Integer(g, "count") > 0)
                     .Select(FormatGroupStats));
             _historySummary.Text = outcome != "failed" && failed > 0 ? $"{total:N0} 条  ·  {failed:N0} 失败" : $"{total:N0} 条";
             var throughput = RouterTaskPresentation.SummarizeDailyThroughput(
                 RouterJson.Rows(metadata, "days"),
                 DateOnly.FromDateTime(DateTime.Now));
-            _historyThroughput.Text = throughput.SummaryText;
-            _history.EmptyTitle = "没有匹配的记录";
-            _history.Invalidate();
             _historyReadAt = slice.CapturedAt;
             statistics = "记录快照 " + _historyReadAt.ToLocalTime().ToString("HH:mm:ss") + Environment.NewLine + statistics;
             if (throughput.TooltipSection.Length > 0)
                 statistics += Environment.NewLine + Environment.NewLine + throughput.TooltipSection;
+            _historyMetrics.Update(throughput, IsCompactMetricsViewport(), statistics);
+            var targetMetricsLogical = _historyMetrics.DesiredLogicalHeight;
+            _metricsLogicalHeight = targetMetricsLogical;
+            _historyMetrics.Visible = targetMetricsLogical > 0;
+            var targetMetricsHeight = targetMetricsLogical * _popoverScale;
+            if (Math.Abs(_historyBody.RowStyles[1].Height - targetMetricsHeight) >= 0.5f)
+            {
+                _historyBody.RowStyles[1].Height = targetMetricsHeight;
+                _historyBody.PerformLayout();
+                var resizedPageSize = PageRows(_history);
+                if (resizedPageSize != _historyPageSize && _historyBuffer.TryRead(key, _historyOffset, resizedPageSize, out var resizedSlice) && resizedSlice is not null)
+                {
+                    _historyPageSize = resizedPageSize;
+                    _historyOffset = resizedSlice.Offset;
+                    PopulateHistoryRows(resizedSlice.Items, selectedHistory);
+                }
+                else
+                {
+                    _historyPageSize = resizedPageSize;
+                }
+            }
+            _historyPage.Text = PageLabel(_historyOffset, total, _historyPageSize);
+            _history.EmptyTitle = "没有匹配的记录";
+            _history.Invalidate();
             _tips.SetToolTip(_historySummary, statistics); _historySummary.AccessibleDescription = statistics;
-            _tips.SetToolTip(_historyThroughput, statistics); _historyThroughput.AccessibleDescription = statistics;
+            _tips.SetToolTip(_historyMetrics, statistics);
             UpdateControls();
         }
         catch (OperationCanceledException) when (_stop.IsCancellationRequested || generation != _generation || historyGeneration != _historyGeneration) { }
@@ -772,11 +798,34 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
                 var code = RecordReadFailure("history", project, e);
                 _historySummary.Text = code == "timeout" ? "读取超时" : "暂不可用";
                 if (_history.RowCount > 0) _historySummary.Text += " · 上次记录";
-                else _historyThroughput.Text = "";
+                else ClearHistoryMetrics();
                 _history.EmptyTitle = "等待重新读取";
                 _history.Invalidate();
             }
         }
+    }
+
+    private void PopulateHistoryRows(IReadOnlyList<JsonElement> items, string selectedHistory)
+    {
+        _history.SuspendLayout();
+        try
+        {
+            _history.Rows.Clear();
+            foreach (var row in items)
+            {
+                var n = _history.Rows.Add(SubmittedTime(RouterJson.Text(row, "createdLocal")), RouterJson.Text(row, "task"),
+                    RouterTaskPresentation.Source(RouterJson.Text(row, "source", RouterJson.Text(row, "threadId"))), ResultName(row),
+                    RouterTaskPresentation.FormatCellDuration(RouterJson.Number(row, "executionSeconds")),
+                    RouterJson.Boolean(row, "cleanupVerified") ? "✓" : "待确认");
+                _history.Rows[n].Tag = row;
+                _history.Rows[n].Cells[0].ToolTipText = RouterJson.Text(row, "createdLocal");
+                _history.Rows[n].Cells[4].ToolTipText = TimingDetails(row, includeSectionHeaders: false);
+                _history.Rows[n].Selected = selectedHistory.Length > 0 && RouterJson.Text(row, "id") == selectedHistory;
+            }
+            // A refresh keeps the user's pick; otherwise no row is pre-highlighted.
+            if (selectedHistory.Length == 0) { _history.ClearSelection(); _history.CurrentCell = null; }
+        }
+        finally { _history.ResumeLayout(); }
     }
 
     private async Task CurrentControlAsync(string action)
@@ -876,8 +925,13 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         var submitted = SubmittedTime(RouterJson.Text(row, "createdLocal", "—"));
         var released = RouterJson.Boolean(row, "cleanupVerified") ? "已确认" : "待确认";
         var source = RouterTaskPresentation.Source(RouterJson.Text(row, "source"));
-        var summary = JoinDetails($"结果  {ResultName(row)}", $"提交  {submitted}", $"资源释放  {released}",
-            TimingDetails(row), source.Length > 0 ? "来源  " + source : "");
+        var basic = JoinDetails(
+            "── 基本信息",
+            $"结果  {ResultName(row)}",
+            $"提交  {submitted}",
+            $"资源释放  {released}",
+            source.Length > 0 ? "来源  " + source : "");
+        var summary = basic + Environment.NewLine + Environment.NewLine + TimingDetails(row, includeSectionHeaders: true);
         return new("任务记录", task, summary, row.GetRawText());
     }
     private static string ResultName(JsonElement row) => RouterJson.Text(row, "failureClass") switch
@@ -899,9 +953,12 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         return $"{category} 均占 {RouterTaskPresentation.FormatDuration(occMean)}（Editor {edMean} / 开销 {ovMean} / 非Editor {neMean}） · {p95}";
     }
 
-    private static string TimingDetails(JsonElement row)
+    private static string TimingDetails(JsonElement row, bool includeSectionHeaders = false)
     {
-        var lines = new List<string> { $"排队 {Seconds(row, "queueSeconds")}", $"资源占用 {Seconds(row, "executionSeconds")}" };
+        var lines = new List<string>();
+        if (includeSectionHeaders) lines.Add("── 阶段耗时");
+        lines.Add($"排队 {Seconds(row, "queueSeconds")}");
+        lines.Add($"资源占用 {Seconds(row, "executionSeconds")}");
         if (RouterJson.Text(row, "failureClass") == "dispatch_preflight_failed") lines.Add("原生操作未执行");
         foreach (var (field, label) in new[] { ("preflightSeconds", "派发前检查"), ("dispatchRecoveryWaitSeconds", "派发恢复等待"),
                      ("nativeTestSeconds", "原生测试"), ("recoverySeconds", "恢复执行"), ("recoveryWaitSeconds", "恢复等待") })
@@ -909,6 +966,11 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         lines.Add("清理 " + Seconds(row, "cleanupSeconds"));
         if (RouterJson.Number(row, "occupiedSeconds") is { } occ)
         {
+            if (includeSectionHeaders)
+            {
+                lines.Add("");
+                lines.Add("── 槽位时间拆解");
+            }
             lines.Add("槽位总占用 " + RouterTaskPresentation.FormatDuration(occ));
             var edVal = RouterJson.Number(row, "editorActiveSeconds");
             var edText = edVal is { } ed ? RouterTaskPresentation.FormatDuration(ed) : "未观测";

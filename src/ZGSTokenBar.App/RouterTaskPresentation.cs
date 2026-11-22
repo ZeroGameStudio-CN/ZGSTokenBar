@@ -25,7 +25,8 @@ internal sealed record RouterDailyThroughput(
     double TotalNonEditorScriptSeconds = 0,
     double TotalUnmeasuredSeconds = 0,
     int MeasuredCount = 0,
-    int ZeroEditorScriptCount = 0);
+    int ZeroEditorScriptCount = 0,
+    int DispatchedCount = 0);
 
 internal static class RouterTaskPresentation
 {
@@ -115,6 +116,23 @@ internal static class RouterTaskPresentation
                 : string.Create(CultureInfo.InvariantCulture, $"{minutes}m");
         }
         return string.Create(CultureInfo.InvariantCulture, $"{seconds / 3600d:0.#}h");
+    }
+
+    /// <summary>Formats one share as an integer percentage or "&lt;1%" for tiny non-zero portions.</summary>
+    internal static string FormatShare(double part, double whole)
+    {
+        if (!double.IsFinite(part) || !double.IsFinite(whole) || part <= 0.001 || whole <= 0) return "0%";
+        var pct = part * 100d / whole;
+        if (pct < 0.5) return "<1%";
+        return string.Create(CultureInfo.InvariantCulture, $"{(int)Math.Round(pct, MidpointRounding.AwayFromZero)}%");
+    }
+
+    /// <summary>Formats a nullable execution duration for table cells, keeping sub-minute precision and shortening longer spans.</summary>
+    internal static string FormatCellDuration(double? seconds)
+    {
+        if (seconds is not { } s || !double.IsFinite(s) || s < 0) return "—";
+        if (s < 60) return string.Create(CultureInfo.InvariantCulture, $"{s:0.##}s");
+        return FormatDuration(s);
     }
 
     /// <summary>Formats one date filter choice with its day total and occupied duration when available.</summary>
@@ -225,10 +243,12 @@ internal static class RouterTaskPresentation
         var hasDurations = activeRows.Any(entry => entry.Value.HasDurations) && totalDispatched > 0;
         if (!hasDurations)
         {
-            var summaryText = string.Create(CultureInfo.InvariantCulture, $"今日 {todayTotal:N0}  ·  日均 {avgText}/天");
-            var lines = new List<string>(1 + Math.Min(14, activeRows.Length))
+            var summaryText = string.Create(CultureInfo.InvariantCulture, $"今日 {todayTotal:N0} 条 · 日均 {avgText} 条/天");
+            var lines = new List<string>(2 + Math.Min(14, activeRows.Length))
             {
-                string.Create(CultureInfo.InvariantCulture, $"日均 {avgText}/天（按 {activeDays:N0} 个活跃日，共 {totalProcessed:N0} 条）")
+                string.Create(CultureInfo.InvariantCulture, $"日均 {avgText} 条/天（按 {activeDays:N0} 个活跃日，共 {totalProcessed:N0} 条）"),
+                "",
+                "最近活跃日明细：",
             };
             foreach (var entry in activeRows.Take(14))
             {
@@ -252,34 +272,39 @@ internal static class RouterTaskPresentation
 
         var summaryWithDurations = todayTotal > 0 && todayOccupied > 0
             ? string.Create(CultureInfo.InvariantCulture,
-                $"今日 {todayTotal:N0}({FormatDuration(todayOccupied)}) · 日均 {avgText}/天 · 均占 {FormatDuration(avgTaskOccupied)}")
+                $"今日 {todayTotal:N0} 条（{FormatDuration(todayOccupied)}）· 日均 {avgText} 条/天 · 均占 {FormatDuration(avgTaskOccupied)}")
             : string.Create(CultureInfo.InvariantCulture,
-                $"今日 {todayTotal:N0} · 日均 {avgText}/天 · 均占 {FormatDuration(avgTaskOccupied)}");
+                $"今日 {todayTotal:N0} 条 · 日均 {avgText} 条/天 · 均占 {FormatDuration(avgTaskOccupied)}");
 
-        var tipLines = new List<string>(4 + Math.Min(14, activeRows.Length))
+        var tipLines = new List<string>(10 + Math.Min(14, activeRows.Length))
         {
             string.Create(CultureInfo.InvariantCulture,
-                $"日均 {avgText}/天 · 日均占 {FormatDuration(avgDailyOccupied)} · 单任务均占 {FormatDuration(avgTaskOccupied)}（按 {activeDays:N0} 个活跃日，共 {totalProcessed:N0} 条）")
+                $"日均 {avgText} 条/天 · 日均占 {FormatDuration(avgDailyOccupied)} · 单任务均占 {FormatDuration(avgTaskOccupied)}（按 {activeDays:N0} 个活跃日，共 {totalProcessed:N0} 条）")
         };
         if (totalOccupied > 0)
         {
-            static int Pct(double part, double whole) => (int)Math.Round(part * 100d / whole, MidpointRounding.AwayFromZero);
-            var unSuffix = totalUnmeasured > 0.05
-                ? string.Create(CultureInfo.InvariantCulture, $" · 未拆分历史 {FormatDuration(totalUnmeasured)} ({Pct(totalUnmeasured, totalOccupied)}%)")
-                : "";
+            tipLines.Add("");
             tipLines.Add(string.Create(CultureInfo.InvariantCulture,
-                $"槽位拆分：真实 Editor {FormatDuration(totalEditor)} ({Pct(totalEditor, totalOccupied)}%) · Router 开销 {FormatDuration(totalOverhead)} ({Pct(totalOverhead, totalOccupied)}%) · 非 Editor {FormatDuration(totalNonEditor)} ({Pct(totalNonEditor, totalOccupied)}%){unSuffix}"));
-        }
-        if (totalUnmeasured > 0.05)
-        {
+                $"槽位时间拆解（仅统计任务占用期间，不含空闲；总计 {FormatDuration(totalOccupied)}，已拆解 {measuredCount:N0}/{totalDispatched:N0} 条）："));
             tipLines.Add(string.Create(CultureInfo.InvariantCulture,
-                $"  已拆解 {measuredCount:N0}/{totalDispatched:N0} 条（旧脚本未埋点归入「未拆分历史」，新运行脚本将自动拆分）"));
+                $"  真实 Editor    {FormatDuration(totalEditor)} ({FormatShare(totalEditor, totalOccupied)})"));
+            tipLines.Add(string.Create(CultureInfo.InvariantCulture,
+                $"  Router 开销    {FormatDuration(totalOverhead)} ({FormatShare(totalOverhead, totalOccupied)})"));
+            tipLines.Add(string.Create(CultureInfo.InvariantCulture,
+                $"  非 Editor 脚本  {FormatDuration(totalNonEditor)} ({FormatShare(totalNonEditor, totalOccupied)})"));
+            if (totalUnmeasured > 0.05)
+            {
+                tipLines.Add(string.Create(CultureInfo.InvariantCulture,
+                    $"  旧未拆分历史    {FormatDuration(totalUnmeasured)} ({FormatShare(totalUnmeasured, totalOccupied)})"));
+            }
         }
         if (zeroEditorScripts > 0)
         {
             tipLines.Add(string.Create(CultureInfo.InvariantCulture,
-                $"  未调用 Unity CLI 的脚本：{zeroEditorScripts:N0} 条（可优先评估移出 Editor 队列）"));
+                $"  提示：未调用 Unity CLI 的脚本 {zeroEditorScripts:N0} 条（可优先评估移出 Editor 队列）"));
         }
+        tipLines.Add("");
+        tipLines.Add("最近活跃日明细：");
         foreach (var entry in activeRows.Take(14))
         {
             var d = entry.Value;
@@ -317,6 +342,7 @@ internal static class RouterTaskPresentation
             totalNonEditor,
             totalUnmeasured,
             measuredCount,
-            zeroEditorScripts);
+            zeroEditorScripts,
+            totalDispatched);
     }
 }

@@ -632,6 +632,97 @@ internal static class RouterModuleTests
                 dialog.Location = new(-30000, -30000);
                 dialog.Show();
                 SaveRecordDialog(dialog, Path.Combine(directory, "router-record.png"));
+
+                var todayKey = DateOnly.FromDateTime(DateTime.Now).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+                using var durationHandler = new Fixture
+                {
+                    HistoryTotal = 76,
+                    HistoryDays =
+                    [
+                        new
+                        {
+                            date = todayKey,
+                            total = 597,
+                            counts = new { completed = 442, failed = 127, cancelled = 28, pending = 0 },
+                            durations = new
+                            {
+                                dispatchedCount = 544,
+                                measuredCount = 234,
+                                occupiedSeconds = 43891.64,
+                                executionSeconds = 24686.7,
+                                cleanupSeconds = 19199.6,
+                                editorActiveSeconds = 6573.4,
+                                routerOverheadSeconds = 28505.6,
+                                nonEditorScriptSeconds = 66.8,
+                                unmeasuredSeconds = 8745.9,
+                                zeroEditorScriptCount = 3,
+                            },
+                        },
+                        new
+                        {
+                            date = DateOnly.FromDateTime(DateTime.Now).AddDays(-1).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
+                            total = 656,
+                            counts = new { completed = 528, failed = 113, cancelled = 15, pending = 0 },
+                            durations = new
+                            {
+                                dispatchedCount = 639,
+                                measuredCount = 255,
+                                occupiedSeconds = 50503.0,
+                                executionSeconds = 31483.3,
+                                cleanupSeconds = 19019.7,
+                                editorActiveSeconds = 7783.2,
+                                routerOverheadSeconds = 27342.2,
+                                nonEditorScriptSeconds = 0.0,
+                                unmeasuredSeconds = 15377.6,
+                                zeroEditorScriptCount = 0,
+                            },
+                        },
+                    ],
+                };
+                using var durationForm = new RouterMonitorForm(new RouterMonitorClient(durationHandler), observe: false, initialProject: Fixture.Project)
+                { ShowInTaskbar = false, StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
+                durationForm.SetPinned(true);
+                durationForm.ConfigureFor(new Rectangle(400, (int)(600 * scale), 48, 44), true, scale,
+                    QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), new Rectangle(0, 0, (int)(1280 * scale), (int)(800 * scale)));
+                durationForm.Show();
+                Pump(durationForm.RefreshViewAsync());
+                Pump(durationForm.HistoryAsync());
+                durationForm.PerformLayout();
+                System.Windows.Forms.Application.DoEvents();
+                var metricsStrip = AllControls(durationForm).OfType<RouterHistoryMetricsStrip>().Single();
+                Check(metricsStrip.Visible && metricsStrip.Height > 0, "Metrics strip is visible with positive height when durations are present");
+                foreach (var table in AllControls(durationForm).OfType<RouterGrid>().Where(t => t.Visible))
+                    Check(table.Rows.Cast<System.Windows.Forms.DataGridViewRow>().Sum(r => r.Height) <= table.ClientSize.Height - table.ColumnHeadersHeight,
+                        "Duration metrics strip leaves history grid scroll-free");
+                Save(durationForm, Path.Combine(directory, "router-durations-144.png"));
+                durationForm.Close();
+
+                var detailedRow = JsonSerializer.SerializeToElement(new
+                {
+                    id = new string('a', 32),
+                    kind = "script",
+                    category = "组合脚本",
+                    task = "pure-script.py",
+                    createdLocal = "2026-11-22T18:00:00+08:00",
+                    outcome = "completed",
+                    source = "pro1 · 批量验证对话",
+                    queueSeconds = 4.2,
+                    executionSeconds = 85.4,
+                    cleanupSeconds = 3.1,
+                    occupiedSeconds = 88.5,
+                    editorActiveSeconds = 0.0,
+                    routerOverheadSeconds = 4.5,
+                    nonEditorScriptSeconds = 84.0,
+                    unmeasuredSeconds = 0.0,
+                    editorCliSeconds = 0.0,
+                    editorCliCallCount = 0,
+                    cleanupVerified = true,
+                });
+                using var detailedDialog = RouterMonitorForm.CreateRecordDialog(detailedRow);
+                detailedDialog.StartPosition = System.Windows.Forms.FormStartPosition.Manual;
+                detailedDialog.Location = new(-30000, -30000);
+                detailedDialog.Show();
+                SaveRecordDialog(detailedDialog, Path.Combine(directory, "router-record-durations.png"));
             }
             var projectButtons = AllControls(form).OfType<RouterButton>().Where(button => button.AccessibleName?.StartsWith("切换工程 ") == true).ToArray();
             Check(projectButtons.Length == 3 && projectButtons.Count(button => button.Selected) == 1, "Registered projects use flat selected chips");
@@ -1111,14 +1202,14 @@ internal static class RouterModuleTests
         var withToday = RouterTaskPresentation.SummarizeDailyThroughput(daysDoc.EnumerateArray(), new DateOnly(2026, 11, 22));
         Check(withToday.ActiveDays == 2 && withToday.TotalProcessed == 199 && withToday.TodayTotal == 65
             && withToday.AveragePerActiveDay is > 99.4 && withToday.AveragePerActiveDay is < 99.6
-            && withToday.SummaryText == "今日 65  ·  日均 99.5/天"
-            && withToday.TooltipSection.Contains("日均 99.5/天（按 2 个活跃日，共 199 条）")
+            && withToday.SummaryText == "今日 65 条 · 日均 99.5 条/天"
+            && withToday.TooltipSection.Contains("日均 99.5 条/天（按 2 个活跃日，共 199 条）")
             && withToday.TooltipSection.Contains("2026-11-22  65 条（成功 54 · 失败 11）")
             && !withToday.TooltipSection.Contains("2026-11-20"),
             "Daily throughput averages strictly across active days and omits zero-task days");
 
         var withoutToday = RouterTaskPresentation.SummarizeDailyThroughput(daysDoc.EnumerateArray(), new DateOnly(2026, 11, 23));
-        Check(withoutToday.TodayTotal == 0 && withoutToday.SummaryText == "今日 0  ·  日均 99.5/天",
+        Check(withoutToday.TodayTotal == 0 && withoutToday.SummaryText == "今日 0 条 · 日均 99.5 条/天",
             "Missing today bucket shows 今日 0 while retaining active-day average");
 
         var noTotals = JsonSerializer.SerializeToElement(new[] { new { date = "2026-11-22" } });
@@ -1147,10 +1238,11 @@ internal static class RouterModuleTests
         form.Show();
         Pump(form.RefreshViewAsync());
         var controls = AllControls(form).ToArray();
-        var throughputLabel = controls.OfType<System.Windows.Forms.Label>().Single(l => l.Text.Contains("日均 152/天"));
-        Check(throughputLabel.Text == "今日 0  ·  日均 152/天"
-            && throughputLabel.AccessibleDescription!.Contains("2026-10-27  152 条"),
-            "RouterMonitorForm displays today and active-day throughput summary and tooltip details");
+        var throughputStrip = controls.OfType<RouterHistoryMetricsStrip>().Single(s => s.Text.Contains("日均 152 条/天"));
+        Check(throughputStrip.Text == "今日 0 条 · 日均 152 条/天"
+            && throughputStrip.Visible && throughputStrip.Height > 0
+            && throughputStrip.AccessibleDescription!.Contains("2026-10-27  152 条"),
+            "RouterMonitorForm displays today and active-day throughput summary in metrics strip and tooltip details");
         var dayCombo = controls.OfType<System.Windows.Forms.ComboBox>().Single(c => c.AccessibleName == "日期");
         Check(dayCombo.Items.Cast<object>().Any(item => item.ToString() == "2026-10-27 (152)"),
             "RouterMonitorForm day selector shows merged daily task totals");
@@ -1162,8 +1254,13 @@ internal static class RouterModuleTests
         Check(RouterTaskPresentation.FormatDuration(3.5) == "3.5s"
             && RouterTaskPresentation.FormatDuration(48) == "48s"
             && RouterTaskPresentation.FormatDuration(84) == "1m24s"
-            && RouterTaskPresentation.FormatDuration(11520) == "3.2h",
-            "FormatDuration formats sub-minute, minute-second and hour ranges cleanly");
+            && RouterTaskPresentation.FormatDuration(11520) == "3.2h"
+            && RouterTaskPresentation.FormatShare(0.3, 100) == "<1%"
+            && RouterTaskPresentation.FormatShare(0, 100) == "0%"
+            && RouterTaskPresentation.FormatCellDuration(41.2) == "41.2s"
+            && RouterTaskPresentation.FormatCellDuration(85) == "1m25s"
+            && RouterTaskPresentation.FormatCellDuration(null) == "—",
+            "FormatDuration, FormatShare and FormatCellDuration format cleanly");
 
         var daysDoc = JsonSerializer.SerializeToElement(new[]
         {
@@ -1207,14 +1304,17 @@ internal static class RouterModuleTests
             },
         });
         var summary = RouterTaskPresentation.SummarizeDailyThroughput(daysDoc.EnumerateArray(), new DateOnly(2026, 11, 22));
-        Check(summary.HasDurations && summary.TotalOccupiedSeconds == 5400.0
+        Check(summary.HasDurations && summary.TotalOccupiedSeconds == 5400.0 && summary.DispatchedCount == 30
             && summary.AverageDailyOccupiedSeconds == 2700.0 && summary.AverageTaskOccupiedSeconds == 180.0
             && summary.ZeroEditorScriptCount == 4 && summary.MeasuredCount == 25
-            && summary.SummaryText == "今日 20(1h) · 日均 15/天 · 均占 3m"
-            && summary.TooltipSection.Contains("日均 15/天 · 日均占 45m · 单任务均占 3m")
-            && summary.TooltipSection.Contains("槽位拆分：真实 Editor 45m (50%) · Router 开销 18m (20%) · 非 Editor 21m (23%) · 未拆分历史 6m (7%)")
-            && summary.TooltipSection.Contains("已拆解 25/30 条")
-            && summary.TooltipSection.Contains("未调用 Unity CLI 的脚本：4 条")
+            && summary.SummaryText == "今日 20 条（1h）· 日均 15 条/天 · 均占 3m"
+            && summary.TooltipSection.Contains("日均 15 条/天 · 日均占 45m · 单任务均占 3m")
+            && summary.TooltipSection.Contains("槽位时间拆解（仅统计任务占用期间，不含空闲；总计 1.5h，已拆解 25/30 条）：")
+            && summary.TooltipSection.Contains("真实 Editor    45m (50%)")
+            && summary.TooltipSection.Contains("Router 开销    18m (20%)")
+            && summary.TooltipSection.Contains("非 Editor 脚本  21m (23%)")
+            && summary.TooltipSection.Contains("旧未拆分历史    6m (7%)")
+            && summary.TooltipSection.Contains("提示：未调用 Unity CLI 的脚本 4 条（可优先评估移出 Editor 队列）")
             && summary.TooltipSection.Contains("2026-11-22  20 条 · 占 1h（Editor 30m / 开销 12m / 非Editor 12m / 未拆分 6m）")
             && RouterTaskPresentation.DayOptionLabel(daysDoc[0]) == "2026-11-22 (20 · 1h)",
             "Daily throughput summarizes average task/day occupancy, 3-way split, unmeasured caveat and zero-Editor script hint");
@@ -1260,12 +1360,13 @@ internal static class RouterModuleTests
         durationForm.Show();
         Pump(durationForm.RefreshViewAsync());
         var durationControls = AllControls(durationForm).ToArray();
-        var durationLabel = durationControls.OfType<System.Windows.Forms.Label>().Single(l => l.Text.Contains("均占 3m"));
-        Check(durationLabel.Text == "今日 20(1h) · 日均 20/天 · 均占 3m"
-            && durationLabel.AccessibleDescription!.Contains("槽位拆分：真实 Editor 30m (50%)")
+        var durationStrip = durationControls.OfType<RouterHistoryMetricsStrip>().Single(s => s.Text.Contains("均占 3m"));
+        Check(durationStrip.Text == "今日 20 条（1h）· 日均 20 条/天 · 均占 3m"
+            && durationStrip.Visible && durationStrip.Height > 0
+            && durationStrip.AccessibleDescription!.Contains("真实 Editor    30m (50%)")
             && durationControls.OfType<System.Windows.Forms.ComboBox>().Single(c => c.AccessibleName == "日期")
                 .Items.Cast<object>().Any(item => item.ToString() == $"{todayStr} (20 · 1h)"),
-            "RouterMonitorForm displays average occupancy, daily duration and 3-way split tooltip");
+            "RouterMonitorForm displays average occupancy, daily duration and 3-way split in metrics strip");
         durationForm.Close();
 
         var zeroScriptRow = JsonSerializer.SerializeToElement(new
@@ -1290,10 +1391,13 @@ internal static class RouterModuleTests
         });
         using var dialog = RouterMonitorForm.CreateRecordDialog(zeroScriptRow);
         var dialogText = AllControls(dialog).OfType<System.Windows.Forms.RichTextBox>().Single().Text;
-        Check(dialogText.Contains("槽位总占用 10s")
+        Check(dialogText.Contains("── 基本信息")
+            && dialogText.Contains("── 阶段耗时")
+            && dialogText.Contains("── 槽位时间拆解")
+            && dialogText.Contains("槽位总占用 10s")
             && dialogText.Contains("时间拆分：真实 Editor 0s · Router 开销 2s · 非 Editor 8s")
             && dialogText.Contains("Unity CLI 调用 0 次（0s）")
             && dialogText.Contains("提示：未调用 Unity CLI，可评估移出 Editor 队列"),
-            "Record dialog displays 3-way slot timing split and highlights zero-CLI script jobs");
+            "Record dialog displays structured sections, 3-way slot timing split and highlights zero-CLI script jobs");
     }
 }

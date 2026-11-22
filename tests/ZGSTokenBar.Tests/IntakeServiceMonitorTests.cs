@@ -154,7 +154,11 @@ internal static class IntakeServiceMonitorTests
         Pump(form.RefreshAsync());
         var progress = Descendants(form).OfType<RouterGrid>().Single(grid => grid.ColumnCount == 3);
         var history = Descendants(form).OfType<RouterGrid>().Single(grid => grid.ColumnCount == 4);
+        var overview = Descendants(form).OfType<IntakeOverviewStrip>().Single();
+        var eightRowHeight = progress.Height;
         Check(form.Observation is { PendingReview: 0, ProtectedArchive: 8, Unconfirmed: 0, ClosedHistory: 4, InFlight: 0 }
+            && overview.Metrics is { CountsKnown: true, PendingReview: 0, ProtectedArchive: 8, Unconfirmed: 0, ClosedHistory: 4, InFlight: 0 }
+            && overview.Height > 0
             && progress.RowCount == 8 && progress.Rows.Cast<DataGridViewRow>().All(r => Equals(r.Cells[2].Value, "归档保护"))
             && history.Rows.Cast<DataGridViewRow>().Count(r => Equals(r.Cells[3].Value, "原卡已结案")) == 4,
             "Archive guards have their own count and passed reviews remain in history with their original diagnostics.");
@@ -172,22 +176,28 @@ internal static class IntakeServiceMonitorTests
         snapshot = snapshot with { Progress = [real, unknown, .. protection], History = [.. snapshot.History, real, unknown] };
         Pump(form.RefreshAsync());
         Check(form.Observation is { PendingReview: 1, ProtectedArchive: 8, Unconfirmed: 1, ClosedHistory: 4 }
+            && overview.Metrics is { CountsKnown: true, PendingReview: 1, ProtectedArchive: 8, Unconfirmed: 1 }
             && Equals(progress.Rows[0].Cells[2].Value, "待核对") && Equals(progress.Rows[1].Cells[2].Value, "待确认"),
             "Known work and uncertain source state remain visible with distinct statuses.");
         snapshot = snapshot with { Gaps = ["receipts_unavailable"], Progress = [], History = [], ProcessingCount = null };
         Pump(form.RefreshAsync());
         Check(form.Observation is { PendingReview: null, ProtectedArchive: null, Unconfirmed: null, ClosedHistory: 4 }
+            && !overview.Metrics.CountsKnown
             && progress.RowCount == 10, "A partial read keeps previous rows without asserting zero or complete totals.");
 
         var waiting = protection[0] with { Phase = "retry", ReviewState = "archive_waiting", ReasonCode = "archive_thread_active" };
         snapshot = snapshot with { Gaps = [], Progress = [waiting], History = [], ProcessingCount = 0 };
         Pump(form.RefreshAsync());
+        var oneRowHeight = progress.Height;
         Check(form.Observation is { PendingReview: 0, ProtectedArchive: 0 }
-            && Equals(progress.Rows[0].Cells[2].Value, "等待对话空闲"), "A verified busy conversation remains current without review.");
+            && oneRowHeight < eightRowHeight
+            && Equals(progress.Rows[0].Cells[2].Value, "等待对话空闲"), "A verified busy conversation remains current without review and shrinks empty vertical space.");
         var retained = waiting with { Phase = "needs_attention", ReviewState = "archive_retained", ReasonCode = "archive_thread_retained" };
         snapshot = snapshot with { Progress = [], History = [retained] };
         Pump(form.RefreshAsync());
+        var emptyHeight = progress.Height;
         Check(form.Observation is { PendingReview: 0, ProtectedArchive: 0, InFlight: 0 }
+            && emptyHeight < oneRowHeight
             && progress.RowCount == 0 && Equals(history.Rows[0].Cells[3].Value, "续聊已保留")
             && ((IntakeServiceRecord)history.Rows[0].Tag!).Phase == "needs_attention",
             "A retained conversation is terminal in the UI and keeps the original receipt phase.");
