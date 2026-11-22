@@ -40,7 +40,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
     private readonly TableLayoutPanel _root;
     private readonly TableLayoutPanel _singleTask;
     private readonly FlowLayoutPanel _filters;
-    private readonly Label _currentHeading = Label("当前", 52), _queueHeading = Label("排队", 120), _historyHeading = Label("历史", 48), _historySummary = Label("", 156), _historyThroughput = Label("", 230);
+    private readonly Label _currentHeading = Label("当前", 52), _queueHeading = Label("排队", 120), _historyHeading = Label("历史", 42), _historySummary = Label("", 136), _historyThroughput = Label("", 334);
     private readonly TableLayoutPanel _historyBody;
     private readonly Button _pin;
     private readonly ToolTip _tips = new() { InitialDelay = 450, ReshowDelay = 150, AutoPopDelay = 12000 };
@@ -86,7 +86,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         _root = CreatePanelLayout(footerHeight: 0);
         Controls.Add(_root);
         _projects.AccessibleName = "工程切换"; _freshness.Width = 140;
-        _kind.Width = _outcome.Width = 92; _day.Width = 148; _query.Width = 160;
+        _kind.Width = _outcome.Width = 92; _day.Width = 172; _query.Width = 152;
         _kind.AccessibleName = "任务类型"; _outcome.AccessibleName = "结果"; _day.AccessibleName = "日期"; _query.AccessibleName = "搜索任务或对话";
         _pin = IconButton(RouterButtonIcon.Pin, "固定弹层", () => { RequestPinChange(!_pinned); return Task.CompletedTask; });
         var header = Header(Flow(_brand), Flow(_freshness, IconButton(RouterButtonIcon.Refresh, "刷新", () => RefreshViewAsync(forceHistory: true)), _pin,
@@ -747,8 +747,8 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
             var counts = RouterJson.Field(metadata, "counts");
             var failed = RouterJson.Integer(counts, "failed");
             var statistics = $"成功 {RouterJson.Integer(counts, "completed")} · 失败 {failed} · 取消 {RouterJson.Integer(counts, "cancelled")}" + Environment.NewLine
-                + string.Join("   ", RouterJson.Rows(metadata, "groups").Where(g => RouterJson.Integer(g, "count") > 0)
-                    .Select(g => $"{RouterJson.Text(g, "category")} P95 排队/占用/清理 {Seconds(g, "queueSecondsP95")}/{Seconds(g, "executionSecondsP95")}/{Seconds(g, "cleanupSecondsP95")}"));
+                + string.Join(Environment.NewLine, RouterJson.Rows(metadata, "groups").Where(g => RouterJson.Integer(g, "count") > 0)
+                    .Select(FormatGroupStats));
             _historySummary.Text = outcome != "failed" && failed > 0 ? $"{total:N0} 条  ·  {failed:N0} 失败" : $"{total:N0} 条";
             var throughput = RouterTaskPresentation.SummarizeDailyThroughput(
                 RouterJson.Rows(metadata, "days"),
@@ -887,6 +887,18 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         "queue_timeout" => "排队超时", "execution_timeout" => "执行超时", "cleanup_unconfirmed" => "清理待确认",
         _ => RouterJson.Text(row, "outcome") switch { "completed" => "成功", "failed" => "失败", "cancelled" => "取消", _ => "未结束" },
     };
+    private static string FormatGroupStats(JsonElement group)
+    {
+        var category = RouterJson.Text(group, "category");
+        var p95 = $"P95 排队/占用/清理 {Seconds(group, "queueSecondsP95")}/{Seconds(group, "executionSecondsP95")}/{Seconds(group, "cleanupSecondsP95")}";
+        if (RouterJson.Number(group, "occupiedSecondsMean") is not { } occMean)
+            return $"{category} {p95}";
+        var edMean = RouterJson.Number(group, "editorActiveSecondsMean") is { } ed ? RouterTaskPresentation.FormatDuration(ed) : "—";
+        var ovMean = RouterJson.Number(group, "routerOverheadSecondsMean") is { } ov ? RouterTaskPresentation.FormatDuration(ov) : "—";
+        var neMean = RouterJson.Number(group, "nonEditorScriptSecondsMean") is { } ne ? RouterTaskPresentation.FormatDuration(ne) : "—";
+        return $"{category} 均占 {RouterTaskPresentation.FormatDuration(occMean)}（Editor {edMean} / 开销 {ovMean} / 非Editor {neMean}） · {p95}";
+    }
+
     private static string TimingDetails(JsonElement row)
     {
         var lines = new List<string> { $"排队 {Seconds(row, "queueSeconds")}", $"资源占用 {Seconds(row, "executionSeconds")}" };
@@ -895,6 +907,28 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
                      ("nativeTestSeconds", "原生测试"), ("recoverySeconds", "恢复执行"), ("recoveryWaitSeconds", "恢复等待") })
             if (RouterJson.Number(row, field) is not null) lines.Add(label + " " + Seconds(row, field));
         lines.Add("清理 " + Seconds(row, "cleanupSeconds"));
+        if (RouterJson.Number(row, "occupiedSeconds") is { } occ)
+        {
+            lines.Add("槽位总占用 " + RouterTaskPresentation.FormatDuration(occ));
+            var edVal = RouterJson.Number(row, "editorActiveSeconds");
+            var edText = edVal is { } ed ? RouterTaskPresentation.FormatDuration(ed) : "未观测";
+            var ovText = RouterJson.Number(row, "routerOverheadSeconds") is { } ov ? RouterTaskPresentation.FormatDuration(ov) : "—";
+            var neText = RouterJson.Number(row, "nonEditorScriptSeconds") is { } ne ? RouterTaskPresentation.FormatDuration(ne) : "—";
+            var unSuffix = RouterJson.Number(row, "unmeasuredSeconds") is { } un && un > 0.05
+                ? $" · 未拆分 {RouterTaskPresentation.FormatDuration(un)}"
+                : "";
+            lines.Add($"时间拆分：真实 Editor {edText} · Router 开销 {ovText} · 非 Editor {neText}{unSuffix}");
+            var cliCount = row.ValueKind == JsonValueKind.Object && row.TryGetProperty("editorCliCallCount", out var cliEl) && cliEl.ValueKind == JsonValueKind.Number
+                ? cliEl.GetInt32()
+                : (int?)null;
+            if (cliCount is { } count)
+            {
+                var cliSec = RouterJson.Number(row, "editorCliSeconds") is { } cs ? RouterTaskPresentation.FormatDuration(cs) : "0s";
+                lines.Add(string.Create(CultureInfo.InvariantCulture, $"Unity CLI 调用 {count:N0} 次（{cliSec}）"));
+            }
+            if (RouterJson.Text(row, "kind") == "script" && cliCount == 0 && edVal is 0)
+                lines.Add("提示：未调用 Unity CLI，可评估移出 Editor 队列");
+        }
         return string.Join(Environment.NewLine, lines);
     }
     private static string Seconds(JsonElement row, string name) => RouterJson.Number(row, name) is { } n ? $"{n:0.##}s" : "—";

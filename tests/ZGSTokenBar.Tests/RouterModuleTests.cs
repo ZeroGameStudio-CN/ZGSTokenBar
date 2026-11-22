@@ -33,6 +33,7 @@ internal static class RouterModuleTests
         QueueRefreshRecovery();
         OwnedFontScaling();
         DailyThroughputSummary();
+        DailyDurationBreakdown();
         using var handler = new Fixture();
         using var client = new RouterMonitorClient(handler);
         var snapshot = client.SnapshotAsync().GetAwaiter().GetResult();
@@ -1154,5 +1155,145 @@ internal static class RouterModuleTests
         Check(dayCombo.Items.Cast<object>().Any(item => item.ToString() == "2026-10-27 (152)"),
             "RouterMonitorForm day selector shows merged daily task totals");
         form.Close();
+    }
+
+    private static void DailyDurationBreakdown()
+    {
+        Check(RouterTaskPresentation.FormatDuration(3.5) == "3.5s"
+            && RouterTaskPresentation.FormatDuration(48) == "48s"
+            && RouterTaskPresentation.FormatDuration(84) == "1m24s"
+            && RouterTaskPresentation.FormatDuration(11520) == "3.2h",
+            "FormatDuration formats sub-minute, minute-second and hour ranges cleanly");
+
+        var daysDoc = JsonSerializer.SerializeToElement(new[]
+        {
+            new
+            {
+                date = "2026-11-22",
+                total = 20,
+                counts = new { completed = 18, failed = 2, cancelled = 0, pending = 0 },
+                durations = new
+                {
+                    dispatchedCount = 20,
+                    measuredCount = 15,
+                    occupiedSeconds = 3600.0,
+                    executionSeconds = 3000.0,
+                    cleanupSeconds = 600.0,
+                    editorActiveSeconds = 1800.0,
+                    routerOverheadSeconds = 720.0,
+                    nonEditorScriptSeconds = 720.0,
+                    unmeasuredSeconds = 360.0,
+                    zeroEditorScriptCount = 3,
+                },
+            },
+            new
+            {
+                date = "2026-11-21",
+                total = 10,
+                counts = new { completed = 10, failed = 0, cancelled = 0, pending = 0 },
+                durations = new
+                {
+                    dispatchedCount = 10,
+                    measuredCount = 10,
+                    occupiedSeconds = 1800.0,
+                    executionSeconds = 1500.0,
+                    cleanupSeconds = 300.0,
+                    editorActiveSeconds = 900.0,
+                    routerOverheadSeconds = 360.0,
+                    nonEditorScriptSeconds = 540.0,
+                    unmeasuredSeconds = 0.0,
+                    zeroEditorScriptCount = 1,
+                },
+            },
+        });
+        var summary = RouterTaskPresentation.SummarizeDailyThroughput(daysDoc.EnumerateArray(), new DateOnly(2026, 11, 22));
+        Check(summary.HasDurations && summary.TotalOccupiedSeconds == 5400.0
+            && summary.AverageDailyOccupiedSeconds == 2700.0 && summary.AverageTaskOccupiedSeconds == 180.0
+            && summary.ZeroEditorScriptCount == 4 && summary.MeasuredCount == 25
+            && summary.SummaryText == "今日 20(1h) · 日均 15/天 · 均占 3m"
+            && summary.TooltipSection.Contains("日均 15/天 · 日均占 45m · 单任务均占 3m")
+            && summary.TooltipSection.Contains("槽位拆分：真实 Editor 45m (50%) · Router 开销 18m (20%) · 非 Editor 21m (23%) · 未拆分历史 6m (7%)")
+            && summary.TooltipSection.Contains("已拆解 25/30 条")
+            && summary.TooltipSection.Contains("未调用 Unity CLI 的脚本：4 条")
+            && summary.TooltipSection.Contains("2026-11-22  20 条 · 占 1h（Editor 30m / 开销 12m / 非Editor 12m / 未拆分 6m）")
+            && RouterTaskPresentation.DayOptionLabel(daysDoc[0]) == "2026-11-22 (20 · 1h)",
+            "Daily throughput summarizes average task/day occupancy, 3-way split, unmeasured caveat and zero-Editor script hint");
+
+        var todayStr = DateOnly.FromDateTime(DateTime.Now).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        using var handler = TwoActiveProjects();
+        handler.HistoryDays =
+        [
+            new
+            {
+                date = todayStr,
+                total = 10,
+                counts = new { completed = 9, failed = 1, cancelled = 0, pending = 0 },
+                durations = new
+                {
+                    dispatchedCount = 10,
+                    measuredCount = 10,
+                    occupiedSeconds = 1800.0,
+                    executionSeconds = 1500.0,
+                    cleanupSeconds = 300.0,
+                    editorActiveSeconds = 900.0,
+                    routerOverheadSeconds = 300.0,
+                    nonEditorScriptSeconds = 600.0,
+                    unmeasuredSeconds = 0.0,
+                    zeroEditorScriptCount = 2,
+                },
+            }
+        ];
+        using var client = new RouterMonitorClient(handler);
+        var mergedHistory = client.HistoryAsync(RouterMonitorClient.AllProjects, "all", "finished", "all", "", 0, limit: 25).GetAwaiter().GetResult();
+        var mergedDay = RouterJson.Rows(mergedHistory, "days").Single(d => RouterJson.Text(d, "date") == todayStr);
+        var mergedDur = RouterJson.Field(mergedDay, "durations");
+        Check(RouterJson.Integer(mergedDur, "dispatchedCount") == 20
+            && RouterJson.Number(mergedDur, "occupiedSeconds") == 3600.0
+            && RouterJson.Number(mergedDur, "editorActiveSeconds") == 1800.0
+            && RouterJson.Number(mergedDur, "nonEditorScriptSeconds") == 1200.0
+            && RouterJson.Integer(mergedDur, "zeroEditorScriptCount") == 4
+            && !RouterJson.Rows(mergedHistory, "groups").Any(),
+            "All-project history sums daily durations accurately while keeping merged groups empty");
+
+        using var durationForm = new RouterMonitorForm(client, observe: false)
+        { Opacity = 0, StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
+        durationForm.Show();
+        Pump(durationForm.RefreshViewAsync());
+        var durationControls = AllControls(durationForm).ToArray();
+        var durationLabel = durationControls.OfType<System.Windows.Forms.Label>().Single(l => l.Text.Contains("均占 3m"));
+        Check(durationLabel.Text == "今日 20(1h) · 日均 20/天 · 均占 3m"
+            && durationLabel.AccessibleDescription!.Contains("槽位拆分：真实 Editor 30m (50%)")
+            && durationControls.OfType<System.Windows.Forms.ComboBox>().Single(c => c.AccessibleName == "日期")
+                .Items.Cast<object>().Any(item => item.ToString() == $"{todayStr} (20 · 1h)"),
+            "RouterMonitorForm displays average occupancy, daily duration and 3-way split tooltip");
+        durationForm.Close();
+
+        var zeroScriptRow = JsonSerializer.SerializeToElement(new
+        {
+            id = new string('a', 32),
+            kind = "script",
+            category = "组合脚本",
+            task = "pure-script.py",
+            createdLocal = "2026-11-22T18:00:00+08:00",
+            outcome = "completed",
+            queueSeconds = 1.0,
+            executionSeconds = 9.0,
+            cleanupSeconds = 1.0,
+            occupiedSeconds = 10.0,
+            editorActiveSeconds = 0.0,
+            routerOverheadSeconds = 2.0,
+            nonEditorScriptSeconds = 8.0,
+            unmeasuredSeconds = 0.0,
+            editorCliSeconds = 0.0,
+            editorCliCallCount = 0,
+            cleanupVerified = true,
+        });
+        using var dialog = RouterMonitorForm.CreateRecordDialog(zeroScriptRow);
+        var dialogText = AllControls(dialog).OfType<System.Windows.Forms.RichTextBox>().Single().Text;
+        Check(dialogText.Contains("槽位总占用 10s")
+            && dialogText.Contains("时间拆分：真实 Editor 0s · Router 开销 2s · 非 Editor 8s")
+            && dialogText.Contains("Unity CLI 调用 0 次（0s）")
+            && dialogText.Contains("提示：未调用 Unity CLI，可评估移出 Editor 队列"),
+            "Record dialog displays 3-way slot timing split and highlights zero-CLI script jobs");
     }
 }
