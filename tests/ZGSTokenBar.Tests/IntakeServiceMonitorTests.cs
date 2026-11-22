@@ -30,6 +30,7 @@ internal static class IntakeServiceMonitorTests
             Check(client.ProcessingCount([a, b with { Source = Source with { Id = alternate.Id } }]) == 1,
                 "Duplicate profiles for the same service do not double-count its operations.");
             ReviewProjection(captures);
+            HistoryScopeAndPrewarm();
             foreach (var dpi in new[] { 96, 144, 192 })
             {
                 CaptureCount(dpi, captures);
@@ -177,8 +178,9 @@ internal static class IntakeServiceMonitorTests
         Pump(form.RefreshAsync());
         Check(form.Observation is { PendingReview: 1, ProtectedArchive: 8, Unconfirmed: 1, ClosedHistory: 4 }
             && overview.Metrics is { CountsKnown: true, PendingReview: 1, ProtectedArchive: 8, Unconfirmed: 1 }
+            && Descendants(form).OfType<Label>().Any(l => l.Text == "10 条  ·  2 待核")
             && Equals(progress.Rows[0].Cells[2].Value, "待核对") && Equals(progress.Rows[1].Cells[2].Value, "待确认"),
-            "Known work and uncertain source state remain visible with distinct statuses.");
+            "Known work and uncertain source state remain visible with distinct statuses and review subcount.");
         snapshot = snapshot with { Gaps = ["receipts_unavailable"], Progress = [], History = [], ProcessingCount = null };
         Pump(form.RefreshAsync());
         Check(form.Observation is { PendingReview: null, ProtectedArchive: null, Unconfirmed: null, ClosedHistory: 4 }
@@ -201,6 +203,56 @@ internal static class IntakeServiceMonitorTests
             && progress.RowCount == 0 && Equals(history.Rows[0].Cells[3].Value, "续聊已保留")
             && ((IntakeServiceRecord)history.Rows[0].Tag!).Phase == "needs_attention",
             "A retained conversation is terminal in the UI and keeps the original receipt phase.");
+    }
+
+    private static void HistoryScopeAndPrewarm()
+    {
+        var reads = 0;
+        var todayRow = new IntakeServiceRecord("h-today", "00000000-0000-4000-8000-000000000021", "LAB", "LAB-21", "Today item", "precheck", "confirmed", DateTimeOffset.Now);
+        var olderRow = new IntakeServiceRecord("h-old", "00000000-0000-4000-8000-000000000022", "OTHER", "OTHER-22", "Older item", "archive", "archived", DateTimeOffset.Now.AddDays(-2));
+        var reading = new IntakeServiceReading("zgstokenbar.intake-monitor.v1", Source.Id, DateTimeOffset.UtcNow, true, "running", "fixture",
+            ["LAB", "OTHER"], [], [todayRow, olderRow], []) { ProcessingCount = 0 };
+        var client = new IntakeServiceMonitorClient([Source], (_, _) =>
+        {
+            reads++;
+            return Task.FromResult(reading);
+        });
+        var theme = QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette);
+        using var form = new IntakeServiceMonitorForm(true, client, observe: false) { Opacity = 0 };
+        form.ConfigureFor(new(-28500, -28000, 48, 44), true, 1.5f, theme, new(-30000, -30000, 3840, 2160));
+        form.Show();
+        Pump(form.RefreshAsync());
+
+        var buttons = Descendants(form).OfType<RouterButton>().ToArray();
+        var todayBtn = buttons.Single(b => b.AccessibleName == "历史范围 今日");
+        var allBtn = buttons.Single(b => b.AccessibleName == "历史范围 全部");
+        var history = Descendants(form).OfType<RouterGrid>().Single(grid => grid.ColumnCount == 4);
+        Check(!todayBtn.Selected && allBtn.Selected && history.RowCount == 2 && form.Observation.History == 2 && reads == 1,
+            "Intake history defaults to All scope showing retained history.");
+
+        todayBtn.PerformClick();
+        Application.DoEvents();
+        Check(todayBtn.Selected && !allBtn.Selected && history.RowCount == 1
+            && Descendants(form).OfType<Label>().Any(l => l.Text == "今日 1 条")
+            && form.Observation.History == 2 && reads == 1,
+            "Switching Intake history to Today filters rows locally without extra service reads.");
+
+        allBtn.PerformClick();
+        Application.DoEvents();
+        Check(!todayBtn.Selected && allBtn.Selected && history.RowCount == 2 && reads == 1,
+            "Switching Intake history back to All restores older retained rows locally.");
+
+        var prewarmReads = 0;
+        var strictClient = new IntakeServiceMonitorClient([Source], (_, _) =>
+        {
+            prewarmReads++;
+            throw new InvalidOperationException("Hidden prewarming must not run SSH collector.");
+        });
+        using var prewarm = new IntakeServiceMonitorForm(true, strictClient, observe: false) { Opacity = 0 };
+        prewarm.Prewarm(1.5f, theme);
+        var handle = prewarm.Handle;
+        Check(!prewarm.Visible && !prewarm.Pinned && Descendants(prewarm).All(c => c.IsHandleCreated) && prewarmReads == 0 && handle != 0,
+            "Prewarming IntakeServiceMonitorForm builds native controls invisibly without invoking SSH.");
     }
 
     private static void View(int dpi, bool chinese, string? captures)
@@ -232,9 +284,17 @@ internal static class IntakeServiceMonitorTests
         Pump(form.RefreshAsync());
         Check(form.Observation is { Projects: 2, History: 2, InFlight: 1 } && observed == 1,
             "A full panel observation also feeds the global number without another service read.");
+        var historyGrid = Descendants(form).OfType<RouterGrid>().Single(grid => grid.ColumnCount == 4);
+        Check(historyGrid.Columns[2].HeaderText == (chinese ? "项目 · 操作" : "Project · Action")
+            && Equals(historyGrid.Rows[0].Cells[2].Value, chinese ? "OTHER · 验收后归档" : "OTHER · Archive")
+            && Equals(historyGrid.Rows[1].Cells[2].Value, chinese ? "LAB · 分拣" : "LAB · Triage"),
+            "All-project intake history reveals the project column.");
         var buttons = Descendants(form).OfType<RouterButton>().ToArray();
         buttons.Single(b => b.Text == "LAB").PerformClick();
-        Check(form.Observation.History == 1 && reads == 2, "Project selection filters the observation, without another business read.");
+        Check(form.Observation.History == 1 && reads == 2
+            && historyGrid.Columns[2].HeaderText == (chinese ? "操作" : "Action")
+            && Equals(historyGrid.Rows[0].Cells[2].Value, chinese ? "分拣" : "Triage"),
+            "Project selection filters the observation and simplifies the action column, without another business read.");
         buttons = Descendants(form).OfType<RouterButton>().ToArray();
         var normalHeight = progress.Height;
         buttons.Single(b => b.Text == "OTHER").PerformClick();

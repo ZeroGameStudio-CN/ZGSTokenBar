@@ -291,9 +291,14 @@ internal static class RouterModuleTests
         Check(!buffer.TryRead("instance/project/filter", 96, 5, out _) && !buffer.TryRead("other/project/filter", 0, 5, out _)
             && !buffer.TryRead("instance/project/other-filter", 0, 5, out _), "Uncovered or differently bound history is never reused");
         buffer.Store("last", Window(200, 206));
+        Check(buffer.TryRead("instance/project/filter", 95, 5, out var retainedSlice) && retainedSlice!.Items.Count == 5,
+            "LRU history cache preserves recently visited filter windows across scope switches");
         Check(buffer.TryRead("last", 204, 5, out slice) && slice!.Items.Count == 2, "Partial final page is retained");
         buffer.Store("empty", Window(0, 0));
         Check(buffer.TryRead("empty", 0, 5, out slice) && slice!.Items.Count == 0, "Empty filtered history is a valid snapshot");
+        for (var i = 0; i < RouterHistoryBuffer.MaxCachedKeys; i++)
+            buffer.Store("lru-" + i, Window(0, 10));
+        Check(!buffer.TryRead("last", 204, 5, out _), "LRU eviction bounds retained cache entries");
         Throws<InvalidDataException>(() => buffer.Store("bad", Window(0, 206, 101)));
         Throws<InvalidDataException>(() => buffer.Store("short", Window(0, 206, 5)));
         buffer.Clear(); Check(!buffer.TryRead("empty", 0, 5, out _), "History reset removes prior bindings");
@@ -1349,30 +1354,31 @@ internal static class RouterModuleTests
         });
         var summary = RouterTaskPresentation.SummarizeDailyThroughput(daysDoc.EnumerateArray(), new DateOnly(2026, 11, 22), "all");
         Check(summary.RangeKind == RouterHistoryRangeKind.All
-            && summary.HasDurations && summary.TotalOccupiedSeconds == 5400.0 && summary.DispatchedCount == 30
+            && summary.HasDurations && summary.TotalOccupiedSeconds == 5400.0 && summary.TotalCleanupSeconds == 900.0 && summary.DispatchedCount == 30
             && summary.AverageDailyOccupiedSeconds == 2700.0 && summary.AverageTaskOccupiedSeconds == 180.0
             && summary.ZeroEditorScriptCount == 4 && summary.MeasuredCount == 25
             && summary.SummaryText == "日均 15 条/天（45m/天）· 均占 3m · 累计 1.5h"
             && summary.TooltipSection.Contains("日均 15 条/天 · 日均占 45m · 单任务均占 3m")
             && summary.TooltipSection.Contains("槽位时间拆解（仅统计任务占用期间，不含空闲；总计 1.5h，已拆解 25/30 条）：")
             && summary.TooltipSection.Contains("真实 Editor    45m (50%)")
-            && summary.TooltipSection.Contains("Router 开销    18m (20%)")
+            && summary.TooltipSection.Contains("Router 开销    18m (20%)（清理 15m · 准备/恢复 3m）")
             && summary.TooltipSection.Contains("非 Editor 脚本  21m (23%)")
             && summary.TooltipSection.Contains("旧未拆分历史    6m (7%)")
             && summary.TooltipSection.Contains("提示：未调用 Unity CLI 的脚本 4 条（可优先评估移出 Editor 队列）")
             && summary.TooltipSection.Contains("2026-11-22  20 条 · 占 1h（Editor 30m / 开销 12m / 非Editor 12m / 未拆分 6m）")
             && RouterTaskPresentation.DayOptionLabel(daysDoc[0]) == "2026-11-22 (20 · 1h)",
-            "All-window throughput summarizes average task/day occupancy, 3-way split, unmeasured caveat and zero-Editor script hint");
+            "All-window throughput summarizes average task/day occupancy, cleanup-split overhead, unmeasured caveat and zero-Editor script hint");
 
         var todaySplit = RouterTaskPresentation.SummarizeDailyThroughput(daysDoc.EnumerateArray(), new DateOnly(2026, 11, 22), "2026-11-22");
         Check(todaySplit.RangeKind == RouterHistoryRangeKind.Today
-            && todaySplit.HasDurations && todaySplit.TotalOccupiedSeconds == 3600.0 && todaySplit.DispatchedCount == 20
+            && todaySplit.HasDurations && todaySplit.TotalOccupiedSeconds == 3600.0 && todaySplit.TotalCleanupSeconds == 600.0 && todaySplit.DispatchedCount == 20
             && todaySplit.ZeroEditorScriptCount == 3 && todaySplit.MeasuredCount == 15
             && todaySplit.SummaryText == "今日 20 条 · 总占 1h · 均占 3m"
             && todaySplit.TooltipSection.Contains("真实 Editor    30m (50%)")
+            && todaySplit.TooltipSection.Contains("Router 开销    12m (20%)（清理 10m · 准备/恢复 2m）")
             && todaySplit.TooltipSection.Contains("旧未拆分历史    6m (10%)")
             && todaySplit.TooltipSection.Contains("提示：未调用 Unity CLI 的脚本 3 条"),
-            "Today-scoped breakdown isolates today's occupied hours and percentages cleanly");
+            "Today-scoped breakdown isolates today's occupied hours, cleanup share and percentages cleanly");
 
         var todayDate = DateOnly.FromDateTime(DateTime.Now);
         var todayStr = todayDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
@@ -1468,11 +1474,20 @@ internal static class RouterModuleTests
             && durationStrip.Text == $"{yesterdayStr[5..]} 10 条 · 总占 30m · 均占 3m",
             "Picking a historical date deselects Today/All buttons and summarizes that single day");
 
+        var routesBeforeTodayReturn = handler.Routes.Count(u => u.AbsolutePath == "/api/history");
         todayBtn.PerformClick();
         Pump(durationForm.HistoryAsync());
         Check(todayBtn.Selected && !allBtn.Selected
-            && handler.Routes.Last(u => u.AbsolutePath == "/api/history").Query.Contains($"day={todayStr}"),
-            "Clicking 今日 returns cleanly from custom historical date to Today scope");
+            && handler.Routes.Count(u => u.AbsolutePath == "/api/history") == routesBeforeTodayReturn
+            && durationStrip.Text == "今日 20 条 · 总占 1h · 均占 3m"
+            && dayFilter.SelectedItem!.ToString()!.StartsWith(todayStr, StringComparison.Ordinal),
+            "Clicking 今日 returns cleanly from custom historical date to Today scope using LRU cache without re-fetching");
+
+        durationStrip.ActivateZeroEditorFilter();
+        Pump(durationForm.HistoryAsync());
+        Check(handler.Routes.Last(u => u.AbsolutePath == "/api/history").Query.Contains("category=script")
+            && durationControls.OfType<System.Windows.Forms.ComboBox>().Single(c => c.AccessibleName == "任务类型").Text == "脚本",
+            "Clicking the zero-Editor scripts pill opens filters and isolates script history");
         durationForm.Close();
 
         var zeroScriptRow = JsonSerializer.SerializeToElement(new
@@ -1495,6 +1510,16 @@ internal static class RouterModuleTests
             editorCliCallCount = 0,
             cleanupVerified = true,
         });
+        using var occupiedHandler = new Fixture { HistoryItems = [zeroScriptRow] };
+        using var occupiedForm = new RouterMonitorForm(new RouterMonitorClient(occupiedHandler), observe: false, initialProject: Fixture.Project)
+        { Opacity = 0, StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
+        occupiedForm.Show();
+        Pump(occupiedForm.RefreshViewAsync());
+        var occupiedGrid = AllControls(occupiedForm).OfType<RouterGrid>().Single(g => g.ColumnCount == 6);
+        Check(Equals(occupiedGrid.Rows[0].Cells[4].Value, "10s"),
+            "History table duration column reports full occupiedSeconds rather than execution-only seconds when available");
+        occupiedForm.Close();
+
         using var dialog = RouterMonitorForm.CreateRecordDialog(zeroScriptRow);
         var dialogText = AllControls(dialog).OfType<System.Windows.Forms.RichTextBox>().Single().Text;
         Check(dialogText.Contains("── 基本信息")

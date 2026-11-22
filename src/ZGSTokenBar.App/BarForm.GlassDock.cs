@@ -26,6 +26,7 @@ internal sealed partial class BarForm
     private byte[] _glassFrame = [];
     private byte[] _glassFrameScratch = [];
     private Size _glassFrameSize;
+    private Bitmap? _glassBitmap;
     private RectangleF _glassChipBounds;
     /// <summary>When the hover timer (not a click) opened the overflow; a click right after keeps it open.</summary>
     private HashSet<string> _hiddenDockItems = new(StringComparer.Ordinal);
@@ -520,7 +521,12 @@ internal sealed partial class BarForm
             return;
         }
         using var trace = PerfTrace.Measure("glass.render");
-        using var bitmap = new Bitmap(size.Width, size.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        if (_glassBitmap is null || _glassBitmap.Size != size)
+        {
+            _glassBitmap?.Dispose();
+            _glassBitmap = new Bitmap(size.Width, size.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        }
+        var bitmap = _glassBitmap;
         try
         {
             using (var graphics = Graphics.FromImage(bitmap))

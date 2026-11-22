@@ -53,6 +53,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
     private bool _modal, _filtersVisible;
     private DateTimeOffset _historyReadAt, _historyAttemptAt;
     private readonly RouterHistoryBuffer _historyBuffer = new();
+    private readonly Dictionary<string, string> _historySignatures = new(StringComparer.Ordinal);
     private CancellationTokenSource? _historyRequest, _queueRequest;
     private Task<JsonElement>? _historyLoad;
     private string _historyLoadKey = "";
@@ -220,6 +221,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         historyLeft.Controls.Add(_historySummary, 2, 0);
         _historyBody.Controls.Add(Header(historyLeft, Flow(_filterToggle, IconButton(RouterButtonIcon.Export, "导出 CSV", ExportAsync), _historyPrevious, _historyPage, _historyNext), 184), 0, 0);
         _historyBody.Controls.Add(_historyMetrics, 0, 1);
+        _historyMetrics.ZeroEditorScriptsClicked += async (_, _) => await FilterZeroEditorScriptsAsync();
         Options(_kind, [("all", "全部类型"), ("compile", "编译"), ("editmode", "EditMode"), ("playmode", "PlayMode"), ("script", "脚本")]);
         Options(_outcome, [("finished", "全部结果"), ("completed", "成功"), ("failed", "失败"), ("cancelled", "取消")]);
         Options(_day, [("all", "全部日期")]);
@@ -554,7 +556,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         _queue.EmptyTitle = "正在读取队列…"; _history.EmptyTitle = "正在读取历史…";
         _queue.Rows.Clear(); _history.Rows.Clear();
         SetEmptyTopTable(_root, _queue, false);
-        _historyGeneration++; _historyBuffer.Clear(); _historyReadAt = _historyAttemptAt = default; _historySignature = "";
+        _historyGeneration++; _historyBuffer.Clear(); _historySignatures.Clear(); _historyReadAt = _historyAttemptAt = default; _historySignature = "";
         _historyRequest?.Cancel(); _historyLoad = null; _historyLoadKey = "";
     }
 
@@ -579,6 +581,24 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         _customHistoryDay = "all";
         _historyOffset = 0;
         SyncHistoryScopeButtons();
+        await HistoryAsync();
+    }
+
+    private async Task FilterZeroEditorScriptsAsync()
+    {
+        if (_controlling || IsDisposed) return;
+        if (!_pinned) RequestPinChange(true);
+        if (!_filtersVisible)
+        {
+            _filtersVisible = true;
+            _filters.Visible = true;
+            _historyBody.RowStyles[2].Height = 34 * _popoverScale;
+            ((RouterButton)_filterToggle).Selected = true;
+            _root.PerformLayout();
+        }
+        var scriptChoice = _kind.Items.Cast<Choice>().FirstOrDefault(c => c.Key == "script");
+        if (scriptChoice is not null) _kind.SelectedItem = scriptChoice;
+        _historyOffset = 0;
         await HistoryAsync();
     }
 
@@ -815,18 +835,21 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
                     _historyRequest = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
                     _historyLoadKey = key; _historyLoadOffset = offset;
                     _historyAttemptAt = DateTimeOffset.UtcNow;
+                    if (!forceRefresh || _historySummary.Text.Length == 0) _historySummary.Text = "正在读取…";
                     _historyLoad = _client.HistoryAsync(project, kind, outcome, day, query, offset, _historyRequest.Token, RouterHistoryBuffer.Capacity);
                 }
                 var page = await _historyLoad;
                 if (generation != _generation || historyGeneration != _historyGeneration || IsDisposed) return;
                 _historyBuffer.Store(key, page);
                 _historySignature = ComputeHistorySignature(snapshot);
+                _historySignatures[key] = _historySignature;
                 // The server may clamp the offset after a filter or history retention change.
                 offset = Math.Max(RouterJson.Integer(page, "offset"), Math.Min(offset, RouterJson.Integer(page, "total")));
             }
             if (generation != _generation || historyGeneration != _historyGeneration || IsDisposed) return;
             if (!_historyBuffer.TryRead(key, offset, _historyPageSize, out var slice) || slice is null)
                 throw new InvalidDataException("History window does not cover the requested page.");
+            if (_historySignatures.TryGetValue(key, out var cachedSignature)) _historySignature = cachedSignature;
             var selectedHistory = Selected(_history);
             PopulateHistoryRows(slice.Items, selectedHistory);
             var metadata = slice.Metadata; var total = slice.Total; _historyOffset = slice.Offset;
@@ -915,7 +938,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
             {
                 var n = _history.Rows.Add(SubmittedTime(RouterJson.Text(row, "createdLocal")), RouterJson.Text(row, "task"),
                     RouterTaskPresentation.Source(RouterJson.Text(row, "source", RouterJson.Text(row, "threadId"))), ResultName(row),
-                    RouterTaskPresentation.FormatCellDuration(RouterJson.Number(row, "executionSeconds")),
+                    RouterTaskPresentation.FormatCellDuration(RouterJson.Number(row, "occupiedSeconds") ?? RouterJson.Number(row, "executionSeconds")),
                     RouterJson.Boolean(row, "cleanupVerified") ? "✓" : "待确认");
                 _history.Rows[n].Tag = row;
                 _history.Rows[n].Cells[0].ToolTipText = RouterJson.Text(row, "createdLocal");
@@ -1045,13 +1068,17 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
     private static string FormatGroupStats(JsonElement group)
     {
         var category = RouterJson.Text(group, "category");
-        var p95 = $"P95 排队/占用/清理 {Seconds(group, "queueSecondsP95")}/{Seconds(group, "executionSecondsP95")}/{Seconds(group, "cleanupSecondsP95")}";
+        var occP95 = RouterJson.Number(group, "occupiedSecondsP95") is { } op ? $"{op:0.##}s" : Seconds(group, "executionSecondsP95");
+        var p95 = $"P95 排队/占用/清理 {Seconds(group, "queueSecondsP95")}/{occP95}/{Seconds(group, "cleanupSecondsP95")}";
         if (RouterJson.Number(group, "occupiedSecondsMean") is not { } occMean)
             return $"{category} {p95}";
         var edMean = RouterJson.Number(group, "editorActiveSecondsMean") is { } ed ? RouterTaskPresentation.FormatDuration(ed) : "—";
         var ovMean = RouterJson.Number(group, "routerOverheadSecondsMean") is { } ov ? RouterTaskPresentation.FormatDuration(ov) : "—";
+        var ovDetail = RouterJson.Number(group, "cleanupSecondsMean") is { } cl && cl > 0.05
+            ? $"{ovMean}·清理 {RouterTaskPresentation.FormatDuration(cl)}"
+            : ovMean;
         var neMean = RouterJson.Number(group, "nonEditorScriptSecondsMean") is { } ne ? RouterTaskPresentation.FormatDuration(ne) : "—";
-        return $"{category} 均占 {RouterTaskPresentation.FormatDuration(occMean)}（Editor {edMean} / 开销 {ovMean} / 非Editor {neMean}） · {p95}";
+        return $"{category} 均占 {RouterTaskPresentation.FormatDuration(occMean)}（Editor {edMean} / 开销 {ovDetail} / 非Editor {neMean}） · {p95}";
     }
 
     private static string TimingDetails(JsonElement row, bool includeSectionHeaders = false)
