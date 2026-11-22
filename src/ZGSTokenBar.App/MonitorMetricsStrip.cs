@@ -145,7 +145,12 @@ internal sealed class RouterHistoryMetricsStrip : Control
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     internal RouterDailyThroughput Data => _data;
 
-    internal int DesiredLogicalHeight => _data.ActiveDays == 0 ? 0 : (_data.HasDurations && !_compact ? 58 : 28);
+    internal int DesiredLogicalHeight =>
+        _data.RangeKind == RouterHistoryRangeKind.All
+            ? (_data.ActiveDays == 0 ? 0 : (_data.HasDurations && !_compact ? 58 : 28))
+            : (_data.TotalProcessed == 0
+                ? (_data.HasAnyHistory ? 28 : 0)
+                : (_data.HasDurations && !_compact ? 58 : 28));
 
     internal RouterHistoryMetricsStrip()
     {
@@ -175,7 +180,7 @@ internal sealed class RouterHistoryMetricsStrip : Control
         var g = e.Graphics;
         var s = RouterVisualGeometry.Scale(this);
         MonitorStripPaint.DrawInsetCard(g, this, _palette, s);
-        if (_data.ActiveDays == 0 || Width <= 24 || Height <= 10) return;
+        if (DesiredLogicalHeight == 0 || Width <= 24 || Height <= 10) return;
 
         var padX = 10f * s;
         var left = padX;
@@ -184,33 +189,55 @@ internal sealed class RouterHistoryMetricsStrip : Control
         using var valueFont = new Font(Font.FontFamily, 10.5f * s, FontStyle.Bold, GraphicsUnit.Pixel);
         using var captionFont = new Font(Font.FontFamily, 9.8f * s, FontStyle.Regular, GraphicsUnit.Pixel);
 
-        var avgText = _data.AveragePerActiveDay?.ToString("0.#", CultureInfo.InvariantCulture) ?? "0";
-        if (!_data.HasDurations || _compact)
-        {
-            var items = new List<MonitorKpiItem>(3)
-            {
-                new("今日", string.Create(CultureInfo.InvariantCulture, $"{_data.TodayTotal:N0} 条"), UiTokens.TextStrong,
-                    _data.HasDurations && _data.TodayOccupiedSeconds > 0 ? "占 " + RouterTaskPresentation.FormatDuration(_data.TodayOccupiedSeconds) : null, UiTokens.Info),
-                new("日均", string.Create(CultureInfo.InvariantCulture, $"{avgText} 条/天"), UiTokens.Info),
-            };
-            if (_data.HasDurations && _data.AverageTaskOccupiedSeconds is { } avgTask)
-                items.Add(new("单任务均占", RouterTaskPresentation.FormatDuration(avgTask), UiTokens.TextStrong));
-            else
-                items.Add(new("活跃日", string.Create(CultureInfo.InvariantCulture, $"{_data.ActiveDays:N0} 天"), UiTokens.TextSecondary));
+        var isSingleDay = _data.RangeKind != RouterHistoryRangeKind.All;
+        var dayLabel = _data.RangeKind == RouterHistoryRangeKind.Today
+            ? "今日"
+            : (_data.RangeDate.Length == 10 ? _data.RangeDate[5..] : _data.RangeDate);
 
-            var hintText = "悬停查看每日明细";
-            var hintW = MonitorStripPaint.MeasureWidth(g, hintText, captionFont);
-            var contentEnd = MonitorStripPaint.DrawKpiItems(g, left, right, 2f * s, Height - 4f * s, items, labelFont, valueFont, captionFont, s);
-            if (right - contentEnd >= hintW + 14f * s)
+        if (isSingleDay && _data.TotalProcessed == 0)
+        {
+            var emptyItems = new MonitorKpiItem[]
             {
-                TextRenderer.DrawText(g, hintText, captionFont,
-                    new Rectangle((int)Math.Round(right - hintW), 0, hintW, Height), UiTokens.Muted,
-                    MonitorStripPaint.MeasureFlags | TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
-            }
+                new(dayLabel, "0 条", UiTokens.Muted),
+                new("状态", "暂无已结束任务", UiTokens.Muted),
+            };
+            DrawCompactStripRow(g, left, right, emptyItems, "点「全部」看历史均值", labelFont, valueFont, captionFont, s);
             return;
         }
 
-        // Row 1: Today, Daily Avg, Task Avg + right badge
+        var avgText = _data.AveragePerActiveDay?.ToString("0.#", CultureInfo.InvariantCulture) ?? "0";
+        if (!_data.HasDurations || _compact)
+        {
+            var compactItems = new List<MonitorKpiItem>(3);
+            if (isSingleDay)
+            {
+                compactItems.Add(new(dayLabel, string.Create(CultureInfo.InvariantCulture, $"{_data.TotalProcessed:N0} 条"), UiTokens.TextStrong,
+                    _data.HasDurations && _data.TotalOccupiedSeconds > 0 ? "占 " + RouterTaskPresentation.FormatDuration(_data.TotalOccupiedSeconds) : null, UiTokens.Info));
+                if (_data.HasDurations && _data.AverageTaskOccupiedSeconds is { } singleAvg)
+                {
+                    compactItems.Add(new("单任务均占", RouterTaskPresentation.FormatDuration(singleAvg), UiTokens.TextStrong));
+                }
+                else if (_data.SelectedCompleted > 0 || _data.SelectedFailed > 0)
+                {
+                    compactItems.Add(new("成功", string.Create(CultureInfo.InvariantCulture, $"{_data.SelectedCompleted:N0}"), UiTokens.Positive));
+                    compactItems.Add(new("失败", string.Create(CultureInfo.InvariantCulture, $"{_data.SelectedFailed:N0}"),
+                        _data.SelectedFailed > 0 ? UiTokens.Negative : UiTokens.Muted));
+                }
+            }
+            else
+            {
+                compactItems.Add(new("日均", string.Create(CultureInfo.InvariantCulture, $"{avgText} 条/天"), UiTokens.Info));
+                if (_data.HasDurations && _data.AverageTaskOccupiedSeconds is { } avgTask)
+                    compactItems.Add(new("单任务均占", RouterTaskPresentation.FormatDuration(avgTask), UiTokens.TextStrong));
+                else
+                    compactItems.Add(new("活跃", string.Create(CultureInfo.InvariantCulture, $"{_data.ActiveDays:N0} 天"), UiTokens.TextSecondary));
+                compactItems.Add(new("累计", string.Create(CultureInfo.InvariantCulture, $"{_data.TotalProcessed:N0} 条"), UiTokens.TextSecondary));
+            }
+            DrawCompactStripRow(g, left, right, compactItems, isSingleDay ? "悬停查看近14日明细" : "悬停查看每日明细", labelFont, valueFont, captionFont, s);
+            return;
+        }
+
+        // Row 1: Scoped KPIs + right badge
         var badgeText = _data.ZeroEditorScriptCount > 0
             ? string.Create(CultureInfo.InvariantCulture, $"无 Editor 脚本 {_data.ZeroEditorScriptCount:N0} 条")
             : _data.TotalUnmeasuredSeconds > 0.05 && _data.DispatchedCount > 0
@@ -236,14 +263,21 @@ internal sealed class RouterHistoryMetricsStrip : Control
             }
         }
 
-        var kpis = new List<MonitorKpiItem>(3)
-        {
-            new("今日", string.Create(CultureInfo.InvariantCulture, $"{_data.TodayTotal:N0} 条"), UiTokens.TextStrong,
-                _data.TodayOccupiedSeconds > 0 ? "占 " + RouterTaskPresentation.FormatDuration(_data.TodayOccupiedSeconds) : null, UiTokens.Info),
-            new("日均", string.Create(CultureInfo.InvariantCulture, $"{avgText} 条"), UiTokens.TextStrong,
-                _data.AverageDailyOccupiedSeconds is { } avgDay ? RouterTaskPresentation.FormatDuration(avgDay) + "/天" : null, UiTokens.TextSecondary),
-            new("单任务均占", _data.AverageTaskOccupiedSeconds is { } avgOcc ? RouterTaskPresentation.FormatDuration(avgOcc) : "—", UiTokens.Info),
-        };
+        var kpis = isSingleDay
+            ? new List<MonitorKpiItem>(3)
+            {
+                new(dayLabel, string.Create(CultureInfo.InvariantCulture, $"{_data.TotalProcessed:N0} 条"), UiTokens.TextStrong),
+                new("总占用", RouterTaskPresentation.FormatDuration(_data.TotalOccupiedSeconds), UiTokens.Info),
+                new("单任务均占", _data.AverageTaskOccupiedSeconds is { } singleTask ? RouterTaskPresentation.FormatDuration(singleTask) : "—", UiTokens.TextStrong),
+            }
+            : new List<MonitorKpiItem>(3)
+            {
+                new("日均", string.Create(CultureInfo.InvariantCulture, $"{avgText} 条"), UiTokens.TextStrong,
+                    _data.AverageDailyOccupiedSeconds is { } avgDay ? RouterTaskPresentation.FormatDuration(avgDay) + "/天" : null, UiTokens.TextSecondary),
+                new("单任务均占", _data.AverageTaskOccupiedSeconds is { } allTask ? RouterTaskPresentation.FormatDuration(allTask) : "—", UiTokens.Info),
+                new("累计", string.Create(CultureInfo.InvariantCulture, $"{_data.ActiveDays:N0} 天"), UiTokens.TextStrong,
+                    RouterTaskPresentation.FormatDuration(_data.TotalOccupiedSeconds), UiTokens.TextSecondary),
+            };
         var leftMaxX = badgeText.Length > 0 ? right - badgeW - 10f * s : right;
         var usedX = MonitorStripPaint.DrawKpiItems(g, left, leftMaxX, 2f * s, 19f * s, kpis, labelFont, valueFont, captionFont, s);
         if (badgeText.Length > 0 && badgeBounds.Left >= usedX + 6f * s)
@@ -328,6 +362,27 @@ internal sealed class RouterHistoryMetricsStrip : Control
                 UiTokens.TextSecondary,
                 measuredW <= availW ? MonitorStripPaint.DrawFlags : MonitorStripPaint.DrawFlags | TextFormatFlags.EndEllipsis);
             lx += dotSize + 4.5f * s + measuredW + legendGap;
+        }
+    }
+
+    private void DrawCompactStripRow(
+        Graphics g,
+        float left,
+        float right,
+        IReadOnlyList<MonitorKpiItem> items,
+        string hintText,
+        Font labelFont,
+        Font valueFont,
+        Font captionFont,
+        float s)
+    {
+        var hintW = MonitorStripPaint.MeasureWidth(g, hintText, captionFont);
+        var contentEnd = MonitorStripPaint.DrawKpiItems(g, left, right, 2f * s, Height - 4f * s, items, labelFont, valueFont, captionFont, s);
+        if (right - contentEnd >= hintW + 14f * s)
+        {
+            TextRenderer.DrawText(g, hintText, captionFont,
+                new Rectangle((int)Math.Round(right - hintW), 0, hintW, Height), UiTokens.Muted,
+                MonitorStripPaint.MeasureFlags | TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
         }
     }
 }
