@@ -43,16 +43,16 @@ internal static class IsolatedAcceptance
                     new Dictionary<string, JsonElement>(StringComparer.Ordinal)),
             ]);
         var desktop = new AcceptanceDesktop();
-        await using var host = new ZgsTokenBarHost(
-            [plugin],
-            profile,
-            "acceptance",
-            dataRoot,
-            desktop);
-        var pipeName = $"ZGSTokenBar.acceptance.{Guid.NewGuid():N}";
-        await using var server = new ZgsNamedPipeServer(host, pipeName);
         try
         {
+            await using var host = new ZgsTokenBarHost(
+                [plugin],
+                profile,
+                "acceptance",
+                dataRoot,
+                desktop);
+            var pipeName = $"ZGSTokenBar.acceptance.{Guid.NewGuid():N}";
+            await using var server = new ZgsNamedPipeServer(host, pipeName);
             await host.StartAsync(cancellationToken);
             server.Start();
             var client = new ZgsNamedPipeClient(pipeName);
@@ -299,11 +299,30 @@ internal static class IsolatedAcceptance
         }
         finally
         {
-            try
+            var deleted = false;
+            for (var attempt = 0; attempt < 25; attempt++)
             {
-                if (Directory.Exists(dataRoot)) Directory.Delete(dataRoot, recursive: true);
+                try
+                {
+                    if (!Directory.Exists(dataRoot))
+                    {
+                        deleted = true;
+                        break;
+                    }
+                    Directory.Delete(dataRoot, recursive: true);
+                    deleted = true;
+                    break;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < 24)
+                {
+                    await Task.Delay(100, CancellationToken.None);
+                }
+                catch
+                {
+                    break;
+                }
             }
-            catch
+            if (!deleted && Directory.Exists(dataRoot))
             {
                 checks.Add(new("isolation.cleanup", false, "temporary data root could not be removed"));
             }
