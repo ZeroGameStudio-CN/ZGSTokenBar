@@ -12,6 +12,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
     private static readonly TimeSpan HistoryRefreshInterval = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan HistoryRetryInterval = TimeSpan.FromSeconds(10);
     private readonly RouterMonitorClient _client;
+    private readonly bool _observe;
     private readonly bool _recordReadFailures;
     private readonly CancellationTokenSource _stop = new();
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 2000 };
@@ -54,9 +55,10 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
     private DateTimeOffset _historyReadAt, _historyAttemptAt;
     private readonly RouterHistoryBuffer _historyBuffer = new();
     private readonly Dictionary<string, string> _historySignatures = new(StringComparer.Ordinal);
-    private CancellationTokenSource? _historyRequest, _queueRequest;
-    private Task<JsonElement>? _historyLoad;
-    private string _historyLoadKey = "";
+    private readonly Dictionary<string, JsonElement> _historyDaysByScope = new(StringComparer.Ordinal);
+    private CancellationTokenSource? _historyRequest, _queueRequest, _prefetchRequest;
+    private Task<JsonElement>? _historyLoad, _prefetchLoad;
+    private string _historyLoadKey = "", _prefetchKey = "";
     private int _historyLoadOffset = -1, _queueGeneration;
     private bool _queueLoading, _applyingQueue, _queueReady;
     private string _viewFailureNotice = "";
@@ -72,6 +74,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
     internal RouterMonitorForm(RouterMonitorClient? client = null, bool observe = true, string? initialProject = null)
     {
         _project = initialProject ?? RouterMonitorClient.AllProjects;
+        _observe = observe;
         _recordReadFailures = client is null && observe;
         _client = client ?? new();
         SuspendLayout();
@@ -382,7 +385,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
 
     internal void ApplySnapshot(RouterSnapshot snapshot)
     {
-        if (_snapshot is { } previous && previous.InstanceId != snapshot.InstanceId) ResetPages();
+        if (_snapshot is { } previous && previous.InstanceId != snapshot.InstanceId) ResetPages(clearHistoryCache: true);
         _snapshot = snapshot; _project = snapshot.ProjectKey;
         _available = true;
         if (_notice.Text == _viewFailureNotice) _notice.Text = "";
@@ -531,16 +534,25 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
     {
         if (_controlling || key == _project) return;
         if (!_pinned) RequestPinChange(true);
-        _project = key; _generation++; ResetPages();
+        _project = key; _generation++; ResetPages(clearHistoryCache: false);
         _snapshot = null; _available = false; _headline.Text = "读取中"; _task.Text = ""; _detail.Text = ""; _source.Text = ""; _metrics.Text = "";
         _headline.Accent = UiTokens.Muted; _headline.Invalidate();
         _active.Rows.Clear(); _active.Hide(); _singleTask.Show(); _currentMenuButton.Visible = key != RouterMonitorClient.AllProjects;
         foreach (var item in _projectButtons) item.Value.Selected = item.Key == key;
         UpdateControls();
-        await RefreshViewAsync(forceHistory: true);
+        await RefreshViewAsync(forceHistory: false);
     }
 
-    private void ResetPages()
+    private void CancelPrefetch()
+    {
+        _prefetchRequest?.Cancel();
+        _prefetchRequest?.Dispose();
+        _prefetchRequest = null;
+        _prefetchLoad = null;
+        _prefetchKey = "";
+    }
+
+    private void ResetPages(bool clearHistoryCache = true)
     {
         _queueGeneration++; _queueRequest?.Cancel(); _queueLoading = _queueReady = false;
         _queueOffset = _historyOffset = _queueTotal = _historyTotal = 0;
@@ -556,8 +568,17 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         _queue.EmptyTitle = "正在读取队列…"; _history.EmptyTitle = "正在读取历史…";
         _queue.Rows.Clear(); _history.Rows.Clear();
         SetEmptyTopTable(_root, _queue, false);
-        _historyGeneration++; _historyBuffer.Clear(); _historySignatures.Clear(); _historyReadAt = _historyAttemptAt = default; _historySignature = "";
-        _historyRequest?.Cancel(); _historyLoad = null; _historyLoadKey = "";
+        _historyGeneration++;
+        _historyReadAt = _historyAttemptAt = default; _historySignature = "";
+        _historyRequest?.Cancel(); _historyRequest?.Dispose(); _historyRequest = null;
+        _historyLoad = null; _historyLoadKey = ""; _historyLoadOffset = -1;
+        CancelPrefetch();
+        if (clearHistoryCache)
+        {
+            _historyBuffer.Clear();
+            _historySignatures.Clear();
+            _historyDaysByScope.Clear();
+        }
     }
 
     private void SyncHistoryScopeButtons()
@@ -712,11 +733,12 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
 
         var now = DateTimeOffset.UtcNow;
         var historyIdle = _historyLoad is not { IsCompleted: false };
-        var historyDue = historyIdle && !InteractionOpen && _historyOffset == 0
-            && now - _historyAttemptAt >= HistoryRetryInterval
-            && (now - _historyReadAt >= HistoryRefreshInterval || _historySignature != ComputeHistorySignature(_snapshot));
+        var historyDue = historyIdle && _historyOffset == 0 && (_historyReadAt == default
+            || !InteractionOpen && now - _historyAttemptAt >= HistoryRetryInterval
+                && (now - _historyReadAt >= HistoryRefreshInterval || _historySignature != ComputeHistorySignature(_snapshot)));
         var queue = RefreshQueueAsync();
-        var history = forceHistory || historyDue ? HistoryAsync(forceRefresh: true)
+        var history = forceHistory ? HistoryAsync(forceRefresh: true)
+            : historyDue ? HistoryAsync(forceRefresh: _historyReadAt != default)
             : historyIdle && _historyReadAt != default && PageRows(_history) != _historyPageSize ? HistoryAsync()
             : Task.CompletedTask;
         // Pane reads keep their own cancellation and identity guards. A slow list never holds the current-state gate.
@@ -821,22 +843,48 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         var today = DateOnly.FromDateTime(DateTime.Now);
         var kind = Key(_kind); var outcome = Key(_outcome); var day = EffectiveHistoryDay(today); var query = _query.Text;
         var key = JsonSerializer.Serialize(new[] { _snapshot.InstanceId, project, kind, outcome, day, query });
+        var daysScopeKey = $"{_snapshot.InstanceId}|{project}|{kind}|{outcome}|{query}";
         var offset = _historyOffset;
         try
         {
             _historyPageSize = PageRows(_history);
             if (forceRefresh || !_historyBuffer.TryRead(key, offset, _historyPageSize, out _))
             {
-                // Share an outstanding window that covers this page; supersede only obsolete reads.
+                if (!forceRefresh && _historyDaysByScope.TryGetValue(daysScopeKey, out var cachedDays) && cachedDays.ValueKind == JsonValueKind.Array)
+                {
+                    var previewThroughput = RouterTaskPresentation.SummarizeDailyThroughput(cachedDays.EnumerateArray(), today, day);
+                    ApplyHistoryMetrics(previewThroughput, previewThroughput.TooltipSection);
+                    Choice? previewDayChoice = null;
+                    foreach (var item in _day.Items)
+                        if (item is Choice choice && choice.Key == day) { previewDayChoice = choice; break; }
+                    if (previewDayChoice is not null && !Equals(_day.SelectedItem, previewDayChoice)) _day.SelectedItem = previewDayChoice;
+                }
+                if (!forceRefresh || _historySummary.Text.Length == 0) _historySummary.Text = "正在读取…";
+
+                // Share an outstanding window or adopt a matching background prefetch; supersede only obsolete reads.
                 if (_historyLoad is null || _historyLoad.IsCompleted || _historyLoadKey != key
                     || offset < _historyLoadOffset || offset + _historyPageSize > _historyLoadOffset + RouterHistoryBuffer.Capacity)
                 {
-                    _historyRequest?.Cancel(); _historyRequest?.Dispose();
-                    _historyRequest = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
-                    _historyLoadKey = key; _historyLoadOffset = offset;
-                    _historyAttemptAt = DateTimeOffset.UtcNow;
-                    if (!forceRefresh || _historySummary.Text.Length == 0) _historySummary.Text = "正在读取…";
-                    _historyLoad = _client.HistoryAsync(project, kind, outcome, day, query, offset, _historyRequest.Token, RouterHistoryBuffer.Capacity);
+                    if (!forceRefresh && offset == 0 && _prefetchLoad is { IsCompleted: false } prefetch && _prefetchKey == key)
+                    {
+                        _historyRequest?.Cancel(); _historyRequest?.Dispose();
+                        _historyRequest = _prefetchRequest;
+                        _prefetchRequest = null;
+                        _historyLoad = prefetch;
+                        _prefetchLoad = null;
+                        _historyLoadKey = key; _historyLoadOffset = 0;
+                        _prefetchKey = "";
+                        _historyAttemptAt = DateTimeOffset.UtcNow;
+                    }
+                    else
+                    {
+                        CancelPrefetch();
+                        _historyRequest?.Cancel(); _historyRequest?.Dispose();
+                        _historyRequest = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
+                        _historyLoadKey = key; _historyLoadOffset = offset;
+                        _historyAttemptAt = DateTimeOffset.UtcNow;
+                        _historyLoad = _client.HistoryAsync(project, kind, outcome, day, query, offset, _historyRequest.Token, RouterHistoryBuffer.Capacity);
+                    }
                 }
                 var page = await _historyLoad;
                 if (generation != _generation || historyGeneration != _historyGeneration || IsDisposed) return;
@@ -851,9 +899,10 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
                 throw new InvalidDataException("History window does not cover the requested page.");
             if (_historySignatures.TryGetValue(key, out var cachedSignature)) _historySignature = cachedSignature;
             var selectedHistory = Selected(_history);
-            PopulateHistoryRows(slice.Items, selectedHistory);
             var metadata = slice.Metadata; var total = slice.Total; _historyOffset = slice.Offset;
             _historyTotal = total;
+            if (metadata.ValueKind == JsonValueKind.Object && metadata.TryGetProperty("days", out var daysElement) && daysElement.ValueKind == JsonValueKind.Array)
+                _historyDaysByScope[daysScopeKey] = daysElement;
             var dayChoices = new List<(string Key, string Text)> { ("all", "全部日期") };
             var seenDays = new HashSet<string>(StringComparer.Ordinal);
             foreach (var d in RouterJson.Rows(metadata, "days"))
@@ -867,8 +916,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
             {
                 dayChoices.Insert(1, (day, $"{day} (0)"));
             }
-            Options(_day, dayChoices.ToArray());
-            _day.SelectedItem = _day.Items.Cast<Choice>().FirstOrDefault(c => c.Key == day) ?? _day.Items[0];
+            SyncChoices(_day, dayChoices, day);
             var counts = RouterJson.Field(metadata, "counts");
             var failed = RouterJson.Integer(counts, "failed");
             var statistics = $"结果合计：成功 {RouterJson.Integer(counts, "completed")} · 失败 {failed} · 取消 {RouterJson.Integer(counts, "cancelled")}" + Environment.NewLine
@@ -883,35 +931,25 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
             statistics = "记录快照 " + _historyReadAt.ToLocalTime().ToString("HH:mm:ss") + Environment.NewLine + statistics;
             if (throughput.TooltipSection.Length > 0)
                 statistics += Environment.NewLine + Environment.NewLine + throughput.TooltipSection;
-            _historyMetrics.Update(throughput, IsCompactMetricsViewport(), statistics);
-            var targetMetricsLogical = _historyMetrics.DesiredLogicalHeight;
-            _metricsLogicalHeight = targetMetricsLogical;
-            _historyMetrics.Visible = targetMetricsLogical > 0;
-            var targetMetricsHeight = targetMetricsLogical * _popoverScale;
-            if (Math.Abs(_historyBody.RowStyles[1].Height - targetMetricsHeight) >= 0.5f)
+
+            ApplyHistoryMetrics(throughput, statistics);
+            var finalPageSize = PageRows(_history);
+            if (finalPageSize != _historyPageSize && _historyBuffer.TryRead(key, _historyOffset, finalPageSize, out var resizedSlice) && resizedSlice is not null)
             {
-                _historyBody.RowStyles[1].Height = targetMetricsHeight;
-                _historyBody.PerformLayout();
-                var resizedPageSize = PageRows(_history);
-                if (resizedPageSize != _historyPageSize && _historyBuffer.TryRead(key, _historyOffset, resizedPageSize, out var resizedSlice) && resizedSlice is not null)
-                {
-                    _historyPageSize = resizedPageSize;
-                    _historyOffset = resizedSlice.Offset;
-                    PopulateHistoryRows(resizedSlice.Items, selectedHistory);
-                }
-                else
-                {
-                    _historyPageSize = resizedPageSize;
-                }
+                _historyPageSize = finalPageSize;
+                _historyOffset = resizedSlice.Offset;
+                slice = resizedSlice;
             }
+            PopulateHistoryRows(slice.Items, selectedHistory);
+
             _historyPage.Text = PageLabel(_historyOffset, total, _historyPageSize);
             _history.EmptyTitle = _historyScope == RouterHistoryRangeKind.Today && kind == "all" && outcome == "finished" && string.IsNullOrWhiteSpace(query)
                 ? "今日暂无已结束记录"
                 : "没有匹配的记录";
             _history.Invalidate();
             _tips.SetToolTip(_historySummary, statistics); _historySummary.AccessibleDescription = statistics;
-            _tips.SetToolTip(_historyMetrics, statistics);
             UpdateControls();
+            StartSiblingPrefetch(snapshot, project, kind, outcome, day, query, offset, today, daysScopeKey, generation);
         }
         catch (OperationCanceledException) when (_stop.IsCancellationRequested || generation != _generation || historyGeneration != _historyGeneration) { }
         catch (Exception e) when (Expected(e))
@@ -928,23 +966,121 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         }
     }
 
+    private void ApplyHistoryMetrics(RouterDailyThroughput throughput, string tooltip)
+    {
+        _historyMetrics.Update(throughput, IsCompactMetricsViewport(), tooltip);
+        var targetMetricsLogical = _historyMetrics.DesiredLogicalHeight;
+        _metricsLogicalHeight = targetMetricsLogical;
+        _historyMetrics.Visible = targetMetricsLogical > 0;
+        var targetMetricsHeight = targetMetricsLogical * _popoverScale;
+        if (Math.Abs(_historyBody.RowStyles[1].Height - targetMetricsHeight) >= 0.5f)
+        {
+            _historyBody.RowStyles[1].Height = targetMetricsHeight;
+            _historyBody.PerformLayout();
+        }
+        _tips.SetToolTip(_historyMetrics, tooltip);
+    }
+
+    private void StartSiblingPrefetch(RouterSnapshot snapshot, string project, string kind, string outcome, string day, string query, int offset, DateOnly today, string daysScopeKey, int generation)
+    {
+        if (!_observe || IsDisposed || _controlling || offset != 0 || kind != "all" || outcome != "finished" || !string.IsNullOrEmpty(query)) return;
+        var todayKey = today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        if (day != "all" && day != todayKey) return;
+        var siblingDay = day == "all" ? todayKey : "all";
+        var siblingKey = JsonSerializer.Serialize(new[] { snapshot.InstanceId, project, kind, outcome, siblingDay, query });
+        if (_historyBuffer.TryRead(siblingKey, 0, Math.Max(1, _historyPageSize), out _)) return;
+        if (_prefetchLoad is { IsCompleted: false } && _prefetchKey == siblingKey) return;
+
+        CancelPrefetch();
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
+        var load = _client.HistoryAsync(project, kind, outcome, siblingDay, query, 0, cts.Token, RouterHistoryBuffer.Capacity);
+        _prefetchRequest = cts;
+        _prefetchLoad = load;
+        _prefetchKey = siblingKey;
+        _ = CompletePrefetchAsync(load, cts, snapshot, siblingKey, daysScopeKey, generation);
+    }
+
+    private async Task CompletePrefetchAsync(Task<JsonElement> load, CancellationTokenSource cts, RouterSnapshot snapshot, string siblingKey, string daysScopeKey, int generation)
+    {
+        try
+        {
+            var page = await load;
+            if (!IsDisposed && generation == _generation && ReferenceEquals(_prefetchLoad, load))
+            {
+                _historyBuffer.Store(siblingKey, page);
+                _historySignatures[siblingKey] = ComputeHistorySignature(snapshot);
+                if (page.ValueKind == JsonValueKind.Object && page.TryGetProperty("days", out var daysEl) && daysEl.ValueKind == JsonValueKind.Array)
+                    _historyDaysByScope[daysScopeKey] = daysEl;
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception e) when (Expected(e)) { }
+        finally
+        {
+            if (ReferenceEquals(_prefetchLoad, load))
+            {
+                _prefetchLoad = null;
+                _prefetchKey = "";
+            }
+            if (ReferenceEquals(_prefetchRequest, cts))
+            {
+                _prefetchRequest = null;
+                cts.Dispose();
+            }
+        }
+    }
+
     private void PopulateHistoryRows(IReadOnlyList<JsonElement> items, string selectedHistory)
     {
         _history.SuspendLayout();
         try
         {
-            _history.Rows.Clear();
-            foreach (var row in items)
+            for (var i = 0; i < items.Count; i++)
             {
-                var n = _history.Rows.Add(SubmittedTime(RouterJson.Text(row, "createdLocal")), RouterJson.Text(row, "task"),
-                    RouterTaskPresentation.Source(RouterJson.Text(row, "source", RouterJson.Text(row, "threadId"))), ResultName(row),
-                    RouterTaskPresentation.FormatCellDuration(RouterJson.Number(row, "occupiedSeconds") ?? RouterJson.Number(row, "executionSeconds")),
-                    RouterJson.Boolean(row, "cleanupVerified") ? "✓" : "待确认");
-                _history.Rows[n].Tag = row;
-                _history.Rows[n].Cells[0].ToolTipText = RouterJson.Text(row, "createdLocal");
-                _history.Rows[n].Cells[4].ToolTipText = TimingDetails(row, includeSectionHeaders: false);
-                _history.Rows[n].Selected = selectedHistory.Length > 0 && RouterJson.Text(row, "id") == selectedHistory;
+                var rowData = items[i];
+                var id = RouterJson.Text(rowData, "id");
+                if (i >= _history.RowCount)
+                {
+                    var n = _history.Rows.Add(
+                        SubmittedTime(RouterJson.Text(rowData, "createdLocal")),
+                        RouterJson.Text(rowData, "task"),
+                        RouterTaskPresentation.Source(RouterJson.Text(rowData, "source", RouterJson.Text(rowData, "threadId"))),
+                        ResultName(rowData),
+                        RouterTaskPresentation.FormatCellDuration(RouterJson.Number(rowData, "occupiedSeconds") ?? RouterJson.Number(rowData, "executionSeconds")),
+                        RouterJson.Boolean(rowData, "cleanupVerified") ? "✓" : "待确认");
+                    var added = _history.Rows[n];
+                    added.Tag = rowData;
+                    added.Cells[0].ToolTipText = RouterJson.Text(rowData, "createdLocal");
+                    added.Cells[4].ToolTipText = TimingDetails(rowData, includeSectionHeaders: false);
+                    added.Selected = selectedHistory.Length > 0 && id == selectedHistory;
+                    continue;
+                }
+
+                var existing = _history.Rows[i];
+                var unchanged = existing.Tag is JsonElement prev
+                    && RouterJson.Text(prev, "id") == id
+                    && RouterJson.Text(prev, "outcome") == RouterJson.Text(rowData, "outcome")
+                    && RouterJson.Text(prev, "failureClass") == RouterJson.Text(rowData, "failureClass")
+                    && RouterJson.Boolean(prev, "cleanupVerified") == RouterJson.Boolean(rowData, "cleanupVerified")
+                    && RouterJson.Number(prev, "occupiedSeconds") == RouterJson.Number(rowData, "occupiedSeconds")
+                    && RouterJson.Number(prev, "executionSeconds") == RouterJson.Number(rowData, "executionSeconds")
+                    && RouterJson.Text(prev, "task") == RouterJson.Text(rowData, "task");
+                existing.Tag = rowData;
+                if (!unchanged)
+                {
+                    existing.SetValues(
+                        SubmittedTime(RouterJson.Text(rowData, "createdLocal")),
+                        RouterJson.Text(rowData, "task"),
+                        RouterTaskPresentation.Source(RouterJson.Text(rowData, "source", RouterJson.Text(rowData, "threadId"))),
+                        ResultName(rowData),
+                        RouterTaskPresentation.FormatCellDuration(RouterJson.Number(rowData, "occupiedSeconds") ?? RouterJson.Number(rowData, "executionSeconds")),
+                        RouterJson.Boolean(rowData, "cleanupVerified") ? "✓" : "待确认");
+                    existing.Cells[0].ToolTipText = RouterJson.Text(rowData, "createdLocal");
+                    existing.Cells[4].ToolTipText = TimingDetails(rowData, includeSectionHeaders: false);
+                }
+                existing.Selected = selectedHistory.Length > 0 && id == selectedHistory;
             }
+            while (_history.RowCount > items.Count) _history.Rows.RemoveAt(_history.RowCount - 1);
             // A refresh keeps the user's pick; otherwise no row is pre-highlighted.
             if (selectedHistory.Length == 0) { _history.ClearSelection(); _history.CurrentCell = null; }
         }
@@ -1136,6 +1272,38 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
     private static string Selected(DataGridView grid) => grid.SelectedRows.Count > 0 && grid.SelectedRows[0].Tag is JsonElement row ? RouterJson.Text(row, "id") : "";
     private static string Key(ComboBox combo) => (combo.SelectedItem as Choice)?.Key ?? "all";
     private static void Options(ComboBox combo, (string Key, string Text)[] choices) { combo.Items.Clear(); combo.Items.AddRange(choices.Select(c => new Choice(c.Key, c.Text)).ToArray()); combo.SelectedIndex = 0; }
+    private static void SyncChoices(ComboBox combo, IReadOnlyList<(string Key, string Text)> choices, string selectedKey)
+    {
+        var unchanged = combo.Items.Count == choices.Count;
+        if (unchanged)
+        {
+            for (var i = 0; i < choices.Count; i++)
+            {
+                if (combo.Items[i] is not Choice c || c.Key != choices[i].Key || c.Text != choices[i].Text)
+                {
+                    unchanged = false;
+                    break;
+                }
+            }
+        }
+        if (!unchanged)
+        {
+            combo.BeginUpdate();
+            try
+            {
+                combo.Items.Clear();
+                combo.Items.AddRange(choices.Select(c => new Choice(c.Key, c.Text)).ToArray());
+            }
+            finally { combo.EndUpdate(); }
+        }
+        Choice? target = null;
+        foreach (var item in combo.Items)
+        {
+            if (item is Choice c && c.Key == selectedKey) { target = c; break; }
+        }
+        target ??= combo.Items.Count > 0 ? combo.Items[0] as Choice : null;
+        if (!Equals(combo.SelectedItem, target)) combo.SelectedItem = target;
+    }
     private static ComboBox Combo(int width) => new RouterCombo { Width = width };
     private static Label Label(string text, int width) => new() { Text = text, Width = width, Height = 31, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft };
     private static FlowLayoutPanel Flow(params Control[] children) { var flow = new FlowLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, WrapContents = false, AutoScroll = false }; flow.Controls.AddRange(children); return flow; }
@@ -1172,7 +1340,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         if (disposing && !_disposed)
         {
             _disposed = true; _timer.Stop(); _timer.Dispose(); _stop.Cancel();
-            _historyRequest?.Dispose(); _queueRequest?.Dispose(); _stop.Dispose(); _client.Dispose();
+            _prefetchRequest?.Dispose(); _historyRequest?.Dispose(); _queueRequest?.Dispose(); _stop.Dispose(); _client.Dispose();
             _tips.Dispose();
             _currentMenu.Dispose();
             _projectMenu.Dispose();

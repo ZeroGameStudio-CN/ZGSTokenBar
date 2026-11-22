@@ -1427,15 +1427,20 @@ internal static class RouterModuleTests
         ];
         using var client = new RouterMonitorClient(handler);
         var mergedHistory = client.HistoryAsync(RouterMonitorClient.AllProjects, "all", "finished", "all", "", 0, limit: 25).GetAwaiter().GetResult();
+        var mergedFirstItem = RouterJson.Rows(mergedHistory, "items").First();
         var mergedDay = RouterJson.Rows(mergedHistory, "days").Single(d => RouterJson.Text(d, "date") == todayStr);
         var mergedDur = RouterJson.Field(mergedDay, "durations");
-        Check(RouterJson.Integer(mergedDur, "dispatchedCount") == 20
+        Check(RouterJson.Text(mergedFirstItem, "projectKey").Length == 64
+            && RouterJson.Text(mergedFirstItem, "projectName").Length > 0
+            && RouterJson.Text(mergedFirstItem, "task").Contains(" · ")
+            && RouterJson.Integer(RouterJson.Field(mergedHistory, "counts"), "completed") > 0
+            && RouterJson.Integer(mergedDur, "dispatchedCount") == 20
             && RouterJson.Number(mergedDur, "occupiedSeconds") == 3600.0
             && RouterJson.Number(mergedDur, "editorActiveSeconds") == 1800.0
             && RouterJson.Number(mergedDur, "nonEditorScriptSeconds") == 1200.0
             && RouterJson.Integer(mergedDur, "zeroEditorScriptCount") == 4
             && !RouterJson.Rows(mergedHistory, "groups").Any(),
-            "All-project history sums daily durations accurately while keeping merged groups empty");
+            "All-project history merges items, project labels, counts and daily durations accurately while keeping merged groups empty");
 
         using var durationForm = new RouterMonitorForm(client, observe: false)
         { Opacity = 0, StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
@@ -1454,7 +1459,15 @@ internal static class RouterModuleTests
                 .Items.Cast<object>().Any(item => item.ToString() == $"{todayStr} (20 · 1h)"),
             "RouterMonitorForm defaults to Today scope showing today-only occupancy and 3-way split");
 
+        handler.HoldHistory = new(TaskCreationOptions.RunContinuationsAsynchronously);
         allBtn.PerformClick();
+        System.Windows.Forms.Application.DoEvents();
+        Check(!todayBtn.Selected && allBtn.Selected
+            && durationStrip.Text == "日均 15 条/天（45m/天）· 均占 3m · 累计 1.5h"
+            && durationControls.OfType<System.Windows.Forms.Label>().Any(l => l.Text == "正在读取…"),
+            "Cold Today->All switch immediately previews metrics from cached days and shows loading summary before HTTP finishes");
+        handler.HoldHistory.SetResult();
+        handler.HoldHistory = null;
         Pump(durationForm.HistoryAsync());
         Check(!todayBtn.Selected && allBtn.Selected
             && handler.Routes.Last(u => u.AbsolutePath == "/api/history").Query.Contains("day=all")
@@ -1482,6 +1495,14 @@ internal static class RouterModuleTests
             && durationStrip.Text == "今日 20 条 · 总占 1h · 均占 3m"
             && dayFilter.SelectedItem!.ToString()!.StartsWith(todayStr, StringComparison.Ordinal),
             "Clicking 今日 returns cleanly from custom historical date to Today scope using LRU cache without re-fetching");
+
+        Pump(durationForm.SelectProjectAsync(Fixture.Project));
+        var routesBeforeReturnAll = handler.Routes.Count(u => u.AbsolutePath == "/api/history");
+        Pump(durationForm.SelectProjectAsync(RouterMonitorClient.AllProjects));
+        Check(durationForm.Snapshot?.ProjectKey == RouterMonitorClient.AllProjects
+            && handler.Routes.Count(u => u.AbsolutePath == "/api/history") == routesBeforeReturnAll
+            && durationStrip.Text == "今日 20 条 · 总占 1h · 均占 3m",
+            "Returning to a recently visited project reuses the LRU history cache without re-fetching");
 
         durationStrip.ActivateZeroEditorFilter();
         Pump(durationForm.HistoryAsync());
