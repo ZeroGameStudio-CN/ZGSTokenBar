@@ -15,6 +15,7 @@ internal sealed partial class QuotaApplicationContext
     private IntakeEvidenceNotices? _intakeEvidenceNotices;
     private IntakeServiceMonitorForm? _intakeServiceObserver;
     private bool _intakeShowWorkItems;
+    private bool _intakeServicePrewarmed;
     private MonitorPanelForm? ActiveIntakePanel => _intakeObserver is { Visible: true, IsDisposed: false } ? _intakeObserver
         : _intakeServiceObserver is { Visible: true, IsDisposed: false } ? _intakeServiceObserver : null;
     private bool IntakeEnabled => _settings.IsPluginEnabled(MiniAreaIds.Intake, IntakeObserverPlugin.DefaultEnabled)
@@ -93,10 +94,29 @@ internal sealed partial class QuotaApplicationContext
             {
                 PublishIntakeCount(client.ProcessingCount(results));
                 ObserveIntakeEvidence(results);
+                PrewarmIntakeServiceObserver();
             }
         }
         catch (OperationCanceledException) when (operation.IsCancellationRequested) { }
         finally { _intakeSummaryRead = null; }
+    }
+
+    private void PrewarmIntakeServiceObserver()
+    {
+        if (_intakeServicePrewarmed || _quitting || !IntakeEnabled || _intakeShowWorkItems
+            || _bar.IsDisposed || !_bar.IsHandleCreated)
+            return;
+        _intakeServicePrewarmed = true;
+        try
+        {
+            _bar.BeginInvoke(() =>
+            {
+                if (_quitting || _bar.IsDisposed || !IntakeEnabled || _intakeShowWorkItems || ReadIntakeProfile() is null) return;
+                var panel = EnsureIntakeObserver();
+                if (!panel.Visible && !panel.IsDisposed) panel.Prewarm(_bar.UiScale, _bar.UiTheme);
+            });
+        }
+        catch (InvalidOperationException) { }
     }
 
     private void PublishIntakeCount(int? count)
@@ -143,6 +163,7 @@ internal sealed partial class QuotaApplicationContext
     private void CloseIntakeObservers()
     {
         ResetIntakeSummary();
+        _intakeServicePrewarmed = false;
         _bar.SetIntakeServiceConfigured(false);
         _intakeObserver?.Close();
         _intakeServiceObserver?.Close();

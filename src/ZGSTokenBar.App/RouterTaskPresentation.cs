@@ -33,7 +33,8 @@ internal sealed record RouterDailyThroughput(
     string RangeDate = "",
     int SelectedCompleted = 0,
     int SelectedFailed = 0,
-    bool HasAnyHistory = false);
+    bool HasAnyHistory = false,
+    double TotalCleanupSeconds = 0);
 
 internal static class RouterTaskPresentation
 {
@@ -176,6 +177,7 @@ internal static class RouterTaskPresentation
         public int MeasuredCount;
         public int ZeroEditorScriptCount;
         public double OccupiedSeconds;
+        public double CleanupSeconds;
         public double EditorActiveSeconds;
         public double RouterOverheadSeconds;
         public double NonEditorScriptSeconds;
@@ -223,6 +225,7 @@ internal static class RouterTaskPresentation
                 acc.MeasuredCount += Math.Max(0, RouterJson.Integer(durations, "measuredCount"));
                 acc.ZeroEditorScriptCount += Math.Max(0, RouterJson.Integer(durations, "zeroEditorScriptCount"));
                 acc.OccupiedSeconds += Math.Max(0d, RouterJson.Number(durations, "occupiedSeconds") ?? 0d);
+                acc.CleanupSeconds += Math.Max(0d, RouterJson.Number(durations, "cleanupSeconds") ?? 0d);
                 acc.EditorActiveSeconds += Math.Max(0d, RouterJson.Number(durations, "editorActiveSeconds") ?? 0d);
                 acc.RouterOverheadSeconds += Math.Max(0d, RouterJson.Number(durations, "routerOverheadSeconds") ?? 0d);
                 acc.NonEditorScriptSeconds += Math.Max(0d, RouterJson.Number(durations, "nonEditorScriptSeconds") ?? 0d);
@@ -312,7 +315,8 @@ internal static class RouterTaskPresentation
                 entry.UnmeasuredSeconds,
                 entry.MeasuredCount,
                 entry.DispatchedCount,
-                entry.ZeroEditorScriptCount);
+                entry.ZeroEditorScriptCount,
+                entry.CleanupSeconds);
             AppendRecentDayLines(tip, "最近活跃日参考：", activeRows);
             return new(
                 1,
@@ -337,7 +341,8 @@ internal static class RouterTaskPresentation
                 normalizedSelection,
                 entry.Completed,
                 entry.Failed,
-                true);
+                true,
+                entry.CleanupSeconds);
         }
 
         var activeDays = activeRows.Length;
@@ -370,6 +375,7 @@ internal static class RouterTaskPresentation
         }
 
         var totalOccupied = activeRows.Sum(entry => entry.Value.OccupiedSeconds);
+        var totalCleanup = activeRows.Sum(entry => entry.Value.CleanupSeconds);
         var totalEditor = activeRows.Sum(entry => entry.Value.EditorActiveSeconds);
         var totalOverhead = activeRows.Sum(entry => entry.Value.RouterOverheadSeconds);
         var totalNonEditor = activeRows.Sum(entry => entry.Value.NonEditorScriptSeconds);
@@ -396,7 +402,8 @@ internal static class RouterTaskPresentation
             totalUnmeasured,
             measuredCount,
             totalDispatched,
-            zeroEditorScripts);
+            zeroEditorScripts,
+            totalCleanup);
         AppendRecentDayLines(tipLines, "最近活跃日明细：", activeRows);
 
         return new(
@@ -422,7 +429,8 @@ internal static class RouterTaskPresentation
             "",
             0,
             0,
-            true);
+            true,
+            totalCleanup);
     }
 
     private static void AppendDurationBreakdownLines(
@@ -434,7 +442,8 @@ internal static class RouterTaskPresentation
         double totalUnmeasured,
         int measuredCount,
         int totalDispatched,
-        int zeroEditorScripts)
+        int zeroEditorScripts,
+        double totalCleanup = 0)
     {
         if (totalOccupied > 0)
         {
@@ -443,8 +452,13 @@ internal static class RouterTaskPresentation
                 $"槽位时间拆解（仅统计任务占用期间，不含空闲；总计 {FormatDuration(totalOccupied)}，已拆解 {measuredCount:N0}/{totalDispatched:N0} 条）："));
             tipLines.Add(string.Create(CultureInfo.InvariantCulture,
                 $"  真实 Editor    {FormatDuration(totalEditor)} ({FormatShare(totalEditor, totalOccupied)})"));
+            var overheadSuffix = totalOverhead > 0.05 && totalCleanup > 0.05
+                ? (Math.Max(0d, totalOverhead - totalCleanup) is var prep && prep > 0.05
+                    ? $"（清理 {FormatDuration(totalCleanup)} · 准备/恢复 {FormatDuration(prep)}）"
+                    : $"（含清理 {FormatDuration(totalCleanup)}）")
+                : "";
             tipLines.Add(string.Create(CultureInfo.InvariantCulture,
-                $"  Router 开销    {FormatDuration(totalOverhead)} ({FormatShare(totalOverhead, totalOccupied)})"));
+                $"  Router 开销    {FormatDuration(totalOverhead)} ({FormatShare(totalOverhead, totalOccupied)}){overheadSuffix}"));
             tipLines.Add(string.Create(CultureInfo.InvariantCulture,
                 $"  非 Editor 脚本  {FormatDuration(totalNonEditor)} ({FormatShare(totalNonEditor, totalOccupied)})"));
             if (totalUnmeasured > 0.05)

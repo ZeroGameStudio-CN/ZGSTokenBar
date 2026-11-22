@@ -141,9 +141,15 @@ internal sealed class RouterHistoryMetricsStrip : Control
     private RouterDailyThroughput _data = new(0, 0, 0, null, "", "");
     private RouterVisualPalette _palette = new(UiTokens.CardSurface);
     private bool _compact;
+    private RectangleF _warningBadgeBounds;
+    private bool _warningBadgeHovered;
+
+    internal event EventHandler? ZeroEditorScriptsClicked;
 
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     internal RouterDailyThroughput Data => _data;
+
+    internal RectangleF WarningBadgeBounds => _warningBadgeBounds;
 
     internal int DesiredLogicalHeight =>
         _data.RangeKind == RouterHistoryRangeKind.All
@@ -159,10 +165,18 @@ internal sealed class RouterHistoryMetricsStrip : Control
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
     }
 
+    internal void ActivateZeroEditorFilter()
+    {
+        if (_data.ZeroEditorScriptCount > 0) ZeroEditorScriptsClicked?.Invoke(this, EventArgs.Empty);
+    }
+
     internal void Update(RouterDailyThroughput data, bool compact, string accessibleDescription)
     {
         _data = data;
         _compact = compact;
+        _warningBadgeBounds = RectangleF.Empty;
+        _warningBadgeHovered = false;
+        Cursor = Cursors.Default;
         Text = data.SummaryText;
         AccessibleDescription = accessibleDescription;
         Invalidate();
@@ -175,10 +189,44 @@ internal sealed class RouterHistoryMetricsStrip : Control
         Invalidate();
     }
 
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        var hit = _data.ZeroEditorScriptCount > 0 && !_warningBadgeBounds.IsEmpty && _warningBadgeBounds.Contains(e.Location);
+        if (hit != _warningBadgeHovered)
+        {
+            _warningBadgeHovered = hit;
+            Cursor = hit ? Cursors.Hand : Cursors.Default;
+            Invalidate(Rectangle.Ceiling(RectangleF.Inflate(_warningBadgeBounds, 2f, 2f)));
+        }
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        base.OnMouseLeave(e);
+        if (_warningBadgeHovered)
+        {
+            _warningBadgeHovered = false;
+            Cursor = Cursors.Default;
+            Invalidate();
+        }
+    }
+
+    protected override void OnMouseClick(MouseEventArgs e)
+    {
+        base.OnMouseClick(e);
+        if (e.Button == MouseButtons.Left && _data.ZeroEditorScriptCount > 0
+            && !_warningBadgeBounds.IsEmpty && _warningBadgeBounds.Contains(e.Location))
+        {
+            ZeroEditorScriptsClicked?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
         var s = RouterVisualGeometry.Scale(this);
+        _warningBadgeBounds = RectangleF.Empty;
         MonitorStripPaint.DrawInsetCard(g, this, _palette, s);
         if (DesiredLogicalHeight == 0 || Width <= 24 || Height <= 10) return;
 
@@ -283,10 +331,16 @@ internal sealed class RouterHistoryMetricsStrip : Control
         if (badgeText.Length > 0 && badgeBounds.Left >= usedX + 6f * s)
         {
             if (isWarningBadge)
-                UiPaint.Pill(g, badgeBounds, badgeText, captionFont, UiTokens.Warning, UiTokens.Mix(Parent?.BackColor ?? _palette.Surface, Color.White, .032f), s);
+            {
+                _warningBadgeBounds = badgeBounds;
+                var pillBg = UiTokens.Mix(Parent?.BackColor ?? _palette.Surface, Color.White, _warningBadgeHovered ? .085f : .032f);
+                UiPaint.Pill(g, badgeBounds, badgeText, captionFont, UiTokens.Warning, pillBg, s);
+            }
             else
+            {
                 TextRenderer.DrawText(g, badgeText, captionFont, Rectangle.Round(badgeBounds), UiTokens.Muted,
                     MonitorStripPaint.MeasureFlags | TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
+            }
         }
 
         // Row 2: Segmented stacked bar
@@ -327,20 +381,33 @@ internal sealed class RouterHistoryMetricsStrip : Control
         }
 
         // Row 3: Legend
+        var dotSize = 5.5f * s;
+        var baseOverhead = $"Router 开销 {RouterTaskPresentation.FormatShare(_data.TotalRouterOverheadSeconds, occupied)} ({RouterTaskPresentation.FormatDuration(_data.TotalRouterOverheadSeconds)})";
         var legend = new List<(Color Color, string Text)>(4)
         {
             (UiTokens.Positive, $"真实 Editor {RouterTaskPresentation.FormatShare(_data.TotalEditorActiveSeconds, occupied)} ({RouterTaskPresentation.FormatDuration(_data.TotalEditorActiveSeconds)})"),
-            (UiTokens.Warning, $"Router 开销 {RouterTaskPresentation.FormatShare(_data.TotalRouterOverheadSeconds, occupied)} ({RouterTaskPresentation.FormatDuration(_data.TotalRouterOverheadSeconds)})"),
+            (UiTokens.Warning, baseOverhead),
             (UiPalette.Violet400, $"非 Editor {RouterTaskPresentation.FormatShare(_data.TotalNonEditorScriptSeconds, occupied)} ({RouterTaskPresentation.FormatDuration(_data.TotalNonEditorScriptSeconds)})"),
         };
         if (_data.TotalUnmeasuredSeconds > 0.05)
         {
             legend.Add((UiPalette.Slate500, $"旧未拆分 {RouterTaskPresentation.FormatShare(_data.TotalUnmeasuredSeconds, occupied)} ({RouterTaskPresentation.FormatDuration(_data.TotalUnmeasuredSeconds)})"));
         }
+        if (_data.TotalCleanupSeconds > 0.05 && _data.TotalRouterOverheadSeconds > 0.05)
+        {
+            var expandedOverhead = $"Router 开销 {RouterTaskPresentation.FormatShare(_data.TotalRouterOverheadSeconds, occupied)} ({RouterTaskPresentation.FormatDuration(_data.TotalRouterOverheadSeconds)}，清理 {RouterTaskPresentation.FormatDuration(_data.TotalCleanupSeconds)})";
+            var expandedWidth = dotSize + 4.5f * s + MonitorStripPaint.MeasureWidth(g, expandedOverhead, captionFont);
+            for (var i = 0; i < legend.Count; i++)
+            {
+                if (i == 1) continue;
+                expandedWidth += dotSize + 4.5f * s + MonitorStripPaint.MeasureWidth(g, legend[i].Text, captionFont);
+            }
+            if (expandedWidth + 6f * s * Math.Max(0, legend.Count - 1) <= right - left)
+                legend[1] = (UiTokens.Warning, expandedOverhead);
+        }
 
         var legendY = 33f * s;
         var legendH = Math.Max(12f * s, Height - legendY - 2f * s);
-        var dotSize = 5.5f * s;
         var legendGap = 12f * s;
         var lx = left;
         var itemWidths = legend.Select(item => dotSize + 4.5f * s + MonitorStripPaint.MeasureWidth(g, item.Text, captionFont)).ToArray();

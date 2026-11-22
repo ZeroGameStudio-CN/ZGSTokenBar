@@ -479,7 +479,7 @@ internal static class GlassDockPainter
             }
             else
             {
-                using var label = FitFont(graphics, text, slot.Width + 3, labelSize, labelSize - 2f, FontStyle.Bold);
+                var label = FitFont(graphics, text, slot.Width + 3, labelSize, labelSize - 2f, FontStyle.Bold);
                 var labelTop = position == GlassPercentPosition.Above ? stackTop : ringBounds.Bottom - 1.5f;
                 var labelBounds = new RectangleF(slot.X - 4, labelTop, slot.Width + 8, labelHeight);
                 using (var halo = new SolidBrush(light ? Color.FromArgb(140, 255, 255, 255) : Color.FromArgb(150, 0, 0, 0)))
@@ -501,7 +501,7 @@ internal static class GlassDockPainter
             DrawWatermark(graphics, core, item, light, opacity, .78f);
             if (balanceOnly)
             {
-                using var balanceFont = FitFont(graphics, ring.BalanceText!, inner.Width + 1, 11f, 7.5f, FontStyle.Bold);
+                var balanceFont = FitFont(graphics, ring.BalanceText!, inner.Width + 1, 11f, 7.5f, FontStyle.Bold);
                 DrawCentered(graphics, ring.BalanceText!, balanceFont, valueBrush, new RectangleF(inner.X - 2, inner.Y - 1, inner.Width + 4, inner.Height));
             }
             else
@@ -527,9 +527,9 @@ internal static class GlassDockPainter
     {
         var number = text.EndsWith('%') ? text[..^1] : text;
         var hasSign = text.EndsWith('%') && number.Length > 0;
-        using var format = new StringFormat(StringFormat.GenericTypographic) { FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces };
-        using var numberFont = new Font("Segoe UI", labelSize, FontStyle.Bold, GraphicsUnit.Pixel);
-        using var signFont = new Font("Segoe UI", Math.Max(6.5f, labelSize * .66f), FontStyle.Bold, GraphicsUnit.Pixel);
+        var format = MeasureFormat();
+        var numberFont = CachedFont(labelSize, FontStyle.Bold);
+        var signFont = CachedFont(Math.Max(6.5f, labelSize * .66f), FontStyle.Bold);
         var numberWidth = graphics.MeasureString(number, numberFont, PointF.Empty, format).Width;
         var signWidth = hasSign ? graphics.MeasureString("%", signFont, PointF.Empty, format).Width + .2f : 0f;
         return numberWidth + signWidth + 4.5f;
@@ -563,9 +563,9 @@ internal static class GlassDockPainter
         var style = ChipStyle;
         var number = text.EndsWith('%') ? text[..^1] : text;
         var hasSign = text.EndsWith('%') && number.Length > 0;
-        using var format = new StringFormat(StringFormat.GenericTypographic) { FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces };
-        using var numberFont = new Font("Segoe UI", labelSize, FontStyle.Bold, GraphicsUnit.Pixel);
-        using var signFont = new Font("Segoe UI", Math.Max(6.5f, labelSize * .66f), FontStyle.Bold, GraphicsUnit.Pixel);
+        var format = MeasureFormat();
+        var numberFont = CachedFont(labelSize, FontStyle.Bold);
+        var signFont = CachedFont(Math.Max(6.5f, labelSize * .66f), FontStyle.Bold);
         var numberWidth = graphics.MeasureString(number, numberFont, PointF.Empty, format).Width;
         var signWidth = hasSign ? graphics.MeasureString("%", signFont, PointF.Empty, format).Width + .2f : 0f;
         var height = Math.Max(11.5f, labelSize + 1.5f);
@@ -621,9 +621,9 @@ internal static class GlassDockPainter
         var number = text.EndsWith('%') ? text[..^1] : text;
         var hasSign = text.EndsWith('%');
         var numberSize = number.Length >= 3 ? 10.5f : 12.5f;
-        using var numberFont = new Font("Segoe UI", numberSize, FontStyle.Bold, GraphicsUnit.Pixel);
-        using var signFont = new Font("Segoe UI", 7f, FontStyle.Bold, GraphicsUnit.Pixel);
-        using var format = new StringFormat(StringFormat.GenericTypographic) { FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces };
+        var numberFont = CachedFont(numberSize, FontStyle.Bold);
+        var signFont = CachedFont(7f, FontStyle.Bold);
+        var format = MeasureFormat();
         var numberWidth = graphics.MeasureString(number, numberFont, PointF.Empty, format).Width;
         var signWidth = hasSign ? graphics.MeasureString("%", signFont, PointF.Empty, format).Width : 0f;
         var total = numberWidth + signWidth + (hasSign ? .3f : 0f);
@@ -677,7 +677,7 @@ internal static class GlassDockPainter
             graphics.FillEllipse(fill, bounds);
             if (opacity >= .99f)
             {
-                using var font = new Font("Segoe UI", Math.Max(7f, side * .5f), FontStyle.Bold, GraphicsUnit.Pixel);
+                var font = CachedFont(Math.Max(7f, side * .5f), FontStyle.Bold);
                 using var text = new SolidBrush(Color.White);
                 var letter = string.IsNullOrWhiteSpace(item.Ring.Title) ? "?" : item.Ring.Title[..1].ToUpperInvariant();
                 DrawCentered(graphics, letter, font, text, bounds);
@@ -833,7 +833,7 @@ internal static class GlassDockPainter
         using var text = new SolidBrush(urgent
             ? alert
             : light ? UiPalette.Slate900.WithAlpha(235) : Color.FromArgb(240, 255, 255, 255));
-        using var font = new Font("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Pixel);
+        var font = CachedFont(10f, FontStyle.Bold);
         var label = scene.Expanded ? "‹" : "+" + scene.Plan.OverflowCount.ToString(CultureInfo.InvariantCulture);
         DrawCentered(graphics, label, font, text, rect);
     }
@@ -843,10 +843,10 @@ internal static class GlassDockPainter
     {
         (string Label, double? Value)[] rows = [("CPU", scene.Cpu), ("RAM", scene.Memory), ("I/O", scene.Disk), ("GPU", scene.Gpu)];
         var rowHeight = bounds.Height / (float)rows.Length;
-        using var labelFont = new Font("Segoe UI", 7.5f, FontStyle.Bold, GraphicsUnit.Pixel);
+        var labelFont = CachedFont(7.5f, FontStyle.Bold);
         using var labelBrush = new SolidBrush(Muted(scene.Light));
         using var trackBrush = new SolidBrush(scene.Light ? UiPalette.Slate900.WithAlpha(36) : Color.FromArgb(40, 255, 255, 255));
-        using var format = new StringFormat(StringFormat.GenericTypographic) { LineAlignment = StringAlignment.Center, FormatFlags = StringFormatFlags.NoWrap };
+        var format = MetricLabelFormat();
         const float labelWidth = 20f;
         const float barHeight = 3.5f;
         for (var index = 0; index < rows.Length; index++)
@@ -870,8 +870,8 @@ internal static class GlassDockPainter
     private static void DrawRate(Graphics graphics, Rectangle bounds, GlassDockScene scene)
     {
         var rate = FixedRateText(scene.TokensPerSecond);
-        using var font = new Font("Segoe UI", RateFontSize, FontStyle.Bold, GraphicsUnit.Pixel);
-        using var small = new Font("Segoe UI", RateUnitSize, FontStyle.Regular, GraphicsUnit.Pixel);
+        var font = CachedFont(RateFontSize, FontStyle.Bold);
+        var small = CachedFont(RateUnitSize, FontStyle.Regular);
         var active = scene.TokensPerSecond is > 0;
         var color = scene.TokensPerSecond is null
             ? Muted(scene.Light)
@@ -887,20 +887,11 @@ internal static class GlassDockPainter
             graphics.FillPath(glowBrush, glowPath);
         }
 
-        using (var numberFormat = new StringFormat(StringFormat.GenericTypographic)
-        {
-            Alignment = StringAlignment.Center,
-            LineAlignment = StringAlignment.Center,
-            FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.NoClip,
-        })
-        {
-            graphics.DrawString(rate, font, text, readout.Number, numberFormat);
-        }
+        graphics.DrawString(rate, font, text, readout.Number, RateNumberFormat());
 
         if (active)
         {
-            using var unitFormat = new StringFormat(StringFormat.GenericTypographic) { FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces };
-            var unitWidth = graphics.MeasureString("tok/s", small, PointF.Empty, unitFormat).Width;
+            var unitWidth = graphics.MeasureString("tok/s", small, PointF.Empty, MeasureFormat()).Width;
             var dotSize = 2.6f;
             var dotX = readout.Unit.X + (readout.Unit.Width - unitWidth) / 2f - dotSize - 2.2f;
             var dotY = readout.Unit.Y + (readout.Unit.Height - dotSize) / 2f + 0.3f;
@@ -924,7 +915,7 @@ internal static class GlassDockPainter
     /// <summary>Number and unit boxes. The number fits "888.8" and "88.8K"; the unit is directly under it.</summary>
     internal static RateReadout RateReadoutBoxes(Graphics graphics, Rectangle bounds, Font numberFont, Font unitFont)
     {
-        using var format = new StringFormat(StringFormat.GenericTypographic) { FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces };
+        var format = MeasureFormat();
         var numberWidth = Math.Min(bounds.Width, Math.Max(graphics.MeasureString("888.8", numberFont, PointF.Empty, format).Width,
             graphics.MeasureString("88.8K", numberFont, PointF.Empty, format).Width) + 1f);
         var left = bounds.X + (bounds.Width - numberWidth) / 2f;
@@ -937,8 +928,16 @@ internal static class GlassDockPainter
     /// <summary>Fixed number box for the rate, right-aligned ahead of the unit.</summary>
     internal static RectangleF RateNumberBox(Graphics graphics, Rectangle bounds, Font font)
     {
-        using var unit = new Font(font.FontFamily, RateUnitSize, FontStyle.Regular, GraphicsUnit.Pixel);
-        return RateReadoutBoxes(graphics, bounds, font, unit).Number;
+        var segoe = string.Equals(font.FontFamily.Name, "Segoe UI", StringComparison.OrdinalIgnoreCase);
+        Font? ownedUnit = segoe ? null : new Font(font.FontFamily, RateUnitSize, FontStyle.Regular, GraphicsUnit.Pixel);
+        try
+        {
+            return RateReadoutBoxes(graphics, bounds, font, ownedUnit ?? CachedFont(RateUnitSize, FontStyle.Regular)).Number;
+        }
+        finally
+        {
+            ownedUnit?.Dispose();
+        }
     }
 
     /// <summary>One fixed decimal (and K/M/G above 1000) so the text length only changes with magnitude.</summary>
@@ -972,9 +971,8 @@ internal static class GlassDockPainter
     {
         while (true)
         {
-            var font = new Font("Segoe UI", size, style, GraphicsUnit.Pixel);
+            var font = CachedFont(size, style);
             if (size <= minimum || graphics.MeasureString(text, font, PointF.Empty, StringFormat.GenericTypographic).Width <= width) return font;
-            font.Dispose();
             size -= .5f;
         }
     }
@@ -982,7 +980,39 @@ internal static class GlassDockPainter
     private static void DrawCentered(Graphics graphics, string text, Font font, Brush brush, RectangleF bounds) =>
         graphics.DrawString(text, font, brush, bounds, Format(StringAlignment.Center));
 
-    private static StringFormat Format(StringAlignment alignment) => new(StringFormat.GenericTypographic)
+    [ThreadStatic]
+    private static Dictionary<(int SizeCentipx, FontStyle Style), Font>? _fontCache;
+    [ThreadStatic]
+    private static StringFormat? _measureFormat, _metricLabelFormat, _rateNumberFormat, _centerEllipsisFormat, _nearEllipsisFormat, _farEllipsisFormat;
+
+    private static Font CachedFont(float size, FontStyle style)
+    {
+        var cache = _fontCache ??= new Dictionary<(int SizeCentipx, FontStyle Style), Font>(16);
+        var centipx = (int)MathF.Round(size * 100f);
+        var key = (centipx, style);
+        if (cache.TryGetValue(key, out var cached)) return cached;
+        var font = new Font("Segoe UI", centipx / 100f, style, GraphicsUnit.Pixel);
+        if (cache.Count < 64) cache[key] = font;
+        return font;
+    }
+
+    private static StringFormat MeasureFormat() =>
+        _measureFormat ??= new(StringFormat.GenericTypographic) { FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces };
+
+    private static StringFormat MetricLabelFormat() =>
+        _metricLabelFormat ??= new(StringFormat.GenericTypographic) { LineAlignment = StringAlignment.Center, FormatFlags = StringFormatFlags.NoWrap };
+
+    private static StringFormat RateNumberFormat() =>
+        _rateNumberFormat ??= new(StringFormat.GenericTypographic) { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center, FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.NoClip };
+
+    private static StringFormat Format(StringAlignment alignment) => alignment switch
+    {
+        StringAlignment.Center => _centerEllipsisFormat ??= CreateEllipsisFormat(StringAlignment.Center),
+        StringAlignment.Far => _farEllipsisFormat ??= CreateEllipsisFormat(StringAlignment.Far),
+        _ => _nearEllipsisFormat ??= CreateEllipsisFormat(StringAlignment.Near),
+    };
+
+    private static StringFormat CreateEllipsisFormat(StringAlignment alignment) => new(StringFormat.GenericTypographic)
     {
         Alignment = alignment,
         LineAlignment = alignment == StringAlignment.Center ? StringAlignment.Center : StringAlignment.Near,
