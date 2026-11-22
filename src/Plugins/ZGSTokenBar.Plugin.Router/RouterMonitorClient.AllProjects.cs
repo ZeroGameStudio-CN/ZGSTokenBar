@@ -122,6 +122,23 @@ public sealed partial class RouterMonitorClient
                         ["pending"] = group.Sum(entry => RouterJson.Integer(RouterJson.Field(entry.Row, "counts"), "pending")),
                     };
                 }
+                var hasDurations = group.Any(entry => RouterJson.Field(entry.Row, "durations").ValueKind == JsonValueKind.Object);
+                if (hasDurations)
+                {
+                    item["durations"] = new JsonObject
+                    {
+                        ["dispatchedCount"] = group.Sum(entry => RouterJson.Integer(RouterJson.Field(entry.Row, "durations"), "dispatchedCount")),
+                        ["measuredCount"] = group.Sum(entry => RouterJson.Integer(RouterJson.Field(entry.Row, "durations"), "measuredCount")),
+                        ["occupiedSeconds"] = Math.Round(group.Sum(entry => RouterJson.Number(RouterJson.Field(entry.Row, "durations"), "occupiedSeconds") ?? 0d), 3),
+                        ["executionSeconds"] = Math.Round(group.Sum(entry => RouterJson.Number(RouterJson.Field(entry.Row, "durations"), "executionSeconds") ?? 0d), 3),
+                        ["cleanupSeconds"] = Math.Round(group.Sum(entry => RouterJson.Number(RouterJson.Field(entry.Row, "durations"), "cleanupSeconds") ?? 0d), 3),
+                        ["editorActiveSeconds"] = Math.Round(group.Sum(entry => RouterJson.Number(RouterJson.Field(entry.Row, "durations"), "editorActiveSeconds") ?? 0d), 3),
+                        ["routerOverheadSeconds"] = Math.Round(group.Sum(entry => RouterJson.Number(RouterJson.Field(entry.Row, "durations"), "routerOverheadSeconds") ?? 0d), 3),
+                        ["nonEditorScriptSeconds"] = Math.Round(group.Sum(entry => RouterJson.Number(RouterJson.Field(entry.Row, "durations"), "nonEditorScriptSeconds") ?? 0d), 3),
+                        ["unmeasuredSeconds"] = Math.Round(group.Sum(entry => RouterJson.Number(RouterJson.Field(entry.Row, "durations"), "unmeasuredSeconds") ?? 0d), 3),
+                        ["zeroEditorScriptCount"] = group.Sum(entry => RouterJson.Integer(RouterJson.Field(entry.Row, "durations"), "zeroEditorScriptCount")),
+                    };
+                }
                 return (JsonNode)item;
             }).ToArray();
         return Element(new JsonObject { ["items"] = new JsonArray(items),

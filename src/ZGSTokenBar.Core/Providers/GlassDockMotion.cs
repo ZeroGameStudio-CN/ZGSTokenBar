@@ -285,10 +285,10 @@ public sealed class GlassDockMotion
 
         var anyValueAnimating = UpdateRingValueTweens(nowTick, animate);
         var anyMetricAnimating = false;
-        var cpu = AdvanceScalarTween(ref _cpuTween, interaction?.Cpu, nowTick, animate, threshold: 0.25, ref anyMetricAnimating);
-        var memory = AdvanceScalarTween(ref _memoryTween, interaction?.Memory, nowTick, animate, threshold: 0.25, ref anyMetricAnimating);
-        var disk = AdvanceScalarTween(ref _diskTween, interaction?.Disk, nowTick, animate, threshold: 0.25, ref anyMetricAnimating);
-        var gpu = AdvanceScalarTween(ref _gpuTween, interaction?.Gpu, nowTick, animate, threshold: 0.25, ref anyMetricAnimating);
+        var cpu = AdvanceScalarTween(ref _cpuTween, interaction?.Cpu, nowTick, animate, threshold: 3.0, ref anyMetricAnimating);
+        var memory = AdvanceScalarTween(ref _memoryTween, interaction?.Memory, nowTick, animate, threshold: 3.0, ref anyMetricAnimating);
+        var disk = AdvanceScalarTween(ref _diskTween, interaction?.Disk, nowTick, animate, threshold: 3.0, ref anyMetricAnimating);
+        var gpu = AdvanceScalarTween(ref _gpuTween, interaction?.Gpu, nowTick, animate, threshold: 3.0, ref anyMetricAnimating);
 
         var anyHoverAnimating = false;
         var chipHover = AdvanceHover(ChipHoverKey, interaction?.ChipHovered == true, nowTick, animate, ref anyHoverAnimating);

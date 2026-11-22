@@ -14,7 +14,18 @@ internal sealed record RouterDailyThroughput(
     int TodayTotal,
     double? AveragePerActiveDay,
     string SummaryText,
-    string TooltipSection);
+    string TooltipSection,
+    bool HasDurations = false,
+    double TodayOccupiedSeconds = 0,
+    double TotalOccupiedSeconds = 0,
+    double? AverageDailyOccupiedSeconds = null,
+    double? AverageTaskOccupiedSeconds = null,
+    double TotalEditorActiveSeconds = 0,
+    double TotalRouterOverheadSeconds = 0,
+    double TotalNonEditorScriptSeconds = 0,
+    double TotalUnmeasuredSeconds = 0,
+    int MeasuredCount = 0,
+    int ZeroEditorScriptCount = 0);
 
 internal static class RouterTaskPresentation
 {
@@ -88,7 +99,25 @@ internal static class RouterTaskPresentation
     private static bool IsIdentifierStart(char character) => char.IsAsciiLetter(character) || character == '_';
     private static string Words(string value) => Regex.Replace(value, @"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", " ").Replace("_", " · ");
 
-    /// <summary>Formats one date filter choice with its day total when Router includes daily counts.</summary>
+    /// <summary>Formats a non-negative duration in seconds concisely for summaries and tooltips.</summary>
+    internal static string FormatDuration(double seconds)
+    {
+        if (!double.IsFinite(seconds) || seconds <= 0) return "0s";
+        if (seconds < 10) return string.Create(CultureInfo.InvariantCulture, $"{seconds:0.#}s");
+        var rounded = (long)Math.Round(seconds, MidpointRounding.AwayFromZero);
+        if (rounded < 60) return string.Create(CultureInfo.InvariantCulture, $"{rounded}s");
+        if (rounded < 3600)
+        {
+            var minutes = rounded / 60;
+            var rem = rounded % 60;
+            return rem > 0
+                ? string.Create(CultureInfo.InvariantCulture, $"{minutes}m{rem}s")
+                : string.Create(CultureInfo.InvariantCulture, $"{minutes}m");
+        }
+        return string.Create(CultureInfo.InvariantCulture, $"{seconds / 3600d:0.#}h");
+    }
+
+    /// <summary>Formats one date filter choice with its day total and occupied duration when available.</summary>
     internal static string DayOptionLabel(JsonElement dayRow)
     {
         var date = RouterJson.Text(dayRow, "date");
@@ -101,13 +130,37 @@ internal static class RouterTaskPresentation
             return date;
         }
         var total = Math.Max(0, (int)Math.Round(rawTotal));
+        var durations = RouterJson.Field(dayRow, "durations");
+        if (durations.ValueKind == JsonValueKind.Object
+            && RouterJson.Number(durations, "occupiedSeconds") is { } occupied
+            && occupied > 0)
+        {
+            return string.Create(CultureInfo.InvariantCulture, $"{date} ({total:N0} · {FormatDuration(occupied)})");
+        }
         return string.Create(CultureInfo.InvariantCulture, $"{date} ({total:N0})");
     }
 
-    /// <summary>Summarizes today's count and the active-day average across Router's daily breakdown.</summary>
+    private sealed class DayAccumulator
+    {
+        public int Total;
+        public int Completed;
+        public int Failed;
+        public bool HasCounts;
+        public bool HasDurations;
+        public int DispatchedCount;
+        public int MeasuredCount;
+        public int ZeroEditorScriptCount;
+        public double OccupiedSeconds;
+        public double EditorActiveSeconds;
+        public double RouterOverheadSeconds;
+        public double NonEditorScriptSeconds;
+        public double UnmeasuredSeconds;
+    }
+
+    /// <summary>Summarizes today's count, active-day average and 3-way slot timing split across Router's daily breakdown.</summary>
     internal static RouterDailyThroughput SummarizeDailyThroughput(IEnumerable<JsonElement> days, DateOnly today)
     {
-        var byDate = new Dictionary<string, (int Total, int Completed, int Failed, bool HasCounts)>(StringComparer.Ordinal);
+        var byDate = new Dictionary<string, DayAccumulator>(StringComparer.Ordinal);
         foreach (var dayRow in days)
         {
             var date = RouterJson.Text(dayRow, "date");
@@ -122,21 +175,33 @@ internal static class RouterTaskPresentation
             var total = (int)Math.Round(rawTotal);
             if (total < 0) continue;
 
-            var counts = RouterJson.Field(dayRow, "counts");
-            var rowHasCounts = counts.ValueKind == JsonValueKind.Object;
-            var completed = rowHasCounts ? Math.Max(0, RouterJson.Integer(counts, "completed")) : 0;
-            var failed = rowHasCounts ? Math.Max(0, RouterJson.Integer(counts, "failed")) : 0;
-            if (byDate.TryGetValue(date, out var existing))
+            if (!byDate.TryGetValue(date, out var acc))
             {
-                byDate[date] = (
-                    existing.Total + total,
-                    existing.Completed + completed,
-                    existing.Failed + failed,
-                    existing.HasCounts || rowHasCounts);
+                acc = new DayAccumulator();
+                byDate[date] = acc;
             }
-            else
+            acc.Total += total;
+
+            var counts = RouterJson.Field(dayRow, "counts");
+            if (counts.ValueKind == JsonValueKind.Object)
             {
-                byDate[date] = (total, completed, failed, rowHasCounts);
+                acc.HasCounts = true;
+                acc.Completed += Math.Max(0, RouterJson.Integer(counts, "completed"));
+                acc.Failed += Math.Max(0, RouterJson.Integer(counts, "failed"));
+            }
+
+            var durations = RouterJson.Field(dayRow, "durations");
+            if (durations.ValueKind == JsonValueKind.Object)
+            {
+                acc.HasDurations = true;
+                acc.DispatchedCount += Math.Max(0, RouterJson.Integer(durations, "dispatchedCount"));
+                acc.MeasuredCount += Math.Max(0, RouterJson.Integer(durations, "measuredCount"));
+                acc.ZeroEditorScriptCount += Math.Max(0, RouterJson.Integer(durations, "zeroEditorScriptCount"));
+                acc.OccupiedSeconds += Math.Max(0d, RouterJson.Number(durations, "occupiedSeconds") ?? 0d);
+                acc.EditorActiveSeconds += Math.Max(0d, RouterJson.Number(durations, "editorActiveSeconds") ?? 0d);
+                acc.RouterOverheadSeconds += Math.Max(0d, RouterJson.Number(durations, "routerOverheadSeconds") ?? 0d);
+                acc.NonEditorScriptSeconds += Math.Max(0d, RouterJson.Number(durations, "nonEditorScriptSeconds") ?? 0d);
+                acc.UnmeasuredSeconds += Math.Max(0d, RouterJson.Number(durations, "unmeasuredSeconds") ?? 0d);
             }
         }
 
@@ -150,23 +215,108 @@ internal static class RouterTaskPresentation
         var activeDays = activeRows.Length;
         var totalProcessed = activeRows.Sum(entry => entry.Value.Total);
         var todayKey = today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        var todayTotal = byDate.TryGetValue(todayKey, out var todayEntry) ? Math.Max(0, todayEntry.Total) : 0;
+        byDate.TryGetValue(todayKey, out var todayEntry);
+        var todayTotal = todayEntry is not null ? Math.Max(0, todayEntry.Total) : 0;
+        var todayOccupied = todayEntry is not null ? Math.Max(0d, todayEntry.OccupiedSeconds) : 0d;
         var average = (double)totalProcessed / activeDays;
         var avgText = average.ToString("0.#", CultureInfo.InvariantCulture);
-        var summaryText = string.Create(CultureInfo.InvariantCulture, $"今日 {todayTotal:N0}  ·  日均 {avgText}/天");
 
-        var lines = new List<string>(1 + Math.Min(14, activeRows.Length))
+        var totalDispatched = activeRows.Sum(entry => entry.Value.DispatchedCount);
+        var hasDurations = activeRows.Any(entry => entry.Value.HasDurations) && totalDispatched > 0;
+        if (!hasDurations)
         {
-            string.Create(CultureInfo.InvariantCulture, $"日均 {avgText}/天（按 {activeDays:N0} 个活跃日，共 {totalProcessed:N0} 条）")
-        };
-        foreach (var entry in activeRows.Take(14))
-        {
-            var detail = entry.Value.HasCounts && (entry.Value.Completed > 0 || entry.Value.Failed > 0)
-                ? string.Create(CultureInfo.InvariantCulture, $"（成功 {entry.Value.Completed:N0} · 失败 {entry.Value.Failed:N0}）")
-                : "";
-            lines.Add(string.Create(CultureInfo.InvariantCulture, $"  {entry.Key}  {entry.Value.Total:N0} 条{detail}"));
+            var summaryText = string.Create(CultureInfo.InvariantCulture, $"今日 {todayTotal:N0}  ·  日均 {avgText}/天");
+            var lines = new List<string>(1 + Math.Min(14, activeRows.Length))
+            {
+                string.Create(CultureInfo.InvariantCulture, $"日均 {avgText}/天（按 {activeDays:N0} 个活跃日，共 {totalProcessed:N0} 条）")
+            };
+            foreach (var entry in activeRows.Take(14))
+            {
+                var detail = entry.Value.HasCounts && (entry.Value.Completed > 0 || entry.Value.Failed > 0)
+                    ? string.Create(CultureInfo.InvariantCulture, $"（成功 {entry.Value.Completed:N0} · 失败 {entry.Value.Failed:N0}）")
+                    : "";
+                lines.Add(string.Create(CultureInfo.InvariantCulture, $"  {entry.Key}  {entry.Value.Total:N0} 条{detail}"));
+            }
+            return new(activeDays, totalProcessed, todayTotal, average, summaryText, string.Join(Environment.NewLine, lines));
         }
 
-        return new(activeDays, totalProcessed, todayTotal, average, summaryText, string.Join(Environment.NewLine, lines));
+        var totalOccupied = activeRows.Sum(entry => entry.Value.OccupiedSeconds);
+        var totalEditor = activeRows.Sum(entry => entry.Value.EditorActiveSeconds);
+        var totalOverhead = activeRows.Sum(entry => entry.Value.RouterOverheadSeconds);
+        var totalNonEditor = activeRows.Sum(entry => entry.Value.NonEditorScriptSeconds);
+        var totalUnmeasured = activeRows.Sum(entry => entry.Value.UnmeasuredSeconds);
+        var measuredCount = activeRows.Sum(entry => entry.Value.MeasuredCount);
+        var zeroEditorScripts = activeRows.Sum(entry => entry.Value.ZeroEditorScriptCount);
+        var avgDailyOccupied = totalOccupied / activeDays;
+        var avgTaskOccupied = totalOccupied / totalDispatched;
+
+        var summaryWithDurations = todayTotal > 0 && todayOccupied > 0
+            ? string.Create(CultureInfo.InvariantCulture,
+                $"今日 {todayTotal:N0}({FormatDuration(todayOccupied)}) · 日均 {avgText}/天 · 均占 {FormatDuration(avgTaskOccupied)}")
+            : string.Create(CultureInfo.InvariantCulture,
+                $"今日 {todayTotal:N0} · 日均 {avgText}/天 · 均占 {FormatDuration(avgTaskOccupied)}");
+
+        var tipLines = new List<string>(4 + Math.Min(14, activeRows.Length))
+        {
+            string.Create(CultureInfo.InvariantCulture,
+                $"日均 {avgText}/天 · 日均占 {FormatDuration(avgDailyOccupied)} · 单任务均占 {FormatDuration(avgTaskOccupied)}（按 {activeDays:N0} 个活跃日，共 {totalProcessed:N0} 条）")
+        };
+        if (totalOccupied > 0)
+        {
+            static int Pct(double part, double whole) => (int)Math.Round(part * 100d / whole, MidpointRounding.AwayFromZero);
+            var unSuffix = totalUnmeasured > 0.05
+                ? string.Create(CultureInfo.InvariantCulture, $" · 未拆分历史 {FormatDuration(totalUnmeasured)} ({Pct(totalUnmeasured, totalOccupied)}%)")
+                : "";
+            tipLines.Add(string.Create(CultureInfo.InvariantCulture,
+                $"槽位拆分：真实 Editor {FormatDuration(totalEditor)} ({Pct(totalEditor, totalOccupied)}%) · Router 开销 {FormatDuration(totalOverhead)} ({Pct(totalOverhead, totalOccupied)}%) · 非 Editor {FormatDuration(totalNonEditor)} ({Pct(totalNonEditor, totalOccupied)}%){unSuffix}"));
+        }
+        if (totalUnmeasured > 0.05)
+        {
+            tipLines.Add(string.Create(CultureInfo.InvariantCulture,
+                $"  已拆解 {measuredCount:N0}/{totalDispatched:N0} 条（旧脚本未埋点归入「未拆分历史」，新运行脚本将自动拆分）"));
+        }
+        if (zeroEditorScripts > 0)
+        {
+            tipLines.Add(string.Create(CultureInfo.InvariantCulture,
+                $"  未调用 Unity CLI 的脚本：{zeroEditorScripts:N0} 条（可优先评估移出 Editor 队列）"));
+        }
+        foreach (var entry in activeRows.Take(14))
+        {
+            var d = entry.Value;
+            if (d.HasDurations && d.OccupiedSeconds > 0)
+            {
+                var unSuffix = d.UnmeasuredSeconds > 0.05
+                    ? string.Create(CultureInfo.InvariantCulture, $" / 未拆分 {FormatDuration(d.UnmeasuredSeconds)}")
+                    : "";
+                tipLines.Add(string.Create(CultureInfo.InvariantCulture,
+                    $"  {entry.Key}  {d.Total:N0} 条 · 占 {FormatDuration(d.OccupiedSeconds)}（Editor {FormatDuration(d.EditorActiveSeconds)} / 开销 {FormatDuration(d.RouterOverheadSeconds)} / 非Editor {FormatDuration(d.NonEditorScriptSeconds)}{unSuffix}）"));
+            }
+            else
+            {
+                var detail = d.HasCounts && (d.Completed > 0 || d.Failed > 0)
+                    ? string.Create(CultureInfo.InvariantCulture, $"（成功 {d.Completed:N0} · 失败 {d.Failed:N0}）")
+                    : "";
+                tipLines.Add(string.Create(CultureInfo.InvariantCulture, $"  {entry.Key}  {d.Total:N0} 条{detail}"));
+            }
+        }
+
+        return new(
+            activeDays,
+            totalProcessed,
+            todayTotal,
+            average,
+            summaryWithDurations,
+            string.Join(Environment.NewLine, tipLines),
+            true,
+            todayOccupied,
+            totalOccupied,
+            avgDailyOccupied,
+            avgTaskOccupied,
+            totalEditor,
+            totalOverhead,
+            totalNonEditor,
+            totalUnmeasured,
+            measuredCount,
+            zeroEditorScripts);
     }
 }
