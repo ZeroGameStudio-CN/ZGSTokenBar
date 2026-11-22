@@ -343,9 +343,11 @@ internal sealed partial class BarForm : Form
 
     public void SetCodexTokenUsage(CodexTokenUsageSummary? summary)
     {
+        var totalChanged = _codexTokenUsage?.LocalTokens != summary?.LocalTokens
+            || _systemUsage.CumulativeTokens != summary?.LocalTokens;
         _codexTokenUsage = summary;
         _systemUsage = _systemUsage with { CumulativeTokens = summary?.LocalTokens };
-        Invalidate();
+        if (totalChanged || HasOpenHoverOrPopover) Invalidate();
     }
 
     public void SetPluginMiniCards(IReadOnlyList<PluginMiniCardView> cards)

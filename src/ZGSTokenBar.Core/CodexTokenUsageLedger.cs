@@ -111,10 +111,10 @@ public sealed class CodexTokenUsageLedger
             }
             if (_summary is not null && observed is not null)
             {
-                _recentSessionPaths = ConversationPaths(observed.RecentSessionPaths, cancellationToken, fullDiscovery: true);
+                _recentSessionPaths = ConversationPaths(observed.RecentSessionPaths, cancellationToken, out _, fullDiscovery: true);
                 _summary = _summary with
                 {
-                    RecentTurns = _conversations.Refresh(_recentSessionPaths, now, cancellationToken),
+                    RecentTurns = _conversations.Refresh(_recentSessionPaths, now, cancellationToken, fullVerify: true),
                     PendingConversationCount = _conversations.PendingSessions,
                     ConversationCheckpointRestoredCount = _conversations.RestoredSessions,
                     ConversationRestoredBytes = _conversations.RestoredBytes,
@@ -133,10 +133,10 @@ public sealed class CodexTokenUsageLedger
         lock (_sync)
         {
             if (_summary is null) return null;
-            _recentSessionPaths = ConversationPaths(_recentSessionPaths, cancellationToken);
+            _recentSessionPaths = ConversationPaths(_recentSessionPaths, cancellationToken, out var fullVerify);
             _summary = _summary with
             {
-                RecentTurns = _conversations.Refresh(_recentSessionPaths, now, cancellationToken),
+                RecentTurns = _conversations.Refresh(_recentSessionPaths, now, cancellationToken, fullVerify || _conversations.PendingSessions > 0),
                 PendingConversationCount = _conversations.PendingSessions,
                 ConversationCheckpointRestoredCount = _conversations.RestoredSessions,
                 ConversationRestoredBytes = _conversations.RestoredBytes,
@@ -149,7 +149,8 @@ public sealed class CodexTokenUsageLedger
         }
     }
 
-    private string[] ConversationPaths(IReadOnlyList<string> known, CancellationToken cancellationToken, bool fullDiscovery = false)
+    private string[] ConversationPaths(IReadOnlyList<string> known, CancellationToken cancellationToken,
+        out bool fullVerify, bool fullDiscovery = false)
     {
         var paths = new HashSet<string>(known, StringComparer.OrdinalIgnoreCase);
         // Resumed turns keep their original date folder. Live discovery has no session-count cap
@@ -167,7 +168,12 @@ public sealed class CodexTokenUsageLedger
             _sessionDirectories.Remove(stale);
         // Ordering and copy de-duplication need a stat of every file; redo it only when the
         // discovered set changes or on the periodic full pass.
-        if (!full && paths.SetEquals(_orderedConversationSource)) return _orderedConversationPaths;
+        if (!full && paths.SetEquals(_orderedConversationSource))
+        {
+            fullVerify = false;
+            return _orderedConversationPaths;
+        }
+        fullVerify = true;
         _orderedConversationSource = paths;
         return _orderedConversationPaths = paths.Select(path => new FileInfo(path))
             .Where(file => file.Exists)

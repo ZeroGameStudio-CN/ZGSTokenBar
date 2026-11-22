@@ -105,16 +105,28 @@ public sealed class CodexPlanChangeHistory
         return history;
     }
 
-    public bool Observe(IEnumerable<CodexPlanObservation>? observations)
+    public bool Observe(IEnumerable<CodexPlanObservation>? observations) =>
+        Observe(observations, out _);
+
+    public bool Observe(IEnumerable<CodexPlanObservation>? observations, out bool structuralChange)
     {
+        structuralChange = false;
         if (observations is null) return false;
         var changed = false;
-        foreach (var observation in observations) changed |= Observe(observation);
+        foreach (var observation in observations)
+        {
+            changed |= Observe(observation, out var itemStructural);
+            structuralChange |= itemStructural;
+        }
         return changed;
     }
 
-    public bool Observe(CodexPlanObservation observation)
+    public bool Observe(CodexPlanObservation observation) =>
+        Observe(observation, out _);
+
+    public bool Observe(CodexPlanObservation observation, out bool structuralChange)
     {
+        structuralChange = false;
         if (!IsStableAccountId(observation.AccountId)) return false;
         var plan = CodexPlanNormalization.Normalize(observation.Plan);
         if (plan is null) return false;
@@ -126,6 +138,7 @@ public sealed class CodexPlanChangeHistory
         {
             _accounts.Add(new AccountState(accountId, plan, observation.ObservedAt, incoming));
             Trim();
+            structuralChange = true;
             return true;
         }
 
@@ -133,9 +146,11 @@ public sealed class CodexPlanChangeHistory
         if (string.Equals(plan, state.Plan, StringComparison.Ordinal))
         {
             var merged = incoming.Count == 0 ? state.Windows : MergeWindows(state.Windows, incoming);
-            var sameInstant = observation.ObservedAt == state.ObservedAt && SameWindows(merged, state.Windows);
+            var windowsChanged = !SameWindows(merged, state.Windows);
+            var sameInstant = observation.ObservedAt == state.ObservedAt && !windowsChanged;
             state.ObservedAt = observation.ObservedAt;
             state.Windows = merged;
+            structuralChange = windowsChanged;
             return !sameInstant;
         }
 
@@ -152,6 +167,7 @@ public sealed class CodexPlanChangeHistory
         state.ObservedAt = observation.ObservedAt;
         state.Windows = incoming;
         Trim();
+        structuralChange = true;
         return true;
     }
 

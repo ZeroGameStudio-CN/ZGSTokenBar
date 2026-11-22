@@ -391,27 +391,33 @@ internal sealed partial class BarForm
     private void RenderGlassLayered()
     {
         _glassRenderQueued = false;
-        if (!IsHandleCreated || IsDisposed || ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
-        using var trace = PerfTrace.Measure("glass.render");
-        using var bitmap = new Bitmap(ClientSize.Width, ClientSize.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-        using (var graphics = Graphics.FromImage(bitmap))
+        var size = ClientSize;
+        if (!IsHandleCreated || IsDisposed || size.Width <= 0 || size.Height <= 0
+            || !float.IsFinite(_scale) || _scale <= 0)
         {
-            graphics.Clear(Color.Transparent);
-            graphics.ScaleTransform(_scale, _scale);
-            try
+            return;
+        }
+        using var trace = PerfTrace.Measure("glass.render");
+        using var bitmap = new Bitmap(size.Width, size.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        try
+        {
+            using (var graphics = Graphics.FromImage(bitmap))
             {
+                graphics.Clear(Color.Transparent);
+                graphics.ScaleTransform(_scale, _scale);
                 DrawGlassDock(graphics);
                 _taskbarRenderFailureAreaIds.Remove("bar");
             }
-            catch (Exception exception) when (IsRecoverableRenderException(exception))
-            {
-                TraceTaskbarRenderFailure("bar", exception);
-            }
+            // Most ticks repaint identical pixels; skipping the HBITMAP/UpdateLayeredWindow round trip
+            // for unchanged frames removes the bulk of the bar's idle kernel time.
+            if (!CaptureGlassFrame(bitmap)) return;
         }
-
-        // Most ticks repaint identical pixels; skipping the HBITMAP/UpdateLayeredWindow round trip
-        // for unchanged frames removes the bulk of the bar's idle kernel time.
-        if (!CaptureGlassFrame(bitmap)) return;
+        catch (Exception exception) when (IsRecoverableRenderException(exception))
+        {
+            _glassFrameSize = Size.Empty;
+            TraceTaskbarRenderFailure("bar", exception);
+            return;
+        }
         using (PerfTrace.Measure("glass.render.update-layered"))
             if (LayeredWindow.Update(Handle, bitmap, _resetLayeredStyle)) _resetLayeredStyle = false;
             else _glassFrameSize = Size.Empty;

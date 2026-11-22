@@ -12,6 +12,7 @@ public static class ReviewFixTests
         AttachInstances();
         ActivityOrder();
         PlanHistory();
+        AuditOptimizations();
     }
 
     private static void PriorityMapping()
@@ -289,6 +290,86 @@ public static class ReviewFixTests
         finally
         {
             Directory.Delete(directory, true);
+        }
+    }
+
+    private static void AuditOptimizations()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var cardA = new QuotaCard("card-a", ProviderKind.Codex, "Codex A", "pro", "#10a37f", true,
+            [new QuotaWindow("5h", 20, now.AddHours(3), TimeSpan.FromHours(5))]) { CapturedAt = now.AddMinutes(-20) };
+        var cardB = new QuotaCard("card-b", ProviderKind.Codex, "Codex B", "pro", "#10a37f", true,
+            [new QuotaWindow("5h", 10, now.AddHours(4), TimeSpan.FromHours(5))]) { CapturedAt = now.AddMinutes(-20) };
+        var tracker = new QuotaPaceTracker(new QuotaRateHistory
+        {
+            Samples =
+            [
+                new("card-a", "5h", TimeSpan.FromHours(5).Ticks, now.AddMinutes(-20), 10, now.AddHours(3)),
+                new("card-b", "5h", TimeSpan.FromHours(5).Ticks, now.AddMinutes(-20), 5, now.AddHours(4)),
+            ],
+        });
+        Check(tracker.SampleCount == 2, "indexed tracker preserves initial sample count");
+        var snapshot = new QuotaSnapshot(
+            [
+                cardA with { CapturedAt = now, Windows = [new("5h", 25, now.AddHours(3), TimeSpan.FromHours(5))] },
+                cardB with { CapturedAt = now, Windows = [new("5h", 12, now.AddHours(4), TimeSpan.FromHours(5))] },
+            ],
+            [new ProviderHealth(ProviderKind.Codex, true, "ok", ProviderHealthCode.Current)],
+            now);
+        Check(tracker.Observe(snapshot, now) && tracker.SampleCount == 4, "indexed tracker appends per-series samples");
+        Check(tracker.Observe(snapshot with
+        {
+            CapturedAt = now.AddSeconds(10),
+            Cards = [snapshot.Cards[0] with { CapturedAt = now.AddSeconds(10), Windows = [new("5h", 1, now.AddHours(8), TimeSpan.FromHours(5))] }],
+        }, now.AddSeconds(10)) && tracker.SampleCount == 3, "new cycle clears only the affected series");
+        var root = TempDirectory();
+        try
+        {
+            var store = new AppSettingsStore(root);
+            var exported = tracker.Export(now.AddSeconds(10));
+            store.SaveQuotaRateHistory(exported);
+            var reloaded = store.LoadQuotaRateHistory(now.AddSeconds(10));
+            Check(reloaded.Samples.Count == 3, "streamed quota rate history round-trips cleanly");
+
+            var settings = new AppSettings();
+            for (var i = 0; i < AppSettings.MaximumPlacementProfiles + 10; i++)
+            {
+                var key = "topology-v1:" + i.ToString("x64");
+                settings.PlacementProfiles[key] = new WindowPlacementProfile();
+            }
+            var firstKey = "topology-v1:" + 0.ToString("x64");
+            settings.TrimPlacementProfiles(keepTopologyKey: firstKey);
+            Check(settings.PlacementProfiles.Count == AppSettings.MaximumPlacementProfiles
+                && settings.PlacementProfiles.ContainsKey(firstKey),
+                "placement profiles cap preserves requested topology key");
+
+            Directory.CreateDirectory(root);
+            var deadPid = 999_999_999;
+            var staleTmp = Path.Combine(root, $".codex-token-usage-index.json.{deadPid}.{Guid.NewGuid():N}.tmp");
+            var freshTmp = Path.Combine(root, $".codex-token-usage-index.json.{deadPid}.{Guid.NewGuid():N}.tmp");
+            var liveTmp = Path.Combine(root, $".codex-token-usage-index.json.{Environment.ProcessId}.{Guid.NewGuid():N}.tmp");
+            var keepJson = Path.Combine(root, "settings.json");
+            File.WriteAllText(staleTmp, "x");
+            File.SetLastWriteTimeUtc(staleTmp, DateTime.UtcNow.AddDays(-2));
+            File.WriteAllText(freshTmp, "x");
+            File.WriteAllText(liveTmp, "x");
+            File.SetLastWriteTimeUtc(liveTmp, DateTime.UtcNow.AddDays(-2));
+            File.WriteAllText(keepJson, "{}");
+            var cleaned = store.CleanupOrphanedTempFiles();
+            Check(cleaned == 1 && !File.Exists(staleTmp) && File.Exists(freshTmp) && File.Exists(liveTmp) && File.Exists(keepJson),
+                "orphaned temp cleanup removes only dead-PID stale atomic temp files");
+
+            var planHistory = new CodexPlanChangeHistory();
+            var t0 = now.AddMinutes(-5);
+            Check(planHistory.Observe([Observation("acct-1", t0, "pro", [Week(now.AddDays(5))])], out var initialStructural) && initialStructural,
+                "initial plan observation is structural");
+            Check(planHistory.Observe([Observation("acct-1", t0.AddMinutes(1), "pro", [Week(now.AddDays(5))])], out var heartbeatStructural)
+                && !heartbeatStructural,
+                "pure timestamp heartbeat under same plan/windows is not structural");
+        }
+        finally
+        {
+            Directory.Delete(root, true);
         }
     }
 

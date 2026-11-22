@@ -110,7 +110,12 @@ internal sealed partial class QuotaApplicationContext
     private void ObserveIntakeEvidence(IReadOnlyList<IntakeServiceResult> readings)
     {
         var now = Environment.TickCount64;
-        if (_quitting || !IntakeEnabled || !_tray.Visible || now < _nextIntakeEvidenceNoticeAt) return;
+        if (_quitting || !IntakeEnabled || !_tray.Visible
+            || _bar.TaskbarEmbedStatus == "hidden:fullscreen"
+            || now < _nextIntakeEvidenceNoticeAt)
+        {
+            return;
+        }
         var requests = readings.Where(result => result.Reading is { Active: true })
             .SelectMany(result => result.Reading!.EvidenceRequests);
         try

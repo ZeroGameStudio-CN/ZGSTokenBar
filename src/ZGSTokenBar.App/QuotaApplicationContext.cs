@@ -85,6 +85,12 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
     private int _genericCardsUpdateQueued;
     private bool _pluginRuntimeDisposed;
     private long _systemUsageGeneration;
+    private readonly object _stateSaveSync = new();
+    private Task _stateSaveTail = Task.CompletedTask;
+    private long _planHistorySavedAt;
+    private bool _planHistoryDirty;
+    private const long PlanHistoryHeartbeatSaveMs = 10 * 60 * 1000;
+    private long _lastClockInvalidateMinute = -1;
 
     public QuotaApplicationContext(
         EventWaitHandle activationEvent,
@@ -104,7 +110,9 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _quotaPaceTracker = new QuotaPaceTracker(_store.LoadQuotaRateHistory(now));
         _codexQuotaTokenTracker = new CodexQuotaTokenTracker(_store.LoadCodexQuotaTokenHistory());
         _planChanges = CodexPlanChangeHistory.Load(_store.LoadCodexPlanChangeHistory());
+        _planHistorySavedAt = Environment.TickCount64;
         _codexTokenUsageLedger = new CodexTokenUsageLedger(_store);
+        _ = Task.Run(() => _store.CleanupOrphanedTempFiles());
         _cachedCodexTokenUsage = _codexTokenUsageLedger.Snapshot(now);
         if (_allowGlobalStartupRegistration && !_store.SettingsReadPending)
         {
@@ -246,7 +254,15 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
                 if (_settings.IsPluginEnabled("zgstokenbar.metrics.system", true) && _activeProviders.Contains(ProviderKind.Codex))
                     _ = RefreshCodexConversationsAsync();
             }
-            _bar.Invalidate();
+            var minute = DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerMinute;
+            if (!_bar.IsTaskbarMode
+                || _bar.HasOpenHoverOrPopover
+                || !_settings.IsPluginEnabled("zgstokenbar.metrics.system", true)
+                || minute != _lastClockInvalidateMinute)
+            {
+                _lastClockInvalidateMinute = minute;
+                _bar.Invalidate();
+            }
             ApplyClockInterval();
         };
         _confirmationTimer = new System.Windows.Forms.Timer { Interval = 3_000 };
@@ -349,41 +365,76 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
              ?.InformationalVersion
          ?? "unknown").Split('+', 2)[0];
 
+    private void EnqueueStateSave(string name, Action save)
+    {
+        lock (_stateSaveSync)
+        {
+            _stateSaveTail = _stateSaveTail.ContinueWith(_ =>
+            {
+                try { save(); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+                catch (Exception error) { AppDiagnostics.Record("state-save:" + name, error); }
+            }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+        }
+    }
+
+    private async Task WaitForStateSavesAsync()
+    {
+        Task tail;
+        lock (_stateSaveSync) tail = _stateSaveTail;
+        await Task.WhenAny(tail, Task.Delay(TimeSpan.FromSeconds(3)));
+    }
+
     private async void Quit()
     {
         if (_quitting) return;
         _quitting = true;
-        _shutdown.Cancel();
-        UnsubscribePowerEvents();
-        _refreshScheduler.Dispose();
-        _updateTimer.Stop();
-        _clockTimer.Stop();
-        _confirmationTimer.Stop();
-        _intakeWarmup.Stop();
-        _settingsDialog?.Dispose();
-        _settingsDialog = null;
-        CloseIntakeObservers();
-        if (!_bar.IsDisposed) _bar.Hide();
         try
         {
-            await _refreshGate.WaitAsync();
-            _refreshGate.Release();
-            await _codexTokenUsageGate.WaitAsync();
-            _codexTokenUsageGate.Release();
-            await _systemUsageGate.WaitAsync();
-            _systemUsageGate.Release();
-            _networkTraffic.Flush(DateTimeOffset.UtcNow);
-            await _updateGate.WaitAsync();
-            _updateGate.Release();
+            _shutdown.Cancel();
+            UnsubscribePowerEvents();
+            _refreshScheduler.Dispose();
+            _updateTimer.Stop();
+            _clockTimer.Stop();
+            _confirmationTimer.Stop();
+            _intakeWarmup.Stop();
+            _settingsDialog?.Dispose();
+            _settingsDialog = null;
+            CloseIntakeObservers();
+            if (!_bar.IsDisposed) _bar.Hide();
+            try
+            {
+                await _refreshGate.WaitAsync();
+                _refreshGate.Release();
+                await _codexTokenUsageGate.WaitAsync();
+                _codexTokenUsageGate.Release();
+                await _systemUsageGate.WaitAsync();
+                _systemUsageGate.Release();
+                _networkTraffic.Flush(DateTimeOffset.UtcNow);
+                await _updateGate.WaitAsync();
+                _updateGate.Release();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Disposal already owns the remaining shutdown work.
+            }
+            if (_planHistoryDirty)
+            {
+                _planHistoryDirty = false;
+                var plans = _planChanges.Export();
+                EnqueueStateSave("codex-plan-change-history", () => _store.SaveCodexPlanChangeHistory(plans));
+            }
+            await WaitForStateSavesAsync();
+            _activationWait.Unregister(null);
+            _tray.Visible = false;
+            await DisposePluginRuntimeAsync();
+            ExitThread();
         }
-        catch (ObjectDisposedException)
+        catch (Exception error)
         {
-            // Disposal already owns the remaining shutdown work.
+            AppDiagnostics.Record("quit", error);
+            ExitThread();
         }
-        _activationWait.Unregister(null);
-        _tray.Visible = false;
-        await DisposePluginRuntimeAsync();
-        ExitThread();
     }
 
     private async ValueTask DisposePluginRuntimeAsync()

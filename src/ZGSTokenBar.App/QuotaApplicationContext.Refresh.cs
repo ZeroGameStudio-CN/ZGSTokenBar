@@ -71,26 +71,24 @@ internal sealed partial class QuotaApplicationContext
             _otherToolsModule.SetExternal(UsageProjection.FromQuotaSnapshot(next));
             if (codexQuotaTokenCapacityChanged)
             {
-                try
-                {
-                    _store.SaveCodexQuotaTokenHistory(_codexQuotaTokenTracker.Export());
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-                {
-                    // Account-scoped token estimates remain useful in memory when history cannot be saved.
-                }
+                var exportedTokens = _codexQuotaTokenTracker.Export();
+                EnqueueStateSave("codex-quota-token-history", () => _store.SaveCodexQuotaTokenHistory(exportedTokens));
             }
             if (!stabilization.ConfirmationRequired
                 && _activeProviders.Contains(ProviderKind.Codex)
-                && _planChanges.Observe(next.CodexPlanObservations))
+                && _planChanges.Observe(next.CodexPlanObservations, out var planStructuralChange))
             {
-                try
+                var tick = Environment.TickCount64;
+                if (planStructuralChange || tick - _planHistorySavedAt >= PlanHistoryHeartbeatSaveMs)
                 {
-                    _store.SaveCodexPlanChangeHistory(_planChanges.Export());
+                    _planHistorySavedAt = tick;
+                    _planHistoryDirty = false;
+                    var exportedPlans = _planChanges.Export();
+                    EnqueueStateSave("codex-plan-change-history", () => _store.SaveCodexPlanChangeHistory(exportedPlans));
                 }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                else
                 {
-                    // The in-memory interval remains available when the history file is busy.
+                    _planHistoryDirty = true;
                 }
             }
             if (!stabilization.ConfirmationRequired
@@ -112,33 +110,21 @@ internal sealed partial class QuotaApplicationContext
                 ScheduleCodexRolloutImport(next, observedAt);
             }
             if (_settings.EnableAlerts) ShowMilestoneAlerts(alerts);
-            try
-            {
-                _store.SaveCache(next);
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                // A cache failure must not hide fresh provider data from the running bar.
-            }
+            EnqueueStateSave("quota-cache", () => _store.SaveCache(next));
             if (paceChanged)
             {
-                try
-                {
-                    _store.SaveQuotaRateHistory(_quotaPaceTracker.Export(observedAt));
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-                {
-                    // Pace history is best-effort and never blocks live quota.
-                }
+                var exportedPace = _quotaPaceTracker.Export(observedAt);
+                EnqueueStateSave("quota-rate-history", () => _store.SaveQuotaRateHistory(exportedPace));
             }
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
         {
             // Normal application shutdown.
         }
-        catch
+        catch (Exception error)
         {
             // Keep the last good snapshot visible if an unexpected refresh failure occurs.
+            AppDiagnostics.Record("refresh", error);
         }
         finally
         {
@@ -392,14 +378,8 @@ internal sealed partial class QuotaApplicationContext
         var observed = new QuotaSnapshot(cards, [new ProviderHealth(ProviderKind.Claude, true, "usage board", ProviderHealthCode.Current)], now);
         if (_quotaPaceTracker.Observe(observed, now))
         {
-            try
-            {
-                _store.SaveQuotaRateHistory(_quotaPaceTracker.Export(now));
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                // Pace history is best-effort and never blocks live quota.
-            }
+            var exportedPace = _quotaPaceTracker.Export(now);
+            EnqueueStateSave("quota-rate-history", () => _store.SaveQuotaRateHistory(exportedPace));
         }
 
         _bar.SetQuotaPaceEstimates(QuotaPaceEstimates(_snapshot, now));

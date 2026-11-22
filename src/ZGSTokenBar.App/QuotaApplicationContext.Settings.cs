@@ -115,7 +115,9 @@ internal sealed partial class QuotaApplicationContext
         var previous = new AppSettings();
         previous.CopyPlacementStateFrom(_settings);
         _settings.PlacementSchemaVersion = AppSettings.CurrentPlacementSchemaVersion;
+        _settings.PlacementProfiles.Remove(commit.TopologyKey);
         _settings.PlacementProfiles[commit.TopologyKey] = commit.Profile.Copy();
+        _settings.TrimPlacementProfiles(commit.TopologyKey);
         _settings.TaskbarDocked = commit.Profile.IsDocked;
         if (commit.DockedMonitorName is not null && commit.DockedPosition is { } position)
         {

@@ -53,11 +53,24 @@ internal static class IntakeServiceMonitorTests
             Check(afterRestart.TakeNext([item]) is null, "The same question is suppressed after app restart.");
             var changed = item with { Question = "Which build was affected?" };
             Check(afterRestart.TakeNext([item, changed]) == changed, "A different evidence request can be reported.");
+
+            var nested = Path.Combine(folder.FullName, "missing-sub");
+            var capped = new IntakeEvidenceNotices(nested);
+            for (var index = 0; index < IntakeEvidenceNotices.MaximumEntries + 15; index++)
+            {
+                var next = item with { Question = $"Question #{index}" };
+                Check(capped.TakeNext([next]) == next, "Each unique question is accepted once.");
+            }
+            var lines = File.ReadAllLines(Path.Combine(nested, "intake-evidence-notices.v1"));
+            Check(lines.Length == IntakeEvidenceNotices.MaximumEntries, "Notice dedup file stays bounded.");
+            Check(new IntakeEvidenceNotices(nested).TakeNext([item with { Question = "Question #0" }]) is { },
+                "Evicted oldest entry can be re-emitted once capacity rolls over.");
+            Check(new IntakeEvidenceNotices(nested).TakeNext([item with { Question = $"Question #{IntakeEvidenceNotices.MaximumEntries + 14}" }]) is null,
+                "Most recent entry remains suppressed.");
         }
         finally
         {
-            File.Delete(Path.Combine(folder.FullName, "intake-evidence-notices.v1"));
-            folder.Delete();
+            if (Directory.Exists(folder.FullName)) folder.Delete(true);
         }
     }
 
