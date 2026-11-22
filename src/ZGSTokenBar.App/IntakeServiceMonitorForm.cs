@@ -18,7 +18,8 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
     private readonly RouterButton _refresh = new() { Icon = RouterButtonIcon.Refresh }, _pin = new() { Icon = RouterButtonIcon.Pin },
         _close = new() { Icon = RouterButtonIcon.Close }, _workItems = new();
     private readonly RouterStatusBadge _headline = new() { Margin = Padding.Empty };
-    private readonly Label _freshness = Label(), _progressHeading = Label(), _historyHeading = Label();
+    private readonly IntakeOverviewStrip _overview = new() { Dock = DockStyle.Fill, Margin = new Padding(0, 4, 0, 0) };
+    private readonly Label _freshness = Label(), _serviceScope = Label(), _progressHeading = Label(), _progressSub = Label(), _historyHeading = Label(), _historySummary = Label();
     private readonly TableLayoutPanel _root;
     private readonly ToolTip _tips = new() { AutoPopDelay = 15000, InitialDelay = 400, ReshowDelay = 100 };
     private readonly FlowLayoutPanel _projects = Flow();
@@ -31,7 +32,8 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
     private string? _project;
     private string _projectSignature = "";
     private readonly bool _observe;
-    private bool _recordOpen;
+    private bool _recordOpen, _lastProgressUnavailable, _lastProgressLoading = true;
+    private int _lastProgressCount = -1;
     internal event EventHandler? WorkItemsRequested;
     internal event Action<int?>? ProcessingObserved;
     internal event Action<IReadOnlyList<IntakeServiceResult>>? EvidenceObserved;
@@ -43,7 +45,7 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
         _zh = chinese; _client = client; _observe = observe;
         Text = T("工单与分拣", "Work intake");
         SuspendLayout();
-        _root = CreatePanelLayout(currentHeight: 56, footerHeight: 0);
+        _root = CreatePanelLayout(currentHeight: 78, footerHeight: 0);
         Controls.Add(_root);
         var brand = new MonitorBrandMark(T("自动分拣", "Intake"), intake: true) { Width = 140, Height = 30 };
         _freshness.Width = 140;
@@ -56,16 +58,31 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
         foreach (var button in new[] { _refresh, _pin, _close }) _tips.SetToolTip(button, button.AccessibleName);
         var actions = Flow(_workItems);
         actions.FlowDirection = FlowDirection.RightToLeft;
+        var statusTopLeft = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 2, RowCount = 1 };
+        statusTopLeft.ColumnStyles.Add(new(SizeType.AutoSize));
+        statusTopLeft.ColumnStyles.Add(new(SizeType.Percent, 100));
+        statusTopLeft.RowStyles.Add(new(SizeType.Percent, 100));
+        _serviceScope.Margin = new Padding(8, 0, 0, 0);
+        statusTopLeft.Controls.Add(_headline, 0, 0);
+        statusTopLeft.Controls.Add(_serviceScope, 1, 0);
+        var statusBody = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 1, RowCount = 2 };
+        statusBody.ColumnStyles.Add(new(SizeType.Percent, 100));
+        statusBody.RowStyles.Add(new(SizeType.Absolute, 28));
+        statusBody.RowStyles.Add(new(SizeType.Percent, 100));
+        statusBody.Controls.Add(CreateHeader(statusTopLeft, actions, 122), 0, 0);
+        statusBody.Controls.Add(_overview, 0, 1);
         var surface = RouterSurface.Section(T("服务状态", "Service status"), featured: true);
-        surface.Controls.Add(CreateHeader(Flow(_headline), actions, 122));
+        surface.Padding = new Padding(10, 6, 10, 6);
+        surface.Margin = new Padding(0, 0, 0, 8);
+        surface.Controls.Add(statusBody);
         _root.Controls.Add(surface, 0, 1);
-        IntakeObserverForm.AddColumn(_progress, T("工单／内容", "Item / title"), 0);
-        IntakeObserverForm.AddColumn(_progress, T("项目／操作", "Project / operation"), 160);
-        IntakeObserverForm.AddColumn(_progress, T("当前阶段", "Stage"), 180);
-        IntakeObserverForm.AddColumn(_history, T("记录时间", "Observed"), 110);
-        IntakeObserverForm.AddColumn(_history, T("工单／内容", "Item / title"), 0);
-        IntakeObserverForm.AddColumn(_history, T("操作", "Operation"), 100);
-        IntakeObserverForm.AddColumn(_history, T("结果／阶段", "Result / stage"), 180);
+        IntakeObserverForm.AddColumn(_progress, T("工单与摘要", "Work item"), 360);
+        IntakeObserverForm.AddColumn(_progress, T("项目 · 操作", "Project · Action"), 155);
+        IntakeObserverForm.AddColumn(_progress, T("当前状态", "Status"), 165);
+        IntakeObserverForm.AddColumn(_history, T("观测时间", "Observed"), 108);
+        IntakeObserverForm.AddColumn(_history, T("工单与摘要", "Work item"), 330);
+        IntakeObserverForm.AddColumn(_history, T("操作", "Action"), 105);
+        IntakeObserverForm.AddColumn(_history, T("状态", "Status"), 165);
         _progress.Columns[1].DefaultCellStyle.ForeColor = UiTokens.TextSecondary;
         _history.Columns[0].DefaultCellStyle.ForeColor = UiTokens.Muted;
         _history.Columns[2].DefaultCellStyle.ForeColor = UiTokens.TextSecondary;
@@ -79,9 +96,11 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
                 if (_pinned && e.RowIndex >= 0 && grid.Rows[e.RowIndex].Tag is IntakeServiceRecord record) ShowRecord(record);
             };
         }
-        _tips.SetToolTip(_history, T("记录时间来自服务观测；旧回执缺少时间时显示 —", "Times come from service observations; older receipts without timestamps show —"));
-        _root.Controls.Add(Table(T("当前回执", "Current receipts"), _progress, _progressHeading), 0, 2);
-        _root.Controls.Add(Table(T("运行历史", "Service history"), _history, _historyHeading), 0, 3);
+        _tips.SetToolTip(_history, T("观测时间来自服务日记；缺少时间戳的旧回执显示 —", "Times come from service observations; older receipts without timestamps show —"));
+        _root.Controls.Add(Table(T("当前回执", "Current receipts"), _progress, _progressHeading, _progressSub), 0, 2);
+        var historySection = Table(T("运行历史", "Service history"), _history, _historyHeading, _historySummary);
+        historySection.Margin = Padding.Empty;
+        _root.Controls.Add(historySection, 0, 3);
         _refresh.Click += async (_, _) => await RefreshAsync();
         _pin.Click += (_, _) => RequestPinChange(!_pinned);
         _close.Click += (_, _) => RequestClose();
@@ -94,6 +113,7 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
         };
         SetLogicalFont(_headline, "Segoe UI", 10.5f, FontStyle.Bold);
         SetLogicalFont(_freshness, "Segoe UI", 10.5f);
+        SetLogicalFont(_serviceScope, "Segoe UI", 10.5f);
         ApplyPalette(QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette));
         ApplyRows(); ResumeLayout(true);
     }
@@ -207,26 +227,112 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
         var protectedArchive = progress.Count(r => r.Review == "archive_protected");
         var unconfirmed = progress.Count(r => r.Review == "unconfirmed");
         var countsKnown = !loading && !unavailable && current.All(r => r.Active);
-        var progressCounts = new List<string>();
-        if (active > 0 && countsKnown) progressCounts.Add(T($"在途 {active:N0}", $"In flight {active:N0}"));
-        if (countsKnown)
-        {
-            progressCounts.Add(unconfirmed > 0 ? T($"已知待核 {pending:N0}", $"Known review {pending:N0}") : T($"待核 {pending:N0}", $"Needs review {pending:N0}"));
-            progressCounts.Add(T($"归档保护 {protectedArchive:N0}", $"Archive protected {protectedArchive:N0}"));
-            if (unconfirmed > 0) progressCounts.Add(T($"待确认 {unconfirmed:N0}", $"Unconfirmed {unconfirmed:N0}"));
-        }
-        _progressHeading.Text = countsKnown ? string.Join("  ·  ", progressCounts) : T("当前回执", "Current receipts");
+        var today = DateOnly.FromDateTime(DateTime.Now);
+        var hasTimedHistory = history.Any(r => r.ObservedAt is not null);
+        var todayHistory = history.Count(r => r.ObservedAt is { } at && DateOnly.FromDateTime(at.ToLocalTime().DateTime) == today);
+        var closedHistory = history.Count(r => r.Review == "source_closed");
+
+        _serviceScope.Text = _project is not null
+            ? T($"筛选项目：{_project}", $"Project: {_project}")
+            : countsKnown && projects.Length > 0
+                ? T($"已接入 {projects.Length:N0} 个项目", $"{projects.Length:N0} projects")
+                : "";
+        _serviceScope.Visible = _serviceScope.Text.Length > 0;
+
+        var overviewSummary = BuildOverviewSummary(countsKnown, active, pending, protectedArchive, unconfirmed, todayHistory, hasTimedHistory, closedHistory);
+        var overviewFallback = loading
+            ? T("正在汇总当前回执与历史指标…", "Loading service metrics…")
+            : unavailable
+                ? T("当前服务观测不完整或暂不可读，暂不汇总总量。", "Observations are incomplete or unavailable; totals are withheld.")
+                : T("分拣服务未运行，当前统计暂不可用。", "Intake service is stopped; live metrics are withheld.");
+        var overviewTip = countsKnown
+            ? T("归档保护：原对话仍在活动或有新增内容，已跳过归档；待核对/待确认：需要人工介入或补充证据。",
+                "Archive protected: conversation is still active or changed; Needs review/Unconfirmed: requires follow-up or confirmation.")
+            : overviewFallback;
+        _overview.Update(
+            new(countsKnown, active, pending, protectedArchive, unconfirmed, todayHistory, hasTimedHistory, closedHistory, overviewFallback, _zh),
+            overviewSummary,
+            overviewTip);
+        _tips.SetToolTip(_overview, overviewTip);
+
+        _progressHeading.Text = T("当前回执", "Current receipts");
+        _progressSub.Text = progress.Length > 0
+            ? T($"{progress.Length:N0} 条", $"{progress.Length:N0} items")
+            : countsKnown ? T("全部清空", "All clear") : "";
         Observation = new(projects.Length, history.Length, _last.Values.SelectMany(r => r.Progress).Count(r => r.InFlight), _headline.Text,
             countsKnown ? pending : null, countsKnown ? protectedArchive : null, countsKnown ? unconfirmed : null,
-            history.Count(r => r.Review == "source_closed"), observedAt);
-        _historyHeading.Text = history.Length == 0 || unavailable ? T("运行历史", "Service history")
-            : T($"运行历史  ·  {history.Length:N0}", $"Service history  ·  {history.Length:N0}");
-        if (!unavailable && !loading) SetEmptyTopTable(_root, _progress, progress.Length == 0);
-        else if (progress.Length > 0) SetEmptyTopTable(_root, _progress, false);
+            closedHistory, observedAt);
+        _historyHeading.Text = T("运行历史", "Service history");
+        if (history.Length == 0 || unavailable)
+        {
+            _historySummary.Text = "";
+        }
+        else
+        {
+            var historyParts = new List<string>(3) { T($"{history.Length:N0} 条", $"{history.Length:N0}") };
+            if (hasTimedHistory) historyParts.Add(T($"今日 {todayHistory:N0}", $"Today {todayHistory:N0}"));
+            if (closedHistory > 0) historyParts.Add(T($"已结案 {closedHistory:N0}", $"Closed {closedHistory:N0}"));
+            _historySummary.Text = string.Join("  ·  ", historyParts);
+        }
+
+        UpdateProgressRowHeight(progress.Length, unavailable, loading);
         SetEmptyState(_progress, unavailable ? T("在途状态暂不可确认", "In-flight state is unconfirmed")
             : loading ? T("正在读取分拣进度…", "Reading intake progress…") : T("暂无当前回执", "No current receipts"));
         SetEmptyState(_history, unavailable ? T("历史记录暂不可用", "Service history is unavailable")
             : loading ? T("正在读取运行历史…", "Reading service history…") : T("暂无服务历史记录", "No retained service history"));
+    }
+
+    private string BuildOverviewSummary(bool countsKnown, int active, int pending, int protectedArchive, int unconfirmed,
+        int todayHistory, bool hasTimedHistory, int closedHistory)
+    {
+        if (!countsKnown) return "";
+        var parts = new List<string>(6)
+        {
+            T($"在途 {active:N0}", $"In flight {active:N0}"),
+            unconfirmed > 0 ? T($"已知待核 {pending:N0}", $"Known review {pending:N0}") : T($"待核对 {pending:N0}", $"Needs review {pending:N0}"),
+        };
+        if (unconfirmed > 0) parts.Add(T($"待确认 {unconfirmed:N0}", $"Unconfirmed {unconfirmed:N0}"));
+        parts.Add(T($"归档保护 {protectedArchive:N0}", $"Archive protected {protectedArchive:N0}"));
+        if (hasTimedHistory) parts.Add(T($"今日记录 {todayHistory:N0}", $"Today {todayHistory:N0}"));
+        if (closedHistory > 0) parts.Add(T($"已结案 {closedHistory:N0}", $"Closed {closedHistory:N0}"));
+        return string.Join(" · ", parts);
+    }
+
+    private void UpdateProgressRowHeight(int progressCount, bool unavailable, bool loading)
+    {
+        _lastProgressCount = progressCount;
+        _lastProgressUnavailable = unavailable;
+        _lastProgressLoading = loading;
+        var row = _root.RowStyles[2];
+        SizeType targetType;
+        float targetHeight;
+        bool headersVisible;
+        if (!unavailable && !loading && progressCount == 0)
+        {
+            headersVisible = false;
+            targetType = SizeType.Absolute;
+            targetHeight = (int)Math.Round(82 * _popoverScale);
+        }
+        else if (progressCount is >= 1 and <= 4)
+        {
+            headersVisible = true;
+            targetType = SizeType.Absolute;
+            targetHeight = (int)Math.Round((86 + 26 * progressCount) * _popoverScale);
+        }
+        else
+        {
+            headersVisible = true;
+            targetType = SizeType.Percent;
+            targetHeight = 50;
+        }
+        var changed = _progress.ColumnHeadersVisible != headersVisible
+            || row.SizeType != targetType
+            || Math.Abs(row.Height - targetHeight) >= 0.5f;
+        if (!changed) return;
+        _progress.ColumnHeadersVisible = headersVisible;
+        row.SizeType = targetType;
+        row.Height = targetHeight;
+        _root.PerformLayout();
     }
 
     private static void SetEmptyState(RouterGrid grid, string title)
@@ -237,14 +343,26 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
         if (grid.RowCount == 0) grid.Invalidate();
     }
 
-    private Control Table(string title, RouterGrid grid, Label heading)
+    private Control Table(string title, RouterGrid grid, Label heading, Label summary)
     {
         var body = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 1, RowCount = 2 };
         body.ColumnStyles.Add(new(SizeType.Percent, 100)); body.RowStyles.Add(new(SizeType.Absolute, 30)); body.RowStyles.Add(new(SizeType.Percent, 100));
         heading.Text = title;
+        heading.Dock = DockStyle.None;
+        heading.AutoSize = true;
+        heading.Anchor = AnchorStyles.Left;
+        heading.Margin = Padding.Empty;
         SetLogicalFont(heading, "Segoe UI", UiTokens.FontBody, FontStyle.Bold);
+        summary.Margin = new Padding(8, 0, 0, 0);
+        SetLogicalFont(summary, "Segoe UI", 10.5f);
+        var titleRow = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 2, RowCount = 1 };
+        titleRow.ColumnStyles.Add(new(SizeType.AutoSize));
+        titleRow.ColumnStyles.Add(new(SizeType.Percent, 100));
+        titleRow.RowStyles.Add(new(SizeType.Percent, 100));
+        titleRow.Controls.Add(heading, 0, 0);
+        titleRow.Controls.Add(summary, 1, 0);
         var pager = new MonitorTablePager(grid, hideSinglePage: true);
-        body.Controls.Add(CreateHeader(heading, Flow(pager.Buttons), 114), 0, 0); body.Controls.Add(grid, 0, 1);
+        body.Controls.Add(CreateHeader(titleRow, Flow(pager.Buttons), 114), 0, 0); body.Controls.Add(grid, 0, 1);
         var section = RouterSurface.Section(title); section.Controls.Add(body); return section;
     }
     private void PaintStage(object? sender, DataGridViewCellPaintingEventArgs e)
@@ -302,6 +420,8 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
         var palette = new RouterVisualPalette(UiTokens.CardSurface);
         ApplyMonitorPalette(palette);
         _headline.ForeColor = palette.Text;
+        _overview.ApplyPalette(palette);
+        if (_lastProgressCount >= 0) UpdateProgressRowHeight(_lastProgressCount, _lastProgressUnavailable, _lastProgressLoading);
         _projectMenu.Renderer = new DarkContextMenuRenderer(palette.Surface, palette.Input, palette.Border, palette.Text, palette.Muted);
         _projectMenu.Font = Font;
     }
@@ -332,15 +452,28 @@ internal sealed class IntakeServiceMonitorForm : MonitorPanelForm
 
     private void ShowRecord(IntakeServiceRecord record)
     {
-        var lines = new List<string> { Kind(record.Kind), Stage(record) };
-        if (record.ObservedAt is { } at) lines.Add(at.ToLocalTime().ToString("MM-dd HH:mm:ss"));
-        if (record.ReviewQuestion.Length > 0) lines.Add(record.ReviewQuestion);
+        var lines = new List<string> { T("── 回执概况", "── Receipt overview") };
+        if (record.Project.Length > 0) lines.Add(T("项目  ", "Project  ") + record.Project);
+        lines.Add(T("工单  ", "Work item  ") + Item(record));
+        lines.Add(T("操作  ", "Action  ") + Kind(record.Kind));
+        lines.Add(T("状态  ", "Status  ") + Stage(record));
+        if (record.ObservedAt is { } at) lines.Add(T("观测时间  ", "Observed  ") + at.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"));
+        if (record.SourceStatus.Length > 0) lines.Add(T("原卡状态  ", "Source status  ") + record.SourceStatus);
+
+        var notes = new List<string>();
+        if (record.ReviewQuestion.Length > 0) notes.Add(T("待补证据  ", "Question  ") + record.ReviewQuestion);
         if (record.Review == "archive_protected")
-            lines.Add(T("原对话有变化或仍在活动，已保留。", "The original conversation changed or is still active and was kept."));
+            notes.Add(T("原对话有变化或仍在活动，已保留。", "The original conversation changed or is still active and was kept."));
         else if (record.Review == "archive_retained")
-            lines.Add(T("已确认原对话有后续内容，保留该对话。", "Follow-up activity was confirmed and the conversation was kept."));
+            notes.Add(T("已确认原对话有后续内容，保留该对话。", "Follow-up activity was confirmed and the conversation was kept."));
         else if (record.IsHistoryOnly && record.ReasonCode == "need_evidence")
-            lines.Add(T("这条旧回执曾要求补充证据。", "This earlier receipt requested more evidence."));
+            notes.Add(T("这条旧回执曾要求补充证据。", "This earlier receipt requested more evidence."));
+        if (notes.Count > 0)
+        {
+            lines.Add("");
+            lines.Add(T("── 补充说明", "── Details"));
+            lines.AddRange(notes);
+        }
         using var dialog = new MonitorRecordDialog(T("分拣回执", "Intake receipt"), ItemTitle(record),
             string.Join(Environment.NewLine, lines), JsonSerializer.Serialize(record), _zh);
         _recordOpen = true;

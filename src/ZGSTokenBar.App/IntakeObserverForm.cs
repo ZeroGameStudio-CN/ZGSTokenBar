@@ -80,9 +80,17 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
         _root.Controls.Add(currentSection, 0, 1);
 
         AddColumn(_recent, T("工单", "Item"), 104); AddColumn(_recent, T("标题", "Title"), 0);
-        AddColumn(_recent, T("当前状态", "State"), 106); AddColumn(_recent, T("更新", "Updated"), 110);
+        AddColumn(_recent, T("当前状态", "State"), 116); AddColumn(_recent, T("更新", "Updated"), 110);
         AddColumn(_timeline, T("时间", "Time"), 112); AddColumn(_timeline, T("记录", "Event"), 0);
-        AddColumn(_timeline, T("结果", "Result"), 114);
+        AddColumn(_timeline, T("结果", "Result"), 122);
+        _recent.Columns[0].DefaultCellStyle.ForeColor = UiTokens.Accent;
+        _recent.Columns[2].HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
+        _recent.Columns[3].DefaultCellStyle.ForeColor = UiTokens.Muted;
+        _recent.Columns[3].HeaderCell.Style.Alignment = _recent.Columns[3].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
+        _timeline.Columns[0].DefaultCellStyle.ForeColor = UiTokens.Muted;
+        _timeline.Columns[2].HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
+        _recent.CellPainting += PaintRecentState;
+        _timeline.CellPainting += PaintTimelineResult;
         _recent.AccessibleName = T("近期工单", "Recent work items");
         _timeline.AccessibleName = T("工单时间线", "Work item timeline");
         _root.Controls.Add(TableSection(T("工单", "Items"), _recent, Flow(_blocked)), 0, 2);
@@ -223,9 +231,32 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
     {
         var palette = new RouterVisualPalette(UiTokens.CardSurface);
         ApplyMonitorPalette(palette, _detail);
+        _detail.ForeColor = _item is null ? palette.Muted : UiTokens.TextStrong;
         _projectMenu.Renderer = new DarkContextMenuRenderer(palette.Surface, palette.Input, palette.Border, palette.Text, palette.Muted);
         _projectMenu.Font = Font;
     }
+
+    private void PaintRecentState(object? sender, DataGridViewCellPaintingEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.ColumnIndex != 2 || _recent.Rows[e.RowIndex].Tag is not IntakeItem item) return;
+        _recent.PaintPill(e, StateAccent(item.Blocked, item.Phase, item.Status));
+    }
+
+    private void PaintTimelineResult(object? sender, DataGridViewCellPaintingEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.ColumnIndex != 2 || _timeline.Rows[e.RowIndex].Tag is not string status || status.Length == 0) return;
+        _timeline.PaintPill(e, StateAccent(status == "blocked", "", status));
+    }
+
+    private static Color StateAccent(bool blocked, string phase, string status) => blocked
+        ? UiTokens.Warning
+        : phase == "running" || status == "passed"
+            ? UiTokens.Positive
+            : status is "rework" or "pending_acceptance"
+                ? UiTokens.Warning
+                : phase is "queued" or "starting" || status is "pending_triage" or "pending_execution"
+                    ? UiTokens.Info
+                    : UiTokens.Muted;
     internal Task RefreshVisibleAsync() => ReadAsync(async token =>
     {
         var access = await RefreshAccessAsync(token);
@@ -305,14 +336,15 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
         token.ThrowIfCancellationRequested();
         var rows = new List<(object?[] Values, object? Tag)>
         {
-            (new object?[] { At(item.UpdatedAt), T("原卡当前", "Current item"), ItemState(item) }, null),
+            (new object?[] { At(item.UpdatedAt), T("原卡当前", "Current item"), ItemState(item) }, (object?)(item.Blocked ? "blocked" : item.Status)),
         };
         if (item.EvidenceMode.Length > 0)
             rows.Add((new object?[] { "—", T("原对话补交已记录", "Original conversation delivery recorded"), "" }, null));
         foreach (var row in history)
-            rows.Add((new object?[] { At(row.Timestamp), Command(row.Command), State(row.Status) }, null));
+            rows.Add((new object?[] { At(row.Timestamp), Command(row.Command), State(row.Status) }, (object?)row.Status));
         _item = item;
         _detail.Text = $"{item.Number} · {item.Project} · {item.Title}";
+        _detail.ForeColor = UiTokens.TextStrong;
         _tips.SetToolTip(_detail, _detail.Text);
         _detail.AccessibleDescription = _detail.Text;
         SetGridRows(_timeline, rows);
@@ -484,6 +516,7 @@ internal sealed partial class IntakeObserverForm : MonitorPanelForm
         _detailFresh = false;
         _timeline.Rows.Clear();
         _detail.Text = T("单击工单查看时间线", "Select a work item to view its timeline");
+        _detail.ForeColor = UiTokens.Muted;
         _tips.SetToolTip(_detail, "");
         _detail.AccessibleDescription = "";
         SetTimelineEmpty();
