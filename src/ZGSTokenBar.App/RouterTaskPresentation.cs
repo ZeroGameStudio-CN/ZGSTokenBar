@@ -6,6 +6,8 @@ using ZGSTokenBar.Plugin.Router;
 
 namespace ZGSTokenBar.App;
 
+internal enum RouterHistoryRangeKind { All, Today, Day }
+
 internal sealed record RouterTaskHeading(string Title, string Context, string Original);
 
 internal sealed record RouterDailyThroughput(
@@ -26,7 +28,12 @@ internal sealed record RouterDailyThroughput(
     double TotalUnmeasuredSeconds = 0,
     int MeasuredCount = 0,
     int ZeroEditorScriptCount = 0,
-    int DispatchedCount = 0);
+    int DispatchedCount = 0,
+    RouterHistoryRangeKind RangeKind = RouterHistoryRangeKind.All,
+    string RangeDate = "",
+    int SelectedCompleted = 0,
+    int SelectedFailed = 0,
+    bool HasAnyHistory = false);
 
 internal static class RouterTaskPresentation
 {
@@ -175,8 +182,8 @@ internal static class RouterTaskPresentation
         public double UnmeasuredSeconds;
     }
 
-    /// <summary>Summarizes today's count, active-day average and 3-way slot timing split across Router's daily breakdown.</summary>
-    internal static RouterDailyThroughput SummarizeDailyThroughput(IEnumerable<JsonElement> days, DateOnly today)
+    /// <summary>Summarizes Router's daily breakdown for either today, a specific day, or the full active window.</summary>
+    internal static RouterDailyThroughput SummarizeDailyThroughput(IEnumerable<JsonElement> days, DateOnly today, string? selectedDay = null)
     {
         var byDate = new Dictionary<string, DayAccumulator>(StringComparer.Ordinal);
         foreach (var dayRow in days)
@@ -227,12 +234,114 @@ internal static class RouterTaskPresentation
             .Where(entry => entry.Value.Total > 0)
             .OrderByDescending(entry => entry.Key, StringComparer.Ordinal)
             .ToArray();
-        if (activeRows.Length == 0)
-            return new(0, 0, 0, null, "", "");
+        var todayKey = today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var normalizedSelection = string.IsNullOrWhiteSpace(selectedDay) ? "all" : selectedDay.Trim();
+        var rangeKind = normalizedSelection == "all"
+            ? RouterHistoryRangeKind.All
+            : normalizedSelection == todayKey ? RouterHistoryRangeKind.Today : RouterHistoryRangeKind.Day;
+        var hasAnyHistory = activeRows.Length > 0;
+
+        if (!hasAnyHistory)
+            return new(0, 0, 0, null, "", "", RangeKind: rangeKind, RangeDate: rangeKind == RouterHistoryRangeKind.All ? "" : normalizedSelection);
+
+        if (rangeKind != RouterHistoryRangeKind.All)
+        {
+            var dayLabel = rangeKind == RouterHistoryRangeKind.Today
+                ? "今日"
+                : (normalizedSelection.Length == 10 ? normalizedSelection[5..] : normalizedSelection);
+            byDate.TryGetValue(normalizedSelection, out var entry);
+            if (entry is null || entry.Total == 0)
+            {
+                var emptyLines = new List<string>(2 + Math.Min(14, activeRows.Length))
+                {
+                    string.Create(CultureInfo.InvariantCulture, $"{dayLabel}（{normalizedSelection}）暂无已结束任务"),
+                };
+                AppendRecentDayLines(emptyLines, "最近活跃日参考：", activeRows);
+                return new(
+                    0,
+                    0,
+                    0,
+                    null,
+                    $"{dayLabel} 0 条",
+                    string.Join(Environment.NewLine, emptyLines),
+                    RangeKind: rangeKind,
+                    RangeDate: normalizedSelection,
+                    HasAnyHistory: true);
+            }
+
+            var isToday = rangeKind == RouterHistoryRangeKind.Today;
+            var dayHasDurations = entry.HasDurations && entry.DispatchedCount > 0;
+            if (!dayHasDurations)
+            {
+                var countSuffix = entry.HasCounts && (entry.Completed > 0 || entry.Failed > 0)
+                    ? string.Create(CultureInfo.InvariantCulture, $"（成功 {entry.Completed:N0} · 失败 {entry.Failed:N0}）")
+                    : "";
+                var dayTipLines = new List<string>(2 + Math.Min(14, activeRows.Length))
+                {
+                    string.Create(CultureInfo.InvariantCulture, $"{dayLabel}（{normalizedSelection}）· 共 {entry.Total:N0} 条{countSuffix}"),
+                };
+                AppendRecentDayLines(dayTipLines, "最近活跃日参考：", activeRows);
+                return new(
+                    1,
+                    entry.Total,
+                    isToday ? entry.Total : 0,
+                    entry.Total,
+                    string.Create(CultureInfo.InvariantCulture, $"{dayLabel} {entry.Total:N0} 条"),
+                    string.Join(Environment.NewLine, dayTipLines),
+                    RangeKind: rangeKind,
+                    RangeDate: normalizedSelection,
+                    SelectedCompleted: entry.Completed,
+                    SelectedFailed: entry.Failed,
+                    HasAnyHistory: true);
+            }
+
+            var avgTask = entry.OccupiedSeconds / entry.DispatchedCount;
+            var daySummary = string.Create(CultureInfo.InvariantCulture,
+                $"{dayLabel} {entry.Total:N0} 条 · 总占 {FormatDuration(entry.OccupiedSeconds)} · 均占 {FormatDuration(avgTask)}");
+            var tip = new List<string>(10 + Math.Min(14, activeRows.Length))
+            {
+                string.Create(CultureInfo.InvariantCulture,
+                    $"{dayLabel}（{normalizedSelection}）· 共 {entry.Total:N0} 条 · 总占用 {FormatDuration(entry.OccupiedSeconds)} · 单任务均占 {FormatDuration(avgTask)}")
+            };
+            AppendDurationBreakdownLines(
+                tip,
+                entry.OccupiedSeconds,
+                entry.EditorActiveSeconds,
+                entry.RouterOverheadSeconds,
+                entry.NonEditorScriptSeconds,
+                entry.UnmeasuredSeconds,
+                entry.MeasuredCount,
+                entry.DispatchedCount,
+                entry.ZeroEditorScriptCount);
+            AppendRecentDayLines(tip, "最近活跃日参考：", activeRows);
+            return new(
+                1,
+                entry.Total,
+                isToday ? entry.Total : 0,
+                entry.Total,
+                daySummary,
+                string.Join(Environment.NewLine, tip),
+                true,
+                isToday ? entry.OccupiedSeconds : 0,
+                entry.OccupiedSeconds,
+                entry.OccupiedSeconds,
+                avgTask,
+                entry.EditorActiveSeconds,
+                entry.RouterOverheadSeconds,
+                entry.NonEditorScriptSeconds,
+                entry.UnmeasuredSeconds,
+                entry.MeasuredCount,
+                entry.ZeroEditorScriptCount,
+                entry.DispatchedCount,
+                rangeKind,
+                normalizedSelection,
+                entry.Completed,
+                entry.Failed,
+                true);
+        }
 
         var activeDays = activeRows.Length;
         var totalProcessed = activeRows.Sum(entry => entry.Value.Total);
-        var todayKey = today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         byDate.TryGetValue(todayKey, out var todayEntry);
         var todayTotal = todayEntry is not null ? Math.Max(0, todayEntry.Total) : 0;
         var todayOccupied = todayEntry is not null ? Math.Max(0d, todayEntry.OccupiedSeconds) : 0d;
@@ -243,21 +352,21 @@ internal static class RouterTaskPresentation
         var hasDurations = activeRows.Any(entry => entry.Value.HasDurations) && totalDispatched > 0;
         if (!hasDurations)
         {
-            var summaryText = string.Create(CultureInfo.InvariantCulture, $"今日 {todayTotal:N0} 条 · 日均 {avgText} 条/天");
+            var summaryText = string.Create(CultureInfo.InvariantCulture, $"日均 {avgText} 条/天 · 活跃 {activeDays:N0} 天 · 共 {totalProcessed:N0} 条");
             var lines = new List<string>(2 + Math.Min(14, activeRows.Length))
             {
                 string.Create(CultureInfo.InvariantCulture, $"日均 {avgText} 条/天（按 {activeDays:N0} 个活跃日，共 {totalProcessed:N0} 条）"),
-                "",
-                "最近活跃日明细：",
             };
-            foreach (var entry in activeRows.Take(14))
-            {
-                var detail = entry.Value.HasCounts && (entry.Value.Completed > 0 || entry.Value.Failed > 0)
-                    ? string.Create(CultureInfo.InvariantCulture, $"（成功 {entry.Value.Completed:N0} · 失败 {entry.Value.Failed:N0}）")
-                    : "";
-                lines.Add(string.Create(CultureInfo.InvariantCulture, $"  {entry.Key}  {entry.Value.Total:N0} 条{detail}"));
-            }
-            return new(activeDays, totalProcessed, todayTotal, average, summaryText, string.Join(Environment.NewLine, lines));
+            AppendRecentDayLines(lines, "最近活跃日明细：", activeRows);
+            return new(
+                activeDays,
+                totalProcessed,
+                todayTotal,
+                average,
+                summaryText,
+                string.Join(Environment.NewLine, lines),
+                RangeKind: RouterHistoryRangeKind.All,
+                HasAnyHistory: true);
         }
 
         var totalOccupied = activeRows.Sum(entry => entry.Value.OccupiedSeconds);
@@ -270,17 +379,63 @@ internal static class RouterTaskPresentation
         var avgDailyOccupied = totalOccupied / activeDays;
         var avgTaskOccupied = totalOccupied / totalDispatched;
 
-        var summaryWithDurations = todayTotal > 0 && todayOccupied > 0
-            ? string.Create(CultureInfo.InvariantCulture,
-                $"今日 {todayTotal:N0} 条（{FormatDuration(todayOccupied)}）· 日均 {avgText} 条/天 · 均占 {FormatDuration(avgTaskOccupied)}")
-            : string.Create(CultureInfo.InvariantCulture,
-                $"今日 {todayTotal:N0} 条 · 日均 {avgText} 条/天 · 均占 {FormatDuration(avgTaskOccupied)}");
+        var summaryWithDurations = string.Create(CultureInfo.InvariantCulture,
+            $"日均 {avgText} 条/天（{FormatDuration(avgDailyOccupied)}/天）· 均占 {FormatDuration(avgTaskOccupied)} · 累计 {FormatDuration(totalOccupied)}");
 
         var tipLines = new List<string>(10 + Math.Min(14, activeRows.Length))
         {
             string.Create(CultureInfo.InvariantCulture,
                 $"日均 {avgText} 条/天 · 日均占 {FormatDuration(avgDailyOccupied)} · 单任务均占 {FormatDuration(avgTaskOccupied)}（按 {activeDays:N0} 个活跃日，共 {totalProcessed:N0} 条）")
         };
+        AppendDurationBreakdownLines(
+            tipLines,
+            totalOccupied,
+            totalEditor,
+            totalOverhead,
+            totalNonEditor,
+            totalUnmeasured,
+            measuredCount,
+            totalDispatched,
+            zeroEditorScripts);
+        AppendRecentDayLines(tipLines, "最近活跃日明细：", activeRows);
+
+        return new(
+            activeDays,
+            totalProcessed,
+            todayTotal,
+            average,
+            summaryWithDurations,
+            string.Join(Environment.NewLine, tipLines),
+            true,
+            todayOccupied,
+            totalOccupied,
+            avgDailyOccupied,
+            avgTaskOccupied,
+            totalEditor,
+            totalOverhead,
+            totalNonEditor,
+            totalUnmeasured,
+            measuredCount,
+            zeroEditorScripts,
+            totalDispatched,
+            RouterHistoryRangeKind.All,
+            "",
+            0,
+            0,
+            true);
+    }
+
+    private static void AppendDurationBreakdownLines(
+        List<string> tipLines,
+        double totalOccupied,
+        double totalEditor,
+        double totalOverhead,
+        double totalNonEditor,
+        double totalUnmeasured,
+        int measuredCount,
+        int totalDispatched,
+        int zeroEditorScripts)
+    {
         if (totalOccupied > 0)
         {
             tipLines.Add("");
@@ -303,8 +458,12 @@ internal static class RouterTaskPresentation
             tipLines.Add(string.Create(CultureInfo.InvariantCulture,
                 $"  提示：未调用 Unity CLI 的脚本 {zeroEditorScripts:N0} 条（可优先评估移出 Editor 队列）"));
         }
+    }
+
+    private static void AppendRecentDayLines(List<string> tipLines, string heading, IEnumerable<KeyValuePair<string, DayAccumulator>> activeRows)
+    {
         tipLines.Add("");
-        tipLines.Add("最近活跃日明细：");
+        tipLines.Add(heading);
         foreach (var entry in activeRows.Take(14))
         {
             var d = entry.Value;
@@ -324,25 +483,5 @@ internal static class RouterTaskPresentation
                 tipLines.Add(string.Create(CultureInfo.InvariantCulture, $"  {entry.Key}  {d.Total:N0} 条{detail}"));
             }
         }
-
-        return new(
-            activeDays,
-            totalProcessed,
-            todayTotal,
-            average,
-            summaryWithDurations,
-            string.Join(Environment.NewLine, tipLines),
-            true,
-            todayOccupied,
-            totalOccupied,
-            avgDailyOccupied,
-            avgTaskOccupied,
-            totalEditor,
-            totalOverhead,
-            totalNonEditor,
-            totalUnmeasured,
-            measuredCount,
-            zeroEditorScripts,
-            totalDispatched);
     }
 }

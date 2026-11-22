@@ -36,6 +36,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
     private readonly TextBox _query = new() { Width = 190, MaxLength = 160, PlaceholderText = "搜索任务或对话" };
     private readonly ToolStripMenuItem _cancel, _release, _nativeStop;
     private readonly Button _queueCancel, _top, _up, _down, _currentMenuButton, _filterToggle, _queuePrevious, _queueNext, _historyPrevious, _historyNext;
+    private readonly RouterButton _historyToday, _historyAll;
     private readonly ContextMenuStrip _currentMenu = new() { ShowImageMargin = false };
     private readonly TableLayoutPanel _root;
     private readonly TableLayoutPanel _singleTask;
@@ -59,6 +60,8 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
     private bool _queueLoading, _applyingQueue, _queueReady;
     private string _viewFailureNotice = "";
     private string _historySignature = "";
+    private RouterHistoryRangeKind _historyScope = RouterHistoryRangeKind.Today;
+    private string _customHistoryDay = "all";
     private string? _project = RouterMonitorClient.AllProjects;
     internal RouterSnapshot? Snapshot => _snapshot;
     internal string FreshnessText => _freshness.Text;
@@ -186,14 +189,43 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
             await HistoryAsync();
         });
         _historyPage.Width = 64; _historyPage.TextAlign = ContentAlignment.MiddleCenter;
-        _historyBody.Controls.Add(Header(Flow(_historyHeading, _historySummary), Flow(_filterToggle, IconButton(RouterButtonIcon.Export, "导出 CSV", ExportAsync), _historyPrevious, _historyPage, _historyNext), 184), 0, 0);
+        _historyToday = Button("今日", () => SelectHistoryScopeAsync(RouterHistoryRangeKind.Today));
+        _historyToday.AccessibleName = "历史范围 今日";
+        _historyToday.Margin = new Padding(1, 0, 1, 0);
+        _historyAll = Button("全部", () => SelectHistoryScopeAsync(RouterHistoryRangeKind.All));
+        _historyAll.AccessibleName = "历史范围 全部";
+        _historyAll.Margin = new Padding(1, 0, 1, 0);
+        SyncHistoryScopeButtons();
+        _tips.SetToolTip(_historyToday, "仅查看今日已结束记录与槽位耗时拆解");
+        _tips.SetToolTip(_historyAll, "查看保留窗口内全部记录与日均统计");
+
+        _historyHeading.Dock = DockStyle.None;
+        _historyHeading.AutoSize = true;
+        _historyHeading.Anchor = AnchorStyles.Left;
+        _historyHeading.Margin = Padding.Empty;
+        _historySummary.Dock = DockStyle.Fill;
+        _historySummary.Margin = Padding.Empty;
+        var scopeFlow = Flow(_historyToday, _historyAll);
+        scopeFlow.Dock = DockStyle.None;
+        scopeFlow.AutoSize = true;
+        scopeFlow.Anchor = AnchorStyles.Left;
+        scopeFlow.Margin = new Padding(8, 0, 8, 0);
+        var historyLeft = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 3, RowCount = 1 };
+        historyLeft.ColumnStyles.Add(new(SizeType.AutoSize));
+        historyLeft.ColumnStyles.Add(new(SizeType.AutoSize));
+        historyLeft.ColumnStyles.Add(new(SizeType.Percent, 100));
+        historyLeft.RowStyles.Add(new(SizeType.Percent, 100));
+        historyLeft.Controls.Add(_historyHeading, 0, 0);
+        historyLeft.Controls.Add(scopeFlow, 1, 0);
+        historyLeft.Controls.Add(_historySummary, 2, 0);
+        _historyBody.Controls.Add(Header(historyLeft, Flow(_filterToggle, IconButton(RouterButtonIcon.Export, "导出 CSV", ExportAsync), _historyPrevious, _historyPage, _historyNext), 184), 0, 0);
         _historyBody.Controls.Add(_historyMetrics, 0, 1);
         Options(_kind, [("all", "全部类型"), ("compile", "编译"), ("editmode", "EditMode"), ("playmode", "PlayMode"), ("script", "脚本")]);
         Options(_outcome, [("finished", "全部结果"), ("completed", "成功"), ("failed", "失败"), ("cancelled", "取消")]);
         Options(_day, [("all", "全部日期")]);
         var search = new RouterSurface { Input = true, Width = 176, Height = 30, Padding = new Padding(8, 6, 8, 6) };
         _query.Dock = DockStyle.Fill; _query.BorderStyle = BorderStyle.None; search.Controls.Add(_query);
-        _filters = Flow(_kind, _outcome, _day, search, Button("筛选", async () => { _historyOffset = 0; await HistoryAsync(); }, RouterButtonKind.Primary));
+        _filters = Flow(_kind, _outcome, _day, search, Button("筛选", async () => { ApplyScopeFromFilter(); _historyOffset = 0; await HistoryAsync(); }, RouterButtonKind.Primary));
         _filters.Visible = false; _historyBody.Controls.Add(_filters, 0, 2);
         _history.EmptyTitle = "正在读取历史…"; _history.EmptyDetail = "";
         _history.Columns.AddRange(Column("createdLocal", "提交时间", 115), Column("task", "任务", 240), Column("source", "来源对话", 150),
@@ -287,7 +319,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         ApplyMonitorPalette(_palette, _task);
         _metrics.ForeColor = UiTokens.Info;
         _historyMetrics.ApplyPalette(_palette);
-        if (_historyMetrics.Data.ActiveDays > 0)
+        if (_historyMetrics.DesiredLogicalHeight > 0)
         {
             var compact = IsCompactMetricsViewport();
             _historyMetrics.Update(_historyMetrics.Data, compact, _historyMetrics.AccessibleDescription ?? "");
@@ -511,6 +543,12 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         _queueGeneration++; _queueRequest?.Cancel(); _queueLoading = _queueReady = false;
         _queueOffset = _historyOffset = _queueTotal = _historyTotal = 0;
         _queueHeading.Text = "排队"; _historySummary.Text = "";
+        if (_historyScope == RouterHistoryRangeKind.Day)
+        {
+            _historyScope = RouterHistoryRangeKind.Today;
+            _customHistoryDay = "all";
+            SyncHistoryScopeButtons();
+        }
         ClearHistoryMetrics();
         _queuePage.Text = _historyPage.Text = "";
         _queue.EmptyTitle = "正在读取队列…"; _history.EmptyTitle = "正在读取历史…";
@@ -518,6 +556,52 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         SetEmptyTopTable(_root, _queue, false);
         _historyGeneration++; _historyBuffer.Clear(); _historyReadAt = _historyAttemptAt = default; _historySignature = "";
         _historyRequest?.Cancel(); _historyLoad = null; _historyLoadKey = "";
+    }
+
+    private void SyncHistoryScopeButtons()
+    {
+        _historyToday.Selected = _historyScope == RouterHistoryRangeKind.Today;
+        _historyAll.Selected = _historyScope == RouterHistoryRangeKind.All;
+    }
+
+    private string EffectiveHistoryDay(DateOnly today) => _historyScope switch
+    {
+        RouterHistoryRangeKind.Today => today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+        RouterHistoryRangeKind.Day when !string.IsNullOrWhiteSpace(_customHistoryDay) => _customHistoryDay,
+        _ => "all",
+    };
+
+    private async Task SelectHistoryScopeAsync(RouterHistoryRangeKind scope)
+    {
+        if (_controlling || _historyScope == scope) return;
+        if (!_pinned) RequestPinChange(true);
+        _historyScope = scope;
+        _customHistoryDay = "all";
+        _historyOffset = 0;
+        SyncHistoryScopeButtons();
+        await HistoryAsync();
+    }
+
+    private void ApplyScopeFromFilter()
+    {
+        var pickedDay = Key(_day);
+        var todayKey = DateOnly.FromDateTime(DateTime.Now).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        if (pickedDay == "all")
+        {
+            _historyScope = RouterHistoryRangeKind.All;
+            _customHistoryDay = "all";
+        }
+        else if (pickedDay == todayKey)
+        {
+            _historyScope = RouterHistoryRangeKind.Today;
+            _customHistoryDay = "all";
+        }
+        else
+        {
+            _historyScope = RouterHistoryRangeKind.Day;
+            _customHistoryDay = pickedDay;
+        }
+        SyncHistoryScopeButtons();
     }
 
     private void ClearHistoryMetrics()
@@ -714,7 +798,8 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         var project = snapshot.ProjectKey;
         var generation = _generation;
         var historyGeneration = ++_historyGeneration;
-        var kind = Key(_kind); var outcome = Key(_outcome); var day = Key(_day); var query = _query.Text;
+        var today = DateOnly.FromDateTime(DateTime.Now);
+        var kind = Key(_kind); var outcome = Key(_outcome); var day = EffectiveHistoryDay(today); var query = _query.Text;
         var key = JsonSerializer.Serialize(new[] { _snapshot.InstanceId, project, kind, outcome, day, query });
         var offset = _historyOffset;
         try
@@ -746,9 +831,21 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
             PopulateHistoryRows(slice.Items, selectedHistory);
             var metadata = slice.Metadata; var total = slice.Total; _historyOffset = slice.Offset;
             _historyTotal = total;
-            var selectedDay = Key(_day);
-            Options(_day, new[] { ("all", "全部日期") }.Concat(RouterJson.Rows(metadata, "days").Select(d => (RouterJson.Text(d, "date"), RouterTaskPresentation.DayOptionLabel(d)))).ToArray());
-            _day.SelectedItem = _day.Items.Cast<Choice>().FirstOrDefault(c => c.Key == selectedDay) ?? _day.Items[0];
+            var dayChoices = new List<(string Key, string Text)> { ("all", "全部日期") };
+            var seenDays = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var d in RouterJson.Rows(metadata, "days"))
+            {
+                var dateKey = RouterJson.Text(d, "date");
+                if (dateKey.Length == 0) continue;
+                seenDays.Add(dateKey);
+                dayChoices.Add((dateKey, RouterTaskPresentation.DayOptionLabel(d)));
+            }
+            if (day != "all" && !seenDays.Contains(day))
+            {
+                dayChoices.Insert(1, (day, $"{day} (0)"));
+            }
+            Options(_day, dayChoices.ToArray());
+            _day.SelectedItem = _day.Items.Cast<Choice>().FirstOrDefault(c => c.Key == day) ?? _day.Items[0];
             var counts = RouterJson.Field(metadata, "counts");
             var failed = RouterJson.Integer(counts, "failed");
             var statistics = $"结果合计：成功 {RouterJson.Integer(counts, "completed")} · 失败 {failed} · 取消 {RouterJson.Integer(counts, "cancelled")}" + Environment.NewLine
@@ -757,7 +854,8 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
             _historySummary.Text = outcome != "failed" && failed > 0 ? $"{total:N0} 条  ·  {failed:N0} 失败" : $"{total:N0} 条";
             var throughput = RouterTaskPresentation.SummarizeDailyThroughput(
                 RouterJson.Rows(metadata, "days"),
-                DateOnly.FromDateTime(DateTime.Now));
+                today,
+                day);
             _historyReadAt = slice.CapturedAt;
             statistics = "记录快照 " + _historyReadAt.ToLocalTime().ToString("HH:mm:ss") + Environment.NewLine + statistics;
             if (throughput.TooltipSection.Length > 0)
@@ -784,7 +882,9 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
                 }
             }
             _historyPage.Text = PageLabel(_historyOffset, total, _historyPageSize);
-            _history.EmptyTitle = "没有匹配的记录";
+            _history.EmptyTitle = _historyScope == RouterHistoryRangeKind.Today && kind == "all" && outcome == "finished" && string.IsNullOrWhiteSpace(query)
+                ? "今日暂无已结束记录"
+                : "没有匹配的记录";
             _history.Invalidate();
             _tips.SetToolTip(_historySummary, statistics); _historySummary.AccessibleDescription = statistics;
             _tips.SetToolTip(_historyMetrics, statistics);
@@ -905,6 +1005,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         _historyPrevious.Enabled = _available && _historyOffset > 0;
         _historyNext.Enabled = _available && _historyOffset + _historyPageSize < _historyTotal;
         _filterToggle.Enabled = _pinned && !_controlling;
+        _historyToday.Enabled = _historyAll.Enabled = !_controlling;
         _projects.Enabled = !_controlling;
         _query.Enabled = _kind.Enabled = _outcome.Enabled = _day.Enabled = _pinned;
     }

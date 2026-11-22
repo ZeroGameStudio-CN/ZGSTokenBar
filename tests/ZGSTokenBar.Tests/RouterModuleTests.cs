@@ -690,11 +690,27 @@ internal static class RouterModuleTests
                 durationForm.PerformLayout();
                 System.Windows.Forms.Application.DoEvents();
                 var metricsStrip = AllControls(durationForm).OfType<RouterHistoryMetricsStrip>().Single();
-                Check(metricsStrip.Visible && metricsStrip.Height > 0, "Metrics strip is visible with positive height when durations are present");
+                var todayScope = AllControls(durationForm).OfType<RouterButton>().Single(b => b.AccessibleName == "历史范围 今日");
+                var allScope = AllControls(durationForm).OfType<RouterButton>().Single(b => b.AccessibleName == "历史范围 全部");
+                Check(todayScope.Selected && !allScope.Selected && metricsStrip.Visible && metricsStrip.Height > 0
+                    && metricsStrip.Text.StartsWith("今日 597 条", StringComparison.Ordinal),
+                    "Metrics strip defaults to today's scoped occupancy and 3-way split");
                 foreach (var table in AllControls(durationForm).OfType<RouterGrid>().Where(t => t.Visible))
                     Check(table.Rows.Cast<System.Windows.Forms.DataGridViewRow>().Sum(r => r.Height) <= table.ClientSize.Height - table.ColumnHeadersHeight,
                         "Duration metrics strip leaves history grid scroll-free");
                 Save(durationForm, Path.Combine(directory, "router-durations-144.png"));
+
+                allScope.PerformClick();
+                Pump(durationForm.HistoryAsync());
+                durationForm.PerformLayout();
+                System.Windows.Forms.Application.DoEvents();
+                Check(allScope.Selected && !todayScope.Selected && metricsStrip.Visible && metricsStrip.Height > 0
+                    && metricsStrip.Text.StartsWith("日均 626.5 条/天", StringComparison.Ordinal),
+                    "Switching to All scope renders multi-day averages and cumulative split");
+                foreach (var table in AllControls(durationForm).OfType<RouterGrid>().Where(t => t.Visible))
+                    Check(table.Rows.Cast<System.Windows.Forms.DataGridViewRow>().Sum(r => r.Height) <= table.ClientSize.Height - table.ColumnHeadersHeight,
+                        "All-scope duration metrics strip also leaves history grid scroll-free");
+                Save(durationForm, Path.Combine(directory, "router-durations-all-144.png"));
                 durationForm.Close();
 
                 var detailedRow = JsonSerializer.SerializeToElement(new
@@ -1199,18 +1215,35 @@ internal static class RouterModuleTests
             new { date = "2026-11-21", total = 134, counts = new { completed = 120, failed = 14, cancelled = 0, pending = 0 } },
             new { date = "2026-11-20", total = 0, counts = new { completed = 0, failed = 0, cancelled = 0, pending = 0 } },
         });
-        var withToday = RouterTaskPresentation.SummarizeDailyThroughput(daysDoc.EnumerateArray(), new DateOnly(2026, 11, 22));
-        Check(withToday.ActiveDays == 2 && withToday.TotalProcessed == 199 && withToday.TodayTotal == 65
-            && withToday.AveragePerActiveDay is > 99.4 && withToday.AveragePerActiveDay is < 99.6
-            && withToday.SummaryText == "今日 65 条 · 日均 99.5 条/天"
-            && withToday.TooltipSection.Contains("日均 99.5 条/天（按 2 个活跃日，共 199 条）")
-            && withToday.TooltipSection.Contains("2026-11-22  65 条（成功 54 · 失败 11）")
-            && !withToday.TooltipSection.Contains("2026-11-20"),
-            "Daily throughput averages strictly across active days and omits zero-task days");
+        var allWindow = RouterTaskPresentation.SummarizeDailyThroughput(daysDoc.EnumerateArray(), new DateOnly(2026, 11, 22), "all");
+        Check(allWindow.RangeKind == RouterHistoryRangeKind.All
+            && allWindow.ActiveDays == 2 && allWindow.TotalProcessed == 199 && allWindow.TodayTotal == 65
+            && allWindow.AveragePerActiveDay is > 99.4 && allWindow.AveragePerActiveDay is < 99.6
+            && allWindow.SummaryText == "日均 99.5 条/天 · 活跃 2 天 · 共 199 条"
+            && allWindow.TooltipSection.Contains("日均 99.5 条/天（按 2 个活跃日，共 199 条）")
+            && allWindow.TooltipSection.Contains("2026-11-22  65 条（成功 54 · 失败 11）")
+            && !allWindow.TooltipSection.Contains("2026-11-20"),
+            "All-window throughput averages strictly across active days and omits zero-task days");
 
-        var withoutToday = RouterTaskPresentation.SummarizeDailyThroughput(daysDoc.EnumerateArray(), new DateOnly(2026, 11, 23));
-        Check(withoutToday.TodayTotal == 0 && withoutToday.SummaryText == "今日 0 条 · 日均 99.5 条/天",
-            "Missing today bucket shows 今日 0 while retaining active-day average");
+        var todayOnly = RouterTaskPresentation.SummarizeDailyThroughput(daysDoc.EnumerateArray(), new DateOnly(2026, 11, 22), "2026-11-22");
+        Check(todayOnly.RangeKind == RouterHistoryRangeKind.Today
+            && todayOnly.ActiveDays == 1 && todayOnly.TotalProcessed == 65 && todayOnly.TodayTotal == 65
+            && todayOnly.SelectedCompleted == 54 && todayOnly.SelectedFailed == 11
+            && todayOnly.SummaryText == "今日 65 条"
+            && todayOnly.TooltipSection.Contains("今日（2026-11-22）· 共 65 条（成功 54 · 失败 11）"),
+            "Today scope isolates only today's counts without mixing all-time totals");
+
+        var missingToday = RouterTaskPresentation.SummarizeDailyThroughput(daysDoc.EnumerateArray(), new DateOnly(2026, 11, 23), "2026-11-23");
+        Check(missingToday.RangeKind == RouterHistoryRangeKind.Today
+            && missingToday.TodayTotal == 0 && missingToday.HasAnyHistory
+            && missingToday.SummaryText == "今日 0 条",
+            "Missing today bucket shows 今日 0 条 while retaining reference history awareness");
+
+        var specificDay = RouterTaskPresentation.SummarizeDailyThroughput(daysDoc.EnumerateArray(), new DateOnly(2026, 11, 22), "2026-11-21");
+        Check(specificDay.RangeKind == RouterHistoryRangeKind.Day
+            && specificDay.RangeDate == "2026-11-21" && specificDay.TotalProcessed == 134
+            && specificDay.SummaryText == "11-21 134 条",
+            "Specific historical date summarizes that single day cleanly");
 
         var noTotals = JsonSerializer.SerializeToElement(new[] { new { date = "2026-11-22" } });
         Check(RouterTaskPresentation.SummarizeDailyThroughput(noTotals.EnumerateArray(), new DateOnly(2026, 11, 22)).SummaryText == ""
@@ -1238,11 +1271,22 @@ internal static class RouterModuleTests
         form.Show();
         Pump(form.RefreshViewAsync());
         var controls = AllControls(form).ToArray();
-        var throughputStrip = controls.OfType<RouterHistoryMetricsStrip>().Single(s => s.Text.Contains("日均 152 条/天"));
-        Check(throughputStrip.Text == "今日 0 条 · 日均 152 条/天"
-            && throughputStrip.Visible && throughputStrip.Height > 0
+        var todayBtn = controls.OfType<RouterButton>().Single(b => b.AccessibleName == "历史范围 今日");
+        var allBtn = controls.OfType<RouterButton>().Single(b => b.AccessibleName == "历史范围 全部");
+        var throughputStrip = controls.OfType<RouterHistoryMetricsStrip>().Single();
+        var todayKey = DateOnly.FromDateTime(DateTime.Now).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        Check(todayBtn.Selected && !allBtn.Selected
+            && handler.Routes.Last(u => u.AbsolutePath == "/api/history").Query.Contains($"day={todayKey}")
+            && throughputStrip.Text == "今日 0 条" && throughputStrip.Visible && throughputStrip.Height > 0,
+            "RouterMonitorForm defaults to Today scope with 今日 0 条 when today has no finished jobs");
+
+        allBtn.PerformClick();
+        Pump(form.HistoryAsync());
+        Check(!todayBtn.Selected && allBtn.Selected
+            && handler.Routes.Last(u => u.AbsolutePath == "/api/history").Query.Contains("day=all")
+            && throughputStrip.Text == "日均 152 条/天 · 活跃 1 天 · 共 152 条"
             && throughputStrip.AccessibleDescription!.Contains("2026-10-27  152 条"),
-            "RouterMonitorForm displays today and active-day throughput summary in metrics strip and tooltip details");
+            "Clicking 全部 switches RouterMonitorForm to all-window averages and totals");
         var dayCombo = controls.OfType<System.Windows.Forms.ComboBox>().Single(c => c.AccessibleName == "日期");
         Check(dayCombo.Items.Cast<object>().Any(item => item.ToString() == "2026-10-27 (152)"),
             "RouterMonitorForm day selector shows merged daily task totals");
@@ -1303,11 +1347,12 @@ internal static class RouterModuleTests
                 },
             },
         });
-        var summary = RouterTaskPresentation.SummarizeDailyThroughput(daysDoc.EnumerateArray(), new DateOnly(2026, 11, 22));
-        Check(summary.HasDurations && summary.TotalOccupiedSeconds == 5400.0 && summary.DispatchedCount == 30
+        var summary = RouterTaskPresentation.SummarizeDailyThroughput(daysDoc.EnumerateArray(), new DateOnly(2026, 11, 22), "all");
+        Check(summary.RangeKind == RouterHistoryRangeKind.All
+            && summary.HasDurations && summary.TotalOccupiedSeconds == 5400.0 && summary.DispatchedCount == 30
             && summary.AverageDailyOccupiedSeconds == 2700.0 && summary.AverageTaskOccupiedSeconds == 180.0
             && summary.ZeroEditorScriptCount == 4 && summary.MeasuredCount == 25
-            && summary.SummaryText == "今日 20 条（1h）· 日均 15 条/天 · 均占 3m"
+            && summary.SummaryText == "日均 15 条/天（45m/天）· 均占 3m · 累计 1.5h"
             && summary.TooltipSection.Contains("日均 15 条/天 · 日均占 45m · 单任务均占 3m")
             && summary.TooltipSection.Contains("槽位时间拆解（仅统计任务占用期间，不含空闲；总计 1.5h，已拆解 25/30 条）：")
             && summary.TooltipSection.Contains("真实 Editor    45m (50%)")
@@ -1317,9 +1362,21 @@ internal static class RouterModuleTests
             && summary.TooltipSection.Contains("提示：未调用 Unity CLI 的脚本 4 条（可优先评估移出 Editor 队列）")
             && summary.TooltipSection.Contains("2026-11-22  20 条 · 占 1h（Editor 30m / 开销 12m / 非Editor 12m / 未拆分 6m）")
             && RouterTaskPresentation.DayOptionLabel(daysDoc[0]) == "2026-11-22 (20 · 1h)",
-            "Daily throughput summarizes average task/day occupancy, 3-way split, unmeasured caveat and zero-Editor script hint");
+            "All-window throughput summarizes average task/day occupancy, 3-way split, unmeasured caveat and zero-Editor script hint");
 
-        var todayStr = DateOnly.FromDateTime(DateTime.Now).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        var todaySplit = RouterTaskPresentation.SummarizeDailyThroughput(daysDoc.EnumerateArray(), new DateOnly(2026, 11, 22), "2026-11-22");
+        Check(todaySplit.RangeKind == RouterHistoryRangeKind.Today
+            && todaySplit.HasDurations && todaySplit.TotalOccupiedSeconds == 3600.0 && todaySplit.DispatchedCount == 20
+            && todaySplit.ZeroEditorScriptCount == 3 && todaySplit.MeasuredCount == 15
+            && todaySplit.SummaryText == "今日 20 条 · 总占 1h · 均占 3m"
+            && todaySplit.TooltipSection.Contains("真实 Editor    30m (50%)")
+            && todaySplit.TooltipSection.Contains("旧未拆分历史    6m (10%)")
+            && todaySplit.TooltipSection.Contains("提示：未调用 Unity CLI 的脚本 3 条"),
+            "Today-scoped breakdown isolates today's occupied hours and percentages cleanly");
+
+        var todayDate = DateOnly.FromDateTime(DateTime.Now);
+        var todayStr = todayDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        var yesterdayStr = todayDate.AddDays(-1).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
         using var handler = TwoActiveProjects();
         handler.HistoryDays =
         [
@@ -1341,6 +1398,25 @@ internal static class RouterModuleTests
                     unmeasuredSeconds = 0.0,
                     zeroEditorScriptCount = 2,
                 },
+            },
+            new
+            {
+                date = yesterdayStr,
+                total = 5,
+                counts = new { completed = 5, failed = 0, cancelled = 0, pending = 0 },
+                durations = new
+                {
+                    dispatchedCount = 5,
+                    measuredCount = 5,
+                    occupiedSeconds = 900.0,
+                    executionSeconds = 750.0,
+                    cleanupSeconds = 150.0,
+                    editorActiveSeconds = 600.0,
+                    routerOverheadSeconds = 150.0,
+                    nonEditorScriptSeconds = 150.0,
+                    unmeasuredSeconds = 0.0,
+                    zeroEditorScriptCount = 0,
+                },
             }
         ];
         using var client = new RouterMonitorClient(handler);
@@ -1360,13 +1436,43 @@ internal static class RouterModuleTests
         durationForm.Show();
         Pump(durationForm.RefreshViewAsync());
         var durationControls = AllControls(durationForm).ToArray();
-        var durationStrip = durationControls.OfType<RouterHistoryMetricsStrip>().Single(s => s.Text.Contains("均占 3m"));
-        Check(durationStrip.Text == "今日 20 条（1h）· 日均 20 条/天 · 均占 3m"
+        var todayBtn = durationControls.OfType<RouterButton>().Single(b => b.AccessibleName == "历史范围 今日");
+        var allBtn = durationControls.OfType<RouterButton>().Single(b => b.AccessibleName == "历史范围 全部");
+        var durationStrip = durationControls.OfType<RouterHistoryMetricsStrip>().Single();
+        Check(todayBtn.Selected && !allBtn.Selected
+            && handler.Routes.Last(u => u.AbsolutePath == "/api/history").Query.Contains($"day={todayStr}")
+            && durationStrip.Text == "今日 20 条 · 总占 1h · 均占 3m"
             && durationStrip.Visible && durationStrip.Height > 0
             && durationStrip.AccessibleDescription!.Contains("真实 Editor    30m (50%)")
             && durationControls.OfType<System.Windows.Forms.ComboBox>().Single(c => c.AccessibleName == "日期")
                 .Items.Cast<object>().Any(item => item.ToString() == $"{todayStr} (20 · 1h)"),
-            "RouterMonitorForm displays average occupancy, daily duration and 3-way split in metrics strip");
+            "RouterMonitorForm defaults to Today scope showing today-only occupancy and 3-way split");
+
+        allBtn.PerformClick();
+        Pump(durationForm.HistoryAsync());
+        Check(!todayBtn.Selected && allBtn.Selected
+            && handler.Routes.Last(u => u.AbsolutePath == "/api/history").Query.Contains("day=all")
+            && durationStrip.Text == "日均 15 条/天（45m/天）· 均占 3m · 累计 1.5h"
+            && durationStrip.AccessibleDescription!.Contains("真实 Editor    50m (56%)"),
+            "RouterMonitorForm switches to All scope showing merged multi-day average and cumulative 3-way split");
+
+        durationForm.SetPinned(true);
+        durationControls.OfType<RouterButton>().Single(b => b.AccessibleName == "筛选记录").PerformClick();
+        Pump(durationForm.HistoryAsync());
+        var dayFilter = durationControls.OfType<System.Windows.Forms.ComboBox>().Single(c => c.AccessibleName == "日期");
+        dayFilter.SelectedIndex = Enumerable.Range(0, dayFilter.Items.Count).Single(i => dayFilter.Items[i]!.ToString()!.StartsWith(yesterdayStr, StringComparison.Ordinal));
+        durationControls.OfType<RouterButton>().Single(b => b.Text == "筛选").PerformClick();
+        Pump(durationForm.HistoryAsync());
+        Check(!todayBtn.Selected && !allBtn.Selected
+            && handler.Routes.Last(u => u.AbsolutePath == "/api/history").Query.Contains($"day={yesterdayStr}")
+            && durationStrip.Text == $"{yesterdayStr[5..]} 10 条 · 总占 30m · 均占 3m",
+            "Picking a historical date deselects Today/All buttons and summarizes that single day");
+
+        todayBtn.PerformClick();
+        Pump(durationForm.HistoryAsync());
+        Check(todayBtn.Selected && !allBtn.Selected
+            && handler.Routes.Last(u => u.AbsolutePath == "/api/history").Query.Contains($"day={todayStr}"),
+            "Clicking 今日 returns cleanly from custom historical date to Today scope");
         durationForm.Close();
 
         var zeroScriptRow = JsonSerializer.SerializeToElement(new
