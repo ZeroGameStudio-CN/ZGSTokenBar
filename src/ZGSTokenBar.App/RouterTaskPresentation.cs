@@ -1,9 +1,20 @@
+using System.Globalization;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using ZGSTokenBar.Core;
+using ZGSTokenBar.Plugin.Router;
 
 namespace ZGSTokenBar.App;
 
 internal sealed record RouterTaskHeading(string Title, string Context, string Original);
+
+internal sealed record RouterDailyThroughput(
+    int ActiveDays,
+    int TotalProcessed,
+    int TodayTotal,
+    double? AveragePerActiveDay,
+    string SummaryText,
+    string TooltipSection);
 
 internal static class RouterTaskPresentation
 {
@@ -76,4 +87,86 @@ internal static class RouterTaskPresentation
     }
     private static bool IsIdentifierStart(char character) => char.IsAsciiLetter(character) || character == '_';
     private static string Words(string value) => Regex.Replace(value, @"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", " ").Replace("_", " · ");
+
+    /// <summary>Formats one date filter choice with its day total when Router includes daily counts.</summary>
+    internal static string DayOptionLabel(JsonElement dayRow)
+    {
+        var date = RouterJson.Text(dayRow, "date");
+        if (date.Length == 0) return "";
+        if (dayRow.ValueKind != JsonValueKind.Object
+            || !dayRow.TryGetProperty("total", out var totalElement)
+            || totalElement.ValueKind != JsonValueKind.Number
+            || RouterJson.Number(dayRow, "total") is not { } rawTotal)
+        {
+            return date;
+        }
+        var total = Math.Max(0, (int)Math.Round(rawTotal));
+        return string.Create(CultureInfo.InvariantCulture, $"{date} ({total:N0})");
+    }
+
+    /// <summary>Summarizes today's count and the active-day average across Router's daily breakdown.</summary>
+    internal static RouterDailyThroughput SummarizeDailyThroughput(IEnumerable<JsonElement> days, DateOnly today)
+    {
+        var byDate = new Dictionary<string, (int Total, int Completed, int Failed, bool HasCounts)>(StringComparer.Ordinal);
+        foreach (var dayRow in days)
+        {
+            var date = RouterJson.Text(dayRow, "date");
+            if (date.Length == 0
+                || dayRow.ValueKind != JsonValueKind.Object
+                || !dayRow.TryGetProperty("total", out var totalEl)
+                || totalEl.ValueKind != JsonValueKind.Number
+                || RouterJson.Number(dayRow, "total") is not { } rawTotal)
+            {
+                continue;
+            }
+            var total = (int)Math.Round(rawTotal);
+            if (total < 0) continue;
+
+            var counts = RouterJson.Field(dayRow, "counts");
+            var rowHasCounts = counts.ValueKind == JsonValueKind.Object;
+            var completed = rowHasCounts ? Math.Max(0, RouterJson.Integer(counts, "completed")) : 0;
+            var failed = rowHasCounts ? Math.Max(0, RouterJson.Integer(counts, "failed")) : 0;
+            if (byDate.TryGetValue(date, out var existing))
+            {
+                byDate[date] = (
+                    existing.Total + total,
+                    existing.Completed + completed,
+                    existing.Failed + failed,
+                    existing.HasCounts || rowHasCounts);
+            }
+            else
+            {
+                byDate[date] = (total, completed, failed, rowHasCounts);
+            }
+        }
+
+        var activeRows = byDate
+            .Where(entry => entry.Value.Total > 0)
+            .OrderByDescending(entry => entry.Key, StringComparer.Ordinal)
+            .ToArray();
+        if (activeRows.Length == 0)
+            return new(0, 0, 0, null, "", "");
+
+        var activeDays = activeRows.Length;
+        var totalProcessed = activeRows.Sum(entry => entry.Value.Total);
+        var todayKey = today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var todayTotal = byDate.TryGetValue(todayKey, out var todayEntry) ? Math.Max(0, todayEntry.Total) : 0;
+        var average = (double)totalProcessed / activeDays;
+        var avgText = average.ToString("0.#", CultureInfo.InvariantCulture);
+        var summaryText = string.Create(CultureInfo.InvariantCulture, $"今日 {todayTotal:N0}  ·  日均 {avgText}/天");
+
+        var lines = new List<string>(1 + Math.Min(14, activeRows.Length))
+        {
+            string.Create(CultureInfo.InvariantCulture, $"日均 {avgText}/天（按 {activeDays:N0} 个活跃日，共 {totalProcessed:N0} 条）")
+        };
+        foreach (var entry in activeRows.Take(14))
+        {
+            var detail = entry.Value.HasCounts && (entry.Value.Completed > 0 || entry.Value.Failed > 0)
+                ? string.Create(CultureInfo.InvariantCulture, $"（成功 {entry.Value.Completed:N0} · 失败 {entry.Value.Failed:N0}）")
+                : "";
+            lines.Add(string.Create(CultureInfo.InvariantCulture, $"  {entry.Key}  {entry.Value.Total:N0} 条{detail}"));
+        }
+
+        return new(activeDays, totalProcessed, todayTotal, average, summaryText, string.Join(Environment.NewLine, lines));
+    }
 }

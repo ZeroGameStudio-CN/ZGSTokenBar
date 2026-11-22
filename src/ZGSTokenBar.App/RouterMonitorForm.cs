@@ -40,7 +40,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
     private readonly TableLayoutPanel _root;
     private readonly TableLayoutPanel _singleTask;
     private readonly FlowLayoutPanel _filters;
-    private readonly Label _currentHeading = Label("当前", 52), _queueHeading = Label("排队", 120), _historyHeading = Label("历史", 70), _historySummary = Label("", 210);
+    private readonly Label _currentHeading = Label("当前", 52), _queueHeading = Label("排队", 120), _historyHeading = Label("历史", 48), _historySummary = Label("", 156), _historyThroughput = Label("", 230);
     private readonly TableLayoutPanel _historyBody;
     private readonly Button _pin;
     private readonly ToolTip _tips = new() { InitialDelay = 450, ReshowDelay = 150, AutoPopDelay = 12000 };
@@ -86,7 +86,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         _root = CreatePanelLayout(footerHeight: 0);
         Controls.Add(_root);
         _projects.AccessibleName = "工程切换"; _freshness.Width = 140;
-        _kind.Width = _outcome.Width = 92; _day.Width = 112; _query.Width = 160;
+        _kind.Width = _outcome.Width = 92; _day.Width = 148; _query.Width = 160;
         _kind.AccessibleName = "任务类型"; _outcome.AccessibleName = "结果"; _day.AccessibleName = "日期"; _query.AccessibleName = "搜索任务或对话";
         _pin = IconButton(RouterButtonIcon.Pin, "固定弹层", () => { RequestPinChange(!_pinned); return Task.CompletedTask; });
         var header = Header(Flow(_brand), Flow(_freshness, IconButton(RouterButtonIcon.Refresh, "刷新", () => RefreshViewAsync(forceHistory: true)), _pin,
@@ -96,12 +96,12 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         SetLogicalFont(_headline, Font.FontFamily.Name, 10.5f, FontStyle.Bold);
         SetLogicalFont(_task, Font.FontFamily.Name, 12, FontStyle.Bold);
         SetLogicalFont(_metrics, Font.FontFamily.Name, 12, FontStyle.Bold);
-        foreach (var label in new[] { _detail, _source, _freshness, _notice, _historySummary })
+        foreach (var label in new[] { _detail, _source, _freshness, _notice, _historySummary, _historyThroughput })
             SetLogicalFont(label, Font.FontFamily.Name, 10.5f);
         foreach (var label in new[] { _currentHeading, _queueHeading, _historyHeading })
             SetLogicalFont(label, "Segoe UI", UiTokens.FontBody, FontStyle.Bold);
-        _currentHeading.Height = 25; _queueHeading.Height = _historyHeading.Height = _historySummary.Height = 30;
-        _currentHeading.Margin = _queueHeading.Margin = _historyHeading.Margin = _historySummary.Margin = Padding.Empty;
+        _currentHeading.Height = 25; _queueHeading.Height = _historyHeading.Height = _historySummary.Height = _historyThroughput.Height = 30;
+        _currentHeading.Margin = _queueHeading.Margin = _historyHeading.Margin = _historySummary.Margin = _historyThroughput.Margin = Padding.Empty;
         _metrics.TextAlign = ContentAlignment.MiddleRight;
         _task.Dock = _detail.Dock = _source.Dock = _notice.Dock = _metrics.Dock = DockStyle.Fill;
         _task.Margin = _detail.Margin = _source.Margin = _metrics.Margin = Padding.Empty;
@@ -185,7 +185,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
             await HistoryAsync();
         });
         _historyPage.Width = 64; _historyPage.TextAlign = ContentAlignment.MiddleCenter;
-        _historyBody.Controls.Add(Header(Flow(_historyHeading, _historySummary), Flow(_filterToggle, IconButton(RouterButtonIcon.Export, "导出 CSV", ExportAsync), _historyPrevious, _historyPage, _historyNext), 184), 0, 0);
+        _historyBody.Controls.Add(Header(Flow(_historyHeading, _historySummary, _historyThroughput), Flow(_filterToggle, IconButton(RouterButtonIcon.Export, "导出 CSV", ExportAsync), _historyPrevious, _historyPage, _historyNext), 184), 0, 0);
         Options(_kind, [("all", "全部类型"), ("compile", "编译"), ("editmode", "EditMode"), ("playmode", "PlayMode"), ("script", "脚本")]);
         Options(_outcome, [("finished", "全部结果"), ("completed", "成功"), ("failed", "失败"), ("cancelled", "取消")]);
         Options(_day, [("all", "全部日期")]);
@@ -284,6 +284,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         _palette = new(UiTokens.CardSurface);
         ApplyMonitorPalette(_palette, _task);
         _metrics.ForeColor = UiTokens.Info;
+        _historyThroughput.ForeColor = UiTokens.Info;
         _active.Columns["project"]!.Width = (int)Math.Round(92 * _popoverScale);
         _active.Columns["task"]!.DefaultCellStyle.Font = _task.Font;
         _active.Columns["elapsed"]!.Width = (int)Math.Round(110 * _popoverScale);
@@ -497,7 +498,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
     {
         _queueGeneration++; _queueRequest?.Cancel(); _queueLoading = _queueReady = false;
         _queueOffset = _historyOffset = _queueTotal = _historyTotal = 0;
-        _queueHeading.Text = "排队"; _historySummary.Text = "";
+        _queueHeading.Text = "排队"; _historySummary.Text = ""; _historyThroughput.Text = "";
         _queuePage.Text = _historyPage.Text = "";
         _queue.EmptyTitle = "正在读取队列…"; _history.EmptyTitle = "正在读取历史…";
         _queue.Rows.Clear(); _history.Rows.Clear();
@@ -741,7 +742,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
             var metadata = slice.Metadata; var total = slice.Total; _historyOffset = slice.Offset;
             _historyTotal = total; _historyPage.Text = PageLabel(_historyOffset, total, _historyPageSize);
             var selectedDay = Key(_day);
-            Options(_day, new[] { ("all", "全部日期") }.Concat(RouterJson.Rows(metadata, "days").Select(d => (RouterJson.Text(d, "date"), RouterJson.Text(d, "date")))).ToArray());
+            Options(_day, new[] { ("all", "全部日期") }.Concat(RouterJson.Rows(metadata, "days").Select(d => (RouterJson.Text(d, "date"), RouterTaskPresentation.DayOptionLabel(d)))).ToArray());
             _day.SelectedItem = _day.Items.Cast<Choice>().FirstOrDefault(c => c.Key == selectedDay) ?? _day.Items[0];
             var counts = RouterJson.Field(metadata, "counts");
             var failed = RouterJson.Integer(counts, "failed");
@@ -749,11 +750,18 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
                 + string.Join("   ", RouterJson.Rows(metadata, "groups").Where(g => RouterJson.Integer(g, "count") > 0)
                     .Select(g => $"{RouterJson.Text(g, "category")} P95 排队/占用/清理 {Seconds(g, "queueSecondsP95")}/{Seconds(g, "executionSecondsP95")}/{Seconds(g, "cleanupSecondsP95")}"));
             _historySummary.Text = outcome != "failed" && failed > 0 ? $"{total:N0} 条  ·  {failed:N0} 失败" : $"{total:N0} 条";
+            var throughput = RouterTaskPresentation.SummarizeDailyThroughput(
+                RouterJson.Rows(metadata, "days"),
+                DateOnly.FromDateTime(DateTime.Now));
+            _historyThroughput.Text = throughput.SummaryText;
             _history.EmptyTitle = "没有匹配的记录";
             _history.Invalidate();
             _historyReadAt = slice.CapturedAt;
             statistics = "记录快照 " + _historyReadAt.ToLocalTime().ToString("HH:mm:ss") + Environment.NewLine + statistics;
+            if (throughput.TooltipSection.Length > 0)
+                statistics += Environment.NewLine + Environment.NewLine + throughput.TooltipSection;
             _tips.SetToolTip(_historySummary, statistics); _historySummary.AccessibleDescription = statistics;
+            _tips.SetToolTip(_historyThroughput, statistics); _historyThroughput.AccessibleDescription = statistics;
             UpdateControls();
         }
         catch (OperationCanceledException) when (_stop.IsCancellationRequested || generation != _generation || historyGeneration != _historyGeneration) { }
@@ -764,6 +772,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
                 var code = RecordReadFailure("history", project, e);
                 _historySummary.Text = code == "timeout" ? "读取超时" : "暂不可用";
                 if (_history.RowCount > 0) _historySummary.Text += " · 上次记录";
+                else _historyThroughput.Text = "";
                 _history.EmptyTitle = "等待重新读取";
                 _history.Invalidate();
             }

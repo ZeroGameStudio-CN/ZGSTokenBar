@@ -42,6 +42,7 @@ internal sealed partial class BarForm
         if (_hoverSystemUsage || _systemUsagePopover is { Visible: true, IsClosing: false }) HideSystemUsagePopover();
         if (_codexAccountsPopover is { Visible: true, IsClosing: false }) HideCodexAccountsPopover();
         if (_quotaPopover is { Visible: true, IsClosing: false }) HideQuotaPopover();
+        if (_codexStrategyPopover?.IsOpen == true) HideCodexStrategyPopover();
         _popoverHoverTimer.Start();
     }
 
@@ -160,6 +161,7 @@ internal sealed partial class BarForm
         _popoverHoverTimer.Stop();
         if (_codexAccountsPopover?.Visible == true) HideCodexAccountsPopover();
         if (_quotaPopover?.Visible == true || _popoverTargetId is not null) HideQuotaPopover();
+        if (_codexStrategyPopover?.IsOpen == true) HideCodexStrategyPopover();
         _systemUsagePopover ??= new SystemUsagePopoverForm();
         _systemUsagePopover.ApplyTheme(_backgroundTheme);
         _systemUsagePopover.ShowFor(
@@ -225,6 +227,7 @@ internal sealed partial class BarForm
         _popoverHoverTimer.Stop();
         if (_systemUsagePopover?.Visible == true || _hoverSystemUsage) HideSystemUsagePopover();
         if (_quotaPopover?.Visible == true) HideQuotaPopover();
+        if (_codexStrategyPopover?.IsOpen == true) HideCodexStrategyPopover();
         _codexAccountsPopover ??= new CodexAccountsPopoverForm();
         _codexAccountsPopover.ApplyTheme(_backgroundTheme);
         _codexAccountsPopover.ShowFor(
@@ -268,6 +271,7 @@ internal sealed partial class BarForm
         _popoverHoverTimer.Stop();
         if (_codexAccountsPopover?.Visible == true) HideCodexAccountsPopover();
         if (_systemUsagePopover?.Visible == true || _hoverSystemUsage) HideSystemUsagePopover();
+        if (_codexStrategyPopover?.IsOpen == true) HideCodexStrategyPopover();
         using var trace = PerfTrace.Measure("quota-popover.open");
         if (_quotaPopover is null)
         {

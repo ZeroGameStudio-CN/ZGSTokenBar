@@ -79,7 +79,6 @@ internal sealed record GlassDockScene(
     public float? IntakeHover { get; init; }
     public float? SystemHover { get; init; }
     public float? RateHover { get; init; }
-    public float PulsePhase { get; init; }
 }
 
 internal static class GlassDockPainter
@@ -805,14 +804,13 @@ internal static class GlassDockPainter
         var urgent = scene.Plan.OverflowUrgent && !scene.Expanded;
         var rect = bounds;
         var chipHover = Math.Clamp(scene.ChipHover ?? (scene.ChipHovered ? 1f : 0f), 0f, 1f);
-        var pulse = Math.Clamp(scene.PulsePhase, 0f, 1f);
         using var path = Rounded(rect, rect.Height / 2);
         var alert = light ? Color.FromArgb(200, 38, 48) : ChipStyle.CriticalText;
-        if (urgent && pulse > 0.01f)
+        if (urgent)
         {
-            var haloRect = RectangleF.Inflate(rect, 1.4f, 1.4f);
+            var haloRect = RectangleF.Inflate(rect, 1.2f, 1.2f);
             using var haloPath = Rounded(haloRect, haloRect.Height / 2);
-            using var halo = new Pen(Color.FromArgb((int)MathF.Round(48 * pulse), alert), 1.4f);
+            using var halo = new Pen(Color.FromArgb(32, alert), 1.2f);
             graphics.DrawPath(halo, haloPath);
         }
 
@@ -828,8 +826,7 @@ internal static class GlassDockPainter
         graphics.FillPath(fill, path);
         if (urgent)
         {
-            var outlineAlpha = Math.Clamp(ChipStyle.CriticalOutlineAlpha + (int)MathF.Round(65 * pulse), 0, 255);
-            using var edge = new Pen(Color.FromArgb(outlineAlpha, alert), 1f);
+            using var edge = new Pen(Color.FromArgb(ChipStyle.CriticalOutlineAlpha, alert), 1f);
             graphics.DrawPath(edge, path);
         }
 
@@ -876,7 +873,6 @@ internal static class GlassDockPainter
         using var font = new Font("Segoe UI", RateFontSize, FontStyle.Bold, GraphicsUnit.Pixel);
         using var small = new Font("Segoe UI", RateUnitSize, FontStyle.Regular, GraphicsUnit.Pixel);
         var active = scene.TokensPerSecond is > 0;
-        var pulse = active ? Math.Clamp(scene.PulsePhase, 0f, 1f) : 0f;
         var color = scene.TokensPerSecond is null
             ? Muted(scene.Light)
             : scene.Light ? UiPalette.Slate900 : UiPalette.Slate50;
@@ -887,7 +883,7 @@ internal static class GlassDockPainter
         {
             var glowBounds = RectangleF.Inflate(readout.Number, 3f, 2f);
             using var glowPath = Rounded(glowBounds, glowBounds.Height / 2f);
-            using var glowBrush = new SolidBrush(Color.FromArgb((int)MathF.Round(18 + 22 * pulse), 52, 220, 150));
+            using var glowBrush = new SolidBrush(Color.FromArgb(24, 52, 220, 150));
             graphics.FillPath(glowBrush, glowPath);
         }
 
@@ -910,7 +906,7 @@ internal static class GlassDockPainter
             var dotY = readout.Unit.Y + (readout.Unit.Height - dotSize) / 2f + 0.3f;
             if (dotX >= bounds.X + 1f)
             {
-                using var dot = new SolidBrush(Color.FromArgb((int)MathF.Round(165 + 90 * pulse), 52, 220, 150));
+                using var dot = new SolidBrush(Color.FromArgb(225, 52, 220, 150));
                 graphics.FillEllipse(dot, dotX, dotY, dotSize, dotSize);
             }
         }
