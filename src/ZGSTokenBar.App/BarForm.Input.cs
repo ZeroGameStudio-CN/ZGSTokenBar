@@ -27,6 +27,7 @@ internal sealed partial class BarForm
             if (onChip != _glassChipHovered)
             {
                 _glassChipHovered = onChip;
+                EnsureAnimationTimer();
                 Invalidate();
             }
             if (onChip)
@@ -232,6 +233,7 @@ internal sealed partial class BarForm
         {
             HideSystemUsagePopover();
             _systemAnchorIsLive = isLive;
+            Invalidate();
         }
         return true;
     }

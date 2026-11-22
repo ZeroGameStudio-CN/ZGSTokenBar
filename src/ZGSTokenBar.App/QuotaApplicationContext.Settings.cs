@@ -242,6 +242,7 @@ internal sealed partial class QuotaApplicationContext
     private void ApplyText()
     {
         _refreshMenuItem.Text = _text.RefreshNow;
+        _codexStrategyMenuItem.Text = CodexStrategyPopoverForm.TitleFor(_text);
         if (_availableUpdate is { } update) _updateMenuItem.Text = _text.UpdateTo(update.Version);
         _settingsMenuItem.Text = _text.Settings;
         _quitMenuItem.Text = _text.Quit;

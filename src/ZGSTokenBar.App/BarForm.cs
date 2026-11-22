@@ -260,7 +260,8 @@ internal sealed partial class BarForm : Form
         _hoverTarget != HoverTarget.None || _hoverSystemUsage
         || _quotaPopover?.Visible == true || _codexAccountsPopover?.Visible == true
         || _systemUsagePopover?.Visible == true
-        || _pluginPopover?.Visible == true;
+        || _pluginPopover?.Visible == true
+        || _codexStrategyPopover?.IsOpen == true;
     internal void SetGlassExpandedForAcceptance(bool expanded) => SetGlassExpanded(expanded);
 
     /// <summary>Renders the hover popover a glass ring opens, or null when the ring has no scoped quota card.</summary>
@@ -301,6 +302,7 @@ internal sealed partial class BarForm : Form
         RefreshQuotaPopover();
         RefreshCodexAccountsPopover();
         RefreshPluginHintContent();
+        RefreshCodexStrategy();
         Invalidate();
     }
 
@@ -319,6 +321,7 @@ internal sealed partial class BarForm : Form
         _codexAccounts = accounts.ToArray();
         ApplySnapshotLayout();
         RefreshCodexAccountsPopover();
+        RefreshCodexStrategy();
         Invalidate();
     }
 
@@ -330,6 +333,7 @@ internal sealed partial class BarForm : Form
     {
         _quotaPaceEstimates = estimates;
         RefreshQuotaPopover();
+        RefreshCodexStrategy();
         Invalidate();
     }
 
@@ -338,6 +342,7 @@ internal sealed partial class BarForm : Form
     {
         _codexQuotaTokenSummaries = summaries;
         RefreshQuotaPopover();
+        RefreshCodexStrategy();
         Invalidate();
     }
 
@@ -544,7 +549,7 @@ internal sealed partial class BarForm : Form
         else if (!refreshing)
         {
             _refreshRotation = 0;
-            if (!_snapshotAnimating && !_glassMotion.IsAnimating) _animationTimer.Stop();
+            if (!NeedsAnyAnimation(false)) _animationTimer.Stop();
         }
         Invalidate();
     }
@@ -558,6 +563,7 @@ internal sealed partial class BarForm : Form
         _quotaPopover?.ApplyTheme(_backgroundTheme);
         _systemUsagePopover?.ApplyTheme(_backgroundTheme);
         _hintPopover?.ApplyTheme(_backgroundTheme);
+        _codexStrategyPopover?.ApplyTheme(_backgroundTheme);
         var previousDocked = _taskbarDocked;
         var previousMiniAreaLayouts = _miniAreaLayouts;
         var previousMiniAreaOrder = _miniAreaOrder;
@@ -596,6 +602,7 @@ internal sealed partial class BarForm : Form
             _hoverProgress.Clear();
             _glassMotion.Reset();
             _pendingCollapseLayout = false;
+            _dockAmbientPulseActive = false;
             _animationTimer.Stop();
             _refreshRotation = 0;
         }
@@ -672,6 +679,7 @@ internal sealed partial class BarForm : Form
             _shellSettleTimer.Dispose();
             _quotaPopover?.Dispose();
             _codexAccountsPopover?.Dispose();
+            _codexStrategyPopover?.Dispose();
             _hintPopover?.Dispose();
             _systemUsagePopover?.Dispose();
             _glassMenu?.Dispose();

@@ -66,6 +66,14 @@ if (args.Length is 1 or 2 && args[0] == "--intake-service")
     return 0;
 }
 
+if (args.Length is 1 or 2 && args[0] == "--codex-strategy")
+{
+    System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
+    CodexUsageStrategyTests.Run(args.Length == 2 ? args[1] : null);
+    Console.WriteLine("PASS Codex strategy ordering, live countdowns and recommendations");
+    return 0;
+}
+
 if (args.Length is 1 or 2 && args[0] == "--codex-tier-filter")
 {
     System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
@@ -716,6 +724,7 @@ var tests = new (string Name, Action Run)[]
     ("Glass dock preserves unused accounts in overflow", () => GlassDockOverflowTests.Run()),
     ("Unified account activity and stable dock selection", () => DockPolicyTests.Run()),
     ("Codex dock tier filtering leaves usage data unchanged", () => CodexTierFilterTests.Run()),
+    ("Codex usage strategy recommendations", () => CodexUsageStrategyTests.Run()),
     ("Intake service observations preserve read-only history and availability", () => IntakeServiceMonitorTests.Run()),
     ("Full monitor hover transitions preserve native lifecycle", () => MonitorPanelMotionTests.Run()),
     ("Read-only health checks coalesce persistent failures and recover silently", RuntimeHealthCheckTests.Run),

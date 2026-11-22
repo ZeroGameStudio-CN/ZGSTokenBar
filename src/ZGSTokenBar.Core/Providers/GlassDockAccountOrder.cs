@@ -14,9 +14,12 @@ public sealed class GlassDockAccountOrder
         var unique = rings.DistinctBy(r => r.StableId).ToArray();
         var membership = unique.OrderBy(r => r.StableId, StringComparer.Ordinal)
             .Select(r => r.StableId + "|" + r.InUse + "|" + r.OverflowOnly + "|" + r.ProviderOrder).ToArray();
-        var desired = unique.OrderBy(r => r.ProviderOrder).ThenBy(r => r.ProviderId, StringComparer.Ordinal)
-            .ThenByDescending(r => r.RemainingPercent ?? double.NegativeInfinity)
-            .ThenBy(r => r.AccountNumber).ThenBy(r => r.StableId, StringComparer.Ordinal)
+        var desired = unique.OrderBy(r => r.ProviderOrder)
+            .ThenBy(r => r.ProviderId, StringComparer.Ordinal)
+            .ThenBy(r => RemainingBucket(r.RemainingPercent))
+            .ThenBy(r => r.RemainingPercent ?? double.PositiveInfinity)
+            .ThenBy(r => r.AccountNumber)
+            .ThenBy(r => r.StableId, StringComparer.Ordinal)
             .Select(r => r.StableId).ToArray();
         if (!_membership.SequenceEqual(membership, StringComparer.Ordinal))
         {
@@ -31,4 +34,11 @@ public sealed class GlassDockAccountOrder
         }
         return _order.Select((id, index) => (id, index)).ToDictionary(entry => entry.id, entry => entry.index, StringComparer.Ordinal);
     }
+
+    private static int RemainingBucket(double? remaining) => remaining switch
+    {
+        > 0 => 0,
+        <= 0 => 1,
+        _ => 2,
+    };
 }

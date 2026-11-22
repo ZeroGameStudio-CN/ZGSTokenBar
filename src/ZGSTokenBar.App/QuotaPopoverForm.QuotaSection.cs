@@ -160,6 +160,22 @@ internal sealed partial class QuotaPopoverForm
             rows++;
         }
         var footerY = y + (UnifiedBodyHeight(content) - LogicalUnifiedQuotaBodyHeight);  // includes the token-note lift
+        if (content.CanOpenCodexStrategy)
+        {
+            _strategyButtonBounds = new RectangleF(left, footerY + 166.5f - StrategyActionRowHeight, right - left, StrategyActionRowHeight - 5f);
+            using var pillPath = RoundedRectangle(_strategyButtonBounds, 6f);
+            using var pillFill = new SolidBrush(_strategyButtonHovered ? Color.FromArgb(34, 147, 197, 253) : Color.FromArgb(16, 255, 255, 255));
+            using var pillEdge = new Pen(_strategyButtonHovered ? Color.FromArgb(110, 147, 197, 253) : Color.FromArgb(38, 255, 255, 255), 1f);
+            using var pillInk = new SolidBrush(Color.FromArgb(_strategyButtonHovered ? 255 : 225, 147, 197, 253));
+            graphics.FillPath(pillFill, pillPath);
+            graphics.DrawPath(pillEdge, pillPath);
+            var label = _text.IsChinese ? "查看 Codex 使用策略 ›" : "Codex usage strategy ›";
+            DrawString(graphics, label, _cardSmallFont, pillInk, _strategyButtonBounds, StringAlignment.Center);
+        }
+        else
+        {
+            _strategyButtonBounds = RectangleF.Empty;
+        }
 
         // Footer.
         graphics.DrawLine(hairline, left, footerY + 166.5f, right, footerY + 166.5f);

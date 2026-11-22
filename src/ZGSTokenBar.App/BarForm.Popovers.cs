@@ -72,6 +72,7 @@ internal sealed partial class BarForm
 
         _popoverHoverTimer.Stop();
         _hoverSystemUsage = hovered;
+        Invalidate();
         if (!hovered) return;
         HideQuotaPopover();
         HideCodexAccountsPopover();
@@ -268,7 +269,11 @@ internal sealed partial class BarForm
         if (_codexAccountsPopover?.Visible == true) HideCodexAccountsPopover();
         if (_systemUsagePopover?.Visible == true || _hoverSystemUsage) HideSystemUsagePopover();
         using var trace = PerfTrace.Measure("quota-popover.open");
-        _quotaPopover ??= new QuotaPopoverForm();
+        if (_quotaPopover is null)
+        {
+            _quotaPopover = new QuotaPopoverForm();
+            _quotaPopover.CodexStrategyRequested += (_, _) => OnQuotaPopoverStrategyRequested();
+        }
         _quotaPopover.ApplyTheme(_backgroundTheme);
         var anchor = QuotaTargetScreenBounds(target.Bounds);
         var logo = target.Logo ?? ProviderLogo(target.Card.Provider);
@@ -302,7 +307,16 @@ internal sealed partial class BarForm
         target.Card.Provider == ProviderKind.Codex
             ? _codexQuotaTokenSummaries.GetValueOrDefault(target.PaceKey)
             : null,
-        ResetCardsFor(target.Card, now));
+        ResetCardsFor(target.Card, now),
+        CanOpenCodexStrategy: target.Card is { Provider: ProviderKind.Codex, IsService: false } && HasCodexStrategy);
+
+    private void OnQuotaPopoverStrategyRequested()
+    {
+        var anchor = _popoverTargetId is { } id && ResolveQuotaTarget(id) is { } target
+            ? QuotaTargetScreenBounds(target.Bounds)
+            : (Rectangle?)null;
+        ShowCodexStrategyPopover(pinned: true, anchorScreen: anchor);
+    }
 
     /// <summary>
     /// The account's reset cards, as the Codex usage response (rate_limit_reset_credits) or Cockpit's
@@ -437,6 +451,11 @@ internal sealed partial class BarForm
             MonitorPluginPopover(cursor, mouseDown, escapeDown, now);
             return;
         }
+        if (_codexStrategyPopover?.IsOpen == true)
+        {
+            MonitorCodexStrategyPopover(cursor, mouseDown, escapeDown, now);
+            return;
+        }
         if (_systemUsagePopover is { Visible: true, IsClosing: false } && _hoverSystemUsage)
         {
             MonitorSimplePopover(_systemUsagePopover, QuotaTargetScreenBounds(SystemUsageAnchorBounds),
@@ -507,6 +526,7 @@ internal sealed partial class BarForm
         if (_systemUsagePopover is { Visible: true, IsClosing: false }) ShowSystemUsagePopover(_popoverPinned);
         if (_quotaPopover?.Visible == true) RefreshQuotaPopover();
         if (_codexAccountsPopover?.Visible == true) RefreshCodexAccountsPopover();
+        if (_codexStrategyPopover?.IsOpen == true) ShowCodexStrategyPopover(_popoverPinned);
     }
 
     private MiniQuotaTarget? ResolveQuotaTarget(string id) =>
@@ -568,6 +588,7 @@ internal sealed partial class BarForm
         HideSystemUsagePopover();
         HideQuotaPopover();
         HideCodexAccountsPopover();
+        HideCodexStrategyPopover();
     }
 
     private void ClearHoverStateForTaskbarDrag()

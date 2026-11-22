@@ -12,7 +12,8 @@ internal sealed record QuotaPopoverContent(
     bool Pinned,
     AiGatewayUsageSummary? AiGatewayUsage = null,
     CodexQuotaTokenSummary? CodexQuotaTokens = null,
-    CodexResetCards? ResetCards = null);
+    CodexResetCards? ResetCards = null,
+    bool CanOpenCodexStrategy = false);
 
 /// <summary>
 /// Codex reset cards (重置卡) of one account: the count from the usage response's
@@ -73,6 +74,9 @@ internal sealed partial class QuotaPopoverForm : Form
     private double _exitStartOpacity = 1;
     private bool _animateMotion;
     private DateTimeOffset? _renderNow;
+    private RectangleF _strategyButtonBounds;
+    private bool _strategyButtonHovered;
+    public event EventHandler? CodexStrategyRequested;
 
     private (string Label, string Value, string Detail)? QuotaTokenUsage =>
         _content is { Card: { Provider: ProviderKind.Codex, IsService: false } } content
@@ -116,12 +120,16 @@ internal sealed partial class QuotaPopoverForm : Form
 
     private const int DetailRowHeight = 18;
     private const int DetailSectionPadding = 6;
+    private const int StrategyActionRowHeight = 24;
 
     /// <summary>Shared quota card height: the fixed core plus one row per detail (windows, credits, subscription).</summary>
     internal static int UnifiedBodyHeight(QuotaPopoverContent content)
     {
         var rows = DetailRowCount(content);
-        return LogicalUnifiedQuotaBodyHeight - TokenNoteLift(content) + (rows == 0 ? 0 : rows * DetailRowHeight + DetailSectionPadding);
+        return LogicalUnifiedQuotaBodyHeight
+            - TokenNoteLift(content)
+            + (rows == 0 ? 0 : rows * DetailRowHeight + DetailSectionPadding)
+            + (content.CanOpenCodexStrategy ? StrategyActionRowHeight : 0);
     }
 
     /// <summary>Height of the note under the token row; every provider without one closes the gap the same way.</summary>
@@ -227,6 +235,8 @@ internal sealed partial class QuotaPopoverForm : Form
         _providerLogo = providerLogo;
         _resetClockIcon = resetClockIcon;
         _scale = Math.Max(1, scale);
+        _strategyButtonHovered = false;
+        Cursor = Cursors.Default;
 
         var bodySize = new Size(Scale(LogicalBodyWidth), Scale(ContentBodyHeight));
         var tailSize = Scale(LogicalTailSize);
@@ -357,6 +367,41 @@ internal sealed partial class QuotaPopoverForm : Form
         DrawContent(graphics, body);
     }
 
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        var logical = new PointF(e.X / Math.Max(1f, _scale), e.Y / Math.Max(1f, _scale));
+        var hovered = !_strategyButtonBounds.IsEmpty && _strategyButtonBounds.Contains(logical);
+        if (hovered != _strategyButtonHovered)
+        {
+            _strategyButtonHovered = hovered;
+            Cursor = hovered ? Cursors.Hand : Cursors.Default;
+            Invalidate();
+        }
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        base.OnMouseLeave(e);
+        if (_strategyButtonHovered)
+        {
+            _strategyButtonHovered = false;
+            Cursor = Cursors.Default;
+            Invalidate();
+        }
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        if (e.Button != MouseButtons.Left || _strategyButtonBounds.IsEmpty) return;
+        var logical = new PointF(e.X / Math.Max(1f, _scale), e.Y / Math.Max(1f, _scale));
+        if (_strategyButtonBounds.Contains(logical))
+        {
+            CodexStrategyRequested?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
     protected override void OnResize(EventArgs e)
     {
         base.OnResize(e);
@@ -375,10 +420,15 @@ internal sealed partial class QuotaPopoverForm : Form
 
     private void DrawContent(Graphics graphics, RectangleF body)
     {
-        if (_content is not { } content || _providerLogo is null || _resetClockIcon is null) return;
+        if (_content is not { } content || _providerLogo is null || _resetClockIcon is null)
+        {
+            _strategyButtonBounds = RectangleF.Empty;
+            return;
+        }
 
         if (content.Card.IsService)
         {
+            _strategyButtonBounds = RectangleF.Empty;
             DrawServiceContent(graphics, body, content);
             return;
         }

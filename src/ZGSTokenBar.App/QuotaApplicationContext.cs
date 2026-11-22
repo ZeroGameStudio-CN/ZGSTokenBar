@@ -40,6 +40,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
     private readonly BarForm _bar;
     private readonly NotifyIcon _tray;
     private readonly ToolStripMenuItem _refreshMenuItem;
+    private readonly ToolStripMenuItem _codexStrategyMenuItem;
     private readonly ToolStripMenuItem _updateMenuItem;
     private readonly ToolStripMenuItem _settingsMenuItem;
     private readonly ToolStripMenuItem _quitMenuItem;
@@ -211,6 +212,11 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
             null,
             (_, _) => _ = RefreshAsync(userInitiated: true));
         menu.Items.Add(_refreshMenuItem);
+        _codexStrategyMenuItem = new ToolStripMenuItem(
+            CodexStrategyPopoverForm.TitleFor(_text),
+            null,
+            (_, _) => _bar.ShowCodexStrategyPopover(pinned: true));
+        menu.Items.Add(_codexStrategyMenuItem);
         _updateMenuItem = new ToolStripMenuItem(string.Empty, null, (_, _) => OpenUpdatePage())
         {
             Visible = false,
@@ -221,6 +227,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         menu.Items.Add(new ToolStripSeparator());
         _quitMenuItem = new ToolStripMenuItem(_text.Quit, null, (_, _) => Quit());
         menu.Items.Add(_quitMenuItem);
+        menu.Opening += (_, _) => _codexStrategyMenuItem.Enabled = _bar.HasCodexStrategy;
         _bar.ContextMenuStrip = menu;
 
         _tray = new NotifyIcon
