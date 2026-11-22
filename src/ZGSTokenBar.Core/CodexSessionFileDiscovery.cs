@@ -14,14 +14,18 @@ internal sealed class CodexSessionFileDiscovery
         var roots = Roots(codexHomes);
         if (roots.Count == 0) return selected;
 
+        var streams = new Dictionary<string, List<(string Folder, string Name)>>(roots.Count, StringComparer.OrdinalIgnoreCase);
+        var fileCache = new Dictionary<(string Folder, string Name), FileInfo?>();
+        foreach (var root in roots) streams[root] = Stream(root).ToList();
+
         var freshEach = Math.Max(1, (CodexTokenUsageReader.MaximumCandidateFiles / 2) / roots.Count);
         foreach (var root in roots)
-            Walk(root, selected, skipNew: 0, takeNew: freshEach, advanceCursor: false);
+            Walk(root, streams[root], fileCache, selected, skipNew: 0, takeNew: freshEach, advanceCursor: false);
         foreach (var root in roots)
         {
             var room = CodexTokenUsageReader.MaximumCandidateFiles - selected.Count;
             if (room <= 0) break;
-            Walk(root, selected, _olderSkip.GetValueOrDefault(root), room, advanceCursor: true);
+            Walk(root, streams[root], fileCache, selected, _olderSkip.GetValueOrDefault(root), room, advanceCursor: true);
         }
 
         return selected;
@@ -29,6 +33,8 @@ internal sealed class CodexSessionFileDiscovery
 
     private void Walk(
         string root,
+        IReadOnlyList<(string Folder, string Name)> entries,
+        Dictionary<(string Folder, string Name), FileInfo?> fileCache,
         Dictionary<string, FileInfo> selected,
         int skipNew,
         int takeNew,
@@ -37,12 +43,12 @@ internal sealed class CodexSessionFileDiscovery
         if (takeNew <= 0) return;
         var passed = 0;
         var taken = 0;
-        foreach (var (folder, name) in Stream(root))
+        foreach (var (folder, name) in entries)
         {
             var key = CodexTokenUsageReader.SessionFileKey(name);
             if (selected.TryGetValue(key, out var existing))
             {
-                if (TryRead(folder, name, out var duplicate)
+                if (TryReadCached(folder, name, fileCache, out var duplicate)
                     && (duplicate.Length > existing.Length
                         || duplicate.Length == existing.Length && duplicate.LastWriteTimeUtc > existing.LastWriteTimeUtc))
                 {
@@ -52,7 +58,7 @@ internal sealed class CodexSessionFileDiscovery
                 continue;
             }
 
-            if (!TryRead(folder, name, out var file)) continue;
+            if (!TryReadCached(folder, name, fileCache, out var file)) continue;
             if (passed < skipNew)
             {
                 passed++;
@@ -67,6 +73,27 @@ internal sealed class CodexSessionFileDiscovery
 
         if (!advanceCursor) return;
         _olderSkip[root] = taken == 0 && skipNew > 0 ? 0 : passed;
+    }
+
+    private static bool TryReadCached(
+        string folder,
+        string name,
+        Dictionary<(string Folder, string Name), FileInfo?> cache,
+        out FileInfo file)
+    {
+        var cacheKey = (folder, name);
+        if (cache.TryGetValue(cacheKey, out var cached))
+        {
+            file = cached!;
+            return cached is not null;
+        }
+        if (TryRead(folder, name, out file))
+        {
+            cache[cacheKey] = file;
+            return true;
+        }
+        cache[cacheKey] = null;
+        return false;
     }
 
     private static bool TryRead(string folder, string name, out FileInfo file)

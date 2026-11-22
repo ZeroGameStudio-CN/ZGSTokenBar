@@ -380,7 +380,13 @@ internal sealed partial class QuotaApplicationContext
         new(InvokeOnUiAsync(
             () =>
             {
-                _bar.BeginInvoke(Quit);
+                // Yield briefly so the named-pipe server finishes flushing the JSON reply before Quit disposes it.
+                _ = Task.Delay(60).ContinueWith(_ =>
+                {
+                    if (_bar.IsDisposed) return;
+                    try { _bar.BeginInvoke(Quit); }
+                    catch (InvalidOperationException) { }
+                }, TaskScheduler.Default);
                 return true;
             },
             cancellationToken));

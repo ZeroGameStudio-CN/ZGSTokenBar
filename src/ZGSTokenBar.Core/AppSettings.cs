@@ -1,7 +1,10 @@
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 
 namespace ZGSTokenBar.Core;
 
@@ -11,6 +14,7 @@ public sealed class AppSettings
     internal const int TransitionalProvenanceSchemaVersion = 3;
     public const string DefaultBackgroundPalette = "midnight";
     public const int CurrentPlacementSchemaVersion = 1;
+    public const int MaximumPlacementProfiles = 32;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public Dictionary<string, bool> PluginEnabled { get; set; } = new(StringComparer.Ordinal);
@@ -301,6 +305,20 @@ public sealed class AppSettings
             placementProfiles[topologyKey!] = entry.Value;
         }
         PlacementProfiles = placementProfiles;
+        TrimPlacementProfiles();
+    }
+
+    public void TrimPlacementProfiles(string? keepTopologyKey = null)
+    {
+        if (PlacementProfiles.Count <= MaximumPlacementProfiles) return;
+        var excess = PlacementProfiles.Count - MaximumPlacementProfiles;
+        foreach (var key in PlacementProfiles.Keys.ToArray())
+        {
+            if (excess <= 0) break;
+            if (keepTopologyKey is not null && string.Equals(key, keepTopologyKey, StringComparison.Ordinal)) continue;
+            PlacementProfiles.Remove(key);
+            excess--;
+        }
     }
 
     public void CapturePlacementMigrationSeed()
@@ -866,11 +884,79 @@ public sealed class AppSettingsStore
         EnsureWritable(QuotaRateHistoryPath, "Quota rate history file is busy. Please retry.");
         Directory.CreateDirectory(DataDirectory);
         history.SchemaVersion = QuotaRateHistory.CurrentSchemaVersion;
-        if (!CredentialSupport.AtomicWrite(
-                QuotaRateHistoryPath,
-                JsonSerializer.Serialize(history, JsonOptions)))
+        using var writeLock = CredentialSupport.AcquireWriteLockFor(QuotaRateHistoryPath)
+            ?? throw new IOException("Quota rate history file is busy. Please retry.");
+        CredentialSupport.AtomicWriteLockedStream(
+            QuotaRateHistoryPath,
+            stream => JsonSerializer.Serialize(stream, history, JsonOptions));
+    }
+
+    private static readonly Regex OrphanedTempFilePattern = new(
+        @"^\..+\.(\d+)\.[0-9a-fA-F]{32}\.tmp$",
+        RegexOptions.Compiled);
+
+    /// <summary>
+    /// Removes stale temp files left behind in <see cref="DataDirectory"/> by dead processes from
+    /// earlier crashed atomic writes. Active-PID files and normal state/backup files are untouched.
+    /// </summary>
+    public int CleanupOrphanedTempFiles(TimeSpan? minimumAge = null)
+    {
+        if (!Directory.Exists(DataDirectory)) return 0;
+        var cutoffUtc = DateTime.UtcNow - (minimumAge ?? TimeSpan.FromHours(24));
+        var deleted = 0;
+        IEnumerable<string> candidates;
+        try
         {
-            throw new IOException("Quota rate history file is busy. Please retry.");
+            candidates = Directory.EnumerateFiles(DataDirectory, ".*.tmp", SearchOption.TopDirectoryOnly);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return 0;
+        }
+
+        foreach (var path in candidates)
+        {
+            var match = OrphanedTempFilePattern.Match(Path.GetFileName(path));
+            if (!match.Success || !int.TryParse(match.Groups[1].Value, out var pid) || pid <= 0) continue;
+            try
+            {
+                var info = new FileInfo(path);
+                if (!info.Exists
+                    || (info.Attributes & FileAttributes.ReparsePoint) != 0
+                    || info.LastWriteTimeUtc > cutoffUtc
+                    || IsProcessAlive(pid))
+                {
+                    continue;
+                }
+
+                info.Delete();
+                deleted++;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+            }
+        }
+        return deleted;
+    }
+
+    private static bool IsProcessAlive(int pid)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            return !process.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+        catch (Win32Exception)
+        {
+            return true;
         }
     }
 

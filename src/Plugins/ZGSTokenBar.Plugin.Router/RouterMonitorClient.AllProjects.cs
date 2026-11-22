@@ -63,26 +63,45 @@ public sealed partial class RouterMonitorClient
             } while (prefix.Count < target && prefix.Count < total);
             return (Project: project, Rows: prefix, Total: total, Metadata: metadata);
         }, token);
-        var rows = pages.SelectMany(page => page.Rows.Select(row =>
+        var entries = pages.SelectMany(page =>
         {
-            var copy = JsonNode.Parse(row.GetRawText())!.AsObject();
-            copy["projectKey"] = RouterJson.Text(page.Project, "key");
-            copy["projectName"] = RouterJson.Text(page.Project, "name");
-            copy["task"] = RouterJson.Text(page.Project, "name") + " · " + RouterJson.Text(row, "task");
-            return Element(copy);
-        })).ToArray();
-        var ordered = history ? rows.OrderByDescending(row => DateTimeOffset.TryParse(RouterJson.Text(row, "createdLocal"),
-                CultureInfo.InvariantCulture, DateTimeStyles.None, out var at) ? at : DateTimeOffset.MinValue)
-            .ThenBy(row => RouterJson.Text(row, "id"), StringComparer.Ordinal)
-            : rows.OrderBy(row => RouterJson.Text(row, "projectName"), StringComparer.Ordinal)
-                .ThenBy(row => RouterJson.Text(row, "projectKey"), StringComparer.Ordinal).ThenBy(row => RouterJson.Integer(row, "rank"));
+            var projectKey = RouterJson.Text(page.Project, "key");
+            var projectName = RouterJson.Text(page.Project, "name");
+            return page.Rows.Select(row => (
+                ProjectKey: projectKey,
+                ProjectName: projectName,
+                Row: row,
+                CreatedAt: history && DateTimeOffset.TryParse(
+                    RouterJson.Text(row, "createdLocal"),
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.None,
+                    out var at)
+                    ? at
+                    : DateTimeOffset.MinValue,
+                Id: RouterJson.Text(row, "id"),
+                Rank: RouterJson.Integer(row, "rank")));
+        });
+        var ordered = history
+            ? entries.OrderByDescending(entry => entry.CreatedAt)
+                .ThenBy(entry => entry.Id, StringComparer.Ordinal)
+            : entries.OrderBy(entry => entry.ProjectName, StringComparer.Ordinal)
+                .ThenBy(entry => entry.ProjectKey, StringComparer.Ordinal)
+                .ThenBy(entry => entry.Rank);
+        var items = ordered.Skip(offset).Take(limit).Select(entry =>
+        {
+            var copy = JsonNode.Parse(entry.Row.GetRawText())!.AsObject();
+            copy["projectKey"] = entry.ProjectKey;
+            copy["projectName"] = entry.ProjectName;
+            copy["task"] = entry.ProjectName + " · " + RouterJson.Text(entry.Row, "task");
+            return (JsonNode)copy;
+        }).ToArray();
         var counts = new JsonObject { ["completed"] = pages.Sum(page => RouterJson.Integer(RouterJson.Field(page.Metadata, "counts"), "completed")),
             ["failed"] = pages.Sum(page => RouterJson.Integer(RouterJson.Field(page.Metadata, "counts"), "failed")),
             ["cancelled"] = pages.Sum(page => RouterJson.Integer(RouterJson.Field(page.Metadata, "counts"), "cancelled")) };
         var days = pages.SelectMany(page => RouterJson.Rows(page.Metadata, "days"))
             .Select(row => RouterJson.Text(row, "date")).Distinct(StringComparer.Ordinal).OrderDescending()
             .Select(date => (JsonNode)new JsonObject { ["date"] = date }).ToArray();
-        return Element(new JsonObject { ["items"] = new JsonArray(ordered.Skip(offset).Take(limit).Select(row => JsonNode.Parse(row.GetRawText())).ToArray()),
+        return Element(new JsonObject { ["items"] = new JsonArray(items),
             ["total"] = pages.Sum(page => page.Total), ["offset"] = offset, ["limit"] = limit,
             ["counts"] = counts, ["days"] = new JsonArray(days), ["groups"] = new JsonArray() });
     }

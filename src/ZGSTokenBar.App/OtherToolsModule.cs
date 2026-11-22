@@ -121,6 +121,7 @@ internal sealed class OtherToolsModule : IDisposable
         }
         catch (Exception error) when (error is IOException or HttpRequestException or System.Text.Json.JsonException or InvalidOperationException)
         {
+            AppDiagnostics.RecordMonitorFailure("usage-board", "refresh", "", AppDiagnostics.MonitorFailureCode(error));
         }
         finally
         {

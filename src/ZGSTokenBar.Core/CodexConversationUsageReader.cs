@@ -77,10 +77,15 @@ public sealed partial class CodexConversationUsageReader
     public CodexLiveRateFeed? LiveRateFeed { get; private set; }
 
     public IReadOnlyList<CodexConversationTurn> Refresh(
-        IReadOnlyList<string> paths, DateTimeOffset now, CancellationToken cancellationToken = default)
+        IReadOnlyList<string> paths, DateTimeOffset now, CancellationToken cancellationToken = default) =>
+        Refresh(paths, now, cancellationToken, fullVerify: true);
+
+    internal IReadOnlyList<CodexConversationTurn> Refresh(
+        IReadOnlyList<string> paths, DateTimeOffset now, CancellationToken cancellationToken, bool fullVerify)
     {
         var turns = new List<CodexConversationTurn>();
         var retained = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var idleCutoffTicks = now.UtcTicks - TimeSpan.FromMinutes(10).Ticks;
         PendingSessions = 0;
         long coldSpent = 0;
         long coldScanMilliseconds = 0;
@@ -89,6 +94,15 @@ public sealed partial class CodexConversationUsageReader
             cancellationToken.ThrowIfCancellationRequested();
             retained.Add(path);
             _cache.TryGetValue(path, out var state);
+            if (!fullVerify
+                && state is { CaughtUp: true, ReadFailed: false } idleState
+                && idleState.Offset >= idleState.Length
+                && idleState.WriteTicks < idleCutoffTicks
+                && (idleState.Active is null || idleState.Active.EndedAt is not null || idleState.Active.Interrupted))
+            {
+                if (idleState.ToTurn(now) is { } idle) turns.Add(idle);
+                continue;
+            }
             try
             {
                 using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,

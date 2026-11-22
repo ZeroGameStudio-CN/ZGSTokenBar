@@ -65,18 +65,42 @@ public sealed class QuotaPaceTracker
             QuotaTrendConfidence.Provisional),
     ];
 
-    private readonly List<QuotaRateSample> _samples;
+    private readonly Dictionary<QuotaSeriesKey, List<QuotaRateSample>> _series = new();
 
-    internal int SampleCount => _samples.Count;
+    internal int SampleCount
+    {
+        get
+        {
+            var count = 0;
+            foreach (var list in _series.Values) count += list.Count;
+            return count;
+        }
+    }
 
     public QuotaPaceTracker(QuotaRateHistory? history = null)
     {
-        _samples = ApplySampleLimits(history?.Samples ?? []).ToList();
+        LoadSamples(ApplySampleLimits(history?.Samples ?? []));
+    }
+
+    private void LoadSamples(IEnumerable<QuotaRateSample> samples)
+    {
+        _series.Clear();
+        foreach (var sample in samples)
+        {
+            var key = SeriesIdentity(sample);
+            if (!_series.TryGetValue(key, out var list))
+            {
+                list = [];
+                _series[key] = list;
+            }
+            list.Add(sample);
+        }
     }
 
     public bool Observe(QuotaSnapshot snapshot, DateTimeOffset now)
     {
         var changed = false;
+        HashSet<QuotaSeriesKey>? touchedSeries = null;
         var freshProviders = snapshot.Health
             .Where(health =>
                 health.Connected
@@ -109,15 +133,22 @@ public sealed class QuotaPaceTracker
                     window.ResetsAt,
                     QuotaRateSampleSource.Live);
                 var seriesKey = SeriesIdentity(sample);
-                var latest = _samples
-                    .Where(existing => SeriesIdentity(existing) == seriesKey)
-                    .MaxBy(existing => existing.CapturedAt);
+                if (!_series.TryGetValue(seriesKey, out var list))
+                {
+                    list = [sample];
+                    _series[seriesKey] = list;
+                    (touchedSeries ??= []).Add(seriesKey);
+                    changed = true;
+                    continue;
+                }
+
+                var latest = list.Count > 0 ? list[^1] : null;
                 if (latest is not null && capturedAt <= latest.CapturedAt)
                 {
                     if (capturedAt == latest.CapturedAt && latest.Source != QuotaRateSampleSource.Live)
                     {
-                        _samples.Remove(latest);
-                        _samples.Add(sample);
+                        list[^1] = sample;
+                        (touchedSeries ??= []).Add(seriesKey);
                         changed = true;
                     }
                     continue;
@@ -125,21 +156,23 @@ public sealed class QuotaPaceTracker
 
                 if (latest is not null && StartsNewCycle(latest, sample))
                 {
-                    _samples.RemoveAll(existing => SeriesIdentity(existing) == seriesKey);
+                    list.Clear();
                 }
 
-                _samples.Add(sample);
+                list.Add(sample);
+                (touchedSeries ??= []).Add(seriesKey);
                 changed = true;
             }
         }
 
-        changed |= Trim(now);
+        changed |= Trim(now, touchedSeries);
         return changed;
     }
 
     public bool MergeImported(IEnumerable<QuotaRateSample> imported, DateTimeOffset now)
     {
         var changed = false;
+        HashSet<QuotaSeriesKey>? touchedSeries = null;
         foreach (var candidate in Deduplicate(imported)
                      .Where(sample => sample.Source == QuotaRateSampleSource.CodexRollout)
                      .Where(IsStructurallyValid)
@@ -147,11 +180,16 @@ public sealed class QuotaPaceTracker
                      .Where(sample => sample.CapturedAt <= now.AddMinutes(1)))
         {
             var seriesKey = SeriesIdentity(candidate);
-            var liveAnchor = _samples
-                .Where(sample =>
-                    sample.Source == QuotaRateSampleSource.Live
-                    && SeriesIdentity(sample) == seriesKey)
-                .MaxBy(sample => sample.CapturedAt);
+            if (!_series.TryGetValue(seriesKey, out var list)) continue;
+            QuotaRateSample? liveAnchor = null;
+            for (var index = list.Count - 1; index >= 0; index--)
+            {
+                if (list[index].Source == QuotaRateSampleSource.Live)
+                {
+                    liveAnchor = list[index];
+                    break;
+                }
+            }
             if (liveAnchor is null
                 || candidate.CapturedAt >= liveAnchor.CapturedAt
                 || candidate.UsedPercent > liveAnchor.UsedPercent + 1
@@ -160,22 +198,53 @@ public sealed class QuotaPaceTracker
                 continue;
             }
 
-            var existing = _samples.FirstOrDefault(sample =>
-                SeriesIdentity(sample) == seriesKey
-                && sample.CapturedAt == candidate.CapturedAt);
-            if (existing is not null)
+            var existingIndex = FindByCapturedAt(list, candidate.CapturedAt);
+            if (existingIndex >= 0)
             {
-                if (existing.Source == QuotaRateSampleSource.Live) continue;
-                if (existing == candidate) continue;
-                _samples.Remove(existing);
+                var existing = list[existingIndex];
+                if (existing.Source == QuotaRateSampleSource.Live || existing == candidate) continue;
+                list[existingIndex] = candidate;
+            }
+            else
+            {
+                InsertSorted(list, candidate);
             }
 
-            _samples.Add(candidate);
+            (touchedSeries ??= []).Add(seriesKey);
             changed = true;
         }
 
-        changed |= Trim(now);
+        changed |= Trim(now, touchedSeries);
         return changed;
+    }
+
+    private static int FindByCapturedAt(List<QuotaRateSample> list, DateTimeOffset capturedAt)
+    {
+        var lo = 0;
+        var hi = list.Count - 1;
+        while (lo <= hi)
+        {
+            var mid = lo + ((hi - lo) >> 1);
+            var cmp = list[mid].CapturedAt.CompareTo(capturedAt);
+            if (cmp < 0) lo = mid + 1;
+            else if (cmp > 0) hi = mid - 1;
+            else
+            {
+                for (var i = mid; i >= 0 && list[i].CapturedAt == capturedAt; i--)
+                    if (list[i].CapturedAt.Offset == capturedAt.Offset) return i;
+                for (var i = mid + 1; i < list.Count && list[i].CapturedAt == capturedAt; i++)
+                    if (list[i].CapturedAt.Offset == capturedAt.Offset) return i;
+                return -1;
+            }
+        }
+        return -1;
+    }
+
+    private static void InsertSorted(List<QuotaRateSample> list, QuotaRateSample sample)
+    {
+        var index = list.Count;
+        while (index > 0 && list[index - 1].CapturedAt > sample.CapturedAt) index--;
+        list.Insert(index, sample);
     }
 
     public QuotaPaceEstimate Estimate(
@@ -231,11 +300,7 @@ public sealed class QuotaPaceTracker
         if (age > fallbackAge) return new(QuotaPaceStatus.WaitingForFreshData, ValidUntil: validUntil);
 
         var seriesKey = SeriesIdentity(card, window);
-        var series = Deduplicate(_samples
-                .Where(sample => SeriesIdentity(sample) == seriesKey))
-            .OrderBy(sample => sample.CapturedAt)
-            .ToArray();
-        if (series.Length == 0)
+        if (!_series.TryGetValue(seriesKey, out var series) || series.Count == 0)
         {
             return CycleFallback(cycle, validUntil, stale);
         }
@@ -345,7 +410,8 @@ public sealed class QuotaPaceTracker
         Trim(now);
         return new QuotaRateHistory
         {
-            Samples = Deduplicate(_samples)
+            Samples = _series.Values
+                .SelectMany(list => list)
                 .OrderBy(sample => sample.CapturedAt)
                 .ToList(),
         };
@@ -625,17 +691,66 @@ public sealed class QuotaPaceTracker
             validUntil);
     }
 
-    private bool Trim(DateTimeOffset now)
+    private bool Trim(DateTimeOffset now, HashSet<QuotaSeriesKey>? dirtySeries = null)
     {
-        var before = _samples.Count;
         var cutoff = now - HistoryRetention;
-        var retained = ApplySampleLimits(_samples
-            .Where(sample =>
-                sample.CapturedAt >= cutoff
-                && sample.CapturedAt <= now.AddMinutes(1)));
-        var changed = before != retained.Length || !_samples.SequenceEqual(retained);
-        _samples.Clear();
-        _samples.AddRange(retained);
+        var upper = now.AddMinutes(1);
+        var changed = false;
+        var total = 0;
+
+        foreach (var (key, list) in _series.ToArray())
+        {
+            if (list.Count == 0)
+            {
+                _series.Remove(key);
+                changed = true;
+                continue;
+            }
+
+            var needsWindowTrim = list[0].CapturedAt < cutoff || list[^1].CapturedAt > upper;
+            var needsSeriesCap = list.Count > MaximumSamplesPerSeries;
+            var needsCompact = dirtySeries?.Contains(key) == true
+                && list.Any(sample => sample.Source == QuotaRateSampleSource.CodexRollout);
+            if (!needsWindowTrim && !needsSeriesCap && !needsCompact)
+            {
+                total += list.Count;
+                continue;
+            }
+
+            IEnumerable<QuotaRateSample> filtered = needsWindowTrim
+                ? list.Where(sample => sample.CapturedAt >= cutoff && sample.CapturedAt <= upper)
+                : list;
+            if (needsCompact) filtered = CompactImported(filtered);
+            var normalized = filtered
+                .OrderByDescending(sample => sample.CapturedAt)
+                .Take(MaximumSamplesPerSeries)
+                .OrderBy(sample => sample.CapturedAt)
+                .ToList();
+            if (normalized.Count != list.Count || !list.SequenceEqual(normalized))
+            {
+                changed = true;
+                if (normalized.Count == 0)
+                {
+                    _series.Remove(key);
+                    continue;
+                }
+                _series[key] = normalized;
+            }
+            total += normalized.Count;
+        }
+
+        if (total > MaximumSamples)
+        {
+            var bounded = _series.Values
+                .SelectMany(list => list)
+                .OrderByDescending(sample => sample.CapturedAt)
+                .Take(MaximumSamples)
+                .OrderBy(sample => sample.CapturedAt)
+                .ToArray();
+            LoadSamples(bounded);
+            changed = true;
+        }
+
         return changed;
     }
 

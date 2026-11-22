@@ -65,14 +65,8 @@ internal sealed partial class QuotaApplicationContext
             var now = DateTimeOffset.UtcNow;
             if (_quotaPaceTracker.MergeImported(completed.Result.Samples, now))
             {
-                try
-                {
-                    _store.SaveQuotaRateHistory(_quotaPaceTracker.Export(now));
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-                {
-                    // Imported history is best-effort and never blocks live quota.
-                }
+                var exportedPace = _quotaPaceTracker.Export(now);
+                EnqueueStateSave("quota-rate-history", () => _store.SaveQuotaRateHistory(exportedPace));
                 _bar.SetQuotaPaceEstimates(QuotaPaceEstimates(_snapshot, now));
             }
 
@@ -104,14 +98,8 @@ internal sealed partial class QuotaApplicationContext
                 .ToArray();
             if (_codexQuotaTokenTracker.Merge(fallbackObservations, now))
             {
-                try
-                {
-                    _store.SaveCodexQuotaTokenHistory(_codexQuotaTokenTracker.Export());
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-                {
-                    // Imported capacity is best-effort and never blocks live quota or pace data.
-                }
+                var exportedTokens = _codexQuotaTokenTracker.Export();
+                EnqueueStateSave("codex-quota-token-history", () => _store.SaveCodexQuotaTokenHistory(exportedTokens));
                 _bar.SetCodexQuotaTokenSummaries(CodexQuotaTokenSummaries(now));
             }
         }
@@ -155,9 +143,10 @@ internal sealed partial class QuotaApplicationContext
         {
             // Normal application shutdown.
         }
-        catch
+        catch (Exception error)
         {
             // Local token aggregation is best-effort and never blocks live quota.
+            AppDiagnostics.Record("codex-token-usage", error);
         }
         finally
         {
