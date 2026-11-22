@@ -13,6 +13,7 @@ internal sealed record IntakeServiceRecord(string Id, string ItemId, string Proj
     public string ReviewState { get; init; } = "";
     public string ReasonCode { get; init; } = "";
     public string SourceStatus { get; init; } = "";
+    public string ReviewQuestion { get; init; } = "";
 
     internal bool InFlight => Phase is "sending" or "model_started" or "classified" or "waiting_upstream"
         or "waiting_original" or "submitting" or "submitted" or "retry" or "archive_pending" or "archive_submitted";
@@ -25,7 +26,10 @@ internal sealed record IntakeServiceReading(string Schema, string SourceId, Date
     IntakeServiceRecord[] History, string[] Gaps)
 {
     public int? ProcessingCount { get; init; }
+    public IntakeEvidenceRequest[] EvidenceRequests { get; init; } = [];
 }
+
+internal sealed record IntakeEvidenceRequest(string ItemId, string Number, string Question);
 internal sealed record IntakeServiceResult(IntakeServiceSource Source, IntakeServiceReading? Reading, string? Error);
 
 /// <summary>Explicitly registered operator observations. Never runs an action or changes the remote service.</summary>
@@ -130,12 +134,19 @@ internal sealed class IntakeServiceMonitorClient
         if (value.Schema != "zgstokenbar.intake-monitor.v1" || value.SourceId != source.Id
             || value.Projects is null || value.Projects.Length > 64 || value.Progress is null || value.Progress.Length > 64
             || value.History is null || value.History.Length > 160 || value.Gaps is null || value.Gaps.Length > 32
+            || value.EvidenceRequests is null || value.EvidenceRequests.Length > 64
+            || !value.Active && value.EvidenceRequests.Length != 0
             || value.ProcessingCount is < 0 or > 1000
             || value.ProcessingCount is not null && (!value.Active || value.Gaps.Any(gap => gap is "receipts_unavailable" or "receipts_capped"))
             || value.ObservedAt > DateTimeOffset.UtcNow.AddMinutes(5) || value.ObservedAt < DateTimeOffset.UtcNow.AddMinutes(-5))
             throw new InvalidDataException("invalid_reading");
         if (value.Projects.Any(p => p is null || !Regex.IsMatch(p, @"\A[A-Za-z0-9][A-Za-z0-9_-]{0,63}\z")))
             throw new InvalidDataException("invalid_projects");
+        foreach (var request in value.EvidenceRequests)
+            if (request is null || !Guid.TryParseExact(request.ItemId, "D", out _)
+                || !Regex.IsMatch(request.Number ?? "", @"\A[A-Za-z][A-Za-z0-9_-]{0,18}-[0-9]{1,12}\z")
+                || !ValidQuestion(request.Question) || request.Question.Length == 0)
+                throw new InvalidDataException("invalid_evidence_request");
         foreach (var row in value.Progress.Concat(value.History))
             if (row is null || row.Id is null || row.Id.Length > 300 || row.Title is null || row.Title.Length > 160
                 || row.Phase is null || row.Phase.Length > 100 || row.Kind is null || row.Kind.Length > 80
@@ -143,9 +154,13 @@ internal sealed class IntakeServiceMonitorClient
                 || row.ItemId is null || row.ItemId.Length > 36 || row.ItemId.Length > 0 && !Guid.TryParseExact(row.ItemId, "D", out _)
                 || row.ReviewState is not ("" or "attention" or "unconfirmed" or "archive_protected" or "archive_waiting"
                     or "archive_retained" or "source_closed" or "source_advanced")
-                || row.ReasonCode is null || row.ReasonCode.Length > 80 || row.SourceStatus is null || row.SourceStatus.Length > 100)
+                || row.ReasonCode is null || row.ReasonCode.Length > 80 || row.SourceStatus is null || row.SourceStatus.Length > 100
+                || !ValidQuestion(row.ReviewQuestion))
                 throw new InvalidDataException("invalid_record");
     }
+
+    private static bool ValidQuestion(string? text) =>
+        text is not null && text.Length <= 320 && !text.Any(char.IsControl);
 
     private static async Task<IntakeServiceReading> ReadSourceAsync(IntakeServiceSource source, bool summaryOnly, CancellationToken token)
     {
