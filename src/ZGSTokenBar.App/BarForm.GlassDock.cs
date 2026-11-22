@@ -15,7 +15,6 @@ internal sealed partial class BarForm
     private readonly GlassDockMotion _glassMotion = new();
     private readonly Dictionary<string, GlassItem> _glassMotionItems = new(StringComparer.Ordinal);
     private bool _pendingCollapseLayout;
-    private bool _dockAmbientPulseActive;
     private HashSet<ProviderKind> _enabledQuotaProviders = Enum.GetValues<ProviderKind>().ToHashSet();
     private readonly bool _explicitQuotaEnablement;
     private int _glassMaxRings = GlassDockLayout.MaxVisibleRings;
@@ -416,12 +415,6 @@ internal sealed partial class BarForm
         _systemUsageBounds = _showSystemMetrics ? RectangleF.Inflate(bars, 4, 3) : RectangleF.Empty;
         var rate = ShiftX(GlassDockLayout.RateBoundsFor(width), deltaX);
         _liveMetricsBounds = RectangleF.Inflate(rate, 3, 3);
-        var ambientPulse = animateDock && (_systemUsage.CurrentOutputRate is > 0 || (plan.OverflowUrgent && !_glassExpanded));
-        _dockAmbientPulseActive = ambientPulse;
-        var pulseCycleMs = ((nowTick % 2600) + 2600) % 2600;
-        var pulsePhase = ambientPulse
-            ? (float)(0.5 - 0.5 * Math.Cos(pulseCycleMs * (2.0 * Math.PI / 2600.0)))
-            : 0f;
         var scene = new GlassDockScene(
             light,
             width,
@@ -454,13 +447,12 @@ internal sealed partial class BarForm
             IntakeHover = animateDock ? motion.IntakeHover : null,
             SystemHover = animateDock ? motion.SystemHover : null,
             RateHover = animateDock ? motion.RateHover : null,
-            PulsePhase = pulsePhase,
         };
         _glassFailedThisPaint.Clear();
         GlassDockPainter.Draw(graphics, scene, _badgeFont);
         // A ring that painted cleanly this time rejoins (its earlier fault is forgotten).
         _taskbarRenderFailureAreaIds.RemoveWhere(id => id != "bar" && !_glassFailedThisPaint.Contains(id));
-        if (animateDock && (motion.Animating || ambientPulse)) EnsureAnimationTimer();
+        if (animateDock && motion.Animating) EnsureAnimationTimer();
         QueueHoverRecovery();
     }
 

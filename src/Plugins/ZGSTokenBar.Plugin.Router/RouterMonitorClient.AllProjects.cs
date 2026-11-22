@@ -99,8 +99,31 @@ public sealed partial class RouterMonitorClient
             ["failed"] = pages.Sum(page => RouterJson.Integer(RouterJson.Field(page.Metadata, "counts"), "failed")),
             ["cancelled"] = pages.Sum(page => RouterJson.Integer(RouterJson.Field(page.Metadata, "counts"), "cancelled")) };
         var days = pages.SelectMany(page => RouterJson.Rows(page.Metadata, "days"))
-            .Select(row => RouterJson.Text(row, "date")).Distinct(StringComparer.Ordinal).OrderDescending()
-            .Select(date => (JsonNode)new JsonObject { ["date"] = date }).ToArray();
+            .Select(row => (Row: row, Date: RouterJson.Text(row, "date")))
+            .Where(entry => entry.Date.Length > 0)
+            .GroupBy(entry => entry.Date, StringComparer.Ordinal)
+            .OrderByDescending(group => group.Key, StringComparer.Ordinal)
+            .Select(group =>
+            {
+                var item = new JsonObject { ["date"] = group.Key };
+                var hasTotal = group.Any(entry => entry.Row.ValueKind == JsonValueKind.Object
+                    && entry.Row.TryGetProperty("total", out var totalProp)
+                    && totalProp.ValueKind == JsonValueKind.Number);
+                if (hasTotal) item["total"] = group.Sum(entry => RouterJson.Integer(entry.Row, "total"));
+
+                var hasCounts = group.Any(entry => RouterJson.Field(entry.Row, "counts").ValueKind == JsonValueKind.Object);
+                if (hasCounts)
+                {
+                    item["counts"] = new JsonObject
+                    {
+                        ["completed"] = group.Sum(entry => RouterJson.Integer(RouterJson.Field(entry.Row, "counts"), "completed")),
+                        ["failed"] = group.Sum(entry => RouterJson.Integer(RouterJson.Field(entry.Row, "counts"), "failed")),
+                        ["cancelled"] = group.Sum(entry => RouterJson.Integer(RouterJson.Field(entry.Row, "counts"), "cancelled")),
+                        ["pending"] = group.Sum(entry => RouterJson.Integer(RouterJson.Field(entry.Row, "counts"), "pending")),
+                    };
+                }
+                return (JsonNode)item;
+            }).ToArray();
         return Element(new JsonObject { ["items"] = new JsonArray(items),
             ["total"] = pages.Sum(page => page.Total), ["offset"] = offset, ["limit"] = limit,
             ["counts"] = counts, ["days"] = new JsonArray(days), ["groups"] = new JsonArray() });

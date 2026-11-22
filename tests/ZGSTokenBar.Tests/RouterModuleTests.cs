@@ -32,6 +32,7 @@ internal static class RouterModuleTests
         QueueBadgeDigits();
         QueueRefreshRecovery();
         OwnedFontScaling();
+        DailyThroughputSummary();
         using var handler = new Fixture();
         using var client = new RouterMonitorClient(handler);
         var snapshot = client.SnapshotAsync().GetAwaiter().GetResult();
@@ -999,6 +1000,7 @@ internal static class RouterModuleTests
         internal JsonElement? LastControl;
         internal JsonElement? ProjectCatalog;
         internal JsonElement[]? HistoryItems;
+        internal object[]? HistoryDays;
         internal readonly Dictionary<string, JsonElement> ProjectViews = new(StringComparer.Ordinal);
         internal string? UnavailableProject;
         internal string Elapsed = "1:25";
@@ -1088,12 +1090,69 @@ internal static class RouterModuleTests
                     preflightSeconds = PreflightRefusal && i == 0 ? (double?)1 : null, dispatchRecoveryWaitSeconds = PreflightRefusal && i == 0 ? (double?)2999 : null,
                     executionSeconds = 41.2, cleanupSeconds = 3.1, cleanupVerified = true }),
                 counts = new { completed = 74, failed = 2, cancelled = 0, pending = 0 },
-                days = new[] { new { date = "2026-10-27", total = 76 } },
+                days = HistoryDays ?? [new { date = "2026-10-27", total = 76 }],
                 groups = new[] { new { count = 76, category = "PlayMode", queueSecondsP95 = 12.5, executionSecondsP95 = 41.2, cleanupSecondsP95 = 3.1 } },
             });
             if (route == "/api/export") return new(HttpStatusCode.OK) { Content = new StringContent("id,task\noriginal-request,synthetic\n", Encoding.UTF8, "text/csv") };
             return new(HttpStatusCode.NotFound);
         }
         private static HttpResponseMessage Json<T>(T value) => new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(value), Encoding.UTF8, "application/json") };
+    }
+
+    private static void DailyThroughputSummary()
+    {
+        var daysDoc = JsonSerializer.SerializeToElement(new[]
+        {
+            new { date = "2026-11-22", total = 65, counts = new { completed = 54, failed = 11, cancelled = 0, pending = 0 } },
+            new { date = "2026-11-21", total = 134, counts = new { completed = 120, failed = 14, cancelled = 0, pending = 0 } },
+            new { date = "2026-11-20", total = 0, counts = new { completed = 0, failed = 0, cancelled = 0, pending = 0 } },
+        });
+        var withToday = RouterTaskPresentation.SummarizeDailyThroughput(daysDoc.EnumerateArray(), new DateOnly(2026, 11, 22));
+        Check(withToday.ActiveDays == 2 && withToday.TotalProcessed == 199 && withToday.TodayTotal == 65
+            && withToday.AveragePerActiveDay is > 99.4 && withToday.AveragePerActiveDay is < 99.6
+            && withToday.SummaryText == "今日 65  ·  日均 99.5/天"
+            && withToday.TooltipSection.Contains("日均 99.5/天（按 2 个活跃日，共 199 条）")
+            && withToday.TooltipSection.Contains("2026-11-22  65 条（成功 54 · 失败 11）")
+            && !withToday.TooltipSection.Contains("2026-11-20"),
+            "Daily throughput averages strictly across active days and omits zero-task days");
+
+        var withoutToday = RouterTaskPresentation.SummarizeDailyThroughput(daysDoc.EnumerateArray(), new DateOnly(2026, 11, 23));
+        Check(withoutToday.TodayTotal == 0 && withoutToday.SummaryText == "今日 0  ·  日均 99.5/天",
+            "Missing today bucket shows 今日 0 while retaining active-day average");
+
+        var noTotals = JsonSerializer.SerializeToElement(new[] { new { date = "2026-11-22" } });
+        Check(RouterTaskPresentation.SummarizeDailyThroughput(noTotals.EnumerateArray(), new DateOnly(2026, 11, 22)).SummaryText == ""
+            && RouterTaskPresentation.DayOptionLabel(noTotals[0]) == "2026-11-22"
+            && RouterTaskPresentation.DayOptionLabel(daysDoc[0]) == "2026-11-22 (65)",
+            "Date-only day rows stay safe and formatted rows append their total");
+
+        using var handler = TwoActiveProjects();
+        using var client = new RouterMonitorClient(handler);
+        var allHistory = client.HistoryAsync(RouterMonitorClient.AllProjects, "all", "finished", "all", "", 0, limit: 25).GetAwaiter().GetResult();
+        var mergedDay = RouterJson.Rows(allHistory, "days").Single(d => RouterJson.Text(d, "date") == "2026-10-27");
+        Check(RouterJson.Integer(mergedDay, "total") == 152,
+            "All-project history merges daily totals by date");
+
+        handler.HistoryDays = [new { date = "2026-10-27", total = 76, counts = new { completed = 74, failed = 2, cancelled = 0, pending = 0 } }];
+        var allHistoryWithCounts = client.HistoryAsync(RouterMonitorClient.AllProjects, "all", "finished", "all", "", 0, limit: 25).GetAwaiter().GetResult();
+        var mergedDayWithCounts = RouterJson.Rows(allHistoryWithCounts, "days").Single(d => RouterJson.Text(d, "date") == "2026-10-27");
+        Check(RouterJson.Integer(mergedDayWithCounts, "total") == 152
+            && RouterJson.Integer(RouterJson.Field(mergedDayWithCounts, "counts"), "completed") == 148
+            && RouterJson.Integer(RouterJson.Field(mergedDayWithCounts, "counts"), "failed") == 4,
+            "All-project history merges daily totals and outcome counts by date");
+
+        using var form = new RouterMonitorForm(client, observe: false)
+        { Opacity = 0, StartPosition = System.Windows.Forms.FormStartPosition.Manual, Location = new(-30000, -30000) };
+        form.Show();
+        Pump(form.RefreshViewAsync());
+        var controls = AllControls(form).ToArray();
+        var throughputLabel = controls.OfType<System.Windows.Forms.Label>().Single(l => l.Text.Contains("日均 152/天"));
+        Check(throughputLabel.Text == "今日 0  ·  日均 152/天"
+            && throughputLabel.AccessibleDescription!.Contains("2026-10-27  152 条"),
+            "RouterMonitorForm displays today and active-day throughput summary and tooltip details");
+        var dayCombo = controls.OfType<System.Windows.Forms.ComboBox>().Single(c => c.AccessibleName == "日期");
+        Check(dayCombo.Items.Cast<object>().Any(item => item.ToString() == "2026-10-27 (152)"),
+            "RouterMonitorForm day selector shows merged daily task totals");
+        form.Close();
     }
 }
