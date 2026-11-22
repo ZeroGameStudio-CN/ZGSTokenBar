@@ -662,8 +662,8 @@ internal static class GlassDockPainter
     }
 
     /// <summary>
-    /// tok/s on one line with the four system rows: a fixed-width number (one decimal, so the point
-    /// does not move) and the unit beside it, centred on the stack rather than on the GPU row.
+    /// tok/s in the narrow column beside the system rows. The number is centred on the four rows,
+    /// and the unit sits under it, so the column stays the width of the number.
     /// The displayed total sums recorded response rates for the active sessions.
     /// </summary>
     private static void DrawRate(Graphics graphics, Rectangle bounds, GlassDockScene scene)
@@ -680,7 +680,7 @@ internal static class GlassDockPainter
         var readout = RateReadoutBoxes(graphics, bounds, font, small);
         using (var numberFormat = new StringFormat(StringFormat.GenericTypographic)
         {
-            Alignment = rate == "—" ? StringAlignment.Center : StringAlignment.Far,
+            Alignment = StringAlignment.Center,
             LineAlignment = StringAlignment.Center,
             FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.NoClip,
         })
@@ -688,35 +688,27 @@ internal static class GlassDockPainter
             graphics.DrawString(rate, font, text, readout.Number, numberFormat);
         }
 
-        using var unitFormat = new StringFormat(StringFormat.GenericTypographic)
-        {
-            Alignment = StringAlignment.Near,
-            LineAlignment = StringAlignment.Center,
-            FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.NoClip,
-        };
-        graphics.DrawString("tok/s", small, muted, readout.Unit, unitFormat);
+        graphics.DrawString("tok/s", small, muted, readout.Unit, Format(StringAlignment.Center));
     }
 
-    internal const float RateUnitSize = 9f;
+    internal const float RateUnitSize = 8f;
     private const float RateNumberHeight = 14f;
-    private const float RateUnitGap = 3f;
 
     internal const float RateFontSize = 12.5f;
 
     internal readonly record struct RateReadout(RectangleF Number, RectangleF Unit);
 
-    /// <summary>Number and unit boxes for the rate line. The number box fits "888.8" and "88.8K".</summary>
+    /// <summary>Number and unit boxes. The number fits "888.8" and "88.8K"; the unit is directly under it.</summary>
     internal static RateReadout RateReadoutBoxes(Graphics graphics, Rectangle bounds, Font numberFont, Font unitFont)
     {
         using var format = new StringFormat(StringFormat.GenericTypographic) { FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces };
-        var numberWidth = Math.Max(graphics.MeasureString("888.8", numberFont, PointF.Empty, format).Width,
-            graphics.MeasureString("88.8K", numberFont, PointF.Empty, format).Width) + 1f;
-        var unitWidth = graphics.MeasureString("tok/s", unitFont, PointF.Empty, format).Width + 1f;
-        var left = bounds.Right - (numberWidth + RateUnitGap + unitWidth);
-        if (left < bounds.Left) left = bounds.Left;
+        var numberWidth = Math.Min(bounds.Width, Math.Max(graphics.MeasureString("888.8", numberFont, PointF.Empty, format).Width,
+            graphics.MeasureString("88.8K", numberFont, PointF.Empty, format).Width) + 1f);
+        var left = bounds.X + (bounds.Width - numberWidth) / 2f;
         var top = bounds.Y + (bounds.Height - RateNumberHeight) / 2f;
         var number = new RectangleF(left, top, numberWidth, RateNumberHeight);
-        return new(number, new RectangleF(number.Right + RateUnitGap, top, unitWidth, RateNumberHeight));
+        var unitHeight = Math.Max(8f, unitFont.Size + 1f);
+        return new(number, new RectangleF(bounds.X, number.Bottom - 2f, bounds.Width, unitHeight));
     }
 
     /// <summary>Fixed number box for the rate, right-aligned ahead of the unit.</summary>
