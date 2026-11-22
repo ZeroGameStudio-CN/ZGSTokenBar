@@ -29,6 +29,18 @@ internal static class GlassDockOverflowTests
         var activeCodex = Ring("active Codex", 99) with { InUse = true };
         Check(GlassDockLayout.Plan([exhausted, activeCodex], maxVisible: 1).Visible.SequenceEqual([activeCodex]),
             "A running account wins a primary slot over an idle low-quota reading.");
+        GlassDockRing[] crowded =
+        [
+            Ring("used", 85) with { StableId = "codex-85", ProviderOrder = 10, AccountOrder = 0 },
+            Ring("low", 11) with { StableId = "codex-11", ProviderOrder = 10, AccountOrder = 1 },
+            Ring("zero-active", 0) with { StableId = "codex-0", ProviderOrder = 10, AccountOrder = 2 },
+            new("grok", "Grok", "grok", 0, 74, null, null, "#38bdf8") { StableId = "grok", ProviderOrder = 900, AccountOrder = 3 },
+            Ring("idle", 90) with { StableId = "codex-idle", OverflowOnly = true, ProviderOrder = 10, AccountOrder = 4 },
+        ];
+        var crowdedPlan = GlassDockLayout.Plan(crowded, maxVisible: 3);
+        Check(crowdedPlan.Visible.Select(r => r.StableId).SequenceEqual(["codex-85", "codex-11", "grok"])
+            && crowdedPlan.OverflowCount == 2 && crowdedPlan.OverflowUrgent,
+            "When active rings exceed capacity, active 0% Codex yields to usable active providers and flags +N urgent");
 
         var now = DateTimeOffset.UtcNow;
         var cards = new[] { Card("used", 20), Card("zero", 0, active: false), Card("idle", 30, active: false),

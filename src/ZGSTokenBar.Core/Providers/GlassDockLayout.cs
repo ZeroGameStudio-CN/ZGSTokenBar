@@ -181,10 +181,7 @@ public static class GlassDockLayout
         bool showIntake = false, bool showRouter = true)
     {
         var limit = VisibleCapacity(maxVisible);
-        var ordered = Order(rings);
-        var count = Math.Min(limit, ordered.Count(ring => !ring.OverflowOnly));
-        var visible = ordered.Take(count).ToArray();
-        var hidden = ordered.Skip(count).ToArray();
+        var (visible, hidden) = SelectPrimaryAndOverflow(Order(rings), limit);
         var urgent = hidden.Any(ring => ring.Warn || ring.RemainingPercent is < 20);
         return WithMonitors(new GlassDockPlan(
             visible,
@@ -202,9 +199,52 @@ public static class GlassDockLayout
     public static GlassDockPlan PlanExpanded(IReadOnlyList<GlassDockRing> rings, int maxVisible = MaxVisibleRings,
         bool showIntake = false, bool showRouter = true)
     {
-        var ordered = Order(rings);
+        var limit = VisibleCapacity(maxVisible);
+        var (visible, hidden) = SelectPrimaryAndOverflow(Order(rings), limit);
+        var ordered = visible.Concat(hidden).ToArray();
         var slots = ExpandedSlots(ordered.Length, out var width);
         return WithMonitors(new GlassDockPlan(ordered, 0, false, width, Height, slots), showIntake, showRouter);
+    }
+
+    private static (GlassDockRing[] Visible, GlassDockRing[] Hidden) SelectPrimaryAndOverflow(GlassDockRing[] ordered, int limit)
+    {
+        var active = ordered.Where(ring => !ring.OverflowOnly).ToArray();
+        var inactive = ordered.Where(ring => ring.OverflowOnly).ToArray();
+        if (active.Length <= limit)
+        {
+            return (active, inactive);
+        }
+
+        var selected = new bool[active.Length];
+        var picked = 0;
+        for (var i = 0; i < active.Length && picked < limit; i++)
+        {
+            if (active[i].RemainingPercent is null or > 0)
+            {
+                selected[i] = true;
+                picked++;
+            }
+        }
+
+        for (var i = 0; i < active.Length && picked < limit; i++)
+        {
+            if (!selected[i])
+            {
+                selected[i] = true;
+                picked++;
+            }
+        }
+
+        var visible = new List<GlassDockRing>(picked);
+        var overflowActive = new List<GlassDockRing>(active.Length - picked + inactive.Length);
+        for (var i = 0; i < active.Length; i++)
+        {
+            if (selected[i]) visible.Add(active[i]);
+            else overflowActive.Add(active[i]);
+        }
+
+        overflowActive.AddRange(inactive);
+        return (visible.ToArray(), overflowActive.ToArray());
     }
 
     private static GlassDockPlan WithMonitors(GlassDockPlan plan, bool showIntake, bool showRouter)

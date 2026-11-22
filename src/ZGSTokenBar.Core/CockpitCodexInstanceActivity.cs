@@ -8,6 +8,9 @@ internal static class CockpitCodexInstanceActivity
 {
     private const long MaximumJsonBytes = 1024 * 1024;
     private const uint SnapshotProcesses = 0x00000002;
+    private const uint ProcessQueryLimitedInformation = 0x1000;
+    private const int ProcessCommandLineInformation = 60;
+    private const int MaximumCommandLineBufferBytes = 65536;
     private static readonly nint InvalidHandleValue = new(-1);
     private static readonly HashSet<string> ActiveProcessNames =
         new(StringComparer.OrdinalIgnoreCase)
@@ -442,6 +445,59 @@ internal static class CockpitCodexInstanceActivity
         return false;
     }
 
+    internal static IReadOnlyList<string> ReadActiveProcessCommandLines()
+    {
+        if (!OperatingSystem.IsWindows()) return [];
+        if (!TryReadProcessEntries(out var processes)) return [];
+
+        var commandLines = new List<string>();
+        foreach (var process in processes)
+        {
+            if (!ActiveProcessNames.Contains(process.ProcessName)) continue;
+            if (TryReadProcessCommandLine(process.ProcessId) is { Length: > 0 } commandLine)
+            {
+                commandLines.Add(commandLine);
+            }
+        }
+
+        return commandLines;
+    }
+
+    private static string? TryReadProcessCommandLine(int processId)
+    {
+        var handle = OpenProcess(ProcessQueryLimitedInformation, false, (uint)processId);
+        if (handle == 0) return null;
+
+        try
+        {
+            _ = NtQueryInformationProcess(handle, ProcessCommandLineInformation, 0, 0, out var needed);
+            if (needed <= 0 || needed > MaximumCommandLineBufferBytes) return null;
+
+            var buffer = Marshal.AllocHGlobal(needed);
+            try
+            {
+                var status = NtQueryInformationProcess(handle, ProcessCommandLineInformation, buffer, needed, out _);
+                if (status != 0) return null;
+
+                var value = Marshal.PtrToStructure<UnicodeString>(buffer);
+                if (value.Buffer == 0 || value.Length == 0) return null;
+                return Marshal.PtrToStringUni(value.Buffer, value.Length / 2);
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            CloseHandle(handle);
+        }
+    }
+
     internal static bool TryReadProcessEntries(out IReadOnlyList<ProcessEntry> processes)
     {
         processes = [];
@@ -500,6 +556,20 @@ internal static class CockpitCodexInstanceActivity
     [DllImport("kernel32.dll", EntryPoint = "Process32NextW", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool Process32Next(nint snapshot, ref ProcessEntry32 entry);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct UnicodeString
+    {
+        public ushort Length;
+        public ushort MaximumLength;
+        public nint Buffer;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern nint OpenProcess(uint desiredAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, uint processId);
+
+    [DllImport("ntdll.dll")]
+    private static extern int NtQueryInformationProcess(nint processHandle, int processInformationClass, nint processInformation, int processInformationLength, out int returnLength);
 
     [DllImport("kernel32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

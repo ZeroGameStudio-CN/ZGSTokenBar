@@ -199,7 +199,7 @@ internal sealed partial class BarForm
         _taskbarContentAreas = OrderTaskbarContentAreas(defaultAreas, _miniAreaOrder)
             .ToArray();
         _visibleTaskbarAreas = SelectVisibleTaskbarAreas(_taskbarContentAreas);
-        var miniLogicalWidth = CurrentGlassPlan().Width;
+        var miniLogicalWidth = GlassCanvasLogicalWidth(CurrentGlassPlan().Width);
         var previousClientSize = ClientSize;
         var newSize = new Size(Scale(miniLogicalWidth), Scale(TaskbarMiniLayoutMath.Height));
         if ((EmbeddedInTaskbar || _taskbarRowOverlayFor != 0)

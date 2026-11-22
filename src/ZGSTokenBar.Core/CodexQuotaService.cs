@@ -18,23 +18,29 @@ public sealed class CodexQuotaService
     private readonly HttpClient _httpClient;
     private readonly string _cockpitHome;
     private readonly string? _interactiveRegistryPath;
+    private readonly Func<IReadOnlyList<string>, DateTimeOffset, IReadOnlySet<string>> _interactiveActiveHomes;
 
     public CodexQuotaService(HttpClient httpClient)
         : this(httpClient, DefaultCockpitHome(), InteractiveCodexHomes.RegistryPath)
     {
     }
 
-    internal CodexQuotaService(HttpClient httpClient, string cockpitHome, string? interactiveRegistryPath = null)
+    internal CodexQuotaService(
+        HttpClient httpClient,
+        string cockpitHome,
+        string? interactiveRegistryPath = null,
+        Func<IReadOnlyList<string>, DateTimeOffset, IReadOnlySet<string>>? interactiveActiveHomes = null)
     {
         _httpClient = httpClient;
         _cockpitHome = cockpitHome;
         _interactiveRegistryPath = interactiveRegistryPath;
+        _interactiveActiveHomes = interactiveActiveHomes ?? ((homes, now) => InteractiveCodexHomes.ActiveHomes(homes, now));
     }
 
     public static bool HasLocalCredentials()
     {
         if (ReadCredentials().Count > 0) return true;
-        if (ReadInteractiveCredentials(InteractiveCodexHomes.RegistryPath).Count > 0) return true;
+        if (ReadInteractiveCredentials(InteractiveCodexHomes.RegistryPath, DateTimeOffset.UtcNow, (homes, now) => InteractiveCodexHomes.ActiveHomes(homes, now)).Count > 0) return true;
         return CockpitCodexQuotaReader.Read(DefaultCockpitHome(), DateTimeOffset.UtcNow)
             .Any(account => account.Active && !string.IsNullOrWhiteSpace(account.AccessToken));
     }
@@ -46,7 +52,7 @@ public sealed class CodexQuotaService
     {
         var now = DateTimeOffset.UtcNow;
         var nativeCredentials = ReadCredentials();
-        var interactiveCredentials = ReadInteractiveCredentials(_interactiveRegistryPath);
+        var interactiveCredentials = ReadInteractiveCredentials(_interactiveRegistryPath, now, _interactiveActiveHomes);
         var activeCockpitAccountIds = CockpitCodexInstanceActivity.ReadActiveAccountIds(_cockpitHome);
         if (interactiveCredentials.Count > 0)
         {
@@ -80,7 +86,7 @@ public sealed class CodexQuotaService
                 DefaultClientId,
                 CredentialSupport.JwtExpiry(account.AccessToken)))
             .ToArray();
-        var credentials = MergeLiveCredentials(nativeCredentials, cockpitCredentials);
+        var credentials = MergeLiveCredentials(nativeCredentials, cockpitCredentials, interactiveAuthoritative: interactiveCredentials.Count > 0);
         if (credentials.Count == 0 && cockpitAccounts.Count == 0)
         {
             return Missing(
@@ -137,10 +143,15 @@ public sealed class CodexQuotaService
                 account.CapturedAt))
             .ToArray();
         var accounts = liveAccounts.Concat(cachedAccounts)
-            .Select(account => interactiveCredentials.Count > 0
-                && !interactiveCredentials.Any(interactive => SameIdentity(account.Credential, interactive))
-                    ? account with { Credential = account.Credential with { Active = false } }
-                    : account)
+            .Select(account =>
+            {
+                if (interactiveCredentials.Count == 0) return account;
+                var interactiveActive = interactiveCredentials.Any(interactive =>
+                    interactive.Active && SameIdentity(account.Credential, interactive));
+                return account.Credential.Active == interactiveActive
+                    ? account
+                    : account with { Credential = account.Credential with { Active = interactiveActive } };
+            })
             .ToArray();
         var visibleCandidates = accounts.Where(account => liveAccounts.Any(live =>
                 !string.IsNullOrWhiteSpace(live.Credential.AccessToken) && live.HttpStatus is not (401 or 403)
@@ -563,21 +574,32 @@ public sealed class CodexQuotaService
         }
     }
 
-    private static IReadOnlyList<CodexCredential> ReadInteractiveCredentials(string? registryPath)
+    private static IReadOnlyList<CodexCredential> ReadInteractiveCredentials(
+        string? registryPath,
+        DateTimeOffset now,
+        Func<IReadOnlyList<string>, DateTimeOffset, IReadOnlySet<string>> activeHomesSelector)
     {
+        var homes = InteractiveCodexHomes.Read(registryPath);
+        if (homes.Count == 0) return [];
+        var activeHomes = activeHomesSelector(homes, now);
+        var hasActivitySignal = activeHomes.Count > 0;
         var credentials = new List<CodexCredential>();
-        foreach (var home in InteractiveCodexHomes.Read(registryPath))
+        foreach (var home in homes)
         {
             var path = Path.Combine(home, "auth.json");
             try
             {
                 var auth = new FileInfo(path);
                 if (!auth.Exists || auth.Length is <= 0 or > MaximumRegistryBytes) continue;
-                var credential = ReadCredential(path, "home:" + home, "Codex", null, null, null, true);
+                var active = !hasActivitySignal || activeHomes.Contains(home);
+                var credential = ReadCredential(path, "home:" + home, "Codex", null, null, null, active);
                 if (credential is null || string.IsNullOrWhiteSpace(credential.AccountId)) continue;
                 // The account identity survives profile relocation and duplicate registered homes.
                 credential = credential with { Key = "interactive:" + credential.AccountId };
-                if (!credentials.Any(existing => SameIdentity(existing, credential))) credentials.Add(credential);
+                var existingIndex = credentials.FindIndex(existing => SameIdentity(existing, credential));
+                if (existingIndex < 0) credentials.Add(credential);
+                else if (credential.Active && !credentials[existingIndex].Active)
+                    credentials[existingIndex] = credentials[existingIndex] with { Active = true };
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
         }
@@ -798,7 +820,8 @@ public sealed class CodexQuotaService
 
     private static IReadOnlyList<CodexCredential> MergeLiveCredentials(
         IReadOnlyList<CodexCredential> nativeCredentials,
-        IReadOnlyList<CodexCredential> cockpitCredentials)
+        IReadOnlyList<CodexCredential> cockpitCredentials,
+        bool interactiveAuthoritative = false)
     {
         var merged = nativeCredentials.ToList();
         foreach (var credential in cockpitCredentials)
@@ -810,11 +833,12 @@ public sealed class CodexQuotaService
             {
                 merged.Add(credential);
             }
-            else if (credential.Active && !merged[duplicateIndex].Active)
+            else if (!interactiveAuthoritative && credential.Active && !merged[duplicateIndex].Active)
             {
                 merged[duplicateIndex] = credential;
             }
-            else if (credential.Active && !string.IsNullOrWhiteSpace(credential.Plan))
+            else if ((credential.Active || (interactiveAuthoritative && string.IsNullOrWhiteSpace(merged[duplicateIndex].Plan)))
+                     && !string.IsNullOrWhiteSpace(credential.Plan))
             {
                 merged[duplicateIndex] = merged[duplicateIndex] with { Plan = credential.Plan };
             }

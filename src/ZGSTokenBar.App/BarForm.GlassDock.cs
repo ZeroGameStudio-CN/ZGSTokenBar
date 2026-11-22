@@ -12,6 +12,9 @@ internal sealed partial class BarForm
     private readonly Dictionary<string, bool?> _usageProviderActivity = new(StringComparer.Ordinal);
     private HashSet<string> _codexDockVisibleTiers = CodexDockTierFilter.All.ToHashSet(StringComparer.Ordinal);
     private readonly GlassDockAccountOrder _glassAccountOrder = new();
+    private readonly GlassDockMotion _glassMotion = new();
+    private readonly Dictionary<string, GlassItem> _glassMotionItems = new(StringComparer.Ordinal);
+    private bool _pendingCollapseLayout;
     private HashSet<ProviderKind> _enabledQuotaProviders = Enum.GetValues<ProviderKind>().ToHashSet();
     private readonly bool _explicitQuotaEnablement;
     private int _glassMaxRings = GlassDockLayout.MaxVisibleRings;
@@ -268,30 +271,71 @@ internal sealed partial class BarForm
 
     private GlassDockPlan CurrentGlassPlan() => CurrentGlassLayout().Plan;
 
+    private int GlassCanvasLogicalWidth(int targetWidth)
+    {
+        if (_renderOnly || !_animationsEnabled || !_glassMotion.HasSnapshot) return targetWidth;
+        if (targetWidth < _glassMotion.CurrentWidth - 0.5f)
+        {
+            _pendingCollapseLayout = true;
+            EnsureAnimationTimer();
+            return Math.Max(targetWidth, (int)Math.Ceiling(_glassMotion.CurrentWidth));
+        }
+
+        return _glassMotion.IsAnimating
+            ? Math.Max(targetWidth, (int)Math.Ceiling(_glassMotion.CurrentWidth))
+            : targetWidth;
+    }
+
+    private static RectangleF ShiftX(Rectangle bounds, float deltaX) =>
+        new(bounds.X + deltaX, bounds.Y, bounds.Width, bounds.Height);
+
     private void DrawGlassDock(Graphics graphics)
     {
         // The dock is a solid dark card in every theme so rings and labels keep full contrast.
         var light = false;
         var (plan, items) = CurrentGlassLayout();
+        var animateDock = !_renderOnly && _animationsEnabled;
+        var motion = _glassMotion.Update(plan, Environment.TickCount64, animateDock);
         _cardBounds.Clear();
         _taskbarWindowBounds.Clear();
         _taskbarPluginBounds.Clear();
         _taskbarCodexAccountBounds.Clear();
         _glassChipBounds = RectangleF.Empty;
         var width = plan.Width;
-        var visuals = new List<GlassDockItemVisual>(items.Count);
-        var itemIndex = 0;
-        for (var index = 0; index < plan.Slots.Count; index++)
+        var deltaX = motion.Width - width;
+
+        var activeByKey = new Dictionary<string, GlassItem>(items.Count, StringComparer.Ordinal);
+        foreach (var item in items)
         {
-            var slot = plan.Slots[index];
-            RectangleF bounds = slot.Bounds;
-            if (slot.Chip)
+            var key = GlassDockMotion.KeyOf(item.Ring);
+            activeByKey[key] = item;
+            _glassMotionItems[key] = item;
+        }
+
+        var motionKeys = new HashSet<string>(motion.Rings.Count, StringComparer.Ordinal);
+        var visuals = new List<GlassDockItemVisual>(items.Count);
+        List<GlassDockItemVisual>? exitingVisuals = null;
+        foreach (var motionRing in motion.Rings)
+        {
+            var key = GlassDockMotion.KeyOf(motionRing.Ring);
+            motionKeys.Add(key);
+            var bounds = new RectangleF(motionRing.X, motionRing.Y, motionRing.Width, motionRing.Height);
+            if (motionRing.Exiting)
             {
-                _glassChipBounds = RectangleF.Inflate(bounds, 2, 6);
+                _glassMotionItems.TryGetValue(key, out var cachedItem);
+                exitingVisuals ??= new List<GlassDockItemVisual>();
+                exitingVisuals.Add(new GlassDockItemVisual(
+                    motionRing.Ring,
+                    cachedItem?.Icon,
+                    cachedItem?.Name ?? motionRing.Ring.AccountLabel,
+                    false,
+                    bounds,
+                    motionRing.Alpha,
+                    true));
                 continue;
             }
-            if (itemIndex >= items.Count) continue;
-            var item = items[itemIndex++];
+
+            if (!activeByKey.TryGetValue(key, out var item)) continue;
             var hovered = false;
             if (item.Card is { } card && item.Window is { } window)
             {
@@ -305,16 +349,36 @@ internal sealed partial class BarForm
                 _taskbarPluginBounds.Add((bounds, plugin));
                 hovered = string.Equals(_hoverPluginTarget?.Card.PluginId, plugin.PluginId, StringComparison.Ordinal);
             }
-            visuals.Add(new GlassDockItemVisual(item.Ring, item.Icon, item.Name, hovered));
+            visuals.Add(new GlassDockItemVisual(
+                motionRing.Ring,
+                item.Icon,
+                item.Name,
+                hovered,
+                animateDock ? bounds : null,
+                motionRing.Alpha,
+                false));
+        }
+
+        if (_glassMotionItems.Count > motionKeys.Count)
+        {
+            foreach (var staleKey in _glassMotionItems.Keys.Where(key => !motionKeys.Contains(key)).ToArray())
+            {
+                _glassMotionItems.Remove(staleKey);
+            }
+        }
+
+        if (motion.ChipBounds is { } chipBounds)
+        {
+            _glassChipBounds = RectangleF.Inflate(chipBounds, 2, 6);
         }
 
         var router = _pluginMiniCards.FirstOrDefault(card => card.PluginId == MiniAreaIds.Router);
         var intake = _pluginMiniCards.FirstOrDefault(card => card.PluginId == MiniAreaIds.Intake);
-        if (router is not null) _taskbarPluginBounds.Add((plan.RouterBounds, router));
-        if (intake is not null) _taskbarPluginBounds.Add((plan.IntakeBounds, intake));
-        var bars = GlassDockLayout.BarsBoundsFor(width);
+        if (router is not null) _taskbarPluginBounds.Add((ShiftX(plan.RouterBounds, deltaX), router));
+        if (intake is not null) _taskbarPluginBounds.Add((ShiftX(plan.IntakeBounds, deltaX), intake));
+        var bars = ShiftX(GlassDockLayout.BarsBoundsFor(width), deltaX);
         _systemUsageBounds = _showSystemMetrics ? RectangleF.Inflate(bars, 4, 3) : RectangleF.Empty;
-        var rate = GlassDockLayout.RateBoundsFor(width);
+        var rate = ShiftX(GlassDockLayout.RateBoundsFor(width), deltaX);
         _liveMetricsBounds = RectangleF.Inflate(rate, 3, 3);
         var scene = new GlassDockScene(
             light,
@@ -339,11 +403,16 @@ internal sealed partial class BarForm
             IntakeHovered = intake is not null && _hoverPluginTarget?.Card.PluginId == MiniAreaIds.Intake,
             IntakeProcessingCount = DisplayedIntakeProcessingCount,
             IntakeServiceConfigured = _intakeServiceConfigured,
+            AnimatedWidth = animateDock ? motion.Width : null,
+            AnimatedChipBounds = animateDock ? motion.ChipBounds : null,
+            ChipAlpha = animateDock ? motion.ChipAlpha : 1f,
+            ExitingItems = exitingVisuals,
         };
         _glassFailedThisPaint.Clear();
         GlassDockPainter.Draw(graphics, scene, _badgeFont);
         // A ring that painted cleanly this time rejoins (its earlier fault is forgotten).
         _taskbarRenderFailureAreaIds.RemoveWhere(id => id != "bar" && !_glassFailedThisPaint.Contains(id));
+        if (motion.Animating) EnsureAnimationTimer();
         QueueHoverRecovery();
     }
 
@@ -371,8 +440,21 @@ internal sealed partial class BarForm
         _glassExpanded = expanded;
         using var total = PerfTrace.Measure(expanded ? "glass.expand" : "glass.collapse");
         using (PerfTrace.Measure("glass.expand.hide-popovers")) HidePopovers();
-        using (PerfTrace.Measure("glass.expand.layout")) ApplySnapshotLayout();
-        Invalidate();
+        var targetWidth = CurrentGlassPlan().Width;
+        if (!_renderOnly && _animationsEnabled && _glassMotion.HasSnapshot
+            && targetWidth < _glassMotion.CurrentWidth - 0.5f)
+        {
+            _pendingCollapseLayout = true;
+            Invalidate();
+            EnsureAnimationTimer();
+        }
+        else
+        {
+            _pendingCollapseLayout = false;
+            using (PerfTrace.Measure("glass.expand.layout")) ApplySnapshotLayout();
+            Invalidate();
+            if (!_renderOnly && _animationsEnabled) EnsureAnimationTimer();
+        }
         if (notify) GlassExpandedChanged?.Invoke(this, expanded);
         if (PerfTrace.Enabled) BeginInvoke(() => PerfTrace.Note("glass.expand.first-frame-posted"));
     }
