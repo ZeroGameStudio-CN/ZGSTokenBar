@@ -35,6 +35,7 @@ internal sealed partial class BarForm
     private nint _taskbarRowOverlayFor;
     private Func<TaskbarPlacement.PlacementTrack, bool> _reservedTaskbarRowProbe = static track =>
         TaskbarPlacement.HasReservedRow(track, Screen.FromHandle(track.TaskbarWindow).WorkingArea);
+    private Func<nint> _primaryTaskbarProbe = TaskbarEmbedding.FindPrimaryTaskbar;
     private (long Style, long ExStyle)? _embedOriginalStyle;
     private bool _embedHandleLost;
     private bool _embedClosing;
@@ -51,8 +52,8 @@ internal sealed partial class BarForm
         return TaskbarEmbedStatus switch
         {
             "hidden:fullscreen" or "fallback:no-clear-space" or "fallback:secondary-monitor" or "fallback:unreserved-row" => null,
-            "embedded" => NativeTaskbarParentVerified && TaskbarEmbedding.IsVisible(Handle),
-            "overlay:remote-session" or "overlay:embed-unavailable" => IsHandleCreated && TaskbarEmbedding.IsVisible(Handle),
+            "embedded" or "embedded:crowded" => NativeTaskbarParentVerified && TaskbarEmbedding.IsVisible(Handle),
+            "overlay:remote-session" or "overlay:embed-unavailable" or "overlay:crowded" => IsHandleCreated && TaskbarEmbedding.IsVisible(Handle),
             _ => false,
         };
     }
@@ -333,7 +334,7 @@ internal sealed partial class BarForm
             TaskbarEmbedStatus = "fallback:remote-session";
             return;
         }
-        var tray = TaskbarEmbedding.FindPrimaryTaskbar();
+        var tray = _primaryTaskbarProbe();
         var onPrimary = tray != 0 && tray == track.TaskbarWindow && track.Primary;
         if (_embedParent != 0)
         {

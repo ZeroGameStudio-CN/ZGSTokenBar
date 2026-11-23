@@ -32,7 +32,11 @@ internal sealed partial class BarForm
         {
             _adjacentTaskbarTrack = null;
             _taskbarRowOverlayFor = 0;
-            if (_taskbarFitRingCap is not null) _taskbarFitRingCap = null;
+            if (_taskbarFitRingCap is not null || _taskbarUltraCompact)
+            {
+                _taskbarFitRingCap = null;
+                _taskbarUltraCompact = false;
+            }
             if (_embedParent != 0) DetachFromTaskbar("undocked");
             if (_watchedTaskbar != 0) ResetTaskbarRowProbe();
         }
@@ -110,6 +114,7 @@ internal sealed partial class BarForm
             var wasInRow = wasEmbedded || _taskbarRowOverlayFor != 0;
             var remote = _embedRequested && RemoteSession();
             if (remote && wasEmbedded) DetachFromTaskbar("remote-session");
+            var wasCrowded = TaskbarEmbedStatus is "embedded:crowded" or "overlay:crowded";
             TryAdaptTaskbarWidthForRow(track, ref placementSize);
             var rowCandidate = TryGetSafeRowLocation(track, placementSize, anchor, oldBounds, remote, out var location, out var reason);
             var rowOverlay = rowCandidate && remote;
@@ -126,7 +131,30 @@ internal sealed partial class BarForm
                     rowOverlay = rowCandidate;
                 }
             }
-            if (!rowCandidate && _embedRequested && (reason is "layout-unavailable" or "waiting-for-space"))
+            var crowdedInRow = false;
+            if (_embedRequested && !rowCandidate
+                && (reason == "no-clear-space" || wasCrowded && wasInRow && reason == "layout-unavailable")
+                && track.Primary && track.Horizontal && !track.TrayBounds.IsEmpty
+                && track.ScreenBounds.Contains(track.TaskbarBounds))
+            {
+                if (TryAdaptTaskbarRingCap(0)) placementSize = Size;
+                if (TaskbarPlacement.TryGetCrowdedRowLocation(
+                        track, placementSize, wasInRow ? oldBounds.Location : anchor, out location))
+                {
+                    if (!remote && !HasNativeTaskbarParent(track.TaskbarWindow))
+                        using (PerfTrace.Measure("placement.embed")) EnsureTaskbarEmbedding(track);
+                    if (EmbeddedInTaskbar)
+                    {
+                        crowdedInRow = true;
+                    }
+                    else if (_reservedTaskbarRowProbe(track))
+                    {
+                        crowdedInRow = true;
+                        rowOverlay = true;
+                    }
+                }
+            }
+            if (!rowCandidate && !crowdedInRow && _embedRequested && (reason is "layout-unavailable" or "waiting-for-space"))
             {
                 // A transient recheck is not a request to switch to a desktop overlay.
                 // Keep any existing native parent; a fresh verified fit restores in the row.
@@ -135,11 +163,11 @@ internal sealed partial class BarForm
                 return;
             }
             _taskbarFullscreenSuspended = false;
-            if (!rowCandidate)
+            if (!rowCandidate && !crowdedInRow)
             {
                 if (EmbeddedInTaskbar) DetachFromTaskbar(reason);
                 if (_embedRequested && !string.IsNullOrEmpty(reason)) TaskbarEmbedStatus = "fallback:" + reason;
-                if (reason == "no-clear-space" && TryAdaptTaskbarRingCap(null))
+                if (TryAdaptTaskbarRingCap(null))
                 {
                     placementSize = Size;
                 }
@@ -169,6 +197,7 @@ internal sealed partial class BarForm
                     // child on the old coordinates, or show an overlay in the icon row.
                     if (EmbeddedInTaskbar) DetachFromTaskbar("placement-failed");
                     else if (rowOverlay) TaskbarEmbedStatus = "fallback:placement-failed";
+                    if (TryAdaptTaskbarRingCap(null)) placementSize = Size;
                     if (!TaskbarPlacement.TryGetAdjacentLocation(track, placementSize, adjacentAnchor, out location)
                         || !TaskbarPlacement.ShowAt(Handle, location, placementSize))
                     {
@@ -176,15 +205,18 @@ internal sealed partial class BarForm
                         return;
                     }
                     inRow = false;
+                    crowdedInRow = false;
                 }
             }
             // Showing before moving can leave a one-frame overlap while Explorer lays out its icons.
             if (!wasVisible) Show();
-            if (EmbeddedInTaskbar) TaskbarEmbedStatus = "embedded";
+            if (EmbeddedInTaskbar) TaskbarEmbedStatus = crowdedInRow ? "embedded:crowded" : "embedded";
             if (inRow && rowOverlay)
             {
                 _taskbarRowOverlayFor = track.TaskbarWindow;
-                TaskbarEmbedStatus = remote ? "overlay:remote-session" : "overlay:embed-unavailable";
+                TaskbarEmbedStatus = crowdedInRow
+                    ? "overlay:crowded"
+                    : remote ? "overlay:remote-session" : "overlay:embed-unavailable";
             }
             _adjacentTaskbarTrack = inRow ? null : track;
             _adjacentTaskbarAnchor = anchor;
@@ -496,6 +528,7 @@ internal sealed partial class BarForm
             _adjacentTaskbarTrack = null;
             _taskbarRowOverlayFor = 0;
             _taskbarFitRingCap = null;
+            _taskbarUltraCompact = false;
             ApplySnapshotLayout(updatePlacement: false);
             MoveToFloatingPosition(topology, activation.Profile);
             if (!Visible && !_hiddenToTray) Show();

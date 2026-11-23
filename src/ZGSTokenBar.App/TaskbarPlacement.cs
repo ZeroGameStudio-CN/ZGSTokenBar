@@ -133,6 +133,29 @@ internal static class TaskbarPlacement
         }
     }
 
+    /// <summary>
+    /// Computes an in-row horizontal position when the taskbar has no clear gap, keeping the
+    /// bar vertically centered inside the taskbar row and to the left of the system tray.
+    /// </summary>
+    internal static bool TryGetCrowdedRowLocation(
+        PlacementTrack track, Size size, Point anchor, out Point location)
+    {
+        location = Point.Empty;
+        if (!track.Horizontal || track.TrayBounds.IsEmpty || size.Width <= 0 || size.Height <= 0)
+            return false;
+        var row = Rectangle.Intersect(track.TaskbarBounds, track.ScreenBounds);
+        if (row.Width < size.Width + 2 * Gap || row.Height < size.Height) return false;
+
+        var minX = row.Left + Gap;
+        var beforeTrayMaxX = track.TrayBounds.Left - Gap - size.Width;
+        var maxX = beforeTrayMaxX >= minX ? beforeTrayMaxX : row.Right - Gap - size.Width;
+        if (maxX < minX) return false;
+
+        var x = Math.Clamp(anchor.X, minX, maxX);
+        location = new Point(x, row.Top + (row.Height - size.Height) / 2);
+        return true;
+    }
+
     internal static int LargestGapWidth(
         PlacementTrack track, IReadOnlyList<Rectangle>? occupied, int extraClearance = 0)
     {
