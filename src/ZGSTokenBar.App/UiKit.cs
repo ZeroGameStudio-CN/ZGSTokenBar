@@ -216,19 +216,18 @@ internal static class UiPaint
     }
 
     /// <summary>
-    /// Expected-usage marker on a progress rail: a small pale-amber diamond with a dark core at
-    /// <paramref name="fraction"/> of the width (where the fill would end if used evenly).
+    /// Expected-usage marker on a progress rail: a high-contrast vertical needle with a dark
+    /// capsule outline extending above and below the rail at <paramref name="fraction"/> of the width.
     /// </summary>
     internal static void PaceMarker(Graphics g, RectangleF rail, double fraction)
     {
         var x = rail.X + rail.Width * (float)Math.Clamp(fraction, 0, 1);
-        var y = rail.Y + rail.Height / 2;
-        var half = rail.Height / 2 + .75f;
-        var core = half * .4f;
-        using var brush = new SolidBrush(UiPalette.Amber200);
-        using var coreBrush = new SolidBrush(UiPalette.Slate800);
-        g.FillPolygon(brush, [new PointF(x, y - half), new PointF(x + half, y), new PointF(x, y + half), new PointF(x - half, y)]);
-        g.FillPolygon(coreBrush, [new PointF(x, y - core), new PointF(x + core, y), new PointF(x, y + core), new PointF(x - core, y)]);
+        var top = rail.Y - 2.5f;
+        var bottom = rail.Bottom + 2.5f;
+        using (var outline = new Pen(Color.FromArgb(245, 8, 10, 16), 3.6f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+            g.DrawLine(outline, x, top, x, bottom);
+        using var needle = new Pen(UiPalette.Amber200, 1.7f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        g.DrawLine(needle, x, top + .25f, x, bottom - .25f);
     }
 
     /// <summary>Fills a rounded rectangle (a plain rectangle when the radius collapses).</summary>
