@@ -7,7 +7,7 @@ internal static unsafe class TaskbarRowOccupancy
 {
     private static readonly Guid AutomationClass = new("e22ad333-b25f-460c-83d0-0581107395c9");
     private static readonly Guid Automation2Interface = new("34723aff-0c9d-49d0-9896-7ab52df8cd8a");
-    private const uint TimeoutMs = 350;
+    private const uint TimeoutMs = 600;
     private const int MaximumNodes = 1024;
     private const int MaximumDepth = 16;
     private static readonly int[] CachedProperties =

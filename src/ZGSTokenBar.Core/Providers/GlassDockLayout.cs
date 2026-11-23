@@ -69,21 +69,21 @@ public static class GlassDockLayout
     public const int Height = 44;
     public const int Corner = 18;
     public const int MaxVisibleRings = 4;
-    public const int RingSize = 34;
-    public const int ItemWidth = 36;
+    public const int RingSize = 32;
+    public const int ItemWidth = 32;
     // Room for the corner % chip of a neighbour showing 100% plus its index badge.
-    public const int RingGap = 6;
-    public const int PadLeft = 6;
-    public const int PadRight = 10;
-    public const int ChipWidth = 24;
-    public const int ChipGap = 4;
-    public const int DividerGap = 13;
-    public const int MonitorSize = 26;
-    public const int ModuleGap = 7;
-    public const int MetricsWidth = 54;
+    public const int RingGap = 4;
+    public const int PadLeft = 5;
+    public const int PadRight = 7;
+    public const int ChipWidth = 22;
+    public const int ChipGap = 3;
+    public const int DividerGap = 9;
+    public const int MonitorSize = 22;
+    public const int ModuleGap = 4;
+    public const int MetricsWidth = 28;
     public const int MetricsRows = 4;
     /// <summary>Narrow column: the widest rate ("88.8K") with "tok/s" under it.</summary>
-    public const int RateWidth = 36;
+    public const int RateWidth = 32;
     private const int MetricsClusterWidth = MetricsWidth + ModuleGap + RateWidth;
     public const int SystemWidth = MonitorSize + ModuleGap + MetricsClusterWidth;
     public const int FlyoutWidth = 316;
@@ -190,6 +190,45 @@ public static class GlassDockLayout
             WidthFor(visible.Length, hidden.Length > 0),
             Height,
             Slots(visible.Length, hidden.Length > 0)), showIntake, showRouter);
+    }
+
+    /// <summary>
+    /// Plans the dock capped at <paramref name="ringCap"/> visible rings; when <c>0</c>, every ring
+    /// folds into the overflow chip while keeping attention indicators and right-side monitors.
+    /// </summary>
+    public static GlassDockPlan PlanWithRingCap(IReadOnlyList<GlassDockRing> rings, int ringCap,
+        bool showIntake = false, bool showRouter = true)
+    {
+        if (ringCap > 0) return Plan(rings, ringCap, showIntake, showRouter);
+        var ordered = Order(rings);
+        var urgent = ordered.Any(ring => ring.Warn || ring.RemainingPercent is < 20);
+        var overflow = ordered.Length > 0;
+        return WithMonitors(new GlassDockPlan(
+            [],
+            ordered.Length,
+            urgent,
+            WidthFor(0, overflow),
+            Height,
+            Slots(0, overflow)), showIntake, showRouter);
+    }
+
+    /// <summary>
+    /// Finds a reduced visible-ring cap (down to 0) when the unconstrained plan exceeds
+    /// <paramref name="maxLogicalWidth"/>. Returns null if no cap is needed, or -1 if even 0 rings
+    /// cannot fit.
+    /// </summary>
+    public static int? FitRingCap(IReadOnlyList<GlassDockRing> rings, int maxVisible, int maxLogicalWidth,
+        bool showIntake = false, bool showRouter = true)
+    {
+        var unconstrained = Plan(rings, maxVisible, showIntake, showRouter);
+        if (unconstrained.Width <= maxLogicalWidth) return null;
+        var start = Math.Min(unconstrained.Visible.Count, VisibleCapacity(maxVisible)) - 1;
+        for (var cap = start; cap >= 0; cap--)
+        {
+            if (PlanWithRingCap(rings, cap, showIntake, showRouter).Width <= maxLogicalWidth)
+                return cap;
+        }
+        return -1;
     }
 
     /// <summary>

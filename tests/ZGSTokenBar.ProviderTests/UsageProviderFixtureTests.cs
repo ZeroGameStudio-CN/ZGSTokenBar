@@ -456,6 +456,23 @@ public static class UsageProviderFixtureTests
         Check(expanded.Slots.Take(lead).Select(slot => slot.Bounds).SequenceEqual(collapsedFour.Slots.Take(lead).Select(slot => slot.Bounds))
             && expanded.Slots[^1].Bounds.Left > expanded.Slots[^2].Bounds.Right,
             "expanding keeps the collapsed rings in place and moves the collapse chip to the far right");
+        var zeroCapped = GlassDockLayout.PlanWithRingCap(many, 0, showIntake: true, showRouter: true);
+        Check(zeroCapped.Visible.Count == 0 && zeroCapped.OverflowCount == 12 && !zeroCapped.OverflowUrgent && zeroCapped.Width == 162,
+            "zero ring cap folds every ring into the overflow chip while keeping monitors");
+        var urgentZero = GlassDockLayout.PlanWithRingCap(many.Select((ring, i) => i == 11 ? ring with { RemainingPercent = 5 } : ring).ToArray(), 0, showIntake: true, showRouter: true);
+        Check(urgentZero.OverflowUrgent && GlassDockLayout.PlanWithRingCap([], 0, showIntake: true, showRouter: true) is { Visible.Count: 0, OverflowCount: 0, Slots.Count: 0 },
+            "zero ring cap keeps urgency for hidden low-quota rings and leaves empty input chipless");
+        var four = many.Take(4).ToArray();
+        Check(GlassDockLayout.FitRingCap(four, 4, 277, showIntake: true, showRouter: true) is null, "fitting returns null when unconstrained width fits");
+        Check(GlassDockLayout.FitRingCap(four, 4, 276, showIntake: true, showRouter: true) == 3, "tight gap reduces 4 unchipped rings (277) to 3 chipped (266)");
+        Check(GlassDockLayout.FitRingCap(four, 4, 230, showIntake: true, showRouter: true) == 2
+            && GlassDockLayout.FitRingCap(four, 4, 200, showIntake: true, showRouter: true) == 1
+            && GlassDockLayout.FitRingCap(four, 4, 162, showIntake: true, showRouter: true) == 0
+            && GlassDockLayout.FitRingCap(four, 4, 161, showIntake: true, showRouter: true) == -1,
+            "ring cap steps cleanly down through 2, 1, 0 and reports -1 below minimum width");
+        var three = many.Take(3).ToArray();
+        Check(GlassDockLayout.FitRingCap(three, 4, 240, showIntake: true, showRouter: true) == 2,
+            "fitting considers overflow chip width when stepping 3 unchipped rings (241) down to 2 chipped (230)");
         Check(GlassDockLayout.RingSweep(4) >= 22f && GlassDockLayout.RingSweep(0) == 0f && GlassDockLayout.RingSweep(null) == 0f && GlassDockLayout.PercentText(4.4) == "4%", "small remaining stays legible");
         Check(GlassDockLayout.RingStart(100) == -90f && Math.Abs(GlassDockLayout.RingStart(50) - 90f) < .01f && Math.Abs(GlassDockLayout.RingStart(75)) < .01f, "remaining starts after clockwise use from 12 o'clock");
         Check(GlassDockLayout.Band(19) == "red" && GlassDockLayout.Band(20) == "amber" && GlassDockLayout.Band(50) == "amber" && GlassDockLayout.Band(51) == "green", "quota bands");

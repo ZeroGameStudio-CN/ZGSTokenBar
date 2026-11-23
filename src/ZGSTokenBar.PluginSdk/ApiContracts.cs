@@ -100,6 +100,8 @@ public sealed record WindowInspection(
     public bool? NativeVisible { get; init; }
     public bool EmbeddedInTaskbar { get; init; }
     public string? TaskbarEmbedStatus { get; init; }
+    public string? TaskbarLastEmbedFailure { get; init; }
+    public int? TaskbarFitRingCap { get; init; }
     public string? TaskbarLastDetachReason { get; init; }
     public DateTimeOffset? TaskbarLastDetachAt { get; init; }
     public string? TaskbarLastDetachDetail { get; init; }

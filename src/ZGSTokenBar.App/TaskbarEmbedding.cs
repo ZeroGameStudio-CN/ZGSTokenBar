@@ -53,16 +53,39 @@ internal static class TaskbarEmbedding
 
     internal static bool IsDescendant(nint parent, nint window) => IsChildWindow(parent, window);
 
-    internal static bool SameDpiAwareness(nint first, nint second)
+    internal static bool SameDpiAwareness(nint first, nint second) =>
+        SameDpiAwareness(first, second, out _);
+
+    internal static bool SameDpiAwareness(nint first, nint second, out string detail)
     {
+        detail = "unavailable";
         try
         {
             var a = GetWindowDpiAwarenessContext(first);
             var b = GetWindowDpiAwarenessContext(second);
-            return a != 0 && b != 0 && AreDpiAwarenessContextsEqual(a, b);
+            if (a == 0 || b == 0)
+            {
+                detail = $"{(long)a}:{(long)b}";
+                return false;
+            }
+            if (AreDpiAwarenessContextsEqual(a, b))
+            {
+                detail = "";
+                return true;
+            }
+            var awarenessA = GetAwarenessFromDpiAwarenessContext(a);
+            var awarenessB = GetAwarenessFromDpiAwarenessContext(b);
+            if (awarenessA >= 0 && awarenessA == awarenessB)
+            {
+                detail = "";
+                return true;
+            }
+            detail = $"{awarenessA}!={awarenessB}";
+            return false;
         }
         catch (EntryPointNotFoundException)
         {
+            detail = "entry-point-missing";
             return false;
         }
     }
@@ -78,11 +101,11 @@ internal static class TaskbarEmbedding
         if (!IsAlive(child)) { failure = "bar-window-missing"; return null; }
         if (!IsAlive(parent)) { failure = "taskbar-missing"; return null; }
         if (!IsResponsive(parent)) { failure = "taskbar-unresponsive"; return null; }
-        if (!SameDpiAwareness(child, parent)) { failure = "dpi-awareness-mismatch"; return null; }
+        if (!SameDpiAwareness(child, parent, out var dpiDetail)) { failure = "dpi-awareness-mismatch:" + dpiDetail; return null; }
         var style = GetWindowLongPtr(child, GwlStyle).ToInt64();
         var exStyle = GetWindowLongPtr(child, GwlExStyle).ToInt64();
         SetWindowLongPtr(child, GwlStyle, (nint)((style | WsChild) & ~WsPopup));
-        SetWindowLongPtr(child, GwlExStyle, (nint)(exStyle | WsExNoParentNotify));
+        SetWindowLongPtr(child, GwlExStyle, (nint)((exStyle & ~WsExTopmost) | WsExNoParentNotify));
         _ = SetParent(child, parent);
         var error = Marshal.GetLastWin32Error();
         if (ParentOf(child) != parent)
@@ -195,6 +218,9 @@ internal static class TaskbarEmbedding
 
     [DllImport("user32.dll")]
     private static extern nint GetWindowDpiAwarenessContext(nint window);
+
+    [DllImport("user32.dll")]
+    private static extern int GetAwarenessFromDpiAwarenessContext(nint context);
 
     [DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(nint window);

@@ -11,8 +11,9 @@ internal sealed partial class BarForm
     private const int LayoutPollMs = TaskbarRowStability.ReturnDelayMs;
     private const int LayoutUnavailablePollMs = 4000;
     private const int LayoutMaximumAgeMs = 3500;
-    // Roughly half a standard app button; a centered group grows toward both sides.
-    private const int RowBreathingRoom = 24;
+    private const int EmbedMaxFailuresBeforeIncompatible = 3;
+    // Small cushion against centered app-icon shifts without ejecting tight seats prematurely.
+    private const int RowBreathingRoom = 8;
     private static readonly TimeSpan EmbedRetryAfterFailure = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan EmbedRetryAfterHang = TimeSpan.FromMinutes(2);
     private readonly System.Windows.Forms.Timer _embedWatchdog = new() { Interval = 1000 };
@@ -29,6 +30,8 @@ internal sealed partial class BarForm
     private bool _embedTransition;
     private nint _embedParent;
     private nint _embedIncompatibleTaskbar;
+    private nint _embedFailedTray;
+    private int _embedFailureCount;
     private nint _taskbarRowOverlayFor;
     private Func<TaskbarPlacement.PlacementTrack, bool> _reservedTaskbarRowProbe = static track =>
         TaskbarPlacement.HasReservedRow(track, Screen.FromHandle(track.TaskbarWindow).WorkingArea);
@@ -60,6 +63,7 @@ internal sealed partial class BarForm
 
     /// <summary>Last embed outcome, for logs and acceptance checks.</summary>
     internal string TaskbarEmbedStatus { get; private set; } = "off";
+    internal string? TaskbarLastEmbedFailure { get; private set; }
     internal string? TaskbarLastDetachReason { get; private set; }
     internal DateTimeOffset? TaskbarLastDetachAt { get; private set; }
     internal string? TaskbarLastDetachDetail { get; private set; }
@@ -93,7 +97,7 @@ internal sealed partial class BarForm
                 _embedWatchdogWired = true;
             }
             _embedRetryAfter = DateTime.MinValue;
-            _embedIncompatibleTaskbar = 0;
+            ResetEmbedCompatibility();
             _embedWatchdog.Start();
             TaskbarEmbedStatus = "pending";
             if (_taskbarDocked) SyncTaskbarPlacement();
@@ -185,6 +189,27 @@ internal sealed partial class BarForm
         return false;
     }
 
+    private void TryAdaptTaskbarWidthForRow(TaskbarPlacement.PlacementTrack track, ref Size placementSize)
+    {
+        if (!_embedRequested || !_taskbarDocked || _glassExpanded || _taskbarDragging
+            || !track.Primary || !track.Horizontal || track.TrayBounds.IsEmpty
+            || !track.ScreenBounds.Contains(track.TaskbarBounds))
+        {
+            return;
+        }
+        var key = (track.TaskbarWindow, track.TaskbarBounds, track.TrayBounds);
+        if (_taskbarRowKey != key || _taskbarRowStability.AwaitingLayout) return;
+        var observed = _taskbarRowSample;
+        if (observed.Occupied is not { } occupied || Environment.TickCount64 - observed.ReadAt >= LayoutMaximumAgeMs)
+            return;
+
+        var maxPhysicalGap = TaskbarPlacement.LargestGapWidth(track, occupied, extraClearance: 0);
+        var maxLogicalGap = (int)Math.Floor(maxPhysicalGap / Math.Max(1f, _scale));
+        if (!TryAdaptTaskbarRingCap(maxLogicalGap)) return;
+        placementSize = Size;
+        if (Visible && GlassLayered) _glassFrameSize = Size.Empty;
+    }
+
     private void StartTaskbarRowProbe((nint Window, Rectangle Row, Rectangle Tray) key)
     {
         _taskbarRowProbePending = true;
@@ -246,7 +271,8 @@ internal sealed partial class BarForm
         // An in-flight result from before the event cannot validate the new geometry.
         var now = Environment.TickCount64;
         _taskbarRowStability.OnLayoutChanged(now);
-        _taskbarRowProbeAfter = now + ShellSettleIntervalMs;
+        var debounceUntil = now + ShellSettleIntervalMs;
+        if (_taskbarRowProbeAfter <= now) _taskbarRowProbeAfter = debounceUntil;
         if (Interlocked.Exchange(ref _taskbarSyncQueued, 1) != 0) return;
         try
         {
@@ -338,22 +364,53 @@ internal sealed partial class BarForm
         finally { _embedTransition = false; }
         if (original is null)
         {
-            TaskbarEmbedStatus = "fallback:" + failure;
-            _embedRetryAfter = DateTime.UtcNow + EmbedRetryAfterFailure;
-            // Keep a usable row overlay steady when this pair of native windows cannot attach.
-            // Display, session and Shell recreation events allow a new attempt.
-            if (failure == "dpi-awareness-mismatch" || failure.StartsWith("setparent-failed:", StringComparison.Ordinal))
-                _embedIncompatibleTaskbar = tray;
-            System.Diagnostics.Trace.WriteLine("ZGSTokenBar: taskbar embed fallback: " + failure);
+            HandleEmbedAttachFailure(tray, failure);
             return;
         }
         _embedHungTicks = 0;
+        ResetEmbedCompatibility();
+        TaskbarLastEmbedFailure = null;
         TaskbarEmbedStatus = "embedded";
         TaskbarPlacement.InvalidateCache();
         RepushLayeredFrame();
         // Popovers already shown with the bar as owner keep that owner; drop them so the next
         // hover recreates them owner-less.
         HidePopovers();
+    }
+
+    private void HandleEmbedAttachFailure(nint tray, string failure)
+    {
+        TaskbarEmbedStatus = "fallback:" + failure;
+        TaskbarLastEmbedFailure = failure;
+        if (_embedFailedTray != tray)
+        {
+            _embedFailedTray = tray;
+            _embedFailureCount = 0;
+        }
+        // Keep a usable row overlay steady when this pair of native windows cannot attach.
+        // Display, session and Shell recreation events allow a new attempt.
+        if (failure.StartsWith("dpi-awareness-mismatch", StringComparison.Ordinal))
+        {
+            _embedIncompatibleTaskbar = tray;
+            _embedRetryAfter = DateTime.UtcNow + EmbedRetryAfterFailure;
+        }
+        else if (failure.StartsWith("setparent-failed:", StringComparison.Ordinal))
+        {
+            _embedFailureCount++;
+            _embedRetryAfter = DateTime.UtcNow + (_embedFailureCount switch
+            {
+                1 => TimeSpan.FromSeconds(5),
+                2 => TimeSpan.FromSeconds(15),
+                _ => EmbedRetryAfterFailure,
+            });
+            if (_embedFailureCount >= EmbedMaxFailuresBeforeIncompatible)
+                _embedIncompatibleTaskbar = tray;
+        }
+        else
+        {
+            _embedRetryAfter = DateTime.UtcNow + EmbedRetryAfterFailure;
+        }
+        System.Diagnostics.Trace.WriteLine("ZGSTokenBar: taskbar embed fallback: " + failure);
     }
 
     private void DetachFromTaskbar(string reason)
@@ -448,11 +505,18 @@ internal sealed partial class BarForm
     /// </summary>
     private bool RemoteSession() => !_renderOnly && SystemInformation.TerminalServerSession;
 
+    private void ResetEmbedCompatibility()
+    {
+        _embedIncompatibleTaskbar = 0;
+        _embedFailureCount = 0;
+        _embedFailedTray = 0;
+    }
+
     private void OnTaskbarRecreated()
     {
         TaskbarPlacement.InvalidateCache();
         ResetTaskbarRowProbe();
-        _embedIncompatibleTaskbar = 0;
+        ResetEmbedCompatibility();
         _embedRetryAfter = DateTime.UtcNow + TimeSpan.FromSeconds(1);
         if (EmbeddedInTaskbar || _taskbarRowOverlayFor != 0 || _embedHandleLost) RequestTopologyRefresh(false);
     }

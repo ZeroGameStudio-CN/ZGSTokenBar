@@ -252,6 +252,8 @@ internal sealed partial class QuotaApplicationContext
                 NativeVisible = _bar.IsHandleCreated && TaskbarEmbedding.IsVisible(_bar.Handle),
                 EmbeddedInTaskbar = _bar.NativeTaskbarParentVerified,
                 TaskbarEmbedStatus = _bar.TaskbarEmbedStatus,
+                TaskbarLastEmbedFailure = _bar.TaskbarLastEmbedFailure,
+                TaskbarFitRingCap = _bar.TaskbarFitRingCap,
                 TaskbarLastDetachReason = _bar.TaskbarLastDetachReason,
                 TaskbarLastDetachAt = _bar.TaskbarLastDetachAt,
                 TaskbarLastDetachDetail = _bar.TaskbarLastDetachDetail,

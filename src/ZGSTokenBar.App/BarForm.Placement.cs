@@ -32,6 +32,7 @@ internal sealed partial class BarForm
         {
             _adjacentTaskbarTrack = null;
             _taskbarRowOverlayFor = 0;
+            if (_taskbarFitRingCap is not null) _taskbarFitRingCap = null;
             if (_embedParent != 0) DetachFromTaskbar("undocked");
             if (_watchedTaskbar != 0) ResetTaskbarRowProbe();
         }
@@ -109,6 +110,7 @@ internal sealed partial class BarForm
             var wasInRow = wasEmbedded || _taskbarRowOverlayFor != 0;
             var remote = _embedRequested && RemoteSession();
             if (remote && wasEmbedded) DetachFromTaskbar("remote-session");
+            TryAdaptTaskbarWidthForRow(track, ref placementSize);
             var rowCandidate = TryGetSafeRowLocation(track, placementSize, anchor, oldBounds, remote, out var location, out var reason);
             var rowOverlay = rowCandidate && remote;
             if (rowCandidate && !remote)
@@ -137,6 +139,10 @@ internal sealed partial class BarForm
             {
                 if (EmbeddedInTaskbar) DetachFromTaskbar(reason);
                 if (_embedRequested && !string.IsNullOrEmpty(reason)) TaskbarEmbedStatus = "fallback:" + reason;
+                if (reason == "no-clear-space" && TryAdaptTaskbarRingCap(null))
+                {
+                    placementSize = Size;
+                }
             }
 
             var inRow = rowOverlay || EmbeddedInTaskbar;
@@ -489,6 +495,7 @@ internal sealed partial class BarForm
         {
             _adjacentTaskbarTrack = null;
             _taskbarRowOverlayFor = 0;
+            _taskbarFitRingCap = null;
             ApplySnapshotLayout(updatePlacement: false);
             MoveToFloatingPosition(topology, activation.Profile);
             if (!Visible && !_hiddenToTray) Show();
@@ -811,7 +818,7 @@ internal sealed partial class BarForm
             // Reconnecting with the same resolution need not send WM_DISPLAYCHANGE. Rebuild
             // session-scoped placement and the layered frame even when the monitor names match.
             _embedRetryAfter = DateTime.MinValue;
-            _embedIncompatibleTaskbar = 0;
+            ResetEmbedCompatibility();
             _taskbarRowOverlayFor = 0;
             if (_taskbarDragging) _topologyChangedDuringDrag = true;
             if (RemoteSession() && _embedParent != 0) DetachFromTaskbar("remote-session");
@@ -822,7 +829,7 @@ internal sealed partial class BarForm
         if (message.Msg == TaskbarCreatedMessage
             || message.Msg is WmSettingChange or WmDisplayChange)
         {
-            if (message.Msg == WmDisplayChange) _embedIncompatibleTaskbar = 0;
+            if (message.Msg == WmDisplayChange) ResetEmbedCompatibility();
             RequestTopologyRefresh(message.Msg == WmDisplayChange);
         }
     }
@@ -863,7 +870,7 @@ internal sealed partial class BarForm
         if (!_taskbarDocked || _renderDpi is not null || dpi < 96
             || _dockedRenderDpi == dpi && Math.Abs(_scale - dpi / 96f) < .001f) return false;
         _dockedRenderDpi = dpi;
-        _embedIncompatibleTaskbar = 0;
+        ResetEmbedCompatibility();
         HidePopovers();
         if (Visible) Hide();
         if (EmbeddedInTaskbar && !HasNativeTaskbarParent(taskbarWindow)) DetachFromTaskbar("dpi-changed");

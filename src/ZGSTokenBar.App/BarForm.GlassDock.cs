@@ -18,8 +18,10 @@ internal sealed partial class BarForm
     private HashSet<ProviderKind> _enabledQuotaProviders = Enum.GetValues<ProviderKind>().ToHashSet();
     private readonly bool _explicitQuotaEnablement;
     private int _glassMaxRings = GlassDockLayout.MaxVisibleRings;
+    private int? _taskbarFitRingCap;
     private ContextMenuStrip? _glassMenu;
     private bool _glassExpanded;
+    internal int? TaskbarFitRingCap => _taskbarFitRingCap;
     private bool _glassChipHovered;
     private bool _glassRenderQueued;
     private bool _resetLayeredStyle;
@@ -245,7 +247,7 @@ internal sealed partial class BarForm
         return image;
     }
 
-    private (GlassDockPlan Plan, IReadOnlyList<GlassItem> Items) CurrentGlassLayout()
+    private GlassItem[] CurrentGlassItemsOrdered(out GlassDockRing[] rings)
     {
         var items = BuildGlassItems().Where(item => !_hiddenDockItems.Contains(item.Id) && !_hiddenDockItems.Contains(item.Ring.ProviderId)
             && (item.Card is not { Provider: ProviderKind.Codex, IsService: false } account
@@ -257,9 +259,17 @@ internal sealed partial class BarForm
             || IsHandleCreated && ClientRectangle.Contains(PointToClient(Cursor.Position)));
         var order = _glassAccountOrder.Update(items.Select(item => item.Ring).ToArray(), Environment.TickCount64, interacting);
         items = items.Select(item => item with { Ring = item.Ring with { AccountOrder = order[item.Ring.StableId] } }).ToArray();
-        var rings = items.Select(item => item.Ring).ToArray();
+        rings = items.Select(item => item.Ring).ToArray();
+        return items;
+    }
+
+    private (GlassDockPlan Plan, IReadOnlyList<GlassItem> Items) CurrentGlassLayout()
+    {
+        var items = CurrentGlassItemsOrdered(out var rings);
         var showRouter = RouterCard is not null;
-        var plan = GlassDockLayout.Plan(rings, _glassMaxRings, HasIntakeCard, showRouter);
+        var plan = !_glassExpanded && _taskbarDocked && _taskbarFitRingCap is { } fitCap
+            ? GlassDockLayout.PlanWithRingCap(rings, Math.Min(_glassMaxRings, fitCap), HasIntakeCard, showRouter)
+            : GlassDockLayout.Plan(rings, _glassMaxRings, HasIntakeCard, showRouter);
         if (_glassExpanded)
         {
             if (plan.OverflowCount > 0) plan = GlassDockLayout.PlanExpanded(rings, _glassMaxRings, HasIntakeCard, showRouter);
@@ -268,6 +278,63 @@ internal sealed partial class BarForm
         foreach (var item in items) byRing[item.Ring] = item;
         var visible = plan.Visible.Select(ring => byRing[ring]).ToArray();
         return (plan, visible);
+    }
+
+    internal bool TryAdaptTaskbarRingCap(int? maxLogicalWidth, int expandHysteresisLogical = 16)
+    {
+        if (!_taskbarDocked || _glassExpanded || _taskbarDragging) return false;
+        int? nextCap = _taskbarFitRingCap;
+        if (maxLogicalWidth is null)
+        {
+            if (_taskbarFitRingCap is null) return false;
+            nextCap = null;
+        }
+        else
+        {
+            _ = CurrentGlassItemsOrdered(out var rings);
+            var showRouter = RouterCard is not null;
+            var desiredPlan = GlassDockLayout.Plan(rings, _glassMaxRings, HasIntakeCard, showRouter);
+            var currentPlan = _taskbarFitRingCap is { } activeCap
+                ? GlassDockLayout.PlanWithRingCap(rings, Math.Min(_glassMaxRings, activeCap), HasIntakeCard, showRouter)
+                : desiredPlan;
+            if (currentPlan.Width > maxLogicalWidth.Value)
+            {
+                var fitted = GlassDockLayout.FitRingCap(rings, _glassMaxRings, maxLogicalWidth.Value, HasIntakeCard, showRouter);
+                nextCap = fitted is >= 0 ? fitted.Value : null;
+            }
+            else if (_taskbarFitRingCap is { } currentCap)
+            {
+                var expandBudget = maxLogicalWidth.Value - expandHysteresisLogical;
+                if (desiredPlan.Width <= expandBudget)
+                {
+                    nextCap = null;
+                }
+                else
+                {
+                    var ceiling = Math.Min(_glassMaxRings, desiredPlan.Visible.Count) - 1;
+                    for (var cap = ceiling; cap > currentCap; cap--)
+                    {
+                        if (GlassDockLayout.PlanWithRingCap(rings, cap, HasIntakeCard, showRouter).Width <= expandBudget)
+                        {
+                            nextCap = cap;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (nextCap == _taskbarFitRingCap) return false;
+        }
+
+        _taskbarFitRingCap = nextCap;
+        _glassMotion.Reset();
+        _pendingCollapseLayout = false;
+        var savedOverlayFor = _taskbarRowOverlayFor;
+        ApplySnapshotLayout(updatePlacement: false);
+        if (_placingTaskbar && _taskbarRowOverlayFor == 0 && savedOverlayFor != 0)
+        {
+            _taskbarRowOverlayFor = savedOverlayFor;
+        }
+        return true;
     }
 
     private GlassDockPlan CurrentGlassPlan() => CurrentGlassLayout().Plan;

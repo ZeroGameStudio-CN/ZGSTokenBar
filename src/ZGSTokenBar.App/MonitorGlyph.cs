@@ -8,7 +8,7 @@ internal static class MonitorGlyph
 {
     internal static RectangleF Centered(RectangleF bounds)
     {
-        var size = Math.Min(18f, Math.Min(bounds.Width, bounds.Height));
+        var size = Math.Min(17f, Math.Min(bounds.Width, bounds.Height));
         return new(bounds.X + (bounds.Width - size) / 2f, bounds.Y + (bounds.Height - size) / 2f, size, size);
     }
 
