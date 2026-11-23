@@ -19,9 +19,11 @@ internal sealed partial class BarForm
     private readonly bool _explicitQuotaEnablement;
     private int _glassMaxRings = GlassDockLayout.MaxVisibleRings;
     private int? _taskbarFitRingCap;
+    private bool _taskbarUltraCompact;
     private ContextMenuStrip? _glassMenu;
     private bool _glassExpanded;
     internal int? TaskbarFitRingCap => _taskbarFitRingCap;
+    internal bool TaskbarUltraCompact => _taskbarUltraCompact;
     private bool _glassChipHovered;
     private bool _glassRenderQueued;
     private bool _resetLayeredStyle;
@@ -267,12 +269,23 @@ internal sealed partial class BarForm
     {
         var items = CurrentGlassItemsOrdered(out var rings);
         var showRouter = RouterCard is not null;
-        var plan = !_glassExpanded && _taskbarDocked && _taskbarFitRingCap is { } fitCap
-            ? GlassDockLayout.PlanWithRingCap(rings, Math.Min(_glassMaxRings, fitCap), HasIntakeCard, showRouter)
-            : GlassDockLayout.Plan(rings, _glassMaxRings, HasIntakeCard, showRouter);
+        GlassDockPlan plan;
         if (_glassExpanded)
         {
+            plan = GlassDockLayout.Plan(rings, _glassMaxRings, HasIntakeCard, showRouter);
             if (plan.OverflowCount > 0) plan = GlassDockLayout.PlanExpanded(rings, _glassMaxRings, HasIntakeCard, showRouter);
+        }
+        else if (_taskbarDocked && _taskbarUltraCompact)
+        {
+            plan = GlassDockLayout.PlanUltraCompact(rings);
+        }
+        else if (_taskbarDocked && _taskbarFitRingCap is { } fitCap)
+        {
+            plan = GlassDockLayout.PlanWithRingCap(rings, Math.Min(_glassMaxRings, fitCap), HasIntakeCard, showRouter);
+        }
+        else
+        {
+            plan = GlassDockLayout.Plan(rings, _glassMaxRings, HasIntakeCard, showRouter);
         }
         var byRing = new Dictionary<GlassDockRing, GlassItem>(ReferenceEqualityComparer.Instance);
         foreach (var item in items) byRing[item.Ring] = item;
@@ -284,48 +297,65 @@ internal sealed partial class BarForm
     {
         if (!_taskbarDocked || _glassExpanded || _taskbarDragging) return false;
         int? nextCap = _taskbarFitRingCap;
+        var nextUltraCompact = _taskbarUltraCompact;
         if (maxLogicalWidth is null)
         {
-            if (_taskbarFitRingCap is null) return false;
+            if (_taskbarFitRingCap is null && !_taskbarUltraCompact) return false;
             nextCap = null;
+            nextUltraCompact = false;
         }
         else
         {
             _ = CurrentGlassItemsOrdered(out var rings);
             var showRouter = RouterCard is not null;
             var desiredPlan = GlassDockLayout.Plan(rings, _glassMaxRings, HasIntakeCard, showRouter);
-            var currentPlan = _taskbarFitRingCap is { } activeCap
-                ? GlassDockLayout.PlanWithRingCap(rings, Math.Min(_glassMaxRings, activeCap), HasIntakeCard, showRouter)
-                : desiredPlan;
+            var currentPlan = _taskbarUltraCompact
+                ? GlassDockLayout.PlanUltraCompact(rings)
+                : _taskbarFitRingCap is { } activeCap
+                    ? GlassDockLayout.PlanWithRingCap(rings, Math.Min(_glassMaxRings, activeCap), HasIntakeCard, showRouter)
+                    : desiredPlan;
             if (currentPlan.Width > maxLogicalWidth.Value)
             {
                 var fitted = GlassDockLayout.FitRingCap(rings, _glassMaxRings, maxLogicalWidth.Value, HasIntakeCard, showRouter);
-                nextCap = fitted is >= 0 ? fitted.Value : null;
+                if (fitted is >= 0)
+                {
+                    nextCap = fitted.Value;
+                    nextUltraCompact = false;
+                }
+                else
+                {
+                    nextCap = 0;
+                    nextUltraCompact = true;
+                }
             }
-            else if (_taskbarFitRingCap is { } currentCap)
+            else if (_taskbarUltraCompact || _taskbarFitRingCap is not null)
             {
                 var expandBudget = maxLogicalWidth.Value - expandHysteresisLogical;
                 if (desiredPlan.Width <= expandBudget)
                 {
                     nextCap = null;
+                    nextUltraCompact = false;
                 }
                 else
                 {
+                    var currentCap = _taskbarUltraCompact ? -1 : _taskbarFitRingCap ?? _glassMaxRings;
                     var ceiling = Math.Min(_glassMaxRings, desiredPlan.Visible.Count) - 1;
                     for (var cap = ceiling; cap > currentCap; cap--)
                     {
                         if (GlassDockLayout.PlanWithRingCap(rings, cap, HasIntakeCard, showRouter).Width <= expandBudget)
                         {
                             nextCap = cap;
+                            nextUltraCompact = false;
                             break;
                         }
                     }
                 }
             }
-            if (nextCap == _taskbarFitRingCap) return false;
+            if (nextCap == _taskbarFitRingCap && nextUltraCompact == _taskbarUltraCompact) return false;
         }
 
         _taskbarFitRingCap = nextCap;
+        _taskbarUltraCompact = nextUltraCompact;
         _glassMotion.Reset();
         _pendingCollapseLayout = false;
         var savedOverlayFor = _taskbarRowOverlayFor;
@@ -477,10 +507,10 @@ internal sealed partial class BarForm
             _glassChipBounds = RectangleF.Inflate(chipBounds, 2, 6);
         }
 
-        if (router is not null) _taskbarPluginBounds.Add((ShiftX(plan.RouterBounds, deltaX), router));
-        if (intake is not null) _taskbarPluginBounds.Add((ShiftX(plan.IntakeBounds, deltaX), intake));
+        if (router is not null && !plan.RouterBounds.IsEmpty) _taskbarPluginBounds.Add((ShiftX(plan.RouterBounds, deltaX), router));
+        if (intake is not null && !plan.IntakeBounds.IsEmpty) _taskbarPluginBounds.Add((ShiftX(plan.IntakeBounds, deltaX), intake));
         var bars = ShiftX(GlassDockLayout.BarsBoundsFor(width), deltaX);
-        _systemUsageBounds = _showSystemMetrics ? RectangleF.Inflate(bars, 4, 3) : RectangleF.Empty;
+        _systemUsageBounds = _showSystemMetrics && !plan.UltraCompact ? RectangleF.Inflate(bars, 4, 3) : RectangleF.Empty;
         var rate = ShiftX(GlassDockLayout.RateBoundsFor(width), deltaX);
         _liveMetricsBounds = RectangleF.Inflate(rate, 3, 3);
         var scene = new GlassDockScene(

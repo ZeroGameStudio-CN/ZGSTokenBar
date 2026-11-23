@@ -106,7 +106,10 @@ internal static class GlassDockPainter
             || scene.AnimatedChipBounds is not null
             || scene.ExitingItems is { Count: > 0 }
             || scene.ChipAlpha < 0.995f;
-        var systemLeft = GlassDockLayout.SystemLeftFor(scene.Width, !scene.Plan.IntakeBounds.IsEmpty, !scene.Plan.RouterBounds.IsEmpty);
+        var rateBounds = GlassDockLayout.RateBoundsFor(scene.Width);
+        var systemLeft = scene.Plan.UltraCompact
+            ? rateBounds.Left
+            : GlassDockLayout.SystemLeftFor(scene.Width, !scene.Plan.IntakeBounds.IsEmpty, !scene.Plan.RouterBounds.IsEmpty);
         var dividerX = systemLeft - GlassDockLayout.DividerGap / 2f;
 
         var ringClipState = animated ? graphics.Save() : null;
@@ -189,14 +192,17 @@ internal static class GlassDockPainter
         if (rightState is not null) graphics.TranslateTransform(deltaX, 0f);
         try
         {
-            using (var divider = new LinearGradientBrush(
-                       new RectangleF(dividerX, 8, 1, GlassDockLayout.Height - 16),
-                       Color.FromArgb(0, Ink(scene.Light)),
-                       Color.FromArgb(scene.Light ? 60 : 70, Ink(scene.Light)),
-                       LinearGradientMode.Vertical))
+            if (!scene.Plan.UltraCompact || scene.Plan.Slots.Count > 0)
             {
-                divider.SetBlendTriangularShape(.5f);
-                graphics.FillRectangle(divider, dividerX - .5f, 8, 1f, GlassDockLayout.Height - 16);
+                using (var divider = new LinearGradientBrush(
+                           new RectangleF(dividerX, 8, 1, GlassDockLayout.Height - 16),
+                           Color.FromArgb(0, Ink(scene.Light)),
+                           Color.FromArgb(scene.Light ? 60 : 70, Ink(scene.Light)),
+                           LinearGradientMode.Vertical))
+                {
+                    divider.SetBlendTriangularShape(.5f);
+                    graphics.FillRectangle(divider, dividerX - .5f, 8, 1f, GlassDockLayout.Height - 16);
+                }
             }
 
             var routerHover = Math.Clamp(scene.RouterHover ?? (scene.RouterHovered ? 1f : 0f), 0f, 1f);
@@ -204,37 +210,40 @@ internal static class GlassDockPainter
             var systemHover = Math.Clamp(scene.SystemHover ?? (scene.SystemHovered ? 1f : 0f), 0f, 1f);
             var rateHover = Math.Clamp(scene.RateHover ?? (scene.RateHovered ? 1f : 0f), 0f, 1f);
 
-            if (scene.Router is { } router && !scene.Plan.RouterBounds.IsEmpty)
+            if (!scene.Plan.UltraCompact)
             {
-                var routerBounds = scene.Plan.RouterBounds;
-                DrawMonitorHover(graphics, routerBounds, routerHover, scene.Light);
-                // The queue count is the same chip as the ring %: same size, and in the corner layout the
-                // same baseline as the ring chips, on the Router icon's lower-left.
-                var corner = scene.RingStyle == GlassRingStyle.IconPercentBelow && scene.PercentPosition == GlassPercentPosition.BottomLeft;
-                var chip = new RouterQueueChip(scene.LabelSize, corner ? (GlassDockLayout.Height + scene.IconRingSize) / 2f + 2.5f : null, scene.Light);
-                RouterCardRenderer.Draw(graphics, routerBounds, router, badgeFont, collapsed: true, queueChip: chip);
-            }
-
-            if (!scene.Plan.IntakeBounds.IsEmpty)
-            {
-                var bounds = scene.Plan.IntakeBounds;
-                DrawMonitorHover(graphics, bounds, intakeHover, scene.Light);
-                var icon = MonitorGlyph.Centered(bounds);
-                var state = scene.IntakeProcessingCount switch
+                if (scene.Router is { } router && !scene.Plan.RouterBounds.IsEmpty)
                 {
-                    > 0 => IntakeGlyphState.Processing,
-                    null when scene.IntakeServiceConfigured => IntakeGlyphState.Unconfirmed,
-                    _ => IntakeGlyphState.Idle,
-                };
-                MonitorGlyph.DrawIntake(graphics, icon, scene.Light, state);
-                if (scene.IntakeProcessingCount is > 0 and var processing)
-                    DrawMonitorCount(graphics, icon, processing, scene.LabelSize, (GlassDockLayout.Height + scene.IconRingSize) / 2f + 2.5f, scene.Light);
+                    var routerBounds = scene.Plan.RouterBounds;
+                    DrawMonitorHover(graphics, routerBounds, routerHover, scene.Light);
+                    // The queue count is the same chip as the ring %: same size, and in the corner layout the
+                    // same baseline as the ring chips, on the Router icon's lower-left.
+                    var corner = scene.RingStyle == GlassRingStyle.IconPercentBelow && scene.PercentPosition == GlassPercentPosition.BottomLeft;
+                    var chip = new RouterQueueChip(scene.LabelSize, corner ? (GlassDockLayout.Height + scene.IconRingSize) / 2f + 2.5f : null, scene.Light);
+                    RouterCardRenderer.Draw(graphics, routerBounds, router, badgeFont, collapsed: true, queueChip: chip);
+                }
+
+                if (!scene.Plan.IntakeBounds.IsEmpty)
+                {
+                    var bounds = scene.Plan.IntakeBounds;
+                    DrawMonitorHover(graphics, bounds, intakeHover, scene.Light);
+                    var icon = MonitorGlyph.Centered(bounds);
+                    var state = scene.IntakeProcessingCount switch
+                    {
+                        > 0 => IntakeGlyphState.Processing,
+                        null when scene.IntakeServiceConfigured => IntakeGlyphState.Unconfirmed,
+                        _ => IntakeGlyphState.Idle,
+                    };
+                    MonitorGlyph.DrawIntake(graphics, icon, scene.Light, state);
+                    if (scene.IntakeProcessingCount is > 0 and var processing)
+                        DrawMonitorCount(graphics, icon, processing, scene.LabelSize, (GlassDockLayout.Height + scene.IconRingSize) / 2f + 2.5f, scene.Light);
+                }
+
+                var barsBounds = GlassDockLayout.BarsBoundsFor(scene.Width);
+                if (systemHover > 0.01f) DrawHover(graphics, RectangleF.Inflate(barsBounds, 4, 3), scene.Light, systemHover);
+                DrawMetrics(graphics, barsBounds, scene);
             }
 
-            var barsBounds = GlassDockLayout.BarsBoundsFor(scene.Width);
-            if (systemHover > 0.01f) DrawHover(graphics, RectangleF.Inflate(barsBounds, 4, 3), scene.Light, systemHover);
-            DrawMetrics(graphics, barsBounds, scene);
-            var rateBounds = GlassDockLayout.RateBoundsFor(scene.Width);
             if (rateHover > 0.01f) DrawHover(graphics, RectangleF.Inflate(rateBounds, 3, 3), scene.Light, rateHover);
             DrawRate(graphics, rateBounds, scene);
         }

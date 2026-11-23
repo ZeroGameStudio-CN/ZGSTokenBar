@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net;
 
 namespace ZGSTokenBar.Core;
 
@@ -127,6 +128,42 @@ public sealed class UsageCliFallback(UsageCliRunner? runner = null)
             }
         }
         catch (Exception error) when (error is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return null;
+        }
+    }
+
+    internal static void ApplySystemProxy(ProcessStartInfo start, Uri probeUri, Func<Uri, Uri?>? resolveProxy = null)
+    {
+        if (HasProxyEnvironment(start)) return;
+        var resolved = (resolveProxy ?? ResolveWindowsSystemProxy)(probeUri);
+        if (resolved is null || resolved.Equals(probeUri) || string.IsNullOrWhiteSpace(resolved.Host)) return;
+        var proxyValue = resolved.GetComponents(UriComponents.SchemeAndServer | UriComponents.UserInfo, UriFormat.UriEscaped);
+        if (string.IsNullOrWhiteSpace(proxyValue)) return;
+        start.Environment["HTTP_PROXY"] = proxyValue;
+        start.Environment["http_proxy"] = proxyValue;
+        start.Environment["HTTPS_PROXY"] = proxyValue;
+        start.Environment["https_proxy"] = proxyValue;
+    }
+
+    private static bool HasProxyEnvironment(ProcessStartInfo start)
+    {
+        foreach (var key in new[] { "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy" })
+        {
+            if (start.Environment.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value))
+                return true;
+        }
+        return false;
+    }
+
+    private static Uri? ResolveWindowsSystemProxy(Uri probeUri)
+    {
+        try
+        {
+            var resolved = WebRequest.GetSystemWebProxy().GetProxy(probeUri);
+            return resolved is null || resolved.Equals(probeUri) ? null : resolved;
+        }
+        catch (Exception error) when (error is NotSupportedException or PlatformNotSupportedException or UriFormatException)
         {
             return null;
         }

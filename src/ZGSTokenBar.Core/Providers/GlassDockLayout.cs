@@ -46,6 +46,7 @@ public sealed record GlassDockPlan(
 {
     public Rectangle RouterBounds { get; init; }
     public Rectangle IntakeBounds { get; init; }
+    public bool UltraCompact { get; init; }
 }
 
 public sealed record GlassDockAccountLine(
@@ -229,6 +230,30 @@ public static class GlassDockLayout
                 return cap;
         }
         return -1;
+    }
+
+    /// <summary>Width of the ultra-compact dock when accounts exist (+N overflow chip + tok/s rate).</summary>
+    public const int UltraCompactWidth = PadLeft + ChipGap + ChipWidth + DividerGap + RateWidth + PadRight;
+
+    /// <summary>
+    /// Minimal dock tier showing only the +N overflow chip (when accounts exist) and live tok/s rate.
+    /// </summary>
+    public static GlassDockPlan PlanUltraCompact(IReadOnlyList<GlassDockRing> rings)
+    {
+        var ordered = Order(rings);
+        var overflow = ordered.Length > 0;
+        var urgent = ordered.Any(ring => ring.Warn || ring.RemainingPercent is < 20);
+        var width = overflow ? UltraCompactWidth : PadLeft + RateWidth + PadRight;
+        return new GlassDockPlan(
+            [],
+            ordered.Length,
+            urgent,
+            width,
+            Height,
+            Slots(0, overflow))
+        {
+            UltraCompact = true,
+        };
     }
 
     /// <summary>

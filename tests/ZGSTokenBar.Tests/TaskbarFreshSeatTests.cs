@@ -53,6 +53,7 @@ internal static class TaskbarFreshSeatTests
             Check(!Safe(seat.Size), "An unavailable read is never a successful clear gap.");
 
             AdaptiveGapFitting();
+            CrowdedRowStaysEmbeddedInTaskbar();
             ProbeBurstDoesNotStarveAndFailuresEscalate();
 
             void Set(string name, object value) => typeof(BarForm).GetField(name, Instance)!.SetValue(bar, value);
@@ -82,16 +83,117 @@ internal static class TaskbarFreshSeatTests
         Check(bar.Width == 241 && bar.TaskbarFitRingCap is null, "Compact 3-ring dock starts unconstrained at 241px.");
         Check(bar.TryAdaptTaskbarRingCap(230) && bar.TaskbarFitRingCap == 2 && bar.Width == 230, "Tight gap shrinks dock to 2 rings.");
         Check(bar.TryAdaptTaskbarRingCap(194) && bar.TaskbarFitRingCap == 1 && bar.Width == 194, "Tighter gap shrinks dock to 1 ring.");
-        Check(bar.TryAdaptTaskbarRingCap(162) && bar.TaskbarFitRingCap == 0 && bar.Width == 162, "Minimal gap folds all rings into +N.");
+        Check(bar.TryAdaptTaskbarRingCap(162) && bar.TaskbarFitRingCap == 0 && !bar.TaskbarUltraCompact && bar.Width == 162, "Minimal gap folds all rings into +N.");
+        Check(bar.TryAdaptTaskbarRingCap(95) && bar.TaskbarUltraCompact && bar.Width == GlassDockLayout.UltraCompactWidth,
+            "Narrow gap below 162px drops into ultra-compact (+N + tok/s) mode.");
+        Check(!bar.TryAdaptTaskbarRingCap(40) && bar.TaskbarUltraCompact && bar.Width == GlassDockLayout.UltraCompactWidth,
+            "Falling below ultra-compact width keeps ultra-compact instead of bloating back to overlay.");
+        Check(!bar.TryAdaptTaskbarRingCap(170) && bar.TaskbarUltraCompact,
+            "Expanding out of ultra-compact obeys 16px hysteresis.");
+        Check(bar.TryAdaptTaskbarRingCap(178) && !bar.TaskbarUltraCompact && bar.TaskbarFitRingCap == 0 && bar.Width == 162,
+            "Sufficient clearance expands out of ultra-compact back to 0 rings + monitors.");
         Check(!bar.TryAdaptTaskbarRingCap(200) && bar.TaskbarFitRingCap == 0, "Expansion obeys 16px hysteresis.");
         Check(bar.TryAdaptTaskbarRingCap(210) && bar.TaskbarFitRingCap == 1 && bar.Width == 194, "Sufficient clearance expands back one ring.");
-        Check(bar.TryAdaptTaskbarRingCap(257) && bar.TaskbarFitRingCap is null && bar.Width == 241, "Full clearance removes cap cleanly.");
+        Check(bar.TryAdaptTaskbarRingCap(257) && bar.TaskbarFitRingCap is null && !bar.TaskbarUltraCompact && bar.Width == 241, "Full clearance removes cap cleanly.");
         Check(bar.TryAdaptTaskbarRingCap(194) && bar.TaskbarFitRingCap == 1, "Re-shrinks cleanly.");
         bar.SetGlassExpandedForAcceptance(true);
         var expandedWidth = bar.Width;
         Check(!bar.TryAdaptTaskbarRingCap(162) && bar.Width == expandedWidth, "Explicit +N expansion is never suppressed by gap cap.");
         bar.SetGlassExpandedForAcceptance(false);
-        Check(bar.TryAdaptTaskbarRingCap(150) && bar.TaskbarFitRingCap is null && bar.Width == 241, "Falling below minimum width restores full rings for overlay.");
+        Check(bar.TryAdaptTaskbarRingCap(null) && bar.TaskbarFitRingCap is null && !bar.TaskbarUltraCompact && bar.Width == 241,
+            "Clearing the gap cap restores full rings.");
+    }
+
+    private static void CrowdedRowStaysEmbeddedInTaskbar()
+    {
+        var now = DateTimeOffset.UtcNow;
+        QuotaCard Card(string key, double used) => new(key, ProviderKind.Codex, "Codex · " + key, "pro", "#10a37f", true,
+            [new("7d", used, now.AddDays(3), TimeSpan.FromDays(7))]) { HasAccountIdentity = true };
+        var snapshot = new QuotaSnapshot(
+            [Card("1", 20), Card("2", 30), Card("3", 40)],
+            [new(ProviderKind.Codex, true, "fixture", ProviderHealthCode.Current)],
+            now);
+        using var parent = new Form
+        {
+            FormBorderStyle = FormBorderStyle.None,
+            ShowInTaskbar = false,
+            StartPosition = FormStartPosition.Manual,
+            Bounds = new(-30000, -30000, 1920, 48),
+            Opacity = 0,
+        };
+        parent.Show();
+        using var bar = new BarForm(new AppSettings { TaskbarDocked = true, EnableAnimations = false },
+            snapshot, renderOnly: true, renderDpi: 96, activeProviders: new HashSet<ProviderKind> { ProviderKind.Codex })
+            { Location = new(-29000, -30000), Opacity = 0 };
+        bar.Show();
+        Application.DoEvents();
+        bar.SetPluginMiniCards([
+            new(RouterPlugin.Id, "Router", RouterModuleTests.Card("idle"), new Dictionary<string, string>()),
+            new(IntakeObserverPlugin.Id, "自动分拣", IntakeObserverPlugin.Launcher, new Dictionary<string, string>())]);
+        Check(TaskbarEmbedding.TryGetScreenBounds(parent.Handle, out var row), "Crowded fixture has real row geometry.");
+        var tray = new Rectangle(row.Right - 220, row.Top, 220, row.Height);
+        var screen = new Rectangle(row.Left, row.Bottom - 1080, row.Width, 1080);
+        var reserved = true;
+        Set("_embedRequested", true);
+        Set("_taskbarDocked", true);
+        Set("_watchedTaskbar", parent.Handle);
+        Set("_taskbarRowKey", (parent.Handle, row, tray));
+        Set("_taskbarRowProbePending", true);
+        Set("_primaryTaskbarProbe", (Func<nint>)(() => parent.Handle));
+        Set("_fullscreenWindowProbe", (Func<string?, bool>)(_ => false));
+        Set("_reservedTaskbarRowProbe", (Func<TaskbarPlacement.PlacementTrack, bool>)(_ => reserved));
+        var track = new TaskbarPlacement.PlacementTrack("fixture", screen, true, true, row.Left + 6, tray.Left - bar.Width - 6,
+            row.Top + (row.Height - bar.Height) / 2) { TaskbarWindow = parent.Handle, TaskbarBounds = row, TrayBounds = tray };
+        var anchor = new Point(row.Left + 900, track.Fixed);
+
+        Set("_taskbarRowSample", (new Rectangle[] { new(row.Left, row.Top, 500, row.Height), tray },
+            Environment.TickCount64 - TaskbarRowStability.ReturnDelayMs));
+        Place();
+        Set("_taskbarRowSample", (new Rectangle[] { new(row.Left, row.Top, 500, row.Height), tray }, Environment.TickCount64));
+        Place();
+        Check(bar.Visible && bar.EmbeddedInTaskbar && bar.TaskbarEmbedStatus == "embedded"
+            && bar.Width == 241 && !bar.TaskbarUltraCompact,
+            "Open row embeds at full ring width.");
+
+        // Crowded taskbar: leave zero clear gap anywhere in the row.
+        Set("_taskbarRowSample", (new Rectangle[] { new(row.Left, row.Top, tray.Left - row.Left, row.Height), tray }, Environment.TickCount64));
+        Place();
+        Check(bar.Visible && bar.EmbeddedInTaskbar && bar.TaskbarEmbedStatus == "embedded:crowded"
+            && bar.TaskbarUltraCompact && bar.Width == GlassDockLayout.UltraCompactWidth
+            && row.Contains(bar.ScreenBounds) && bar.ScreenBounds.Right <= tray.Left
+            && bar.ObserveDockHealth() == true,
+            "Full taskbar shrinks to ultra-compact (+N + tok/s) and pins inside Shell_TrayWnd left of the tray.");
+
+        // Open a 100px gap: fits ultra-compact with no icon overlap, transitioning cleanly out of crowded state.
+        Set("_taskbarRowSample", (new Rectangle[] { new(row.Left, row.Top, tray.Left - row.Left - 112, row.Height), tray }, Environment.TickCount64));
+        Place();
+        Check(bar.Visible && bar.EmbeddedInTaskbar && bar.TaskbarEmbedStatus == "embedded"
+            && bar.TaskbarUltraCompact && bar.Width == GlassDockLayout.UltraCompactWidth,
+            "Moderate gap keeps ultra-compact in the clear gap without overlap.");
+
+        // Reopen wide space: expands back to full ring dock cleanly.
+        Set("_taskbarRowSample", (new Rectangle[] { new(row.Left, row.Top, 500, row.Height), tray }, Environment.TickCount64));
+        Place();
+        Check(bar.Visible && bar.EmbeddedInTaskbar && bar.TaskbarEmbedStatus == "embedded"
+            && !bar.TaskbarUltraCompact && bar.TaskbarFitRingCap is null && bar.Width == 241,
+            "Reopened taskbar space restores rings seamlessly.");
+
+        // Detach + refuse native SetParent on crowded row: stays in reserved row as overlay:crowded, never covers unreserved row.
+        typeof(BarForm).GetMethod("DetachFromTaskbar", Instance)!.Invoke(bar, ["fixture-detach"]);
+        Set("_embedIncompatibleTaskbar", parent.Handle);
+        Set("_taskbarRowSample", (new Rectangle[] { new(row.Left, row.Top, tray.Left - row.Left, row.Height), tray }, Environment.TickCount64));
+        Place();
+        Check(bar.Visible && !bar.EmbeddedInTaskbar && bar.TaskbarEmbedStatus == "overlay:crowded"
+            && row.Contains(bar.ScreenBounds) && bar.ObserveDockHealth() == true,
+            "Reserved crowded row uses overlay:crowded when native attach is refused.");
+
+        reserved = false;
+        Place();
+        Check(bar.Visible && !row.IntersectsWith(bar.ScreenBounds) && !bar.TaskbarUltraCompact,
+            "Unreserved auto-hide row never receives a top-level crowded overlay.");
+
+        void Set(string field, object value) => typeof(BarForm).GetField(field, Instance)!.SetValue(bar, value);
+        void Place() => typeof(BarForm).GetMethod("ApplyDockedTarget", Instance)!.Invoke(bar, [track, bar.Size, anchor, true]);
     }
 
     private static void ProbeBurstDoesNotStarveAndFailuresEscalate()

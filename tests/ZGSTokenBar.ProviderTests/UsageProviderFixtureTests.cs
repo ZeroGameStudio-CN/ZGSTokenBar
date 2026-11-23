@@ -473,6 +473,16 @@ public static class UsageProviderFixtureTests
         var three = many.Take(3).ToArray();
         Check(GlassDockLayout.FitRingCap(three, 4, 240, showIntake: true, showRouter: true) == 2,
             "fitting considers overflow chip width when stepping 3 unchipped rings (241) down to 2 chipped (230)");
+        var ultra = GlassDockLayout.PlanUltraCompact(many);
+        Check(ultra.UltraCompact && ultra.Width == GlassDockLayout.UltraCompactWidth && ultra.Visible.Count == 0
+            && ultra.OverflowCount == many.Length && ultra.Slots.Count == 1 && ultra.Slots[0].Chip
+            && ultra.RouterBounds.IsEmpty && ultra.IntakeBounds.IsEmpty
+            && GlassDockLayout.RateBoundsFor(ultra.Width).Left - ultra.Slots[0].Bounds.Right == GlassDockLayout.DividerGap,
+            "ultra-compact plan folds to +N and tok/s cleanly");
+        var ultraEmpty = GlassDockLayout.PlanUltraCompact([]);
+        Check(ultraEmpty.UltraCompact && ultraEmpty.Slots.Count == 0 && ultraEmpty.OverflowCount == 0
+            && ultraEmpty.Width < ultra.Width,
+            "ultra-compact without accounts drops the chip cleanly");
         Check(GlassDockLayout.RingSweep(4) >= 22f && GlassDockLayout.RingSweep(0) == 0f && GlassDockLayout.RingSweep(null) == 0f && GlassDockLayout.PercentText(4.4) == "4%", "small remaining stays legible");
         Check(GlassDockLayout.RingStart(100) == -90f && Math.Abs(GlassDockLayout.RingStart(50) - 90f) < .01f && Math.Abs(GlassDockLayout.RingStart(75)) < .01f, "remaining starts after clockwise use from 12 o'clock");
         Check(GlassDockLayout.Band(19) == "red" && GlassDockLayout.Band(20) == "amber" && GlassDockLayout.Band(50) == "amber" && GlassDockLayout.Band(51) == "green", "quota bands");

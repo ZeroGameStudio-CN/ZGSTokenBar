@@ -254,6 +254,7 @@ internal sealed partial class QuotaApplicationContext
                 TaskbarEmbedStatus = _bar.TaskbarEmbedStatus,
                 TaskbarLastEmbedFailure = _bar.TaskbarLastEmbedFailure,
                 TaskbarFitRingCap = _bar.TaskbarFitRingCap,
+                TaskbarUltraCompact = _bar.TaskbarUltraCompact,
                 TaskbarLastDetachReason = _bar.TaskbarLastDetachReason,
                 TaskbarLastDetachAt = _bar.TaskbarLastDetachAt,
                 TaskbarLastDetachDetail = _bar.TaskbarLastDetachDetail,

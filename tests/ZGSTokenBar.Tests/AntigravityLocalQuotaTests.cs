@@ -67,6 +67,7 @@ internal static class AntigravityLocalQuotaTests
                 && calls.Count(call => call == "--version") == 2,
                 "The next refresh recovers on the current account, reusing only the executable qualification.");
             await VerifyDetachedChildAsync(root.FullName);
+            VerifySystemProxyPropagation();
         }
         finally
         {
@@ -123,6 +124,35 @@ internal static class AntigravityLocalQuotaTests
 
     [DllImport("kernel32.dll")]
     private static extern nint GetConsoleWindow();
+
+    private static void VerifySystemProxyPropagation()
+    {
+        var probe = new Uri("https://cloudcode-pa.googleapis.com/");
+        var emptyEnv = new ProcessStartInfo("cmd.exe");
+        foreach (var key in new[] { "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy" })
+            emptyEnv.Environment.Remove(key);
+        UsageCliFallback.ApplySystemProxy(emptyEnv, probe, _ => new Uri("http://127.0.0.1:7897/"));
+        Check(emptyEnv.Environment["HTTPS_PROXY"] == "http://127.0.0.1:7897"
+            && emptyEnv.Environment["HTTP_PROXY"] == "http://127.0.0.1:7897"
+            && emptyEnv.Environment["https_proxy"] == "http://127.0.0.1:7897",
+            "Missing proxy environment variables receive the resolved Windows system proxy.");
+
+        var explicitEnv = new ProcessStartInfo("cmd.exe");
+        foreach (var key in new[] { "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy" })
+            explicitEnv.Environment.Remove(key);
+        explicitEnv.Environment["HTTPS_PROXY"] = "http://10.0.0.2:8080";
+        UsageCliFallback.ApplySystemProxy(explicitEnv, probe, _ => new Uri("http://127.0.0.1:7897/"));
+        Check(explicitEnv.Environment["HTTPS_PROXY"] == "http://10.0.0.2:8080"
+            && !explicitEnv.Environment.ContainsKey("HTTP_PROXY"),
+            "An explicit proxy environment variable is never overwritten by the system proxy fallback.");
+
+        var directEnv = new ProcessStartInfo("cmd.exe");
+        foreach (var key in new[] { "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy" })
+            directEnv.Environment.Remove(key);
+        UsageCliFallback.ApplySystemProxy(directEnv, probe, uri => uri);
+        Check(!directEnv.Environment.ContainsKey("HTTPS_PROXY"),
+            "A direct route adds no proxy variables.");
+    }
 
     private static void Check(bool condition, string message)
     {
