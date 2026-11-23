@@ -32,7 +32,7 @@ public static class GlassDockSvg
             Ring(svg, x + slot.Bounds.X + (slot.Bounds.Width - GlassDockLayout.RingSize) / 2, ringY, GlassDockLayout.RingSize, ring, light);
         }
 
-        var dividerX = x + GlassDockLayout.SystemLeft - 6;
+        var dividerX = x + GlassDockLayout.SystemLeft - GlassDockLayout.DividerGap / 2;
         svg.Append("<line x1=\"").Append(dividerX).Append("\" y1=\"").Append(y + 12).Append("\" x2=\"").Append(dividerX).Append("\" y2=\"").Append(y + 32).Append("\" stroke=\"").Append(light ? "rgba(20,24,32,.18)" : "rgba(255,255,255,.22)").Append("\" stroke-width=\"1\"/>");
         Router(svg, x + GlassDockLayout.RouterBounds.X, y + GlassDockLayout.RouterBounds.Y, routerWarning);
         Bars(svg, x + GlassDockLayout.BarsBounds.X, y + GlassDockLayout.BarsBounds.Y, bars);
@@ -159,20 +159,28 @@ public static class GlassDockSvg
 
     private static void Bars(StringBuilder svg, int x, int y, IReadOnlyList<double> bars)
     {
-        string[] labels = ["CPU", "RAM", "I/O", "GPU"];
+        string[] labels = ["C", "M", "D", "G"];
+        var colWidth = GlassDockLayout.MetricsWidth / (double)GlassDockLayout.MetricsRows;
+        const double barWidth = 4.2;
+        const double barHeight = 20;
+        var barTop = y + 1d;
         for (var index = 0; index < GlassDockLayout.MetricsRows; index++)
         {
             var value = index < bars.Count ? Math.Clamp(bars[index], 0, 100) : 0;
-            var rowY = y + index * 8;
-            svg.Append("<text x=\"").Append(x).Append("\" y=\"").Append(rowY + 6.5).Append("\" fill=\"rgba(255,255,255,.6)\" font-family=\"Segoe UI, sans-serif\" font-size=\"7\" font-weight=\"600\">")
-                .Append(labels[index]).Append("</text>");
-            var trackX = x + 18;
-            var trackW = GlassDockLayout.MetricsWidth - 18;
-            svg.Append("<rect x=\"").Append(trackX).Append("\" y=\"").Append(rowY + 2.5).Append("\" width=\"").Append(trackW).Append("\" height=\"3.5\" rx=\"1.75\" fill=\"rgba(255,255,255,.16)\"/>");
-            var w = Math.Max(3.5, trackW * value / 100d);
+            var cx = x + (index + 0.5) * colWidth;
+            var barX = cx - barWidth / 2;
+            svg.Append("<rect x=\"").Append(barX.ToString("0.##", CultureInfo.InvariantCulture)).Append("\" y=\"").Append(barTop.ToString("0.##", CultureInfo.InvariantCulture))
+                .Append("\" width=\"").Append(barWidth.ToString("0.##", CultureInfo.InvariantCulture)).Append("\" height=\"").Append(barHeight.ToString("0.##", CultureInfo.InvariantCulture))
+                .Append("\" rx=\"2.1\" fill=\"rgba(255,255,255,.16)\"/>");
+            var fillH = Math.Max(barWidth, barHeight * value / 100d);
+            var fillY = barTop + barHeight - fillH;
             var color = value > 80 ? "255,90,90" : value > 50 ? "245,193,74" : "70,229,154";
-            svg.Append("<rect x=\"").Append(trackX).Append("\" y=\"").Append(rowY + 2.5).Append("\" width=\"").Append(w.ToString("0.###", CultureInfo.InvariantCulture))
-                .Append("\" height=\"3.5\" rx=\"1.75\" fill=\"rgb(").Append(color).Append(")\"/>");
+            svg.Append("<rect x=\"").Append(barX.ToString("0.##", CultureInfo.InvariantCulture)).Append("\" y=\"").Append(fillY.ToString("0.##", CultureInfo.InvariantCulture))
+                .Append("\" width=\"").Append(barWidth.ToString("0.##", CultureInfo.InvariantCulture)).Append("\" height=\"").Append(fillH.ToString("0.##", CultureInfo.InvariantCulture))
+                .Append("\" rx=\"2.1\" fill=\"rgb(").Append(color).Append(")\"/>");
+            svg.Append("<text x=\"").Append(cx.ToString("0.##", CultureInfo.InvariantCulture)).Append("\" y=\"").Append((y + 30).ToString("0.##", CultureInfo.InvariantCulture))
+                .Append("\" text-anchor=\"middle\" fill=\"rgba(255,255,255,.6)\" font-family=\"Segoe UI, sans-serif\" font-size=\"7\" font-weight=\"600\">")
+                .Append(labels[index]).Append("</text>");
         }
     }
 

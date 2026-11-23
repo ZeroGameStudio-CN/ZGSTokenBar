@@ -133,6 +133,25 @@ internal static class TaskbarPlacement
         }
     }
 
+    internal static int LargestGapWidth(
+        PlacementTrack track, IReadOnlyList<Rectangle>? occupied, int extraClearance = 0)
+    {
+        if (!track.Horizontal || occupied is not { Count: > 0 }) return 0;
+        var row = Rectangle.Intersect(track.TaskbarBounds, track.ScreenBounds);
+        if (row.Width <= 2 * Gap) return 0;
+
+        var largest = 0;
+        var left = row.Left + Gap;
+        foreach (var obstacle in occupied.OrderBy(bounds => bounds.Left))
+        {
+            if (!row.IntersectsWith(obstacle)) continue;
+            largest = Math.Max(largest, obstacle.Left - Gap - extraClearance - left);
+            left = Math.Max(left, obstacle.Right + Gap + extraClearance);
+        }
+        largest = Math.Max(largest, row.Right - Gap - left);
+        return largest;
+    }
+
     internal static bool CurrentRowLocationFits(
         PlacementTrack track, Size size, Point current, IReadOnlyList<Rectangle> occupied, int extraClearance = 0)
     {

@@ -84,8 +84,8 @@ internal sealed record GlassDockScene(
 internal static class GlassDockPainter
 {
     /// <summary>Icon-in-ring layout: ring diameter and the % label size above it (logical px).</summary>
-    internal const float DefaultIconRingSize = 26f;
-    internal const float DefaultLabelSize = 12f;
+    internal const float DefaultIconRingSize = 25f;
+    internal const float DefaultLabelSize = 11f;
     /// <summary>Ring and label sizes for the stacked (above/below) label positions.</summary>
     internal const float StackedIconRingSize = 25f;
     internal const float StackedLabelSize = 10f;
@@ -474,7 +474,7 @@ internal static class GlassDockPainter
             var text = balanceOnly ? ring.BalanceText! : GlassDockLayout.PercentText(ring.RemainingPercent);
             if (!stacked)
             {
-                DrawChip(graphics, Math.Max(8f, slot.X - 1.5f), ringBounds.Bottom + 2.5f, text, labelSize,
+                DrawChip(graphics, Math.Max(6f, slot.X - 1f), ringBounds.Bottom + 2.5f, text, labelSize,
                     !balanceOnly && GlassDockLayout.Band(ring.RemainingPercent) == "red", light, hoverAmount);
             }
             else
@@ -516,7 +516,7 @@ internal static class GlassDockPainter
             var cornerLayout = below && !stacked;
             var indexSize = cornerLayout ? 9f : labelSize;
             var width = ChipWidth(graphics, index, indexSize);
-            var right = cornerLayout ? slot.Right - 1f : ringBounds.Right + 2f;
+            var right = cornerLayout ? slot.Right - 0.5f : ringBounds.Right + 2f;
             var bottom = cornerLayout ? ringBounds.Top + 8f : ringBounds.Bottom + 2.5f;
             DrawChip(graphics, right - width, bottom, index, indexSize, critical: false, light);
         }
@@ -833,32 +833,40 @@ internal static class GlassDockPainter
         using var text = new SolidBrush(urgent
             ? alert
             : light ? UiPalette.Slate900.WithAlpha(235) : Color.FromArgb(240, 255, 255, 255));
-        var font = CachedFont(10f, FontStyle.Bold);
+        var font = CachedFont(9.5f, FontStyle.Bold);
         var label = scene.Expanded ? "‹" : "+" + scene.Plan.OverflowCount.ToString(CultureInfo.InvariantCulture);
         DrawCentered(graphics, label, font, text, rect);
     }
 
-    /// <summary>The four classic system metrics as labelled rows: CPU, RAM, I/O (disk) and GPU.</summary>
+    /// <summary>Four compact vertical micro-bars: CPU (C), RAM (M), Disk I/O (D), GPU (G).</summary>
     private static void DrawMetrics(Graphics graphics, Rectangle bounds, GlassDockScene scene)
     {
-        (string Label, double? Value)[] rows = [("CPU", scene.Cpu), ("RAM", scene.Memory), ("I/O", scene.Disk), ("GPU", scene.Gpu)];
-        var rowHeight = bounds.Height / (float)rows.Length;
-        var labelFont = CachedFont(7.5f, FontStyle.Bold);
+        (string Label, double? Value)[] columns = [("C", scene.Cpu), ("M", scene.Memory), ("D", scene.Disk), ("G", scene.Gpu)];
+        var colWidth = bounds.Width / (float)columns.Length;
+        const float barWidth = 4.2f;
+        var barTop = bounds.Y + 1f;
+        const float barHeight = 20f;
+        var labelTop = barTop + barHeight + 1.5f;
+        var labelHeight = Math.Max(7f, bounds.Bottom - labelTop);
+        var labelFont = CachedFont(7f, FontStyle.Bold);
         using var labelBrush = new SolidBrush(Muted(scene.Light));
-        using var trackBrush = new SolidBrush(scene.Light ? UiPalette.Slate900.WithAlpha(36) : Color.FromArgb(40, 255, 255, 255));
-        var format = MetricLabelFormat();
-        const float labelWidth = 20f;
-        const float barHeight = 3.5f;
-        for (var index = 0; index < rows.Length; index++)
+        using var trackBrush = new SolidBrush(scene.Light ? UiPalette.Slate900.WithAlpha(36) : Color.FromArgb(44, 255, 255, 255));
+        var format = MetricColumnLabelFormat();
+        for (var index = 0; index < columns.Length; index++)
         {
-            var rowTop = bounds.Y + index * rowHeight;
-            graphics.DrawString(rows[index].Label, labelFont, labelBrush, new RectangleF(bounds.X, rowTop, labelWidth + 2, rowHeight), format);
-            var track = new RectangleF(bounds.X + labelWidth, rowTop + (rowHeight - barHeight) / 2f, bounds.Width - labelWidth, barHeight);
-            graphics.FillRoundedRectangle(trackBrush, track, barHeight / 2f);
-            if (rows[index].Value is not { } value || value <= 0) continue;
-            var width = Math.Max(barHeight, track.Width * (float)Math.Clamp(value / 100d, 0, 1));
-            using var ink = new SolidBrush(LoadColor(value, scene.Light));
-            graphics.FillRoundedRectangle(ink, new RectangleF(track.X, track.Y, width, barHeight), barHeight / 2f);
+            var colX = bounds.X + index * colWidth;
+            var barX = colX + (colWidth - barWidth) / 2f;
+            var track = new RectangleF(barX, barTop, barWidth, barHeight);
+            graphics.FillRoundedRectangle(trackBrush, track, barWidth / 2f);
+            if (columns[index].Value is { } value && value > 0)
+            {
+                var fillHeight = Math.Max(barWidth, barHeight * (float)Math.Clamp(value / 100d, 0, 1));
+                var fill = new RectangleF(barX, barTop + barHeight - fillHeight, barWidth, fillHeight);
+                using var ink = new SolidBrush(LoadColor(value, scene.Light));
+                graphics.FillRoundedRectangle(ink, fill, barWidth / 2f);
+            }
+            graphics.DrawString(columns[index].Label, labelFont, labelBrush,
+                new RectangleF(colX - 1f, labelTop, colWidth + 2f, labelHeight), format);
         }
     }
 
@@ -905,10 +913,10 @@ internal static class GlassDockPainter
         graphics.DrawString("tok/s", small, muted, readout.Unit, Format(StringAlignment.Center));
     }
 
-    internal const float RateUnitSize = 8f;
-    private const float RateNumberHeight = 14f;
+    internal const float RateUnitSize = 7.5f;
+    private const float RateNumberHeight = 13f;
 
-    internal const float RateFontSize = 12.5f;
+    internal const float RateFontSize = 11.5f;
 
     internal readonly record struct RateReadout(RectangleF Number, RectangleF Unit);
 
@@ -983,7 +991,7 @@ internal static class GlassDockPainter
     [ThreadStatic]
     private static Dictionary<(int SizeCentipx, FontStyle Style), Font>? _fontCache;
     [ThreadStatic]
-    private static StringFormat? _measureFormat, _metricLabelFormat, _rateNumberFormat, _centerEllipsisFormat, _nearEllipsisFormat, _farEllipsisFormat;
+    private static StringFormat? _measureFormat, _metricColumnLabelFormat, _rateNumberFormat, _centerEllipsisFormat, _nearEllipsisFormat, _farEllipsisFormat;
 
     private static Font CachedFont(float size, FontStyle style)
     {
@@ -999,8 +1007,8 @@ internal static class GlassDockPainter
     private static StringFormat MeasureFormat() =>
         _measureFormat ??= new(StringFormat.GenericTypographic) { FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces };
 
-    private static StringFormat MetricLabelFormat() =>
-        _metricLabelFormat ??= new(StringFormat.GenericTypographic) { LineAlignment = StringAlignment.Center, FormatFlags = StringFormatFlags.NoWrap };
+    private static StringFormat MetricColumnLabelFormat() =>
+        _metricColumnLabelFormat ??= new(StringFormat.GenericTypographic) { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center, FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.NoClip };
 
     private static StringFormat RateNumberFormat() =>
         _rateNumberFormat ??= new(StringFormat.GenericTypographic) { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center, FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.NoClip };
