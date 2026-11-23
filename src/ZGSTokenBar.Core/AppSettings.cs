@@ -868,7 +868,12 @@ public sealed class AppSettingsStore
             if (ProviderCatalog.Find(provider.ProviderId) is not { Surface: UsageSurface.Mini } definition)
                 continue;
             var liveAccounts = provider.Accounts
-                .Where(account => account.Freshness == UsageFreshness.Current && HasUsableUsageData(account))
+                .Where(account => account.Freshness switch
+                {
+                    UsageFreshness.Current => HasUsableUsageData(account),
+                    UsageFreshness.Cached => IsCachedUsageAccountValid(account, now, now),
+                    _ => false,
+                })
                 .ToArray();
             var normalized = UsageAccounts.Normalize(liveAccounts);
             if (normalized.Count == 0) continue;
