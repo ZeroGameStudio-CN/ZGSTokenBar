@@ -10,36 +10,70 @@ internal sealed class OtherToolsModule : IDisposable
     private readonly BarForm _bar;
     private readonly Action _changed;
     private readonly RefreshScheduler _scheduler;
+    private readonly AppSettingsStore _store;
     internal const string RefreshSource = "usage-providers";
     private readonly HttpClient _http = new(new HttpClientHandler { AllowAutoRedirect = false })
     {
         Timeout = TimeSpan.FromSeconds(20),
     };
-    private readonly UsagePaths _paths = UsagePaths.Current();
+    private readonly UsagePaths _paths;
     private readonly object _gate = new();
     private UsageBoard _board = UsageBoard.Empty;
     private UsageBoard _fetched = UsageBoard.Empty;
     private IReadOnlyList<UsageProviderSnapshot> _external = [];
     private UsageBoardForm? _popup;
-    private Func<string, bool> _enabled = static _ => true;
+    private Func<string, bool> _enabled;
     private bool _chinese;
     private bool _light;
     private bool _refreshing;
     private bool _disposed;
 
-    public OtherToolsModule(BarForm bar, Action changed, RefreshScheduler scheduler)
+    public OtherToolsModule(
+        BarForm bar,
+        Action changed,
+        RefreshScheduler scheduler,
+        AppSettingsStore store,
+        Func<string, bool> enabled)
     {
         _bar = bar;
         _changed = changed;
         _scheduler = scheduler;
+        _store = store;
+        _enabled = enabled;
+        _paths = UsagePaths.Current() with { CacheDirectory = store.DataDirectory };
         _bar.PluginPopoverRequested += OnPopoverRequested;
-        // First read one second after start, then every provider refresh interval (2 min by default).
-        // Per-provider failures and any CLI caches stay in the providers.
+
+        var agyHash = AppSettingsStore.HashUsageIdentity(UsageAccountDirectory.AntigravitySignedInAccount(_paths));
+        if (_store.LoadUsageBoardCache(DateTimeOffset.UtcNow, agyHash) is { } cachedBoard)
+        {
+            var detect = DetectContext();
+            var eligible = cachedBoard.Providers
+                .Where(provider => _enabled(provider.ProviderId)
+                    && UsageProviderRegistry.Find(provider.ProviderId)?.IsInstalled(detect) == true)
+                .ToArray();
+            if (eligible.Length > 0)
+            {
+                _fetched = new UsageBoard(eligible);
+                _board = AntigravityGroups.Pin(UsageProviderEngine.Merge(_fetched, _external), _antigravityPrimaryGroup);
+            }
+        }
+
+        // Start fetching immediately after the message loop enters, while showing any fresh
+        // cached readings from the previous session right away.
         _scheduler.Add(
             RefreshSource,
             () => UsageProviderRegistry.RefreshInterval,
             async () => { await RefreshAsync().ConfigureAwait(true); return true; },
-            firstDelay: TimeSpan.FromSeconds(1));
+            firstDelay: TimeSpan.Zero);
+    }
+
+    public void PublishInitial()
+    {
+        lock (_gate)
+        {
+            if (_fetched.Providers.Count == 0 && _external.Count == 0) return;
+        }
+        Publish();
     }
 
     public IReadOnlyList<PluginMiniCardView> Cards(bool chinese, Func<string, bool> enabled)
@@ -67,7 +101,7 @@ internal sealed class OtherToolsModule : IDisposable
 
     public void SetExternal(IReadOnlyList<UsageProviderSnapshot> snapshots)
     {
-        _external = snapshots;
+        lock (_gate) _external = snapshots;
         Publish();
     }
 
@@ -101,23 +135,74 @@ internal sealed class OtherToolsModule : IDisposable
         _refreshing = true;
         try
         {
+            var enabled = _enabled;
+            var agyAccountBefore = UsageAccountDirectory.AntigravitySignedInAccount(_paths);
             var request = new UsageLoadRequest(
                 DateTimeOffset.UtcNow,
                 _paths,
-                _enabled,
+                enabled,
                 new HttpUsageTransport(_http),
                 ProcessUsageEnvironment.Instance,
-                _enabled(UsageProviderIds.Claude));
-            // Account discovery (SQLite probes, credential stats) runs synchronously inside
-            // LoadAsync before its first await; keep it and the CLI fallbacks off the UI thread.
-            var fetched = await Task.Run(async () =>
+                enabled(UsageProviderIds.Claude));
+            // Account discovery (SQLite probes, credential stats) runs synchronously before the
+            // first await; run every enabled provider concurrently in the background and publish
+            // each provider as soon as it finishes so slow CLIs never block fast HTTPS reads.
+            await Task.Run(async () =>
             {
-                var board = await UsageProviderEngine.LoadAsync(request, CancellationToken.None).ConfigureAwait(false);
-                return await _cli.ApplyAsync(board, DetectContext(), _enabled, DateTimeOffset.UtcNow).ConfigureAwait(false);
+                var detect = new UsageDetectContext(_paths, ProcessUsageEnvironment.Instance, enabled(UsageProviderIds.Claude));
+                var registry = UsageProviderRegistry.All;
+                var results = new UsageProviderSnapshot?[registry.Count];
+                var tasks = new Task[registry.Count];
+                for (var index = 0; index < registry.Count; index++)
+                {
+                    var slot = index;
+                    var provider = registry[slot];
+                    tasks[slot] = RefreshProviderAsync(slot, provider, detect);
+                }
+
+                await Task.WhenAll(tasks).ConfigureAwait(false);
+                if (_disposed) return;
+
+                var completed = new UsageBoard(results.OfType<UsageProviderSnapshot>().ToArray());
+                lock (_gate) _fetched = completed;
+                Publish();
+
+                var agyAccountAfter = UsageAccountDirectory.AntigravitySignedInAccount(_paths);
+                var agyHash = string.Equals(agyAccountBefore, agyAccountAfter, StringComparison.OrdinalIgnoreCase)
+                    ? AppSettingsStore.HashUsageIdentity(agyAccountAfter)
+                    : null;
+                try
+                {
+                    _store.SaveUsageBoardCache(completed, DateTimeOffset.UtcNow, agyHash);
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+
+                async Task RefreshProviderAsync(int slot, IUsageProvider provider, UsageDetectContext detectContext)
+                {
+                    var id = provider.Definition.Id;
+                    try
+                    {
+                        if (!enabled(id) || !provider.FetchesUsage)
+                        {
+                            ReplaceFetchedProvider(id, null);
+                            return;
+                        }
+                        var snapshot = await UsageProviderEngine.LoadProviderAsync(provider, request, CancellationToken.None).ConfigureAwait(false);
+                        if (!UsageCliFallback.HasReading(snapshot) && provider.Cli is not null)
+                        {
+                            snapshot = await _cli.ApplyProviderAsync(provider, snapshot, detectContext, request.Now).ConfigureAwait(false);
+                        }
+                        results[slot] = snapshot;
+                        if (_disposed) return;
+                        ReplaceFetchedProvider(id, snapshot);
+                        Publish();
+                    }
+                    catch (Exception error) when (error is IOException or HttpRequestException or System.Text.Json.JsonException or InvalidOperationException)
+                    {
+                        AppDiagnostics.RecordMonitorFailure("usage-board", id, "", AppDiagnostics.MonitorFailureCode(error));
+                    }
+                }
             }).ConfigureAwait(true);
-            if (_disposed) return;
-            _fetched = fetched;
-            Publish();
         }
         catch (Exception error) when (error is IOException or HttpRequestException or System.Text.Json.JsonException or InvalidOperationException)
         {
@@ -129,6 +214,21 @@ internal sealed class OtherToolsModule : IDisposable
         }
     }
 
+    private void ReplaceFetchedProvider(string providerId, UsageProviderSnapshot? snapshot)
+    {
+        lock (_gate)
+        {
+            var map = _fetched.Providers.ToDictionary(item => item.ProviderId, StringComparer.Ordinal);
+            if (snapshot is null) map.Remove(providerId);
+            else map[providerId] = snapshot;
+            _fetched = new UsageBoard(
+                UsageProviderRegistry.All
+                    .Select(provider => map.TryGetValue(provider.Definition.Id, out var existing) ? existing : null)
+                    .OfType<UsageProviderSnapshot>()
+                    .ToArray());
+        }
+    }
+
     private readonly UsageCliFallback _cli = new();
 
     private string _antigravityPrimaryGroup = AntigravityGroups.DefaultPrimary;
@@ -137,8 +237,11 @@ internal sealed class OtherToolsModule : IDisposable
     public void SetAntigravityPrimaryGroup(string? group)
     {
         var next = string.IsNullOrWhiteSpace(group) ? AntigravityGroups.DefaultPrimary : group.Trim();
-        if (string.Equals(next, _antigravityPrimaryGroup, StringComparison.Ordinal)) return;
-        _antigravityPrimaryGroup = next;
+        lock (_gate)
+        {
+            if (string.Equals(next, _antigravityPrimaryGroup, StringComparison.Ordinal)) return;
+            _antigravityPrimaryGroup = next;
+        }
         Publish();
     }
 
@@ -150,16 +253,23 @@ internal sealed class OtherToolsModule : IDisposable
 
     private void Publish()
     {
-        var merged = AntigravityGroups.Pin(UsageProviderEngine.Merge(_fetched, _external), _antigravityPrimaryGroup);
-        lock (_gate) _board = merged;
-        if (_bar.IsDisposed) return;
+        UsageBoard merged;
+        lock (_gate)
+        {
+            merged = AntigravityGroups.Pin(UsageProviderEngine.Merge(_fetched, _external), _antigravityPrimaryGroup);
+            _board = merged;
+        }
+        if (_disposed || _bar.IsDisposed) return;
         if (_bar.InvokeRequired)
         {
             _bar.BeginInvoke(() =>
             {
+                if (_disposed || _bar.IsDisposed) return;
+                UsageBoard latest;
+                lock (_gate) latest = _board;
                 _changed();
-                _bar.SetUsageBoard(merged);
-                _popup?.ShowBoard(merged);
+                _bar.SetUsageBoard(latest);
+                _popup?.ShowBoard(latest);
             });
             return;
         }

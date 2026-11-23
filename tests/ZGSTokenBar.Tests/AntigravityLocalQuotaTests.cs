@@ -68,6 +68,7 @@ internal static class AntigravityLocalQuotaTests
                 "The next refresh recovers on the current account, reusing only the executable qualification.");
             await VerifyDetachedChildAsync(root.FullName);
             VerifySystemProxyPropagation();
+            await VerifyPersistentQualificationCacheAsync(root.FullName);
         }
         finally
         {
@@ -152,6 +153,50 @@ internal static class AntigravityLocalQuotaTests
         UsageCliFallback.ApplySystemProxy(directEnv, probe, uri => uri);
         Check(!directEnv.Environment.ContainsKey("HTTPS_PROXY"),
             "A direct route adds no proxy variables.");
+    }
+
+    private static async Task VerifyPersistentQualificationCacheAsync(string root)
+    {
+        var cacheDir = Path.Combine(root, "qual-cache");
+        var paths = new UsagePaths(root, root, root) { CacheDirectory = cacheDir };
+        var exe = Path.Combine(root, "agy", "bin", "agy.exe");
+        var now = DateTimeOffset.Parse("2026-11-18T12:00:00Z");
+        var versionCalls = 0;
+
+        AntigravityLocalQuota CreateReader() => new((path, args, _) =>
+        {
+            if (args.SequenceEqual(["--version"]))
+            {
+                versionCalls++;
+                return Task.FromResult<string?>("1.5.14");
+            }
+            return Task.FromResult<string?>(Quota);
+        });
+
+        try
+        {
+            var first = await CreateReader().ReadAsync(paths, now, default);
+            Check(first is { Freshness: UsageFreshness.Current } && versionCalls == 1,
+                "Initial read probes --version once and writes stamp cache.");
+
+            var second = await CreateReader().ReadAsync(paths, now.AddMinutes(1), default);
+            Check(second is { Freshness: UsageFreshness.Current } && versionCalls == 1,
+                "A fresh instance reuses the cached --version when executable stamp matches.");
+
+            File.WriteAllText(exe, "modified agy binary fixture payload");
+            var afterUpdate = await CreateReader().ReadAsync(paths, now.AddMinutes(2), default);
+            Check(afterUpdate is { Freshness: UsageFreshness.Current } && versionCalls == 2,
+                "Changing the executable stamp invalidates the cached --version.");
+
+            File.WriteAllText(Path.Combine(cacheDir, "agy-cli-qualification.json"), "{corrupt");
+            var afterCorrupt = await CreateReader().ReadAsync(paths, now.AddMinutes(3), default);
+            Check(afterCorrupt is { Freshness: UsageFreshness.Current } && versionCalls == 3,
+                "A corrupt qualification cache file recovers cleanly without failing the quota read.");
+        }
+        finally
+        {
+            if (Directory.Exists(cacheDir)) Directory.Delete(cacheDir, true);
+        }
     }
 
     private static void Check(bool condition, string message)

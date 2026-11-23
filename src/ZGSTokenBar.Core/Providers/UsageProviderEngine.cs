@@ -147,35 +147,67 @@ public sealed record UsageLoadRequest(
 
 public static class UsageProviderEngine
 {
-    public static async Task<UsageBoard> LoadAsync(UsageLoadRequest request, CancellationToken cancellationToken)
-    {
-        var providers = new List<UsageProviderSnapshot>();
-        var context = new UsageDetectContext(request.Paths, request.Environment, request.SkipPrimaryClaude);
-        foreach (var provider in UsageProviderRegistry.All)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var definition = provider.Definition;
-            if (!request.IsEnabled(definition.Id) || !provider.FetchesUsage) continue;
-            var accounts = new List<UsageAccountSnapshot>();
-            var local = await provider.ReadLocalAccountAsync(context, request.Now, cancellationToken).ConfigureAwait(false);
-            if (local is not null) accounts.Add(local);
-            foreach (var credential in UsageAccountDirectory.Discover(
-                definition,
-                request.Paths,
-                request.Environment,
-                request.SkipPrimaryClaude,
-                includeDetected: local is null))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                accounts.Add(await ReadAccountAsync(provider, credential, request, cancellationToken).ConfigureAwait(false));
-            }
+    public static Task<UsageBoard> LoadAsync(UsageLoadRequest request, CancellationToken cancellationToken) =>
+        LoadAsync(request, onProviderLoaded: null, cancellationToken);
 
-            var normalized = UsageAccounts.Normalize(provider.Enrich(accounts, request));
-            if (normalized.Count == 0) continue;
-            providers.Add(Snapshot(definition, normalized));
+    public static async Task<UsageBoard> LoadAsync(
+        UsageLoadRequest request,
+        Action<UsageProviderSnapshot>? onProviderLoaded,
+        CancellationToken cancellationToken)
+    {
+        var count = UsageProviderRegistry.All.Count;
+        var results = new UsageProviderSnapshot?[count];
+        var tasks = new Task[count];
+        for (var index = 0; index < count; index++)
+        {
+            var slot = index;
+            var provider = UsageProviderRegistry.All[slot];
+            tasks[slot] = LoadSlotAsync(slot, provider);
         }
 
-        return new UsageBoard(providers);
+        await Task.WhenAll(tasks).ConfigureAwait(false);
+        return new UsageBoard(results.OfType<UsageProviderSnapshot>().ToArray());
+
+        async Task LoadSlotAsync(int slot, IUsageProvider provider)
+        {
+            var snapshot = await LoadProviderAsync(provider, request, cancellationToken).ConfigureAwait(false);
+            results[slot] = snapshot;
+            if (snapshot is not null) onProviderLoaded?.Invoke(snapshot);
+        }
+    }
+
+    public static async Task<UsageProviderSnapshot?> LoadProviderAsync(
+        IUsageProvider provider,
+        UsageLoadRequest request,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var definition = provider.Definition;
+        if (!request.IsEnabled(definition.Id) || !provider.FetchesUsage) return null;
+        var context = new UsageDetectContext(request.Paths, request.Environment, request.SkipPrimaryClaude);
+        var accounts = new List<UsageAccountSnapshot>();
+        var local = await provider.ReadLocalAccountAsync(context, request.Now, cancellationToken).ConfigureAwait(false);
+        if (local is not null) accounts.Add(local);
+        var credentials = UsageAccountDirectory.Discover(
+            definition,
+            request.Paths,
+            request.Environment,
+            request.SkipPrimaryClaude,
+            includeDetected: local is null);
+        if (credentials.Count == 1)
+        {
+            accounts.Add(await ReadAccountAsync(provider, credentials[0], request, cancellationToken).ConfigureAwait(false));
+        }
+        else if (credentials.Count > 1)
+        {
+            var accountSnapshots = await Task.WhenAll(
+                credentials.Select(credential => ReadAccountAsync(provider, credential, request, cancellationToken)))
+                .ConfigureAwait(false);
+            accounts.AddRange(accountSnapshots);
+        }
+
+        var normalized = UsageAccounts.Normalize(provider.Enrich(accounts, request));
+        return normalized.Count == 0 ? null : Snapshot(definition, normalized);
     }
 
     public static UsageProviderSnapshot Snapshot(ProviderDefinition definition, IReadOnlyList<UsageAccountSnapshot> accounts) =>

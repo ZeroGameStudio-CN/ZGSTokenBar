@@ -129,7 +129,12 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
             activeProviders: _activeProviders,
             enabledQuotaProviders: Enum.GetValues<ProviderKind>().Where(_settings.IsEnabled).ToHashSet());
         _bar.UsageBoardChanged += (_, board) => ObserveUsagePace(board);
-        _otherToolsModule = new OtherToolsModule(_bar, ApplyGenericPluginCards, _refreshScheduler);
+        _otherToolsModule = new OtherToolsModule(
+            _bar,
+            ApplyGenericPluginCards,
+            _refreshScheduler,
+            _store,
+            id => _settings.IsPluginEnabled(id, true));
         _bar.SetQuotaPaceEstimates(QuotaPaceEstimates(_snapshot, now));
         _bar.SetCodexQuotaTokenSummaries(CodexQuotaTokenSummaries(now));
         _bar.SetCodexTokenUsage(_activeProviders.Contains(ProviderKind.Codex)
@@ -204,6 +209,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _pluginSubscription = _pluginHost.Subscribe(includeValues: true);
         // The group change publishes cards. The plugin host has to exist first.
         _otherToolsModule.SetAntigravityPrimaryGroup(_settings.AntigravityPrimaryGroup);
+        _otherToolsModule.PublishInitial();
         ApplyGenericPluginCards();
 
         var menu = new ContextMenuStrip();
