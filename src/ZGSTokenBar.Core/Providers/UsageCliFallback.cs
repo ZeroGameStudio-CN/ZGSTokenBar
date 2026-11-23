@@ -18,45 +18,79 @@ public sealed class UsageCliFallback(UsageCliRunner? runner = null)
 
     public async Task<UsageBoard> ApplyAsync(UsageBoard board, UsageDetectContext context, Func<string, bool> isEnabled, DateTimeOffset now)
     {
+        var existingById = board.Providers.ToDictionary(provider => provider.ProviderId, StringComparer.Ordinal);
+        var tasks = new List<Task<UsageProviderSnapshot?>>();
+        var replacedIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var provider in UsageProviderRegistry.All)
         {
-            if (provider.Cli is not { } cli || !isEnabled(provider.Definition.Id) || HasReading(board, provider.Definition.Id)) continue;
-            if (cli.Executable(context) is not { } executable) continue;
-            UsageParseResult? parsed;
-            (DateTimeOffset At, UsageParseResult? Parsed) cached;
-            bool hit;
-            lock (_gate) hit = _cache.TryGetValue(provider.Definition.Id, out cached);
-            if (cli.CacheFor > TimeSpan.Zero && hit && now - cached.At <= cli.CacheFor)
-            {
-                parsed = cached.Parsed;
-            }
-            else
-            {
-                parsed = null;
-                foreach (var attempt in cli.Attempts)
-                {
-                    parsed = cli.Parse(await _run(executable, attempt).ConfigureAwait(false));
-                    if (parsed is not null) break;
-                }
-
-                if (cli.CacheFor > TimeSpan.Zero)
-                {
-                    lock (_gate) _cache[provider.Definition.Id] = (now, parsed);
-                }
-            }
-
-            board = Replace(board, provider.Definition, parsed, cli.SourceKind, now, cli.Account?.Invoke(context));
+            var id = provider.Definition.Id;
+            existingById.TryGetValue(id, out var current);
+            if (provider.Cli is null || !isEnabled(id) || HasReading(current)) continue;
+            if (provider.Cli.Executable(context) is null) continue;
+            replacedIds.Add(id);
+            tasks.Add(ApplyProviderAsync(provider, current, context, now));
         }
 
-        return board;
+        if (tasks.Count == 0) return board;
+        var updated = await Task.WhenAll(tasks).ConfigureAwait(false);
+        var preserved = board.Providers.Where(provider => !replacedIds.Contains(provider.ProviderId)).ToArray();
+        return UsageProviderEngine.Merge(new UsageBoard(preserved), updated.OfType<UsageProviderSnapshot>().ToArray());
+    }
+
+    public async Task<UsageProviderSnapshot?> ApplyProviderAsync(
+        IUsageProvider provider,
+        UsageProviderSnapshot? current,
+        UsageDetectContext context,
+        DateTimeOffset now)
+    {
+        if (provider.Cli is not { } cli || HasReading(current)) return current;
+        if (cli.Executable(context) is not { } executable) return current;
+        UsageParseResult? parsed;
+        (DateTimeOffset At, UsageParseResult? Parsed) cached;
+        bool hit;
+        lock (_gate) hit = _cache.TryGetValue(provider.Definition.Id, out cached);
+        if (cli.CacheFor > TimeSpan.Zero && hit && now - cached.At <= cli.CacheFor)
+        {
+            parsed = cached.Parsed;
+        }
+        else
+        {
+            parsed = null;
+            foreach (var attempt in cli.Attempts)
+            {
+                parsed = cli.Parse(await _run(executable, attempt).ConfigureAwait(false));
+                if (parsed is not null) break;
+            }
+
+            if (cli.CacheFor > TimeSpan.Zero)
+            {
+                lock (_gate) _cache[provider.Definition.Id] = (now, parsed);
+            }
+        }
+
+        if (parsed is null && current is not null) return current;
+        var account = CreateCliAccount(provider.Definition, parsed, cli.SourceKind, now, cli.Account?.Invoke(context));
+        return UsageProviderEngine.Snapshot(provider.Definition, [account]);
     }
 
     internal static UsageBoard Replace(UsageBoard board, ProviderDefinition definition, UsageParseResult? parsed, string source, DateTimeOffset now,
         string? accountLabel = null)
     {
         if (parsed is null && board.Providers.Any(provider => provider.ProviderId == definition.Id)) return board;
+        var account = CreateCliAccount(definition, parsed, source, now, accountLabel);
+        var others = board.Providers.Where(provider => !string.Equals(provider.ProviderId, definition.Id, StringComparison.Ordinal)).ToArray();
+        return UsageProviderEngine.Merge(new UsageBoard(others), [UsageProviderEngine.Snapshot(definition, [account])]);
+    }
+
+    private static UsageAccountSnapshot CreateCliAccount(
+        ProviderDefinition definition,
+        UsageParseResult? parsed,
+        string source,
+        DateTimeOffset now,
+        string? accountLabel)
+    {
         // The account id stays the CLI source, so pace history keys do not change with the sign-in.
-        var account = new UsageAccountSnapshot(
+        return new UsageAccountSnapshot(
             source,
             string.IsNullOrWhiteSpace(accountLabel) ? definition.DisplayName : accountLabel,
             parsed?.Plan,
@@ -71,14 +105,15 @@ public sealed class UsageCliFallback(UsageCliRunner? runner = null)
         {
             Period = parsed?.Period,
         };
-        var others = board.Providers.Where(provider => !string.Equals(provider.ProviderId, definition.Id, StringComparison.Ordinal)).ToArray();
-        return UsageProviderEngine.Merge(new UsageBoard(others), [UsageProviderEngine.Snapshot(definition, [account])]);
     }
 
+    public static bool HasReading(UsageProviderSnapshot? provider) =>
+        provider is not null
+        && provider.Accounts.Any(account => account.Freshness == UsageFreshness.Current
+            && (account.Windows.Any(window => window.UsedPercent is not null) || account.Credits is not null));
+
     public static bool HasReading(UsageBoard board, string providerId) =>
-        board.Providers.Any(provider => provider.ProviderId == providerId
-            && provider.Accounts.Any(account => account.Freshness == UsageFreshness.Current
-                && (account.Windows.Any(window => window.UsedPercent is not null) || account.Credits is not null)));
+        HasReading(board.Providers.FirstOrDefault(provider => provider.ProviderId == providerId));
 
     public static Task<string?> RunProcessAsync(string executable, IReadOnlyList<string> arguments) =>
         RunProcessAsync(executable, arguments, CancellationToken.None);

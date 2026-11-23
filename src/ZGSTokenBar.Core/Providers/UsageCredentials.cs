@@ -59,6 +59,8 @@ public sealed class MapUsageEnvironment(IReadOnlyDictionary<string, string> valu
 
 public sealed record UsagePaths(string Home, string ApplicationData, string LocalApplicationData)
 {
+    public string? CacheDirectory { get; init; }
+
     public static UsagePaths Current() => new(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),

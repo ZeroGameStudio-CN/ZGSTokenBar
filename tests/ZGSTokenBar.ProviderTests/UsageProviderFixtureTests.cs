@@ -15,6 +15,8 @@ public static class UsageProviderFixtureTests
         VerifyAccounts();
         VerifyEndpoints();
         VerifyEngine().GetAwaiter().GetResult();
+        VerifyConcurrentStreamingEngine().GetAwaiter().GetResult();
+        VerifyUsageBoardCache();
         ReviewFixTests.Run();
         VerifyProjectionAndSvg();
         VerifyGlassDock();
@@ -531,5 +533,131 @@ public static class UsageProviderFixtureTests
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("blocked request was sent");
+    }
+
+    private static async Task VerifyConcurrentStreamingEngine()
+    {
+        var root = Temp();
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root, ".grok"));
+            File.WriteAllText(Path.Combine(root, ".grok", "auth.json"), """
+                {"email":"ada@example.com","key":"test-token-not-real","expires_at":"2099-01-01T00:00:00Z"}
+                """);
+            var grokGate = new TaskCompletionSource<UsageHttpResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var openRouterStreamed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var streamed = new List<string>();
+            var env = new MapUsageEnvironment(new Dictionary<string, string> { ["OPENROUTER_API_KEY"] = "test-openrouter-key" });
+            var transport = new GatingTransport(grokGate.Task);
+
+            var loadTask = UsageProviderEngine.LoadAsync(
+                new UsageLoadRequest(
+                    DateTimeOffset.Parse("2026-11-10T00:00:00Z"),
+                    new UsagePaths(root, root, root),
+                    id => id is UsageProviderIds.Grok or UsageProviderIds.OpenRouter,
+                    transport,
+                    env,
+                    true),
+                snapshot =>
+                {
+                    lock (streamed) streamed.Add(snapshot.ProviderId);
+                    if (snapshot.ProviderId == UsageProviderIds.OpenRouter) openRouterStreamed.TrySetResult();
+                },
+                CancellationToken.None);
+
+            await openRouterStreamed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Check(!loadTask.IsCompleted, "fast provider completes and streams before slow earlier provider unblocks");
+
+            grokGate.SetResult(new UsageHttpResult((int)HttpStatusCode.OK, """{"config":{"creditUsagePercent":15,"prepaidBalance":{"val":50}}}""", null));
+            var board = await loadTask.WaitAsync(TimeSpan.FromSeconds(5));
+            Check(board.Providers.Select(p => p.ProviderId).SequenceEqual([UsageProviderIds.Grok, UsageProviderIds.OpenRouter]),
+                "final board preserves canonical registry order regardless of completion order");
+            lock (streamed) Check(streamed.FirstOrDefault() == UsageProviderIds.OpenRouter, "faster provider streamed first");
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    private static void VerifyUsageBoardCache()
+    {
+        var root = Temp();
+        try
+        {
+            var store = new AppSettingsStore(dataDirectory: root);
+            var now = DateTimeOffset.Parse("2026-11-23T12:00:00Z");
+            var grokDef = ProviderCatalog.Find(UsageProviderIds.Grok)!;
+            var agyDef = ProviderCatalog.Find(UsageProviderIds.Antigravity)!;
+            var codexDef = ProviderCatalog.Find(UsageProviderIds.Codex)!;
+            var board = new UsageBoard(
+            [
+                UsageProviderEngine.Snapshot(grokDef,
+                [
+                    new UsageAccountSnapshot("a1", "Grok", null, "grok",
+                        [new UsageWindow("credits", "Credits", 25, null, null)],
+                        null, null, [], UsageFreshness.Current, now.AddMinutes(-2), null),
+                    new UsageAccountSnapshot("a2", "Empty", null, "grok",
+                        [], null, null, [], UsageFreshness.Unavailable, now, "unavailable"),
+                ]),
+                UsageProviderEngine.Snapshot(agyDef,
+                [
+                    new UsageAccountSnapshot("antigravity", "Antigravity", null, "agy-cli",
+                        [new UsageWindow("w", "Gemini", 40, now.AddHours(3), TimeSpan.FromDays(7))],
+                        null, null, [], UsageFreshness.Current, now.AddMinutes(-1), null),
+                ]),
+                // Projected providers (Codex/Claude) belong in quota-cache.json, never usage-board-cache.json.
+                UsageProviderEngine.Snapshot(codexDef,
+                [
+                    new UsageAccountSnapshot("c1", "Codex", null, "codex",
+                        [new UsageWindow("5h", "5h", 10, null, null)],
+                        null, null, [], UsageFreshness.Current, now, null),
+                ]),
+            ]);
+
+            var agyHash = AppSettingsStore.HashUsageIdentity("user@example.com");
+            store.SaveUsageBoardCache(board, now, agyHash);
+            Check(File.Exists(store.UsageBoardCachePath), "usage board cache persists to disk");
+            Check(!File.ReadAllText(store.UsageBoardCachePath).Contains("user@example.com", StringComparison.OrdinalIgnoreCase),
+                "usage board cache never stores raw account email");
+
+            var loaded = store.LoadUsageBoardCache(now.AddMinutes(5), agyHash);
+            Check(loaded is not null
+                && loaded.Providers.Select(p => p.ProviderId).SequenceEqual([UsageProviderIds.Grok, UsageProviderIds.Antigravity])
+                && loaded.Providers[0].Accounts.Count == 1
+                && loaded.Providers[0].Accounts[0].Freshness == UsageFreshness.Cached
+                && loaded.Providers[1].Accounts[0].Freshness == UsageFreshness.Cached,
+                "cached Mini readings restore as Cached and omit Projected/Unavailable accounts");
+
+            var wrongAccount = store.LoadUsageBoardCache(now.AddMinutes(5), AppSettingsStore.HashUsageIdentity("other@example.com"));
+            Check(wrongAccount is not null
+                && wrongAccount.Providers.Select(p => p.ProviderId).SequenceEqual([UsageProviderIds.Grok]),
+                "account switch hides mismatched cached Antigravity reading without dropping other tools");
+
+            Check(store.LoadUsageBoardCache(now.AddHours(25), agyHash) is null,
+                "expired usage board cache is ignored");
+
+            File.WriteAllText(store.UsageBoardCachePath, "{not-json");
+            Check(store.LoadUsageBoardCache(now.AddMinutes(5), agyHash) is null,
+                "corrupt usage board cache recovers safely");
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    private sealed class GatingTransport(Task<UsageHttpResult> grokResponse) : IUsageTransport
+    {
+        public Task<UsageHttpResult> SendAsync(UsageHttpRequest request, CancellationToken cancellationToken)
+        {
+            if (request.Url.Host == "cli-chat-proxy.grok.com") return grokResponse;
+            if (request.Url.Host == "openrouter.ai")
+            {
+                return Task.FromResult(new UsageHttpResult((int)HttpStatusCode.OK,
+                    """{"data":{"total_credits":25,"total_usage":5}}""", null));
+            }
+            return Task.FromResult(UsageHttpResult.Blocked());
+        }
     }
 }

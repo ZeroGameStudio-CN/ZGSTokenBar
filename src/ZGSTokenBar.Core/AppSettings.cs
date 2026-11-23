@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -602,6 +603,7 @@ public sealed class AppSettingsStore
 
     public string SettingsPath => Path.Combine(DataDirectory, "settings.json");
     public string CachePath => Path.Combine(DataDirectory, "quota-cache.json");
+    public string UsageBoardCachePath => Path.Combine(DataDirectory, "usage-board-cache.json");
     public string QuotaRateHistoryPath => Path.Combine(DataDirectory, "quota-rate-history.json");
     public string CodexTokenUsageIndexPath => Path.Combine(DataDirectory, "codex-token-usage-index.json");
     public string CodexConversationCheckpointDirectory => Path.Combine(DataDirectory, "conversation-checkpoints-v1");
@@ -798,6 +800,117 @@ public sealed class AppSettingsStore
             throw new IOException("Quota cache file is busy. Please retry.");
         }
     }
+
+    public static string? HashUsageIdentity(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value.Trim().ToLowerInvariant())));
+    }
+
+    private sealed record UsageBoardCacheEnvelope(
+        int SchemaVersion,
+        DateTimeOffset CapturedAt,
+        string? AntigravityAccountHash,
+        IReadOnlyList<UsageProviderSnapshot> Providers);
+
+    public UsageBoard? LoadUsageBoardCache(DateTimeOffset now, string? antigravityAccountHash = null)
+    {
+        try
+        {
+            if (!File.Exists(UsageBoardCachePath)) return null;
+            var envelope = JsonSerializer.Deserialize<UsageBoardCacheEnvelope>(
+                File.ReadAllText(UsageBoardCachePath), JsonOptions);
+            if (envelope is null
+                || envelope.SchemaVersion != 1
+                || envelope.CapturedAt > now.AddMinutes(1)
+                || now - envelope.CapturedAt > TimeSpan.FromHours(24)
+                || envelope.Providers is null)
+            {
+                return null;
+            }
+
+            var providers = new List<UsageProviderSnapshot>();
+            foreach (var provider in envelope.Providers)
+            {
+                if (ProviderCatalog.Find(provider.ProviderId) is not { Surface: UsageSurface.Mini } definition)
+                    continue;
+                if (provider.ProviderId == UsageProviderIds.Antigravity
+                    && !string.Equals(envelope.AntigravityAccountHash, antigravityAccountHash, StringComparison.Ordinal))
+                    continue;
+
+                var cachedAccounts = (provider.Accounts ?? [])
+                    .Where(account => IsCachedUsageAccountValid(account, envelope.CapturedAt, now))
+                    .Select(account => account with { Freshness = UsageFreshness.Cached })
+                    .ToArray();
+                var normalized = UsageAccounts.Normalize(cachedAccounts);
+                if (normalized.Count == 0) continue;
+                providers.Add(new UsageProviderSnapshot(
+                    definition.Id,
+                    definition.DisplayName,
+                    definition.Accent,
+                    definition.Order,
+                    normalized));
+            }
+
+            return providers.Count == 0 ? null : new UsageBoard(providers);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public void SaveUsageBoardCache(UsageBoard board, DateTimeOffset now, string? antigravityAccountHash = null)
+    {
+        var providers = new List<UsageProviderSnapshot>();
+        foreach (var provider in board.Providers)
+        {
+            if (ProviderCatalog.Find(provider.ProviderId) is not { Surface: UsageSurface.Mini } definition)
+                continue;
+            var liveAccounts = provider.Accounts
+                .Where(account => account.Freshness == UsageFreshness.Current && HasUsableUsageData(account))
+                .ToArray();
+            var normalized = UsageAccounts.Normalize(liveAccounts);
+            if (normalized.Count == 0) continue;
+            providers.Add(new UsageProviderSnapshot(
+                definition.Id,
+                definition.DisplayName,
+                definition.Accent,
+                definition.Order,
+                normalized));
+        }
+
+        if (providers.Count == 0)
+        {
+            try
+            {
+                if (File.Exists(UsageBoardCachePath)) File.Delete(UsageBoardCachePath);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+            return;
+        }
+
+        Directory.CreateDirectory(DataDirectory);
+        var envelope = new UsageBoardCacheEnvelope(1, now, antigravityAccountHash, providers);
+        if (!CredentialSupport.AtomicWrite(UsageBoardCachePath, JsonSerializer.Serialize(envelope, JsonOptions)))
+        {
+            throw new IOException("Usage board cache file is busy. Please retry.");
+        }
+    }
+
+    private static bool IsCachedUsageAccountValid(
+        UsageAccountSnapshot account,
+        DateTimeOffset capturedAt,
+        DateTimeOffset now)
+    {
+        if (account.Freshness is not (UsageFreshness.Current or UsageFreshness.Cached)) return false;
+        if (!HasUsableUsageData(account)) return false;
+        var sampledAt = account.SampledAt ?? capturedAt;
+        return sampledAt <= now.AddMinutes(1) && now - sampledAt <= TimeSpan.FromHours(24);
+    }
+
+    private static bool HasUsableUsageData(UsageAccountSnapshot account) =>
+        account.Windows.Any(window => window.UsedPercent is not null) || account.Credits is not null;
 
     private static QuotaCard NormalizeCachedCard(QuotaCard card, DateTimeOffset now)
     {

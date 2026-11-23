@@ -16,6 +16,7 @@ internal sealed partial class QuotaApplicationContext
 {
     private async Task RefreshAsync(bool userInitiated = false, bool forceProviderRefresh = false, bool codexOnly = false)
     {
+        if (userInitiated) _otherToolsModule.RequestRefresh();
         if (!await _refreshGate.WaitAsync(0)) return;
         try
         {
@@ -363,23 +364,29 @@ internal sealed partial class QuotaApplicationContext
     private void ObserveUsagePace(UsageBoard board)
     {
         var now = DateTimeOffset.UtcNow;
-        var cards = new List<QuotaCard>();
+        var allCards = new List<QuotaCard>();
+        var liveCards = new List<QuotaCard>();
         foreach (var provider in board.Providers)
         {
             if (provider.ProviderId is UsageProviderIds.Claude or UsageProviderIds.Codex) continue;
             foreach (var account in provider.Accounts)
             {
-                if (BarForm.UsageQuotaCard(provider, account, provider.ProviderId) is { } projected) cards.Add(projected.Card);
+                if (BarForm.UsageQuotaCard(provider, account, provider.ProviderId) is not { } projected) continue;
+                allCards.Add(projected.Card);
+                if (account.Freshness == UsageFreshness.Current) liveCards.Add(projected.Card);
             }
         }
 
-        _usagePaceCards = cards;
-        if (cards.Count == 0) return;
-        var observed = new QuotaSnapshot(cards, [new ProviderHealth(ProviderKind.Claude, true, "usage board", ProviderHealthCode.Current)], now);
-        if (_quotaPaceTracker.Observe(observed, now))
+        _usagePaceCards = allCards;
+        if (allCards.Count == 0) return;
+        if (liveCards.Count > 0)
         {
-            var exportedPace = _quotaPaceTracker.Export(now);
-            EnqueueStateSave("quota-rate-history", () => _store.SaveQuotaRateHistory(exportedPace));
+            var observed = new QuotaSnapshot(liveCards, [new ProviderHealth(ProviderKind.Claude, true, "usage board", ProviderHealthCode.Current)], now);
+            if (_quotaPaceTracker.Observe(observed, now))
+            {
+                var exportedPace = _quotaPaceTracker.Export(now);
+                EnqueueStateSave("quota-rate-history", () => _store.SaveQuotaRateHistory(exportedPace));
+            }
         }
 
         _bar.SetQuotaPaceEstimates(QuotaPaceEstimates(_snapshot, now));
