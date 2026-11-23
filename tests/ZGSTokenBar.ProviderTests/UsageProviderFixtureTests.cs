@@ -706,6 +706,63 @@ public static class UsageProviderFixtureTests
         Check(UsageProviderEngine.ReconcileProviderRefresh(previous, null, now) is null,
             "null candidate (disabled or uninstalled) drops the provider");
 
+        foreach (var permanentKey in new[] { "endpoint_blocked", "payload_too_large", "usage_unknown" })
+        {
+            var permanent = UsageProviderEngine.Snapshot(agyDef,
+            [
+                new UsageAccountSnapshot("antigravity", "Antigravity", null, "agy-cli",
+                    [], null, null, [], UsageFreshness.Unavailable, now, permanentKey),
+            ]);
+            var afterPermanent = UsageProviderEngine.ReconcileProviderRefresh(previous, permanent, now);
+            Check(afterPermanent is { Accounts.Count: 1 }
+                && afterPermanent.Accounts[0].Freshness == UsageFreshness.Unavailable
+                && afterPermanent.Accounts[0].ErrorKey == permanentKey,
+                $"non-transient failure {permanentKey} is never masked by cached fallback");
+        }
+
+        var providerWideFailure = UsageProviderEngine.ReconcileProviderRefresh(
+            previous, UsageProviderEngine.Snapshot(agyDef, []), now);
+        Check(providerWideFailure is { Accounts.Count: 1 }
+            && providerWideFailure.Accounts[0].Freshness == UsageFreshness.Cached
+            && providerWideFailure.Accounts[0].Windows[0].UsedPercent == 74,
+            "provider-wide read failure retains the recent reading");
+
+        var httpDef = ProviderCatalog.Find(UsageProviderIds.Grok)!;
+        UsageAccountSnapshot HttpAccount(string id, double? used, UsageFreshness freshness, DateTimeOffset? sampled, string? error) =>
+            new(id, id, null, "credential",
+                used is null ? [] : [new UsageWindow("w", "Weekly", used, now.AddHours(3), TimeSpan.FromDays(7))],
+                null, null, [], freshness, sampled, error);
+        var httpPrevious = UsageProviderEngine.Snapshot(httpDef,
+        [
+            HttpAccount("acct-a", 10, UsageFreshness.Current, sampleAt, null),
+            HttpAccount("acct-b", 20, UsageFreshness.Current, sampleAt, null),
+            HttpAccount("acct-old", 30, UsageFreshness.Current, sampleAt, null),
+        ]);
+
+        var switched = UsageProviderEngine.ReconcileProviderRefresh(httpPrevious, UsageProviderEngine.Snapshot(httpDef,
+        [
+            HttpAccount("acct-new", null, UsageFreshness.Unavailable, now, "rate_limited"),
+        ]), now);
+        Check(switched is { Accounts.Count: 1 }
+            && switched.Accounts[0].AccountId == "acct-new"
+            && switched.Accounts[0].Freshness == UsageFreshness.Unavailable,
+            "a different account's transient failure never shows another account's quota");
+
+        var partial = UsageProviderEngine.ReconcileProviderRefresh(httpPrevious, UsageProviderEngine.Snapshot(httpDef,
+        [
+            HttpAccount("acct-a", 15, UsageFreshness.Current, now, null),
+            HttpAccount("ACCT-B", null, UsageFreshness.Unavailable, now, "http_error"),
+        ]), now);
+        Check(partial is { Accounts.Count: 2 }
+            && partial.Accounts.Single(account => account.AccountId == "acct-a") is { Freshness: UsageFreshness.Current } liveA
+            && liveA.Windows[0].UsedPercent == 15
+            && partial.Accounts.Single(account => account.AccountId.Equals("acct-b", StringComparison.OrdinalIgnoreCase)) is
+                { Freshness: UsageFreshness.Cached } retainedB
+            && retainedB.Windows[0].UsedPercent == 20
+            && retainedB.SampledAt == sampleAt
+            && partial.Accounts.All(account => account.AccountId != "acct-old"),
+            "partial refresh retains only the failing account's own reading and never resurrects removed accounts");
+
         var root = Temp();
         try
         {
