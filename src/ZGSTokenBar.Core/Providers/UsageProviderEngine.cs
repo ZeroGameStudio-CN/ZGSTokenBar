@@ -156,23 +156,44 @@ public static class UsageProviderEngine
         bool accountIdentityChanged = false,
         TimeSpan? maxTransientRetention = null)
     {
-        if (candidate is null || UsageCliFallback.HasReading(candidate) || accountIdentityChanged || previous is null)
-            return candidate;
-        if (candidate.Accounts.Any(account => account.Freshness == UsageFreshness.MissingCredentials))
+        if (candidate is null || accountIdentityChanged || previous is null)
             return candidate;
 
         var retentionWindow = maxTransientRetention ?? DefaultTransientRetention;
-        var retained = previous.Accounts
-            .Where(account => account.Freshness is UsageFreshness.Current or UsageFreshness.Cached
+        var recent = new Dictionary<string, UsageAccountSnapshot>(StringComparer.OrdinalIgnoreCase);
+        foreach (var account in previous.Accounts)
+        {
+            if (account.Freshness is UsageFreshness.Current or UsageFreshness.Cached
                 && (account.Windows.Any(window => window.UsedPercent is not null) || account.Credits is not null)
                 && account.SampledAt is { } sampledAt
                 && sampledAt <= now.AddMinutes(1)
                 && now - sampledAt <= retentionWindow)
-            .Select(account => account with { Freshness = UsageFreshness.Cached })
+            {
+                recent.TryAdd(account.AccountId, account with { Freshness = UsageFreshness.Cached });
+            }
+        }
+        if (recent.Count == 0) return candidate;
+
+        // A provider-wide read failure reports no accounts; keep the recent readings it would have replaced.
+        if (candidate.Accounts.Count == 0)
+            return candidate with { Accounts = UsageAccounts.Normalize(recent.Values) };
+
+        // Otherwise only a transient failure of the same account may fall back to that account's own reading.
+        var retainedAny = false;
+        var merged = candidate.Accounts
+            .Select(account =>
+            {
+                if (!IsTransientFailure(account) || !recent.TryGetValue(account.AccountId, out var prior)) return account;
+                retainedAny = true;
+                return prior;
+            })
             .ToArray();
-        var normalized = UsageAccounts.Normalize(retained);
-        return normalized.Count == 0 ? candidate : candidate with { Accounts = normalized };
+        return retainedAny ? candidate with { Accounts = UsageAccounts.Normalize(merged) } : candidate;
     }
+
+    private static bool IsTransientFailure(UsageAccountSnapshot account) =>
+        account.Freshness == UsageFreshness.Unavailable
+        && account.ErrorKey is "unavailable" or "http_error" or "rate_limited";
 
     public static Task<UsageBoard> LoadAsync(UsageLoadRequest request, CancellationToken cancellationToken) =>
         LoadAsync(request, onProviderLoaded: null, cancellationToken);
