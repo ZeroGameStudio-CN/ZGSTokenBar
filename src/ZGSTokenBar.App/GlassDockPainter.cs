@@ -335,14 +335,14 @@ internal static class GlassDockPainter
         var (cx, cy) = (ellipse.X + ellipse.Width / 2, ellipse.Y + ellipse.Height / 2);
         var radius = ellipse.Width / 2;
         var (dx, dy) = ((float)Math.Cos(angle), (float)Math.Sin(angle));
-        var inner = radius - stroke / 2 - .6f;
-        var outer = radius + stroke / 2 + .6f;
+        var inner = radius - stroke / 2 - 1.6f;
+        var outer = radius + stroke / 2 + 1.7f;
         var a = new PointF(cx + dx * inner, cy + dy * inner);
         var b = new PointF(cx + dx * outer, cy + dy * outer);
-        using (var outline = new Pen(Color.FromArgb(200, 10, 12, 18), 2.4f) { StartCap = LineCap.Flat, EndCap = LineCap.Flat })
+        using (var outline = new Pen(Color.FromArgb(245, 8, 10, 16), 3.2f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
             graphics.DrawLine(outline, a, b);
-        using var tick = new Pen(Color.FromArgb(250, 248, 250, 252), 1.1f) { StartCap = LineCap.Flat, EndCap = LineCap.Flat };
-        graphics.DrawLine(tick, new PointF(cx + dx * (inner + .4f), cy + dy * (inner + .4f)), new PointF(cx + dx * (outer - .4f), cy + dy * (outer - .4f)));
+        using var tick = new Pen(Color.FromArgb(255, 255, 250, 238), 1.35f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        graphics.DrawLine(tick, new PointF(cx + dx * (inner + .2f), cy + dy * (inner + .2f)), new PointF(cx + dx * (outer - .2f), cy + dy * (outer - .2f)));
     }
 
     private static void DrawRingItem(Graphics graphics, RectangleF slot, GlassDockItemVisual item, GlassDockScene scene)
@@ -470,16 +470,15 @@ internal static class GlassDockPainter
             else graphics.DrawArc(ink, ellipse, GlassDockLayout.RingStart(arcRemaining), sweep);
         }
 
-        // Pace tick sits on the ring under the % chip and text, exactly like the arc it marks.
-        if (!balanceOnly && ring.RemainingPercent is > 0 && ring.ExpectedRemaining is { } expected)
-            DrawPaceTick(graphics, ellipse, stroke, expected);
-
         var inner = RectangleF.Inflate(ringBounds, -stroke - 2.5f, -stroke - 2.5f);
         using var valueBrush = new SolidBrush(ValueColor(ring, light));
         var core = RectangleF.Inflate(ringBounds, -stroke - 1f, -stroke - 1f);
         if (below)
         {
             DrawWatermark(graphics, core, item, light, 1f, .86f);
+            // Draw the pace tick above the icon watermark so the inner tip stays crisp, while keeping it under the % chip/text.
+            if (!balanceOnly && ring.RemainingPercent is > 0 && ring.ExpectedRemaining is { } expectedBelow)
+                DrawPaceTick(graphics, ellipse, stroke, expectedBelow);
             var text = balanceOnly ? ring.BalanceText! : GlassDockLayout.PercentText(ring.RemainingPercent);
             if (!stacked)
             {
@@ -508,6 +507,8 @@ internal static class GlassDockPainter
                 _ => light ? .22f : .26f,
             };
             DrawWatermark(graphics, core, item, light, opacity, .78f);
+            if (!balanceOnly && ring.RemainingPercent is > 0 && ring.ExpectedRemaining is { } expected)
+                DrawPaceTick(graphics, ellipse, stroke, expected);
             if (balanceOnly)
             {
                 var balanceFont = FitFont(graphics, ring.BalanceText!, inner.Width + 1, 11f, 7.5f, FontStyle.Bold);

@@ -9629,6 +9629,8 @@ static void TestQuotaPacePopoverPresentation()
         GlassDockPainter.DrawPaceTick(tickGraphics, new RectangleF(5, 5, 30, 30), 3.2f, 75);
         var tick = tickBitmap.GetPixel(35, 20);
         Check(tick.R > 230 && tick.G > 230 && tick.B > 230, $"pace tick reads near-white on an amber ring ({tick})");
+        var outerTip = tickBitmap.GetPixel(37, 20);
+        Check(outerTip.R > 230 && outerTip.G > 220 && outerTip.B > 200, $"pace tick protrudes visibly past the ring stroke ({outerTip})");
         var dark = tickBitmap.GetPixel(35, 21);
         Check(dark.GetBrightness() < Color.FromArgb(251, 191, 36).GetBrightness(), $"pace tick carries a dark outline ({dark})");
         var away = tickBitmap.GetPixel(5, 20);
