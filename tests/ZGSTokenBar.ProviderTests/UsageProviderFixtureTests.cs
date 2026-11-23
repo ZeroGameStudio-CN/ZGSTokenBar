@@ -17,6 +17,7 @@ public static class UsageProviderFixtureTests
         VerifyEngine().GetAwaiter().GetResult();
         VerifyConcurrentStreamingEngine().GetAwaiter().GetResult();
         VerifyUsageBoardCache();
+        VerifyTransientRefreshRetention();
         ReviewFixTests.Run();
         VerifyProjectionAndSvg();
         VerifyGlassDock();
@@ -640,6 +641,86 @@ public static class UsageProviderFixtureTests
             File.WriteAllText(store.UsageBoardCachePath, "{not-json");
             Check(store.LoadUsageBoardCache(now.AddMinutes(5), agyHash) is null,
                 "corrupt usage board cache recovers safely");
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    private static void VerifyTransientRefreshRetention()
+    {
+        var now = DateTimeOffset.Parse("2026-11-23T12:00:00Z");
+        var agyDef = ProviderCatalog.Find(UsageProviderIds.Antigravity)!;
+        var sampleAt = now.AddMinutes(-5);
+        var previous = UsageProviderEngine.Snapshot(agyDef,
+        [
+            new UsageAccountSnapshot("antigravity", "Antigravity", null, "agy-cli",
+                [new UsageWindow("w", "Gemini Models", 74, now.AddHours(3), TimeSpan.FromDays(7))],
+                null, null, [], UsageFreshness.Current, sampleAt, null),
+        ]);
+        var transientUnavailable = UsageProviderEngine.Snapshot(agyDef,
+        [
+            new UsageAccountSnapshot("antigravity", "Antigravity", null, "agy-cli",
+                [], null, null, [], UsageFreshness.Unavailable, null, "unavailable"),
+        ]);
+
+        var retained = UsageProviderEngine.ReconcileProviderRefresh(previous, transientUnavailable, now);
+        Check(retained is { Accounts.Count: 1 }
+            && retained.Accounts[0].Freshness == UsageFreshness.Cached
+            && retained.Accounts[0].SampledAt == sampleAt
+            && retained.Accounts[0].Windows[0].UsedPercent == 74,
+            "transient unavailability retains recent same-account reading as Cached without forging SampledAt");
+
+        var fresh = UsageProviderEngine.Snapshot(agyDef,
+        [
+            new UsageAccountSnapshot("antigravity", "Antigravity", null, "agy-cli",
+                [new UsageWindow("w", "Gemini Models", 80, now.AddHours(3), TimeSpan.FromDays(7))],
+                null, null, [], UsageFreshness.Current, now, null),
+        ]);
+        var updated = UsageProviderEngine.ReconcileProviderRefresh(retained, fresh, now.AddMinutes(1));
+        Check(updated is { Accounts.Count: 1 }
+            && updated.Accounts[0].Freshness == UsageFreshness.Current
+            && updated.Accounts[0].Windows[0].UsedPercent == 80,
+            "live reading supersedes retained Cached reading");
+
+        var signedOut = UsageProviderEngine.Snapshot(agyDef,
+        [
+            new UsageAccountSnapshot("antigravity", "Antigravity", null, "agy-cli",
+                [], null, null, [], UsageFreshness.MissingCredentials, now, "missing_credentials"),
+        ]);
+        var afterSignOut = UsageProviderEngine.ReconcileProviderRefresh(previous, signedOut, now);
+        Check(afterSignOut is { Accounts.Count: 1 }
+            && afterSignOut.Accounts[0].Freshness == UsageFreshness.MissingCredentials
+            && afterSignOut.Accounts[0].Windows.Count == 0,
+            "missing credentials are never masked by cached fallback");
+
+        var afterSwitch = UsageProviderEngine.ReconcileProviderRefresh(previous, transientUnavailable, now, accountIdentityChanged: true);
+        Check(afterSwitch is { Accounts.Count: 1 } && afterSwitch.Accounts[0].Freshness == UsageFreshness.Unavailable,
+            "account switch never retains prior account quota");
+
+        var expired = UsageProviderEngine.ReconcileProviderRefresh(previous, transientUnavailable, sampleAt.AddMinutes(31));
+        Check(expired is { Accounts.Count: 1 } && expired.Accounts[0].Freshness == UsageFreshness.Unavailable,
+            "expired transient retention (>30m) degrades back to Unavailable");
+
+        Check(UsageProviderEngine.ReconcileProviderRefresh(previous, null, now) is null,
+            "null candidate (disabled or uninstalled) drops the provider");
+
+        var root = Temp();
+        try
+        {
+            var store = new AppSettingsStore(dataDirectory: root);
+            var agyHash = AppSettingsStore.HashUsageIdentity("user@example.com");
+            store.SaveUsageBoardCache(new UsageBoard([retained!]), now, agyHash);
+            var reloaded = store.LoadUsageBoardCache(now.AddMinutes(2), agyHash);
+            Check(reloaded is { Providers.Count: 1 }
+                && reloaded.Providers[0].Accounts[0].Freshness == UsageFreshness.Cached
+                && reloaded.Providers[0].Accounts[0].Windows[0].UsedPercent == 74,
+                "usage board cache persists recent retained Cached reading while still discarding Unavailable");
+
+            store.SaveUsageBoardCache(new UsageBoard([transientUnavailable]), now, agyHash);
+            Check(!File.Exists(store.UsageBoardCachePath),
+                "saving an empty/unavailable-only board clears stale usage board cache");
         }
         finally
         {

@@ -139,7 +139,8 @@ public sealed class UsageCliFallback(UsageCliRunner? runner = null)
             cancellationToken.ThrowIfCancellationRequested();
             if (!process.Start()) return null;
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(TimeSpan.FromSeconds(25));
+            // Allow slow self-contained CLIs (e.g. agy.exe) cold-start headroom on top of --print-timeout 20s.
+            timeout.CancelAfter(TimeSpan.FromSeconds(35));
             try
             {
                 process.StandardInput.Close();

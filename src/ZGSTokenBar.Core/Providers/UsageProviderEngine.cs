@@ -147,6 +147,33 @@ public sealed record UsageLoadRequest(
 
 public static class UsageProviderEngine
 {
+    public static readonly TimeSpan DefaultTransientRetention = TimeSpan.FromMinutes(30);
+
+    public static UsageProviderSnapshot? ReconcileProviderRefresh(
+        UsageProviderSnapshot? previous,
+        UsageProviderSnapshot? candidate,
+        DateTimeOffset now,
+        bool accountIdentityChanged = false,
+        TimeSpan? maxTransientRetention = null)
+    {
+        if (candidate is null || UsageCliFallback.HasReading(candidate) || accountIdentityChanged || previous is null)
+            return candidate;
+        if (candidate.Accounts.Any(account => account.Freshness == UsageFreshness.MissingCredentials))
+            return candidate;
+
+        var retentionWindow = maxTransientRetention ?? DefaultTransientRetention;
+        var retained = previous.Accounts
+            .Where(account => account.Freshness is UsageFreshness.Current or UsageFreshness.Cached
+                && (account.Windows.Any(window => window.UsedPercent is not null) || account.Credits is not null)
+                && account.SampledAt is { } sampledAt
+                && sampledAt <= now.AddMinutes(1)
+                && now - sampledAt <= retentionWindow)
+            .Select(account => account with { Freshness = UsageFreshness.Cached })
+            .ToArray();
+        var normalized = UsageAccounts.Normalize(retained);
+        return normalized.Count == 0 ? candidate : candidate with { Accounts = normalized };
+    }
+
     public static Task<UsageBoard> LoadAsync(UsageLoadRequest request, CancellationToken cancellationToken) =>
         LoadAsync(request, onProviderLoaded: null, cancellationToken);
 

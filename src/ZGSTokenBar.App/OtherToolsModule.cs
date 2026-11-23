@@ -23,6 +23,7 @@ internal sealed class OtherToolsModule : IDisposable
     private IReadOnlyList<UsageProviderSnapshot> _external = [];
     private UsageBoardForm? _popup;
     private Func<string, bool> _enabled;
+    private string? _antigravityAccountHash;
     private bool _chinese;
     private bool _light;
     private bool _refreshing;
@@ -54,6 +55,8 @@ internal sealed class OtherToolsModule : IDisposable
             if (eligible.Length > 0)
             {
                 _fetched = new UsageBoard(eligible);
+                if (eligible.Any(provider => provider.ProviderId == AntigravityId))
+                    _antigravityAccountHash = agyHash;
                 _board = AntigravityGroups.Pin(UsageProviderEngine.Merge(_fetched, _external), _antigravityPrimaryGroup);
             }
         }
@@ -136,7 +139,6 @@ internal sealed class OtherToolsModule : IDisposable
         try
         {
             var enabled = _enabled;
-            var agyAccountBefore = UsageAccountDirectory.AntigravitySignedInAccount(_paths);
             var request = new UsageLoadRequest(
                 DateTimeOffset.UtcNow,
                 _paths,
@@ -164,27 +166,45 @@ internal sealed class OtherToolsModule : IDisposable
                 if (_disposed) return;
 
                 var completed = new UsageBoard(results.OfType<UsageProviderSnapshot>().ToArray());
-                lock (_gate) _fetched = completed;
+                string? savedAgyHash;
+                lock (_gate)
+                {
+                    _fetched = completed;
+                    savedAgyHash = _antigravityAccountHash;
+                }
                 Publish();
 
-                var agyAccountAfter = UsageAccountDirectory.AntigravitySignedInAccount(_paths);
-                var agyHash = string.Equals(agyAccountBefore, agyAccountAfter, StringComparison.OrdinalIgnoreCase)
-                    ? AppSettingsStore.HashUsageIdentity(agyAccountAfter)
-                    : null;
                 try
                 {
-                    _store.SaveUsageBoardCache(completed, DateTimeOffset.UtcNow, agyHash);
+                    _store.SaveUsageBoardCache(completed, DateTimeOffset.UtcNow, savedAgyHash);
                 }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
 
                 async Task RefreshProviderAsync(int slot, IUsageProvider provider, UsageDetectContext detectContext)
                 {
                     var id = provider.Definition.Id;
+                    UsageProviderSnapshot? previous;
+                    string? previousAgyHash;
+                    lock (_gate)
+                    {
+                        previous = _fetched.Providers.FirstOrDefault(item => item.ProviderId == id);
+                        previousAgyHash = _antigravityAccountHash;
+                    }
+
+                    string? currentAgyHash = null;
+                    var accountChanged = false;
+                    if (id == AntigravityId)
+                    {
+                        currentAgyHash = AppSettingsStore.HashUsageIdentity(
+                            UsageAccountDirectory.AntigravitySignedInAccount(_paths));
+                        accountChanged = !string.Equals(previousAgyHash, currentAgyHash, StringComparison.Ordinal);
+                    }
+
                     try
                     {
                         if (!enabled(id) || !provider.FetchesUsage)
                         {
-                            ReplaceFetchedProvider(id, null);
+                            ReplaceFetchedProvider(id, null, clearAntigravityHash: id == AntigravityId);
                             return;
                         }
                         var snapshot = await UsageProviderEngine.LoadProviderAsync(provider, request, CancellationToken.None).ConfigureAwait(false);
@@ -192,14 +212,40 @@ internal sealed class OtherToolsModule : IDisposable
                         {
                             snapshot = await _cli.ApplyProviderAsync(provider, snapshot, detectContext, request.Now).ConfigureAwait(false);
                         }
-                        results[slot] = snapshot;
+                        var now = DateTimeOffset.UtcNow;
+                        if (id == AntigravityId)
+                        {
+                            var afterHash = AppSettingsStore.HashUsageIdentity(
+                                UsageAccountDirectory.AntigravitySignedInAccount(_paths));
+                            if (!string.Equals(currentAgyHash, afterHash, StringComparison.Ordinal))
+                                accountChanged = true;
+                            currentAgyHash = afterHash;
+                        }
+                        var reconciled = UsageProviderEngine.ReconcileProviderRefresh(
+                            previous,
+                            snapshot,
+                            now,
+                            accountIdentityChanged: accountChanged);
+                        results[slot] = reconciled;
                         if (_disposed) return;
-                        ReplaceFetchedProvider(id, snapshot);
+                        CommitProviderResult(id, reconciled, accountChanged, currentAgyHash);
                         Publish();
                     }
                     catch (Exception error) when (error is IOException or HttpRequestException or System.Text.Json.JsonException or InvalidOperationException)
                     {
                         AppDiagnostics.RecordMonitorFailure("usage-board", id, "", AppDiagnostics.MonitorFailureCode(error));
+                        var fallback = UsageProviderEngine.ReconcileProviderRefresh(
+                            previous,
+                            UsageProviderEngine.Snapshot(provider.Definition, []),
+                            DateTimeOffset.UtcNow,
+                            accountIdentityChanged: accountChanged);
+                        var retained = fallback is { Accounts.Count: > 0 } ? fallback : null;
+                        results[slot] = retained;
+                        if (!_disposed)
+                        {
+                            CommitProviderResult(id, retained, accountChanged, currentAgyHash);
+                            Publish();
+                        }
                     }
                 }
             }).ConfigureAwait(true);
@@ -214,19 +260,40 @@ internal sealed class OtherToolsModule : IDisposable
         }
     }
 
-    private void ReplaceFetchedProvider(string providerId, UsageProviderSnapshot? snapshot)
+    private void CommitProviderResult(
+        string providerId,
+        UsageProviderSnapshot? snapshot,
+        bool accountChanged,
+        string? currentAgyHash)
     {
         lock (_gate)
         {
-            var map = _fetched.Providers.ToDictionary(item => item.ProviderId, StringComparer.Ordinal);
-            if (snapshot is null) map.Remove(providerId);
-            else map[providerId] = snapshot;
-            _fetched = new UsageBoard(
-                UsageProviderRegistry.All
-                    .Select(provider => map.TryGetValue(provider.Definition.Id, out var existing) ? existing : null)
-                    .OfType<UsageProviderSnapshot>()
-                    .ToArray());
+            ReplaceFetchedProviderLocked(providerId, snapshot);
+            if (providerId == AntigravityId && (UsageCliFallback.HasReading(snapshot) || accountChanged || snapshot is null))
+                _antigravityAccountHash = currentAgyHash;
         }
+    }
+
+    private void ReplaceFetchedProvider(string providerId, UsageProviderSnapshot? snapshot, bool clearAntigravityHash = false)
+    {
+        lock (_gate)
+        {
+            ReplaceFetchedProviderLocked(providerId, snapshot);
+            if (clearAntigravityHash && providerId == AntigravityId)
+                _antigravityAccountHash = null;
+        }
+    }
+
+    private void ReplaceFetchedProviderLocked(string providerId, UsageProviderSnapshot? snapshot)
+    {
+        var map = _fetched.Providers.ToDictionary(item => item.ProviderId, StringComparer.Ordinal);
+        if (snapshot is null) map.Remove(providerId);
+        else map[providerId] = snapshot;
+        _fetched = new UsageBoard(
+            UsageProviderRegistry.All
+                .Select(provider => map.TryGetValue(provider.Definition.Id, out var existing) ? existing : null)
+                .OfType<UsageProviderSnapshot>()
+                .ToArray());
     }
 
     private readonly UsageCliFallback _cli = new();
