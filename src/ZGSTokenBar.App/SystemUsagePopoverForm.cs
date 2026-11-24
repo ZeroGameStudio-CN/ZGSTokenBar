@@ -18,6 +18,8 @@ internal sealed record SystemUsagePopoverContent(SystemUsageSnapshot Snapshot, b
     public TokenCacheStats? Cache { get; init; }
     /// <summary>Compact 12-week token activity (Codex-style grid) plus week / average / total stats.</summary>
     public TokenActivityView? Activity { get; init; }
+    /// <summary>Per-tool usage share across Today / Week / 30d / All-time.</summary>
+    public ProviderTokenBreakdown? ProviderBreakdown { get; init; }
 }
 
 internal sealed record TokenCacheStats(long? TodayRead, long? TodayWrite, double? TodayHitPercent, double? TotalHitPercent);
@@ -68,6 +70,13 @@ internal sealed class SystemUsagePopoverForm : Form
     private PointF? _hoverLogicalPoint;
     private string? _hoverHeatmapLabel;
     private RectangleF _hoverHeatmapTargetBounds;
+    private TokenBreakdownPeriod _breakdownPeriod = TokenBreakdownPeriod.Week;
+    private RectangleF _breakdownPeriodBounds;
+    private RectangleF _breakdownBarBounds;
+    private readonly List<(RectangleF Bounds, string Label, Color Accent)> _breakdownHitTargets = [];
+    private string? _hoverBreakdownLabel;
+    private RectangleF _hoverBreakdownTargetBounds;
+    private Color _hoverBreakdownAccent = RecordedAccent;
     private const int MaximumSessionRows = 10;
     private const int SessionRowHeight = 34;
     private const int SessionHeaderHeight = 30;
@@ -180,12 +189,18 @@ internal sealed class SystemUsagePopoverForm : Form
             _heatmapBounds = RectangleF.Empty;
             _hoverHeatmapLabel = null;
             _hoverHeatmapTargetBounds = RectangleF.Empty;
+            _breakdownPeriodBounds = RectangleF.Empty;
+            _breakdownBarBounds = RectangleF.Empty;
+            _breakdownHitTargets.Clear();
+            _hoverBreakdownLabel = null;
+            _hoverBreakdownTargetBounds = RectangleF.Empty;
         }
         _logicalBodyWidth = content.LiveRates ? LiveRateBodyWidth : LogicalBodyWidth;
         _logicalBodyHeight = content.LiveRates
-            ? LiveRateBodyHeight + TokenSectionHeight
+            ? LiveRateBodyHeight + EffectiveTokenSectionHeight
             : Math.Clamp(282 + Math.Max(0, _processes.Length - 1) * 18, 282, LogicalBodyHeight);
         _capturedAt = _text.SystemUsageCapturedAt(snapshot.CapturedAt);
+        if (_breakdownBarBounds.Width > 0) RebuildBreakdownHitTargets();
         Invalidate();
     }
 
@@ -200,7 +215,18 @@ internal sealed class SystemUsagePopoverForm : Form
 
     internal RectangleF HoverHeatmapBoundsForAcceptance => _hoverHeatmapTargetBounds;
 
+    internal TokenBreakdownPeriod SelectedBreakdownPeriodForAcceptance => _breakdownPeriod;
+
+    internal RectangleF BreakdownPeriodBoundsForAcceptance => _breakdownPeriodBounds;
+
+    internal string? HoverBreakdownLabelForAcceptance => _hoverBreakdownLabel;
+
     private const int TokenSectionHeight = 168;
+    private const int BreakdownSectionHeight = 72;
+
+    private bool HasProviderBreakdown => _content?.LiveRates == true && _content.ProviderBreakdown is { HasAnyTokens: true };
+
+    private int EffectiveTokenSectionHeight => TokenSectionHeight + (HasProviderBreakdown ? BreakdownSectionHeight : 0);
 
     private int SessionSectionHeight => !_sessionsVisible ? 0
         : SessionHeaderHeight + Math.Max(1, _sessions.Length) * SessionRowHeight + 8;
@@ -363,33 +389,69 @@ internal sealed class SystemUsagePopoverForm : Form
         return true;
     }
 
+    internal bool SelectBreakdownPeriodAtLogicalPoint(PointF logicalPoint)
+    {
+        if (!HasProviderBreakdown || !_breakdownPeriodBounds.Contains(logicalPoint)) return false;
+        var slot = Math.Clamp((int)((logicalPoint.X - _breakdownPeriodBounds.Left) / (_breakdownPeriodBounds.Width / 4f)), 0, 3);
+        var next = (TokenBreakdownPeriod)slot;
+        if (_breakdownPeriod == next) return true;
+        _breakdownPeriod = next;
+        RebuildBreakdownHitTargets();
+        UpdateHoverAtLogicalPoint(logicalPoint);
+        Invalidate();
+        return true;
+    }
+
     internal void UpdateHoverAtLogicalPoint(PointF? logicalPoint)
     {
         _hoverLogicalPoint = logicalPoint;
-        var cursor = logicalPoint is { } pt && _grainToggleBounds.Contains(pt)
+        var cursor = logicalPoint is { } pt
+            && (_grainToggleBounds.Contains(pt) || (HasProviderBreakdown && _breakdownPeriodBounds.Contains(pt)))
             ? Cursors.Hand
             : Cursors.Default;
         if (Cursor != cursor) Cursor = cursor;
 
         string? nextLabel = null;
         var nextBounds = RectangleF.Empty;
-        if (_content?.LiveRates == true
-            && _content.Activity is { } activity
-            && logicalPoint is { } point)
+        string? nextBreakdownLabel = null;
+        var nextBreakdownBounds = RectangleF.Empty;
+        var nextBreakdownAccent = RecordedAccent;
+        if (_content?.LiveRates == true && logicalPoint is { } point)
         {
-            var effective = activity with { Grain = EffectiveActivityGrain };
-            if (_heatmapBounds.Width > 0
-                && UiPaint.TryHitActivityHeatmap(_heatmapBounds, effective, point, _text.IsChinese, out var label, out _, out _, out var hitBounds))
+            if (_content.Activity is { } activity)
             {
-                nextLabel = label;
-                nextBounds = hitBounds;
+                var effective = activity with { Grain = EffectiveActivityGrain };
+                if (_heatmapBounds.Width > 0
+                    && UiPaint.TryHitActivityHeatmap(_heatmapBounds, effective, point, _text.IsChinese, out var label, out _, out _, out var hitBounds))
+                {
+                    nextLabel = label;
+                    nextBounds = hitBounds;
+                }
+            }
+
+            if (nextLabel is null && HasProviderBreakdown)
+            {
+                foreach (var target in _breakdownHitTargets)
+                {
+                    if (!target.Bounds.Contains(point)) continue;
+                    nextBreakdownLabel = target.Label;
+                    nextBreakdownBounds = target.Bounds;
+                    nextBreakdownAccent = target.Accent;
+                    break;
+                }
             }
         }
         if (!string.Equals(_hoverHeatmapLabel, nextLabel, StringComparison.Ordinal)
-            || _hoverHeatmapTargetBounds != nextBounds)
+            || _hoverHeatmapTargetBounds != nextBounds
+            || !string.Equals(_hoverBreakdownLabel, nextBreakdownLabel, StringComparison.Ordinal)
+            || _hoverBreakdownTargetBounds != nextBreakdownBounds
+            || _hoverBreakdownAccent != nextBreakdownAccent)
         {
             _hoverHeatmapLabel = nextLabel;
             _hoverHeatmapTargetBounds = nextBounds;
+            _hoverBreakdownLabel = nextBreakdownLabel;
+            _hoverBreakdownTargetBounds = nextBreakdownBounds;
+            _hoverBreakdownAccent = nextBreakdownAccent;
             Invalidate();
         }
     }
@@ -397,8 +459,10 @@ internal sealed class SystemUsagePopoverForm : Form
     protected override void OnMouseDown(MouseEventArgs e)
     {
         base.OnMouseDown(e);
-        if (e.Button == MouseButtons.Left)
-            SelectActivityGrainAtLogicalPoint(new PointF(e.X / _scale, e.Y / _scale));
+        if (e.Button != MouseButtons.Left) return;
+        var point = new PointF(e.X / _scale, e.Y / _scale);
+        if (!SelectActivityGrainAtLogicalPoint(point))
+            SelectBreakdownPeriodAtLogicalPoint(point);
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
@@ -532,8 +596,10 @@ internal sealed class SystemUsagePopoverForm : Form
         TextAt(live?.Generating.ToString() ?? "—", _metricValueFont, primary, 114, 170, 28, 14, StringAlignment.Far);
         TextAt(live?.Tools.ToString() ?? "—", _metricValueFont, primary, 248, 170, 28, 14, StringAlignment.Far);
 
-        // Compact 12-week activity grid (Daily / Weekly) plus 3x2 grouped metrics (本周/周均 · 本日/日均 · 总量/缓存).
-        Panel(206, TokenSectionHeight - 8);
+        // Compact 12-week activity grid (Daily / Weekly) plus 3x2 grouped metrics (本周/周均 · 本日/日均 · 总量/缓存)
+        // and optional compact stacked bar breakdown by tool.
+        var tokenSectionHeight = EffectiveTokenSectionHeight;
+        Panel(206, tokenSectionHeight - 8);
         var activity = _content?.Activity;
         var grain = _grainOverride ?? activity?.Grain ?? TokenActivityGrain.Daily;
         var effectiveActivity = activity is null ? null : activity with { Grain = grain };
@@ -546,6 +612,7 @@ internal sealed class SystemUsagePopoverForm : Form
 
         string? hoverTip = null;
         var hoverTarget = RectangleF.Empty;
+        var hoverAccent = RecordedAccent;
         if (effectiveActivity is not null)
         {
             if (_hoverLogicalPoint is { } hoverPt
@@ -612,7 +679,34 @@ internal sealed class SystemUsagePopoverForm : Form
             _hoverHeatmapTargetBounds = RectangleF.Empty;
             TextAt(zh ? "暂无按日用量" : "No daily totals yet", _detailFont, muted, 24, 270, 252, 14);
         }
-        dy = TokenSectionHeight;
+
+        if (HasProviderBreakdown && _content?.ProviderBreakdown is { } breakdown)
+        {
+            _breakdownPeriodBounds = At(112, 371, 168, 18);
+            _breakdownBarBounds = At(20, 395, 260, 6);
+            graphics.DrawLine(divider, body.X + 20, body.Y + 365, body.X + 280, body.Y + 365);
+            TextAt(zh ? "各家占比" : "By tool", _subtitleFont, muted, 20, 373, 86, 14);
+            UiPaint.Segmented(graphics, _breakdownPeriodBounds,
+                zh ? new[] { "本日", "本周", "30天", "总量" } : new[] { "Day", "Wk", "30d", "All" },
+                (int)_breakdownPeriod, _subtitleFont);
+
+            DrawProviderBreakdown(graphics, breakdown, primary, muted);
+            if (hoverTip is null && _hoverBreakdownLabel is { Length: > 0 } && _hoverBreakdownTargetBounds.Width > 0)
+            {
+                hoverTip = _hoverBreakdownLabel;
+                hoverTarget = _hoverBreakdownTargetBounds;
+                hoverAccent = _hoverBreakdownAccent;
+            }
+        }
+        else
+        {
+            _breakdownPeriodBounds = RectangleF.Empty;
+            _breakdownBarBounds = RectangleF.Empty;
+            _breakdownHitTargets.Clear();
+            _hoverBreakdownLabel = null;
+            _hoverBreakdownTargetBounds = RectangleF.Empty;
+        }
+        dy = tokenSectionHeight;
 
         // Live rates plus cumulative traffic (token totals + cache now live on the activity card).
         Panel(206, 78);
@@ -645,7 +739,7 @@ internal sealed class SystemUsagePopoverForm : Form
         if (_sessionsVisible)
         {
             var sessionTop = 38f;
-            var sessionHeight = (LiveRateBodyHeight + TokenSectionHeight) - sessionTop - 12;
+            var sessionHeight = (LiveRateBodyHeight + tokenSectionHeight) - sessionTop - 12;
             using (var path = RoundedRectangle(new RectangleF(body.X + rightX, body.Y + sessionTop, rightWidth, sessionHeight), 8))
             using (var fill = new SolidBrush(_backgroundTheme.ProviderGroup))
             {
@@ -656,10 +750,170 @@ internal sealed class SystemUsagePopoverForm : Form
         }
 
         if (hoverTip is { Length: > 0 } && hoverTarget.Width > 0)
-            DrawHeatmapHoverOverlay(graphics, body, hoverTip, hoverTarget);
+            DrawHeatmapHoverOverlay(graphics, body, hoverTip, hoverTarget, hoverAccent);
     }
 
-    private void DrawHeatmapHoverOverlay(Graphics graphics, RectangleF body, string tip, RectangleF target)
+    private void DrawProviderBreakdown(Graphics graphics, ProviderTokenBreakdown breakdown, Brush primary, Brush muted)
+    {
+        using var trackBrush = new SolidBrush(UiPalette.Slate500.WithAlpha(34));
+        graphics.FillRoundedRectangle(trackBrush, _breakdownBarBounds, 3f);
+
+        var shares = breakdown.For(_breakdownPeriod);
+        RebuildBreakdownHitTargets();
+        if (shares.Count == 0)
+        {
+            DrawString(graphics, _text.IsChinese ? "该周期暂无用量" : "No usage in this period",
+                _subtitleFont, muted, new RectangleF(_breakdownBarBounds.X, _breakdownBarBounds.Bottom + 10f, _breakdownBarBounds.Width, 16f), StringAlignment.Center);
+            return;
+        }
+
+        var segments = LayoutBreakdownBar(_breakdownBarBounds, shares);
+        var state = graphics.Save();
+        var smoothing = graphics.SmoothingMode;
+        graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using (var clipPath = RoundedRectangle(_breakdownBarBounds, 3f))
+            graphics.SetClip(clipPath);
+        foreach (var (share, rect) in segments)
+        {
+            using var segBrush = new SolidBrush(ProviderAccent(share.ProviderId));
+            graphics.FillRectangle(segBrush, rect);
+        }
+        graphics.SmoothingMode = smoothing;
+        graphics.Restore(state);
+
+        var legendX = _breakdownBarBounds.X;
+        var legendY = _breakdownBarBounds.Bottom + 6f;
+        var displayed = Math.Min(4, shares.Count);
+        for (var i = 0; i < displayed; i++)
+        {
+            var share = shares[i];
+            var colX = legendX + (i % 2) * 134f;
+            var rowY = legendY + (i / 2) * 14f;
+            var accent = ProviderAccent(share.ProviderId);
+            using var dotBrush = new SolidBrush(accent);
+            graphics.FillEllipse(dotBrush, colX, rowY + 4f, 5f, 5f);
+            DrawString(graphics, share.DisplayName, _subtitleFont, primary,
+                new RectangleF(colX + 8f, rowY, 40f, 13f), StringAlignment.Near);
+            var statText = $"{FormatSharePercent(share.SharePercent, shares.Count)} · {NativeText.FormatTokenCount(share.Tokens)}";
+            DrawString(graphics, statText, _subtitleFont, muted,
+                new RectangleF(colX + 48f, rowY, 78f, 13f), StringAlignment.Far);
+        }
+    }
+
+    private void RebuildBreakdownHitTargets()
+    {
+        _breakdownHitTargets.Clear();
+        if (!HasProviderBreakdown || _content?.ProviderBreakdown is not { } breakdown || _breakdownBarBounds.Width <= 0)
+        {
+            _hoverBreakdownLabel = null;
+            _hoverBreakdownTargetBounds = RectangleF.Empty;
+            return;
+        }
+
+        var shares = breakdown.For(_breakdownPeriod);
+        if (shares.Count == 0)
+        {
+            _hoverBreakdownLabel = null;
+            _hoverBreakdownTargetBounds = RectangleF.Empty;
+            return;
+        }
+
+        foreach (var (share, rect) in LayoutBreakdownBar(_breakdownBarBounds, shares))
+        {
+            var label = $"{share.DisplayName} · {FormatSharePercent(share.SharePercent, shares.Count)} · {NativeText.FormatTokenCount(share.Tokens)}";
+            var hitRect = new RectangleF(rect.X, rect.Y - 3f, rect.Width, rect.Height + 6f);
+            _breakdownHitTargets.Add((hitRect, label, ProviderAccent(share.ProviderId)));
+        }
+
+        var legendX = _breakdownBarBounds.X;
+        var legendY = _breakdownBarBounds.Bottom + 6f;
+        var displayed = Math.Min(4, shares.Count);
+        for (var i = 0; i < displayed; i++)
+        {
+            var share = shares[i];
+            var colX = legendX + (i % 2) * 134f;
+            var rowY = legendY + (i / 2) * 14f;
+            var label = $"{share.DisplayName} · {FormatSharePercent(share.SharePercent, shares.Count)} · {NativeText.FormatTokenCount(share.Tokens)}";
+            _breakdownHitTargets.Add((new RectangleF(colX, rowY, 126f, 13f), label, ProviderAccent(share.ProviderId)));
+        }
+    }
+
+    internal static IReadOnlyList<(ProviderTokenShare Share, RectangleF Rect)> LayoutBreakdownBar(
+        RectangleF barBounds,
+        IReadOnlyList<ProviderTokenShare> shares)
+    {
+        var count = Math.Min(4, shares.Count);
+        if (count == 0 || barBounds.Width <= 0 || barBounds.Height <= 0) return [];
+
+        double total = 0;
+        for (var i = 0; i < count; i++)
+            total += Math.Max(0d, shares[i].Tokens);
+        if (total <= 0) return [];
+
+        var gap = count > 1 ? 1.5f : 0f;
+        var usable = Math.Max(1f, barBounds.Width - (count - 1) * gap);
+        var minWidth = count > 1 ? Math.Min(5f, usable / count) : usable;
+
+        var widths = new float[count];
+        var deficit = 0f;
+        var spareCapacity = 0f;
+        for (var i = 0; i < count; i++)
+        {
+            var raw = (float)(usable * (Math.Max(0d, shares[i].Tokens) / total));
+            if (raw < minWidth)
+            {
+                deficit += minWidth - raw;
+                widths[i] = minWidth;
+            }
+            else
+            {
+                spareCapacity += raw - minWidth;
+                widths[i] = raw;
+            }
+        }
+
+        if (deficit > 0 && spareCapacity > 0)
+        {
+            for (var i = 0; i < count; i++)
+            {
+                if (widths[i] <= minWidth) continue;
+                var spare = widths[i] - minWidth;
+                widths[i] -= deficit * (spare / spareCapacity);
+            }
+        }
+
+        var result = new (ProviderTokenShare, RectangleF)[count];
+        var x = barBounds.X;
+        for (var i = 0; i < count; i++)
+        {
+            var width = i == count - 1
+                ? Math.Max(1f, barBounds.Right - x)
+                : Math.Max(1f, widths[i]);
+            result[i] = (shares[i], new RectangleF(x, barBounds.Y, width, barBounds.Height));
+            x += width + gap;
+        }
+        return result;
+    }
+
+    internal static string FormatSharePercent(double sharePercent, int providerCount)
+    {
+        if (sharePercent <= 0) return "0%";
+        if (sharePercent < 0.1) return "<0.1%";
+        if (sharePercent >= 99.95 && providerCount > 1) return ">99.9%";
+        if (sharePercent >= 99.95) return "100%";
+        return $"{sharePercent.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}%";
+    }
+
+    private static Color ProviderAccent(string providerId) => providerId switch
+    {
+        ExternalProviderTokenLedger.CodexProviderId => Color.FromArgb(70, 229, 154),
+        ExternalProviderTokenLedger.AntigravityProviderId => Color.FromArgb(66, 133, 244),
+        ExternalProviderTokenLedger.GrokProviderId => Color.FromArgb(56, 189, 248),
+        ExternalProviderTokenLedger.ClaudeProviderId => Color.FromArgb(245, 158, 11),
+        _ => UiTokens.Accent,
+    };
+
+    private void DrawHeatmapHoverOverlay(Graphics graphics, RectangleF body, string tip, RectangleF target, Color? accent = null)
     {
         var split = tip.IndexOf(" · ", StringComparison.Ordinal);
         var dateText = split >= 0 ? tip[..split] : tip;
@@ -710,7 +964,7 @@ internal sealed class SystemUsagePopoverForm : Form
             graphics.DrawLine(borderPen, tipX, pill.Top - 3.6f, tipX + 4f, pill.Top);
         }
 
-        using var dotBrush = new SolidBrush(RecordedAccent);
+        using var dotBrush = new SolidBrush(accent ?? RecordedAccent);
         graphics.FillEllipse(dotBrush, pill.X + 8f, pill.Y + (pill.Height - 4f) / 2f, 4f, 4f);
         using var dateBrush = new SolidBrush(UiPalette.Slate200);
         UiPaint.Text(graphics, dateText, _detailFont, dateBrush,

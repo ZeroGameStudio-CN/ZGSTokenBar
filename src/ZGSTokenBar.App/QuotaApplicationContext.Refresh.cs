@@ -105,6 +105,10 @@ internal sealed partial class QuotaApplicationContext
             {
                 _ = RefreshCodexTokenUsageAsync(observedAt);
             }
+            if (forceProviderRefresh || userInitiated)
+            {
+                _ = RefreshExternalProviderTokensAsync();
+            }
             if (!stabilization.ConfirmationRequired
                 && _activeProviders.Contains(ProviderKind.Codex))
             {
@@ -159,6 +163,9 @@ internal sealed partial class QuotaApplicationContext
                         await RefreshAsync(codexOnly: true).ConfigureAwait(true);
                     return true;
                 });
+            _refreshScheduler.Add("external-provider-tokens",
+                () => TimeSpan.FromMinutes(1),
+                async () => { await RefreshExternalProviderTokensAsync().ConfigureAwait(true); return true; });
         }
         else if (minutes != _appliedRefreshMinutes)
         {

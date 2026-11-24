@@ -138,6 +138,7 @@ internal sealed partial class BarForm : Form
         new Dictionary<string, CodexQuotaTokenSummary>(StringComparer.Ordinal);
     private CodexTokenUsageSummary? _codexTokenUsage;
     private AiGatewayUsageSummary? _aiGatewayUsage;
+    private ExternalProviderTokenSummary? _externalProviderTokens;
     private SystemUsageSnapshot _systemUsage = new(
         null,
         null,
@@ -159,7 +160,10 @@ internal sealed partial class BarForm : Form
     public event EventHandler<WindowPlacementCommit>? PlacementCommitted;
     public event EventHandler? SystemUsageDetailsRequested;
     internal SystemUsageSnapshot LiveMetrics => _systemUsage;
-    internal long? DisplayedTokenTotal => _codexTokenUsage?.LocalTokens;
+    internal long? DisplayedTokenTotal => CombinedTotalTokens();
+
+    private long? CombinedTotalTokens() =>
+        MultiProviderTokenAggregator.CombinedTotal(_codexTokenUsage, _externalProviderTokens);
 
     public BarForm(
         AppSettings settings,
@@ -348,11 +352,32 @@ internal sealed partial class BarForm : Form
 
     public void SetCodexTokenUsage(CodexTokenUsageSummary? summary)
     {
-        var totalChanged = _codexTokenUsage?.LocalTokens != summary?.LocalTokens
-            || _systemUsage.CumulativeTokens != summary?.LocalTokens;
+        var previousTotal = CombinedTotalTokens();
+        var previousCumulative = _systemUsage.CumulativeTokens;
         _codexTokenUsage = summary;
-        _systemUsage = _systemUsage with { CumulativeTokens = summary?.LocalTokens };
-        if (totalChanged || HasOpenHoverOrPopover) Invalidate();
+        var nextTotal = CombinedTotalTokens();
+        _systemUsage = _systemUsage with { CumulativeTokens = nextTotal };
+        if (previousTotal != nextTotal || previousCumulative != nextTotal || HasOpenHoverOrPopover) Invalidate();
+    }
+
+    public void SetExternalProviderTokens(ExternalProviderTokenSummary? summary)
+    {
+        if (ReferenceEquals(_externalProviderTokens, summary)) return;
+        var previousTotal = CombinedTotalTokens();
+        var previousCumulative = _systemUsage.CumulativeTokens;
+        _externalProviderTokens = summary;
+        var nextTotal = CombinedTotalTokens();
+        _systemUsage = _systemUsage with { CumulativeTokens = nextTotal };
+        if (_systemUsagePopover?.Visible == true)
+        {
+            var previousHeight = _systemUsagePopover.CurrentLogicalBodyHeight;
+            _systemUsagePopover.UpdateContent(SystemPopoverContent(_systemUsage, _popoverPinned), _text);
+            if (previousHeight != _systemUsagePopover.CurrentLogicalBodyHeight)
+            {
+                RepositionPopovers();
+            }
+        }
+        if (previousTotal != nextTotal || previousCumulative != nextTotal || HasOpenHoverOrPopover) Invalidate();
     }
 
     public void SetPluginMiniCards(IReadOnlyList<PluginMiniCardView> cards)
@@ -456,23 +481,37 @@ internal sealed partial class BarForm : Form
         Invalidate();
     }
 
-    private SystemUsagePopoverContent SystemPopoverContent(SystemUsageSnapshot snapshot, bool pinned) =>
-        new(snapshot, pinned, _systemAnchorIsLive)
+    private SystemUsagePopoverContent SystemPopoverContent(SystemUsageSnapshot snapshot, bool pinned)
+    {
+        var now = DateTimeOffset.Now;
+        var aggregated = _systemAnchorIsLive ? CurrentAggregatedTokens(now) : null;
+        return new(snapshot, pinned, _systemAnchorIsLive)
         {
             Conversations = _systemAnchorIsLive ? LiveConversationRows(snapshot) : null,
-            TodayTokens = _systemAnchorIsLive ? _codexTokenUsage?.TodayTokens : null,
-            HourlyTokens = _systemAnchorIsLive ? HourlyTokens(DateTimeOffset.Now) : null,
-            Cache = _systemAnchorIsLive && _codexTokenUsage is { } usage ? CacheStats(usage, DateTimeOffset.Now) : null,
-            Activity = _systemAnchorIsLive && _codexTokenUsage is { } tokens
-                ? TokenActivityCalendar.FromDailyTotals(
-                    tokens.ActivityDays
-                        .Where(day => DateOnly.TryParse(day.LocalDate, out _))
-                        .GroupBy(day => DateOnly.Parse(day.LocalDate))
-                        .ToDictionary(group => group.Key, group => group.Sum(day => day.Spend.TotalTokens)),
-                    DateOnly.FromDateTime(DateTime.Now),
-                    tokens.LocalTokens)
-                : null,
+            TodayTokens = aggregated?.TodayTokens,
+            HourlyTokens = _systemAnchorIsLive ? HourlyTokens(now) : null,
+            Cache = _systemAnchorIsLive && _codexTokenUsage is { } usage ? CacheStats(usage, now) : null,
+            Activity = aggregated?.Activity,
+            ProviderBreakdown = aggregated?.Breakdown is { HasAnyTokens: true } breakdown ? breakdown : null,
         };
+    }
+
+    private (DateOnly Day, CodexTokenUsageSummary? Codex, ExternalProviderTokenSummary? External, AggregatedTokenUsage? Result)? _aggregatedTokensCache;
+
+    private AggregatedTokenUsage? CurrentAggregatedTokens(DateTimeOffset now)
+    {
+        var today = DateOnly.FromDateTime(now.Date);
+        if (_aggregatedTokensCache is { } cached
+            && cached.Day == today
+            && ReferenceEquals(cached.Codex, _codexTokenUsage)
+            && ReferenceEquals(cached.External, _externalProviderTokens))
+        {
+            return cached.Result;
+        }
+        var result = MultiProviderTokenAggregator.Build(_codexTokenUsage, _externalProviderTokens, today);
+        _aggregatedTokensCache = (today, _codexTokenUsage, _externalProviderTokens, result);
+        return result;
+    }
 
     private (DateTimeOffset Hour, CodexTokenUsageSummary? Usage, long[] Buckets)? _hourlyTokensCache;
 
@@ -528,7 +567,7 @@ internal sealed partial class BarForm : Form
 
     public void SetSystemUsage(SystemUsageSnapshot snapshot)
     {
-        snapshot = snapshot with { ObservedOutputTokensPerSecond = _systemUsage.ObservedOutputTokensPerSecond, OutputRateCapturedAt = _systemUsage.OutputRateCapturedAt, LiveRate = _systemUsage.LiveRate, CumulativeTokens = _codexTokenUsage?.LocalTokens };
+        snapshot = snapshot with { ObservedOutputTokensPerSecond = _systemUsage.ObservedOutputTokensPerSecond, OutputRateCapturedAt = _systemUsage.OutputRateCapturedAt, LiveRate = _systemUsage.LiveRate, CumulativeTokens = CombinedTotalTokens() };
         _systemUsage = snapshot;
         if (_systemUsagePopover?.Visible == true)
         {
