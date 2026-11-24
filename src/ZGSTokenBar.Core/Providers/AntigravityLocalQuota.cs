@@ -10,6 +10,8 @@ internal sealed class AntigravityLocalQuota(
     private static readonly Version MinimumVersion = new(1, 5, 3);
     private static readonly string[] QuotaArguments = ["-p", "/usage", "--output-format", "json", "--print-timeout", "20s"];
     private static readonly Uri CloudCodeProbeUri = new("https://cloudcode-pa.googleapis.com/");
+    // Allow slow self-contained agy.exe cold-start headroom on top of --print-timeout 20s.
+    internal static readonly TimeSpan ProcessTimeout = TimeSpan.FromSeconds(35);
     private readonly Func<string, IReadOnlyList<string>, CancellationToken, Task<string?>> _run = run ?? RunDetachedAsync;
     private QualifiedExecutable? _qualified;
 
@@ -54,7 +56,7 @@ internal sealed class AntigravityLocalQuota(
             start.StandardOutputEncoding = System.Text.Encoding.UTF8;
             start.Environment["AGY_CLI_DISABLE_AUTO_UPDATE"] = "true";
             UsageCliFallback.ApplySystemProxy(start, CloudCodeProbeUri);
-        });
+        }, ProcessTimeout);
 
     private static ExecutableStamp? ReadStamp(string path)
     {

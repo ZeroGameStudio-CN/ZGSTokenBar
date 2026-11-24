@@ -871,7 +871,7 @@ public sealed class AppSettingsStore
                 .Where(account => account.Freshness switch
                 {
                     UsageFreshness.Current => HasUsableUsageData(account),
-                    UsageFreshness.Cached => IsCachedUsageAccountValid(account, now, now),
+                    UsageFreshness.Cached => account.SampledAt is not null && IsCachedUsageAccountValid(account, now, now),
                     _ => false,
                 })
                 .ToArray();

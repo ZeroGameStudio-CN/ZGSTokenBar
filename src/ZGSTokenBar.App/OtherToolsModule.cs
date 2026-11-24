@@ -200,6 +200,16 @@ internal sealed class OtherToolsModule : IDisposable
                         accountChanged = !string.Equals(previousAgyHash, currentAgyHash, StringComparison.Ordinal);
                     }
 
+                    void RefreshAntigravityIdentity()
+                    {
+                        if (id != AntigravityId) return;
+                        var afterHash = AppSettingsStore.HashUsageIdentity(
+                            UsageAccountDirectory.AntigravitySignedInAccount(_paths));
+                        if (!string.Equals(currentAgyHash, afterHash, StringComparison.Ordinal))
+                            accountChanged = true;
+                        currentAgyHash = afterHash;
+                    }
+
                     try
                     {
                         if (!enabled(id) || !provider.FetchesUsage)
@@ -213,14 +223,7 @@ internal sealed class OtherToolsModule : IDisposable
                             snapshot = await _cli.ApplyProviderAsync(provider, snapshot, detectContext, request.Now).ConfigureAwait(false);
                         }
                         var now = DateTimeOffset.UtcNow;
-                        if (id == AntigravityId)
-                        {
-                            var afterHash = AppSettingsStore.HashUsageIdentity(
-                                UsageAccountDirectory.AntigravitySignedInAccount(_paths));
-                            if (!string.Equals(currentAgyHash, afterHash, StringComparison.Ordinal))
-                                accountChanged = true;
-                            currentAgyHash = afterHash;
-                        }
+                        RefreshAntigravityIdentity();
                         var reconciled = UsageProviderEngine.ReconcileProviderRefresh(
                             previous,
                             snapshot,
@@ -234,6 +237,7 @@ internal sealed class OtherToolsModule : IDisposable
                     catch (Exception error) when (error is IOException or HttpRequestException or System.Text.Json.JsonException or InvalidOperationException)
                     {
                         AppDiagnostics.RecordMonitorFailure("usage-board", id, "", AppDiagnostics.MonitorFailureCode(error));
+                        RefreshAntigravityIdentity();
                         var fallback = UsageProviderEngine.ReconcileProviderRefresh(
                             previous,
                             UsageProviderEngine.Snapshot(provider.Definition, []),

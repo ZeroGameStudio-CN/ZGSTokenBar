@@ -763,6 +763,21 @@ public static class UsageProviderFixtureTests
             && partial.Accounts.All(account => account.AccountId != "acct-old"),
             "partial refresh retains only the failing account's own reading and never resurrects removed accounts");
 
+        var duplicatePrevious = UsageProviderEngine.Snapshot(httpDef,
+        [
+            HttpAccount("acct-dup", 10, UsageFreshness.Cached, sampleAt.AddMinutes(-10), null),
+            HttpAccount("acct-dup", 42, UsageFreshness.Current, sampleAt, null),
+        ]);
+        var normalizedRetention = UsageProviderEngine.ReconcileProviderRefresh(duplicatePrevious, UsageProviderEngine.Snapshot(httpDef,
+        [
+            HttpAccount("acct-dup", null, UsageFreshness.Unavailable, now, "unavailable"),
+        ]), now);
+        Check(normalizedRetention is { Accounts.Count: 1 }
+            && normalizedRetention.Accounts[0].Freshness == UsageFreshness.Cached
+            && normalizedRetention.Accounts[0].Windows[0].UsedPercent == 42
+            && normalizedRetention.Accounts[0].SampledAt == sampleAt,
+            "duplicate unnormalized account entries prefer the fresher Current reading when retaining");
+
         var root = Temp();
         try
         {
@@ -774,6 +789,16 @@ public static class UsageProviderFixtureTests
                 && reloaded.Providers[0].Accounts[0].Freshness == UsageFreshness.Cached
                 && reloaded.Providers[0].Accounts[0].Windows[0].UsedPercent == 74,
                 "usage board cache persists recent retained Cached reading while still discarding Unavailable");
+
+            var cachedWithoutSampleTime = UsageProviderEngine.Snapshot(agyDef,
+            [
+                new UsageAccountSnapshot("antigravity", "Antigravity", null, "agy-cli",
+                    [new UsageWindow("w", "Gemini Models", 66, now.AddHours(3), TimeSpan.FromDays(7))],
+                    null, null, [], UsageFreshness.Cached, null, null),
+            ]);
+            store.SaveUsageBoardCache(new UsageBoard([cachedWithoutSampleTime]), now, agyHash);
+            Check(!File.Exists(store.UsageBoardCachePath),
+                "saving a Cached account without SampledAt never renews cache TTL");
 
             store.SaveUsageBoardCache(new UsageBoard([transientUnavailable]), now, agyHash);
             Check(!File.Exists(store.UsageBoardCachePath),
