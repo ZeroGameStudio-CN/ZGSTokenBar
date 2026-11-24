@@ -26,6 +26,14 @@ if (args is ["--runtime-health"])
     return 0;
 }
 
+if (args is ["--multi-provider-tokens"])
+{
+    System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
+    MultiProviderTokenLedgerTests.Run();
+    Console.WriteLine("PASS multi-provider local token ledger, aggregator and breakdown UI");
+    return 0;
+}
+
 if (args is ["--quota-pipe-fixture"]) return AntigravityLocalQuotaTests.RunPipeFixture(null);
 if (args is ["--quota-pipe-fixture", var quotaMarker]) return AntigravityLocalQuotaTests.RunPipeFixture(quotaMarker);
 if (args is ["--agy-quota"])
@@ -618,6 +626,7 @@ var tests = new (string Name, Action Run)[]
     ("Token ledger failed-save retry", PersistenceRegressionTests.LedgerSaveRetry),
     ("Conversation history persistence", PersistenceRegressionTests.ConversationHistoryPersistence),
     ("Observed live output and network rates", LiveMetricTests.Run),
+    ("Multi-provider local token ledger and breakdown", MultiProviderTokenLedgerTests.Run),
     ("Conversation byte checkpoints survive restart without duplicate accounting", ConversationCheckpointTests.Run),
     ("Retained conversation query and export", ConversationQueryTests.Run),
     ("Unchanged conversation refresh allocation and persistence", ConversationHistoryRefreshTests.Run),

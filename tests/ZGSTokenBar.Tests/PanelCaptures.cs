@@ -47,12 +47,43 @@ internal static class PanelCaptures
             var today = DateOnly.FromDateTime(new DateTime(2026, 11, 13));
             var daily = ActivityFixture(today, TokenActivityGrain.Daily);
             var weekly = daily with { Grain = TokenActivityGrain.Weekly };
+            var breakdown = new ProviderTokenBreakdown(new Dictionary<TokenBreakdownPeriod, IReadOnlyList<ProviderTokenShare>>
+            {
+                [TokenBreakdownPeriod.Today] =
+                [
+                    new(ExternalProviderTokenLedger.CodexProviderId, "Codex", 1_640_000_000, 89.1),
+                    new(ExternalProviderTokenLedger.AntigravityProviderId, "AGY", 120_000_000, 6.5),
+                    new(ExternalProviderTokenLedger.GrokProviderId, "Grok", 80_000_000, 4.4),
+                ],
+                [TokenBreakdownPeriod.Week] =
+                [
+                    new(ExternalProviderTokenLedger.CodexProviderId, "Codex", 9_120_000_000, 82.9),
+                    new(ExternalProviderTokenLedger.GrokProviderId, "Grok", 1_040_000_000, 9.5),
+                    new(ExternalProviderTokenLedger.AntigravityProviderId, "AGY", 610_000_000, 5.5),
+                    new(ExternalProviderTokenLedger.ClaudeProviderId, "Claude", 230_000_000, 2.1),
+                ],
+                [TokenBreakdownPeriod.ThirtyDays] =
+                [
+                    new(ExternalProviderTokenLedger.CodexProviderId, "Codex", 42_500_000_000, 94.4),
+                    new(ExternalProviderTokenLedger.GrokProviderId, "Grok", 1_400_000_000, 3.1),
+                    new(ExternalProviderTokenLedger.AntigravityProviderId, "AGY", 780_000_000, 1.7),
+                    new(ExternalProviderTokenLedger.ClaudeProviderId, "Claude", 350_000_000, 0.8),
+                ],
+                [TokenBreakdownPeriod.AllTime] =
+                [
+                    new(ExternalProviderTokenLedger.CodexProviderId, "Codex", 880_000_000_000, 99.94),
+                    new(ExternalProviderTokenLedger.GrokProviderId, "Grok", 320_000_000, 0.04),
+                    new(ExternalProviderTokenLedger.AntigravityProviderId, "AGY", 128_000_000, 0.014),
+                    new(ExternalProviderTokenLedger.ClaudeProviderId, "Claude", 52_000_000, 0.006),
+                ],
+            });
             var rateContent = new SystemUsagePopoverContent(snapshot, false, true)
             {
                 TodayTokens = 1_840_000_000,
                 HourlyTokens = hourly,
                 Cache = new TokenCacheStats(1_800_000_000, 18_000_000, 99.0, 98.4),
                 Activity = daily,
+                ProviderBreakdown = breakdown,
             };
             Save(directory, $"panel-rates-{locale}.png", popover => popover.RenderForTest(rateContent, text, theme, 144));
             Save(directory, $"panel-rates-sessions-{locale}.png", popover => popover.RenderForTest(rateContent with { Conversations = turns }, text, theme, 144));

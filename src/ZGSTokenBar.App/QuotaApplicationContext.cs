@@ -25,6 +25,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
     private readonly QuotaCoordinator _coordinator = new();
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private readonly SemaphoreSlim _codexTokenUsageGate = new(1, 1);
+    private readonly SemaphoreSlim _externalTokenUsageGate = new(1, 1);
     private readonly SemaphoreSlim _systemUsageGate = new(1, 1);
     private readonly SemaphoreSlim _updateGate = new(1, 1);
     private readonly CancellationTokenSource _shutdown = new();
@@ -33,6 +34,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
     private readonly CodexQuotaTokenTracker _codexQuotaTokenTracker;
     private readonly CodexPlanChangeHistory _planChanges;
     private readonly CodexTokenUsageLedger _codexTokenUsageLedger;
+    private readonly ExternalProviderTokenLedger _externalProviderTokenLedger;
     private readonly SystemUsageSampler _systemUsageSampler = new();
     private readonly NetworkTrafficLedger _networkTraffic;
     private readonly ObservedOutputRate _observedOutput = new();
@@ -113,6 +115,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _planChanges = CodexPlanChangeHistory.Load(_store.LoadCodexPlanChangeHistory());
         _planHistorySavedAt = Environment.TickCount64;
         _codexTokenUsageLedger = new CodexTokenUsageLedger(_store);
+        _externalProviderTokenLedger = new ExternalProviderTokenLedger(_store.DataDirectory);
         _ = Task.Run(() => _store.CleanupOrphanedTempFiles());
         _cachedCodexTokenUsage = _codexTokenUsageLedger.Snapshot(now);
         if (_allowGlobalStartupRegistration && !_store.SettingsReadPending)
@@ -140,6 +143,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _bar.SetCodexTokenUsage(_activeProviders.Contains(ProviderKind.Codex)
             ? _cachedCodexTokenUsage
             : null);
+        _bar.SetExternalProviderTokens(_externalProviderTokenLedger.Snapshot());
         _bar.RefreshRequested += (_, _) => _ = RefreshAsync(userInitiated: true);
         _bar.SettingsRequested += (_, _) => OpenSettings();
         _bar.ProbeSettingsSaveRequested += (_, layoutChange) => ProbeSettingsSave(layoutChange);
@@ -348,6 +352,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
 
         _bar.BeginInvoke(() => _ = RefreshSystemUsageOverviewAsync());
         _bar.BeginInvoke(() => _ = RefreshAsync());
+        _bar.BeginInvoke(() => _ = RefreshExternalProviderTokensAsync());
         _bar.BeginInvoke(() => _ = CheckForUpdatesAsync());
         if (openSettingsOnStart) _bar.BeginInvoke(OpenSettings);
     }
@@ -421,6 +426,8 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
                 _refreshGate.Release();
                 await _codexTokenUsageGate.WaitAsync();
                 _codexTokenUsageGate.Release();
+                await _externalTokenUsageGate.WaitAsync();
+                _externalTokenUsageGate.Release();
                 await _systemUsageGate.WaitAsync();
                 _systemUsageGate.Release();
                 _networkTraffic.Flush(DateTimeOffset.UtcNow);
@@ -484,6 +491,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
             _coordinator.Dispose();
             _refreshGate.Dispose();
             _codexTokenUsageGate.Dispose();
+            _externalTokenUsageGate.Dispose();
             _systemUsageGate.Dispose();
             _updateGate.Dispose();
             _systemUsageSampler.Dispose();

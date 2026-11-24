@@ -170,6 +170,63 @@ internal static class LiveMetricTests
         popover.UpdateContent(new SystemUsagePopoverContent(snapshot, true), text);
         Check(!popover.LiveRatesContentForAcceptance && popover.ProcessRowCountForAcceptance == 1,
             "Switching back to a pinned CPU hover restores only CPU details.");
+
+        var breakdown = new ProviderTokenBreakdown(new Dictionary<TokenBreakdownPeriod, IReadOnlyList<ProviderTokenShare>>
+        {
+            [TokenBreakdownPeriod.Today] =
+            [
+                new(ExternalProviderTokenLedger.CodexProviderId, "Codex", 800_000_000, 80.0),
+                new(ExternalProviderTokenLedger.GrokProviderId, "Grok", 200_000_000, 20.0),
+            ],
+            [TokenBreakdownPeriod.Week] =
+            [
+                new(ExternalProviderTokenLedger.CodexProviderId, "Codex", 6_800_000_000, 68.0),
+                new(ExternalProviderTokenLedger.GrokProviderId, "Grok", 2_000_000_000, 20.0),
+                new(ExternalProviderTokenLedger.AntigravityProviderId, "AGY", 800_000_000, 8.0),
+                new(ExternalProviderTokenLedger.ClaudeProviderId, "Claude", 400_000_000, 4.0),
+            ],
+            [TokenBreakdownPeriod.ThirtyDays] =
+            [
+                new(ExternalProviderTokenLedger.CodexProviderId, "Codex", 24_000_000_000, 96.0),
+                new(ExternalProviderTokenLedger.GrokProviderId, "Grok", 1_000_000_000, 4.0),
+            ],
+            [TokenBreakdownPeriod.AllTime] =
+            [
+                new(ExternalProviderTokenLedger.CodexProviderId, "Codex", 880_000_000_000, 99.94),
+                new(ExternalProviderTokenLedger.GrokProviderId, "Grok", 350_000_000, 0.04),
+                new(ExternalProviderTokenLedger.AntigravityProviderId, "AGY", 120_000_000, 0.014),
+                new(ExternalProviderTokenLedger.ClaudeProviderId, "Claude", 50_000_000, 0.006),
+            ],
+        });
+        var breakdownContent = rateContent with { ProviderBreakdown = breakdown };
+        using (var _ = popover.RenderForTest(breakdownContent, text, QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), 96)) { }
+        Check(popover.CurrentLogicalBodyHeight <= 540,
+            "Rates panel with multi-provider breakdown still fits inside the single unscrolled page budget.");
+        Check(popover.SelectedBreakdownPeriodForAcceptance == TokenBreakdownPeriod.Week,
+            "Multi-provider breakdown defaults to Week.");
+
+        var bounds = popover.BreakdownPeriodBoundsForAcceptance;
+        var slotW = bounds.Width / 4f;
+        var slotY = bounds.Y + bounds.Height / 2f;
+        Check(popover.SelectBreakdownPeriodAtLogicalPoint(new System.Drawing.PointF(bounds.X + slotW * 0.5f, slotY))
+            && popover.SelectedBreakdownPeriodForAcceptance == TokenBreakdownPeriod.Today,
+            "Clicking Day switches breakdown to Today.");
+        Check(popover.SelectBreakdownPeriodAtLogicalPoint(new System.Drawing.PointF(bounds.X + slotW * 2.5f, slotY))
+            && popover.SelectedBreakdownPeriodForAcceptance == TokenBreakdownPeriod.ThirtyDays,
+            "Clicking 30d switches breakdown to ThirtyDays.");
+        Check(popover.SelectBreakdownPeriodAtLogicalPoint(new System.Drawing.PointF(bounds.X + slotW * 3.5f, slotY))
+            && popover.SelectedBreakdownPeriodForAcceptance == TokenBreakdownPeriod.AllTime,
+            "Clicking All switches breakdown to AllTime.");
+
+        // In AllTime mode, AGY sits in row 1 col 0 of the 2x2 legend (x = 20..146, y = 420..433).
+        popover.UpdateHoverAtLogicalPoint(new System.Drawing.PointF(60, 426));
+        Check(popover.HoverBreakdownLabelForAcceptance is { Length: > 0 } agyTip
+            && agyTip.Contains("AGY", StringComparison.Ordinal)
+            && agyTip.Contains("<0.1%", StringComparison.Ordinal),
+            "Hovering a small-share breakdown item reports provider name and <0.1% pill readout.");
+        popover.UpdateHoverAtLogicalPoint(null);
+        Check(popover.HoverBreakdownLabelForAcceptance is null,
+            "Leaving the breakdown area clears the hover readout.");
     }
     internal static void Render(string directory)
     {

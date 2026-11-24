@@ -177,6 +177,31 @@ internal sealed partial class QuotaApplicationContext
         finally { _codexTokenUsageGate.Release(); }
     }
 
+    private async Task RefreshExternalProviderTokensAsync()
+    {
+        if (!await _externalTokenUsageGate.WaitAsync(0)) return;
+        try
+        {
+            var summary = await Task.Run(
+                () => BackgroundWork.BelowNormal(() => _externalProviderTokenLedger.Refresh(DateTimeOffset.UtcNow, _shutdown.Token)),
+                _shutdown.Token);
+            if (!_shutdown.IsCancellationRequested && !_bar.IsDisposed)
+                _bar.SetExternalProviderTokens(summary);
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+        {
+            // Normal application shutdown.
+        }
+        catch (Exception error)
+        {
+            AppDiagnostics.Record("external-provider-tokens", error);
+        }
+        finally
+        {
+            _externalTokenUsageGate.Release();
+        }
+    }
+
     private static string? FreshCodexCardSignature(
         QuotaSnapshot snapshot,
         DateTimeOffset observedAt)
