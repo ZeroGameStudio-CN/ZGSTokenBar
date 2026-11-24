@@ -115,11 +115,13 @@ public sealed class UsageCliFallback(UsageCliRunner? runner = null)
     public static bool HasReading(UsageBoard board, string providerId) =>
         HasReading(board.Providers.FirstOrDefault(provider => provider.ProviderId == providerId));
 
+    internal static readonly TimeSpan DefaultProcessTimeout = TimeSpan.FromSeconds(25);
+
     public static Task<string?> RunProcessAsync(string executable, IReadOnlyList<string> arguments) =>
         RunProcessAsync(executable, arguments, CancellationToken.None);
 
     internal static async Task<string?> RunProcessAsync(string executable, IReadOnlyList<string> arguments,
-        CancellationToken cancellationToken, Action<ProcessStartInfo>? configure = null)
+        CancellationToken cancellationToken, Action<ProcessStartInfo>? configure = null, TimeSpan? processTimeout = null)
     {
         try
         {
@@ -139,8 +141,7 @@ public sealed class UsageCliFallback(UsageCliRunner? runner = null)
             cancellationToken.ThrowIfCancellationRequested();
             if (!process.Start()) return null;
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            // Allow slow self-contained CLIs (e.g. agy.exe) cold-start headroom on top of --print-timeout 20s.
-            timeout.CancelAfter(TimeSpan.FromSeconds(35));
+            timeout.CancelAfter(processTimeout ?? DefaultProcessTimeout);
             try
             {
                 process.StandardInput.Close();

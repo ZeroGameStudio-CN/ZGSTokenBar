@@ -161,7 +161,7 @@ public static class UsageProviderEngine
 
         var retentionWindow = maxTransientRetention ?? DefaultTransientRetention;
         var recent = new Dictionary<string, UsageAccountSnapshot>(StringComparer.OrdinalIgnoreCase);
-        foreach (var account in previous.Accounts)
+        foreach (var account in UsageAccounts.Normalize(previous.Accounts))
         {
             if (account.Freshness is UsageFreshness.Current or UsageFreshness.Cached
                 && (account.Windows.Any(window => window.UsedPercent is not null) || account.Credits is not null)

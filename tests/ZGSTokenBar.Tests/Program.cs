@@ -9636,6 +9636,25 @@ static void TestQuotaPacePopoverPresentation()
         var away = tickBitmap.GetPixel(5, 20);
         Equal(Color.FromArgb(251, 191, 36).ToArgb(), away.ToArgb(), "the tick is drawn only at the expected position");
     }
+    using (var markerBitmap = new Bitmap(120, 30))
+    using (var markerGraphics = Graphics.FromImage(markerBitmap))
+    {
+        var railGreen = Color.FromArgb(70, 229, 154);
+        markerGraphics.Clear(railGreen);
+        markerGraphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        UiPaint.PaceMarker(markerGraphics, new RectangleF(10, 12, 100, 6), 0.5);
+        var center = markerBitmap.GetPixel(60, 15);
+        Check(center.R > 230 && center.G > 200 && center.B < 180,
+            $"pace marker center reads warm amber ({center})");
+        var topProtrusion = markerBitmap.GetPixel(60, 10);
+        Check(topProtrusion.R > 230 && topProtrusion.G > 200 && topProtrusion.B < 180,
+            $"pace marker protrudes visibly above the rail ({topProtrusion})");
+        var outlineBrightness = Math.Min(markerBitmap.GetPixel(61, 15).GetBrightness(), markerBitmap.GetPixel(62, 15).GetBrightness());
+        Check(outlineBrightness < railGreen.GetBrightness(),
+            $"pace marker carries a dark outline against the green rail ({outlineBrightness})");
+        var untouched = markerBitmap.GetPixel(25, 15);
+        Equal(railGreen.ToArgb(), untouched.ToArgb(), "pace marker leaves unrelated rail pixels untouched");
+    }
     Equal("Click to pin", en.PinHint, "English pin hint stays concise");
     Equal("Esc / 点击外部", zh.ClosePinnedHint, "Chinese pinned hint stays concise");
     Equal(

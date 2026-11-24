@@ -67,6 +67,9 @@ internal static class AntigravityLocalQuotaTests
                 && calls.Count(call => call == "--version") == 2,
                 "The next refresh recovers on the current account, reusing only the executable qualification.");
             await VerifyDetachedChildAsync(root.FullName);
+            Check(UsageCliFallback.DefaultProcessTimeout == TimeSpan.FromSeconds(25)
+                && AntigravityLocalQuota.ProcessTimeout == TimeSpan.FromSeconds(35),
+                "Default CLI timeout stays 25s while AGY keeps 35s cold-start headroom.");
             VerifySystemProxyPropagation();
             await VerifyPersistentQualificationCacheAsync(root.FullName);
         }
