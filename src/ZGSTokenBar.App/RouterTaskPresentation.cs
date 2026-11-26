@@ -126,6 +126,16 @@ internal static class RouterTaskPresentation
         return string.Create(CultureInfo.InvariantCulture, $"{seconds / 3600d:0.#}h");
     }
 
+    internal static (double Cleanup, double Other) SplitOverhead(double overhead, double cleanup)
+    {
+        var boundedCleanup = Math.Clamp(cleanup, 0d, Math.Max(0d, overhead));
+        return (boundedCleanup, Math.Max(0d, overhead - boundedCleanup));
+    }
+
+    internal static string DispatchLatency(double seconds) => seconds < 1
+        ? string.Create(CultureInfo.InvariantCulture, $"{seconds * 1000:0}ms")
+        : string.Create(CultureInfo.InvariantCulture, $"{seconds:0.##}s");
+
     /// <summary>Formats one share as an integer percentage or "&lt;1%" for tiny non-zero portions.</summary>
     internal static string FormatShare(double part, double whole)
     {
@@ -178,6 +188,8 @@ internal static class RouterTaskPresentation
         public int ZeroEditorScriptCount;
         public double OccupiedSeconds;
         public double CleanupSeconds;
+        public double ReadyToDispatchSeconds;
+        public int ReadyToDispatchSamples;
         public double EditorActiveSeconds;
         public double RouterOverheadSeconds;
         public double NonEditorScriptSeconds;
@@ -226,6 +238,12 @@ internal static class RouterTaskPresentation
                 acc.ZeroEditorScriptCount += Math.Max(0, RouterJson.Integer(durations, "zeroEditorScriptCount"));
                 acc.OccupiedSeconds += Math.Max(0d, RouterJson.Number(durations, "occupiedSeconds") ?? 0d);
                 acc.CleanupSeconds += Math.Max(0d, RouterJson.Number(durations, "cleanupSeconds") ?? 0d);
+                if (RouterJson.Integer(durations, "readyToDispatchSamples") is > 0 and var samples
+                    && RouterJson.Number(durations, "readyToDispatchSeconds") is >= 0d and var readySeconds)
+                {
+                    acc.ReadyToDispatchSamples += samples;
+                    acc.ReadyToDispatchSeconds += readySeconds;
+                }
                 acc.EditorActiveSeconds += Math.Max(0d, RouterJson.Number(durations, "editorActiveSeconds") ?? 0d);
                 acc.RouterOverheadSeconds += Math.Max(0d, RouterJson.Number(durations, "routerOverheadSeconds") ?? 0d);
                 acc.NonEditorScriptSeconds += Math.Max(0d, RouterJson.Number(durations, "nonEditorScriptSeconds") ?? 0d);
@@ -316,7 +334,9 @@ internal static class RouterTaskPresentation
                 entry.MeasuredCount,
                 entry.DispatchedCount,
                 entry.ZeroEditorScriptCount,
-                entry.CleanupSeconds);
+                entry.CleanupSeconds,
+                entry.ReadyToDispatchSeconds,
+                entry.ReadyToDispatchSamples);
             AppendRecentDayLines(tip, "最近活跃日参考：", activeRows);
             return new(
                 1,
@@ -403,7 +423,9 @@ internal static class RouterTaskPresentation
             measuredCount,
             totalDispatched,
             zeroEditorScripts,
-            totalCleanup);
+            totalCleanup,
+            activeRows.Sum(entry => entry.Value.ReadyToDispatchSeconds),
+            activeRows.Sum(entry => entry.Value.ReadyToDispatchSamples));
         AppendRecentDayLines(tipLines, "最近活跃日明细：", activeRows);
 
         return new(
@@ -443,34 +465,37 @@ internal static class RouterTaskPresentation
         int measuredCount,
         int totalDispatched,
         int zeroEditorScripts,
-        double totalCleanup = 0)
+        double totalCleanup,
+        double readyToDispatchSeconds,
+        int readyToDispatchSamples)
     {
         if (totalOccupied > 0)
         {
             tipLines.Add("");
             tipLines.Add(string.Create(CultureInfo.InvariantCulture,
                 $"槽位时间拆解（仅统计任务占用期间，不含空闲；总计 {FormatDuration(totalOccupied)}，已拆解 {measuredCount:N0}/{totalDispatched:N0} 条）："));
-            tipLines.Add(string.Create(CultureInfo.InvariantCulture,
-                $"  真实 Editor    {FormatDuration(totalEditor)} ({FormatShare(totalEditor, totalOccupied)})"));
-            var overheadSuffix = totalOverhead > 0.05 && totalCleanup > 0.05
-                ? (Math.Max(0d, totalOverhead - totalCleanup) is var prep && prep > 0.05
-                    ? $"（清理 {FormatDuration(totalCleanup)} · 准备/恢复 {FormatDuration(prep)}）"
-                    : $"（含清理 {FormatDuration(totalCleanup)}）")
-                : "";
-            tipLines.Add(string.Create(CultureInfo.InvariantCulture,
-                $"  Router 开销    {FormatDuration(totalOverhead)} ({FormatShare(totalOverhead, totalOccupied)}){overheadSuffix}"));
-            tipLines.Add(string.Create(CultureInfo.InvariantCulture,
-                $"  非 Editor 脚本  {FormatDuration(totalNonEditor)} ({FormatShare(totalNonEditor, totalOccupied)})"));
+            var (cleanup, other) = SplitOverhead(totalOverhead, totalCleanup);
+            tipLines.Add($"  Editor 计时    {FormatDuration(totalEditor)} ({FormatShare(totalEditor, totalOccupied)})");
+            if (cleanup > 0.05)
+                tipLines.Add($"  清理确认       {FormatDuration(cleanup)} ({FormatShare(cleanup, totalOccupied)})");
+            tipLines.Add($"  准备与等待     {FormatDuration(other)} ({FormatShare(other, totalOccupied)})");
+            tipLines.Add($"  脚本其他耗时   {FormatDuration(totalNonEditor)} ({FormatShare(totalNonEditor, totalOccupied)})");
+            tipLines.Add("  脚本其他耗时可能含联机、录制期间等待 Unity 的时间。");
             if (totalUnmeasured > 0.05)
             {
                 tipLines.Add(string.Create(CultureInfo.InvariantCulture,
                     $"  旧未拆分历史    {FormatDuration(totalUnmeasured)} ({FormatShare(totalUnmeasured, totalOccupied)})"));
             }
         }
+        if (readyToDispatchSamples > 0)
+        {
+            tipLines.Add(string.Create(CultureInfo.InvariantCulture,
+                $"  就绪到派发均值 {DispatchLatency(readyToDispatchSeconds / readyToDispatchSamples)}（{readyToDispatchSamples:N0} 条，从最后一次就绪确认起算）"));
+        }
         if (zeroEditorScripts > 0)
         {
             tipLines.Add(string.Create(CultureInfo.InvariantCulture,
-                $"  提示：未调用 Unity CLI 的脚本 {zeroEditorScripts:N0} 条（可优先评估移出 Editor 队列）"));
+                $"  未观测到 Unity CLI 的脚本 {zeroEditorScripts:N0} 条"));
         }
     }
 
@@ -483,11 +508,12 @@ internal static class RouterTaskPresentation
             var d = entry.Value;
             if (d.HasDurations && d.OccupiedSeconds > 0)
             {
+                var (cleanup, other) = SplitOverhead(d.RouterOverheadSeconds, d.CleanupSeconds);
                 var unSuffix = d.UnmeasuredSeconds > 0.05
                     ? string.Create(CultureInfo.InvariantCulture, $" / 未拆分 {FormatDuration(d.UnmeasuredSeconds)}")
                     : "";
                 tipLines.Add(string.Create(CultureInfo.InvariantCulture,
-                    $"  {entry.Key}  {d.Total:N0} 条 · 占 {FormatDuration(d.OccupiedSeconds)}（Editor {FormatDuration(d.EditorActiveSeconds)} / 开销 {FormatDuration(d.RouterOverheadSeconds)} / 非Editor {FormatDuration(d.NonEditorScriptSeconds)}{unSuffix}）"));
+                    $"  {entry.Key}  {d.Total:N0} 条 · 占 {FormatDuration(d.OccupiedSeconds)}（Editor {FormatDuration(d.EditorActiveSeconds)} / 清理 {FormatDuration(cleanup)} / 准备 {FormatDuration(other)} / 脚本其他 {FormatDuration(d.NonEditorScriptSeconds)}{unSuffix}）"));
             }
             else
             {

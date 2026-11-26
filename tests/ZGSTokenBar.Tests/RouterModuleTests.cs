@@ -642,6 +642,7 @@ internal static class RouterModuleTests
                 using var durationHandler = new Fixture
                 {
                     HistoryTotal = 76,
+                    FirstSource = "agy · 联机专项复验",
                     HistoryDays =
                     [
                         new
@@ -699,10 +700,15 @@ internal static class RouterModuleTests
                 var allScope = AllControls(durationForm).OfType<RouterButton>().Single(b => b.AccessibleName == "历史范围 全部");
                 Check(todayScope.Selected && !allScope.Selected && metricsStrip.Visible && metricsStrip.Height > 0
                     && metricsStrip.Text.StartsWith("今日 597 条", StringComparison.Ordinal),
-                    "Metrics strip defaults to today's scoped occupancy and 3-way split");
+                    "Metrics strip defaults to today's scoped occupancy and separate cleanup timing");
                 foreach (var table in AllControls(durationForm).OfType<RouterGrid>().Where(t => t.Visible))
+                {
                     Check(table.Rows.Cast<System.Windows.Forms.DataGridViewRow>().Sum(r => r.Height) <= table.ClientSize.Height - table.ColumnHeadersHeight,
                         "Duration metrics strip leaves history grid scroll-free");
+                    Check(table.Rows[0].Cells.Cast<System.Windows.Forms.DataGridViewCell>()
+                        .Any(cell => Equals(cell.Value, "agy · 联机专项复验")),
+                        "Portable source labels appear in queue and history");
+                }
                 Save(durationForm, Path.Combine(directory, "router-durations-144.png"));
 
                 allScope.PerformClick();
@@ -1115,7 +1121,7 @@ internal static class RouterModuleTests
         internal JsonElement[]? HistoryItems;
         internal object[]? HistoryDays;
         internal readonly Dictionary<string, JsonElement> ProjectViews = new(StringComparer.Ordinal);
-        internal string? UnavailableProject;
+        internal string? UnavailableProject, FirstSource;
         internal string Elapsed = "1:25";
         internal bool FailQueue, EmptyQueue, QueuePriorities;
         internal bool LoseControlReply, OldApi, WrongProject, Stale, Oversized, Empty, NativeError, PreflightRefusal, LocalQueueUnavailable;
@@ -1173,7 +1179,7 @@ internal static class RouterModuleTests
                 items = Enumerable.Range(offset, Empty || EmptyQueue ? 0 : Math.Min(limit, Math.Max(0, 41 - offset))).Select(i => new
                 {
                     id = i.ToString("x32"), task = "合成测试 · " + i + " · " + new string('长', 28),
-                    source = "原对话 " + i, wait = "2:10", rank = i + 1, last = false, version = new string('b', 64),
+                    source = i == 0 && FirstSource is { } first ? first : "原对话 " + i, wait = "2:10", rank = i + 1, last = false, version = new string('b', 64),
                     queuePriority = QueuePriorities ? i switch { 0 => "high", 1 => "low", 2 => "normal", _ => null } : null,
                     queuePriorityReason = QueuePriorities ? i switch { 0 => "解除共享编译阻塞", 1 => "可推迟的对比", _ => null } : null,
                 }),
@@ -1199,7 +1205,7 @@ internal static class RouterModuleTests
             {
                 total = HistoryTotal, offset,
                 items = Enumerable.Range(offset, Math.Min(limit, Math.Max(0, HistoryTotal - offset))).Select(i => new { id = i.ToString("x32"), createdLocal = "2026-10-27T21:00:00+08:00", task = "独立测试与回执 " + i,
-                    source = "原对话 " + i, outcome = i % 3 == 0 ? "failed" : "completed", failureClass = PreflightRefusal && i == 0 ? "dispatch_preflight_failed" : i % 3 == 0 ? "validation_failed" : "", queueSeconds = 12.5,
+                    source = i == 0 && FirstSource is { } first ? first : "原对话 " + i, outcome = i % 3 == 0 ? "failed" : "completed", failureClass = PreflightRefusal && i == 0 ? "dispatch_preflight_failed" : i % 3 == 0 ? "validation_failed" : "", queueSeconds = 12.5,
                     preflightSeconds = PreflightRefusal && i == 0 ? (double?)1 : null, dispatchRecoveryWaitSeconds = PreflightRefusal && i == 0 ? (double?)2999 : null,
                     executionSeconds = 41.2, cleanupSeconds = 3.1, cleanupVerified = true }),
                 counts = new { completed = 74, failed = 2, cancelled = 0, pending = 0 },
@@ -1311,7 +1317,7 @@ internal static class RouterModuleTests
             && RouterTaskPresentation.FormatCellDuration(null) == "—",
             "FormatDuration, FormatShare and FormatCellDuration format cleanly");
 
-        var daysDoc = JsonSerializer.SerializeToElement(new[]
+        var daysDoc = JsonSerializer.SerializeToElement(new object[]
         {
             new
             {
@@ -1325,6 +1331,8 @@ internal static class RouterModuleTests
                     occupiedSeconds = 3600.0,
                     executionSeconds = 3000.0,
                     cleanupSeconds = 600.0,
+                    readyToDispatchSeconds = 0.172,
+                    readyToDispatchSamples = 2,
                     editorActiveSeconds = 1800.0,
                     routerOverheadSeconds = 720.0,
                     nonEditorScriptSeconds = 720.0,
@@ -1360,12 +1368,13 @@ internal static class RouterModuleTests
             && summary.SummaryText == "日均 15 条/天（45m/天）· 均占 3m · 累计 1.5h"
             && summary.TooltipSection.Contains("日均 15 条/天 · 日均占 45m · 单任务均占 3m")
             && summary.TooltipSection.Contains("槽位时间拆解（仅统计任务占用期间，不含空闲；总计 1.5h，已拆解 25/30 条）：")
-            && summary.TooltipSection.Contains("真实 Editor    45m (50%)")
-            && summary.TooltipSection.Contains("Router 开销    18m (20%)（清理 15m · 准备/恢复 3m）")
-            && summary.TooltipSection.Contains("非 Editor 脚本  21m (23%)")
+            && summary.TooltipSection.Contains("Editor 计时    45m (50%)")
+            && summary.TooltipSection.Contains("清理确认       15m (17%)")
+            && summary.TooltipSection.Contains("准备与等待     3m (3%)")
+            && summary.TooltipSection.Contains("脚本其他耗时   21m (23%)")
             && summary.TooltipSection.Contains("旧未拆分历史    6m (7%)")
-            && summary.TooltipSection.Contains("提示：未调用 Unity CLI 的脚本 4 条（可优先评估移出 Editor 队列）")
-            && summary.TooltipSection.Contains("2026-11-22  20 条 · 占 1h（Editor 30m / 开销 12m / 非Editor 12m / 未拆分 6m）")
+            && summary.TooltipSection.Contains("未观测到 Unity CLI 的脚本 4 条")
+            && summary.TooltipSection.Contains("2026-11-22  20 条 · 占 1h（Editor 30m / 清理 10m / 准备 2m / 脚本其他 12m / 未拆分 6m）")
             && RouterTaskPresentation.DayOptionLabel(daysDoc[0]) == "2026-11-22 (20 · 1h)",
             "All-window throughput summarizes average task/day occupancy, cleanup-split overhead, unmeasured caveat and zero-Editor script hint");
 
@@ -1374,10 +1383,12 @@ internal static class RouterModuleTests
             && todaySplit.HasDurations && todaySplit.TotalOccupiedSeconds == 3600.0 && todaySplit.TotalCleanupSeconds == 600.0 && todaySplit.DispatchedCount == 20
             && todaySplit.ZeroEditorScriptCount == 3 && todaySplit.MeasuredCount == 15
             && todaySplit.SummaryText == "今日 20 条 · 总占 1h · 均占 3m"
-            && todaySplit.TooltipSection.Contains("真实 Editor    30m (50%)")
-            && todaySplit.TooltipSection.Contains("Router 开销    12m (20%)（清理 10m · 准备/恢复 2m）")
+            && todaySplit.TooltipSection.Contains("Editor 计时    30m (50%)")
+            && todaySplit.TooltipSection.Contains("清理确认       10m (17%)")
+            && todaySplit.TooltipSection.Contains("准备与等待     2m (3%)")
             && todaySplit.TooltipSection.Contains("旧未拆分历史    6m (10%)")
-            && todaySplit.TooltipSection.Contains("提示：未调用 Unity CLI 的脚本 3 条"),
+            && todaySplit.TooltipSection.Contains("就绪到派发均值 86ms（2 条")
+            && todaySplit.TooltipSection.Contains("未观测到 Unity CLI 的脚本 3 条"),
             "Today-scoped breakdown isolates today's occupied hours, cleanup share and percentages cleanly");
 
         var todayDate = DateOnly.FromDateTime(DateTime.Now);
@@ -1398,6 +1409,8 @@ internal static class RouterModuleTests
                     occupiedSeconds = 1800.0,
                     executionSeconds = 1500.0,
                     cleanupSeconds = 300.0,
+                    readyToDispatchSeconds = 0.086,
+                    readyToDispatchSamples = 1,
                     editorActiveSeconds = 900.0,
                     routerOverheadSeconds = 300.0,
                     nonEditorScriptSeconds = 600.0,
@@ -1438,6 +1451,8 @@ internal static class RouterModuleTests
             && RouterJson.Number(mergedDur, "occupiedSeconds") == 3600.0
             && RouterJson.Number(mergedDur, "editorActiveSeconds") == 1800.0
             && RouterJson.Number(mergedDur, "nonEditorScriptSeconds") == 1200.0
+            && RouterJson.Number(mergedDur, "readyToDispatchSeconds") == 0.172
+            && RouterJson.Integer(mergedDur, "readyToDispatchSamples") == 2
             && RouterJson.Integer(mergedDur, "zeroEditorScriptCount") == 4
             && !RouterJson.Rows(mergedHistory, "groups").Any(),
             "All-project history merges items, project labels, counts and daily durations accurately while keeping merged groups empty");
@@ -1454,10 +1469,11 @@ internal static class RouterModuleTests
             && handler.Routes.Last(u => u.AbsolutePath == "/api/history").Query.Contains($"day={todayStr}")
             && durationStrip.Text == "今日 20 条 · 总占 1h · 均占 3m"
             && durationStrip.Visible && durationStrip.Height > 0
-            && durationStrip.AccessibleDescription!.Contains("真实 Editor    30m (50%)")
+            && durationStrip.AccessibleDescription!.Contains("Editor 计时    30m (50%)")
+            && durationStrip.AccessibleDescription!.Contains("就绪到派发均值 86ms（2 条")
             && durationControls.OfType<System.Windows.Forms.ComboBox>().Single(c => c.AccessibleName == "日期")
                 .Items.Cast<object>().Any(item => item.ToString() == $"{todayStr} (20 · 1h)"),
-            "RouterMonitorForm defaults to Today scope showing today-only occupancy and 3-way split");
+            "RouterMonitorForm defaults to Today scope showing today-only occupancy and separate cleanup timing");
 
         handler.HoldHistory = new(TaskCreationOptions.RunContinuationsAsynchronously);
         allBtn.PerformClick();
@@ -1472,8 +1488,8 @@ internal static class RouterModuleTests
         Check(!todayBtn.Selected && allBtn.Selected
             && handler.Routes.Last(u => u.AbsolutePath == "/api/history").Query.Contains("day=all")
             && durationStrip.Text == "日均 15 条/天（45m/天）· 均占 3m · 累计 1.5h"
-            && durationStrip.AccessibleDescription!.Contains("真实 Editor    50m (56%)"),
-            "RouterMonitorForm switches to All scope showing merged multi-day average and cumulative 3-way split");
+            && durationStrip.AccessibleDescription!.Contains("Editor 计时    50m (56%)"),
+            "RouterMonitorForm switches to All scope showing merged multi-day average and cumulative timing breakdown");
 
         durationForm.SetPinned(true);
         durationControls.OfType<RouterButton>().Single(b => b.AccessibleName == "筛选记录").PerformClick();
@@ -1547,9 +1563,9 @@ internal static class RouterModuleTests
             && dialogText.Contains("── 阶段耗时")
             && dialogText.Contains("── 槽位时间拆解")
             && dialogText.Contains("槽位总占用 10s")
-            && dialogText.Contains("时间拆分：真实 Editor 0s · Router 开销 2s · 非 Editor 8s")
+            && dialogText.Contains("时间拆分  Editor 计时 0s · 清理确认 1s · 准备与等待 1s · 脚本其他耗时 8s")
             && dialogText.Contains("Unity CLI 调用 0 次（0s）")
-            && dialogText.Contains("提示：未调用 Unity CLI，可评估移出 Editor 队列"),
-            "Record dialog displays structured sections, 3-way slot timing split and highlights zero-CLI script jobs");
+            && dialogText.Contains("本次未观测到 Unity CLI 进程"),
+            "Record dialog displays structured sections, distinct cleanup timing and a zero-CLI observation");
     }
 }

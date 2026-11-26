@@ -161,6 +161,8 @@ public sealed partial class RouterMonitorClient
                     writer.WriteNumber("nonEditorScriptSeconds", Math.Round(group.Sum(entry => RouterJson.Number(RouterJson.Field(entry.Row, "durations"), "nonEditorScriptSeconds") ?? 0d), 3));
                     writer.WriteNumber("unmeasuredSeconds", Math.Round(group.Sum(entry => RouterJson.Number(RouterJson.Field(entry.Row, "durations"), "unmeasuredSeconds") ?? 0d), 3));
                     writer.WriteNumber("zeroEditorScriptCount", group.Sum(entry => RouterJson.Integer(RouterJson.Field(entry.Row, "durations"), "zeroEditorScriptCount")));
+                    writer.WriteNumber("readyToDispatchSeconds", Math.Round(group.Sum(entry => RouterJson.Number(RouterJson.Field(entry.Row, "durations"), "readyToDispatchSeconds") ?? 0d), 3));
+                    writer.WriteNumber("readyToDispatchSamples", group.Sum(entry => RouterJson.Integer(RouterJson.Field(entry.Row, "durations"), "readyToDispatchSamples")));
                     writer.WriteEndObject();
                 }
                 writer.WriteEndObject();
