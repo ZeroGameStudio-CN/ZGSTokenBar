@@ -16,12 +16,18 @@ public static partial class UsageAccountDirectory
             Path.Combine(paths.Home, ".cursor", "auth.json"),
         })
         {
-            var token = candidate.EndsWith(".vscdb", StringComparison.OrdinalIgnoreCase)
+            var isVscdb = candidate.EndsWith(".vscdb", StringComparison.OrdinalIgnoreCase);
+            var token = isVscdb
                 ? ProbeSqliteText(candidate, "cursorAuth/accessToken")
                 : ReadTokenFile(candidate, "accessToken", "access_token");
             if (token is null) continue;
             var user = JwtSubject(token) ?? "cursor-local";
-            accounts.Add(new UsageCredential(user, "Cursor", "cursor-session", token, new Dictionary<string, string>
+            var email = (isVscdb
+                    ? ProbeSqliteEmail(candidate, "cursorAuth/cachedEmail")
+                    : ReadTokenFile(candidate, "email"))
+                ?? CredentialSupport.JwtString(token, "email");
+            var label = IsValidEmail(email) ? email!.Trim() : "Cursor";
+            accounts.Add(new UsageCredential(user, label, "cursor-session", token, new Dictionary<string, string>
             {
                 ["user"] = user,
             }));

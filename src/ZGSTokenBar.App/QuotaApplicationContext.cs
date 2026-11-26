@@ -26,6 +26,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private readonly SemaphoreSlim _codexTokenUsageGate = new(1, 1);
     private readonly SemaphoreSlim _externalTokenUsageGate = new(1, 1);
+    private readonly SemaphoreSlim _externalConversationsGate = new(1, 1);
     private readonly SemaphoreSlim _systemUsageGate = new(1, 1);
     private readonly SemaphoreSlim _updateGate = new(1, 1);
     private readonly CancellationTokenSource _shutdown = new();
@@ -35,6 +36,8 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
     private readonly CodexPlanChangeHistory _planChanges;
     private readonly CodexTokenUsageLedger _codexTokenUsageLedger;
     private readonly ExternalProviderTokenLedger _externalProviderTokenLedger;
+    private readonly ExternalConversationTracker _externalConversationTracker = new();
+    private long _lastExternalConversationsTick;
     private readonly SystemUsageSampler _systemUsageSampler = new();
     private readonly NetworkTrafficLedger _networkTraffic;
     private readonly ObservedOutputRate _observedOutput = new();
@@ -158,6 +161,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         {
             ApplyClockInterval();
             _ = RefreshSystemUsageDetailsAsync();
+            _ = RefreshExternalConversationsAsync();
         };
         _bar.GlassExpandedChanged += (_, expanded) => SaveGlassExpanded(expanded);
         _bar.FormClosing += BarFormClosing;
@@ -268,8 +272,14 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
                 if (_bar.WantsSystemUsageDetails) _ = RefreshSystemUsageDetailsAsync();
                 else _ = RefreshSystemUsageOverviewAsync();
                 _bar.SyncTaskbarPlacement();
-                if (_settings.IsPluginEnabled("zgstokenbar.metrics.system", true) && _activeProviders.Contains(ProviderKind.Codex))
-                    _ = RefreshCodexConversationsAsync();
+                if (_settings.IsPluginEnabled("zgstokenbar.metrics.system", true))
+                {
+                    if (_activeProviders.Contains(ProviderKind.Codex))
+                        _ = RefreshCodexConversationsAsync();
+                    var externalThresholdMs = _bar.HasOpenHoverOrPopover ? 2_000L : 10_000L;
+                    if (Environment.TickCount64 - Volatile.Read(ref _lastExternalConversationsTick) >= externalThresholdMs)
+                        _ = RefreshExternalConversationsAsync();
+                }
             }
             var minute = DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerMinute;
             if (!_bar.IsTaskbarMode
@@ -353,6 +363,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _bar.BeginInvoke(() => _ = RefreshSystemUsageOverviewAsync());
         _bar.BeginInvoke(() => _ = RefreshAsync());
         _bar.BeginInvoke(() => _ = RefreshExternalProviderTokensAsync());
+        _bar.BeginInvoke(() => _ = RefreshExternalConversationsAsync());
         _bar.BeginInvoke(() => _ = CheckForUpdatesAsync());
         if (openSettingsOnStart) _bar.BeginInvoke(OpenSettings);
     }
@@ -428,6 +439,8 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
                 _codexTokenUsageGate.Release();
                 await _externalTokenUsageGate.WaitAsync();
                 _externalTokenUsageGate.Release();
+                await _externalConversationsGate.WaitAsync();
+                _externalConversationsGate.Release();
                 await _systemUsageGate.WaitAsync();
                 _systemUsageGate.Release();
                 _networkTraffic.Flush(DateTimeOffset.UtcNow);
@@ -492,6 +505,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
             _refreshGate.Dispose();
             _codexTokenUsageGate.Dispose();
             _externalTokenUsageGate.Dispose();
+            _externalConversationsGate.Dispose();
             _systemUsageGate.Dispose();
             _updateGate.Dispose();
             _systemUsageSampler.Dispose();

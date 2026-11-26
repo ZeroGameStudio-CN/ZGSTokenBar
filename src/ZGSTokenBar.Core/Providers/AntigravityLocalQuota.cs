@@ -38,13 +38,13 @@ internal sealed class AntigravityLocalQuota(
 
         var accountBefore = UsageAccountDirectory.AntigravitySignedInAccount(paths);
         var response = await _run(path, QuotaArguments, token).ConfigureAwait(false);
-        var reading = ReadStamp(path) == stamp && string.Equals(accountBefore,
-            UsageAccountDirectory.AntigravitySignedInAccount(paths), StringComparison.OrdinalIgnoreCase)
-            ? UsageParsers.ParseAntigravityHeadless(response)
-            : null;
-        // The CLI quota response does not identify the account. In particular, do not label it
-        // with an email remembered by a different client or use the legacy token on failure.
-        return new UsageAccountSnapshot("antigravity", "Antigravity", null, "agy-cli", reading?.Windows ?? [],
+        var accountAfter = UsageAccountDirectory.AntigravitySignedInAccount(paths);
+        var stable = ReadStamp(path) == stamp
+            && string.Equals(accountBefore, accountAfter, StringComparison.OrdinalIgnoreCase);
+        var reading = stable ? UsageParsers.ParseAntigravityHeadless(response) : null;
+        var label = reading is not null && accountAfter is not null ? accountAfter : "Antigravity";
+        // Keep AccountId ("antigravity") constant so pace history and transient retention match across updates.
+        return new UsageAccountSnapshot("antigravity", label, null, "agy-cli", reading?.Windows ?? [],
             null, null, [], reading is null ? UsageFreshness.Unavailable : UsageFreshness.Current,
             reading is null ? null : now, reading is null ? "unavailable" : null);
     }

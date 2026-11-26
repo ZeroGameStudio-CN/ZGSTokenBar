@@ -139,6 +139,7 @@ internal sealed partial class BarForm : Form
     private CodexTokenUsageSummary? _codexTokenUsage;
     private AiGatewayUsageSummary? _aiGatewayUsage;
     private ExternalProviderTokenSummary? _externalProviderTokens;
+    private IReadOnlyList<CodexConversationTurn> _externalConversations = [];
     private SystemUsageSnapshot _systemUsage = new(
         null,
         null,
@@ -161,6 +162,7 @@ internal sealed partial class BarForm : Form
     public event EventHandler? SystemUsageDetailsRequested;
     internal SystemUsageSnapshot LiveMetrics => _systemUsage;
     internal long? DisplayedTokenTotal => CombinedTotalTokens();
+    internal IReadOnlyList<CodexConversationTurn> LiveConversationsForAcceptance() => LiveConversationRows(_systemUsage);
 
     private long? CombinedTotalTokens() =>
         MultiProviderTokenAggregator.CombinedTotal(_codexTokenUsage, _externalProviderTokens);
@@ -380,6 +382,24 @@ internal sealed partial class BarForm : Form
         if (previousTotal != nextTotal || previousCumulative != nextTotal || HasOpenHoverOrPopover) Invalidate();
     }
 
+    public void SetExternalConversations(IReadOnlyList<CodexConversationTurn>? turns)
+    {
+        var next = turns ?? [];
+        if (_externalConversations.Count == 0 && next.Count == 0) return;
+        if (_externalConversations.SequenceEqual(next)) return;
+        _externalConversations = next;
+        if (_systemUsagePopover?.Visible == true && _systemAnchorIsLive)
+        {
+            var previousHeight = _systemUsagePopover.CurrentLogicalBodyHeight;
+            _systemUsagePopover.UpdateContent(SystemPopoverContent(_systemUsage, _popoverPinned), _text);
+            if (previousHeight != _systemUsagePopover.CurrentLogicalBodyHeight)
+            {
+                RepositionPopovers();
+            }
+        }
+        if (HasOpenHoverOrPopover) Invalidate();
+    }
+
     public void SetPluginMiniCards(IReadOnlyList<PluginMiniCardView> cards)
     {
         var ordered = cards
@@ -556,13 +576,63 @@ internal sealed partial class BarForm : Form
         return buckets;
     }
 
-    /// <summary>Codex conversations joined with their live per-conversation output rates and taskbar ring identity.</summary>
+    /// <summary>Codex and external tool conversations joined with live output rates and taskbar quota identity.</summary>
     private IReadOnlyList<CodexConversationTurn> LiveConversationRows(SystemUsageSnapshot snapshot)
     {
-        if (_codexTokenUsage is not { } usage || !_activeProviders.Contains(ProviderKind.Codex)) return [];
-        var now = DateTimeOffset.UtcNow;
-        return CodexConversationDisplay.Select(usage.ConversationTurns,
-            snapshot.CurrentOutputRate is not null ? snapshot.LiveRate : null, now, _snapshot);
+        var codexRows = _codexTokenUsage is { } usage && _activeProviders.Contains(ProviderKind.Codex)
+            ? CodexConversationDisplay.Select(
+                usage.ConversationTurns,
+                snapshot.CurrentOutputRate is not null ? snapshot.LiveRate : null,
+                DateTimeOffset.UtcNow,
+                _snapshot)
+            : [];
+
+        if (_externalConversations.Count == 0) return codexRows;
+        var combined = new List<CodexConversationTurn>(codexRows.Count + _externalConversations.Count);
+        combined.AddRange(codexRows);
+        foreach (var turn in _externalConversations)
+        {
+            combined.Add(AttachExternalProviderQuota(turn));
+        }
+        return combined;
+    }
+
+    private CodexConversationTurn AttachExternalProviderQuota(CodexConversationTurn turn)
+    {
+        double? remaining = turn.ProviderId switch
+        {
+            ExternalProviderTokenLedger.AntigravityProviderId => UsageBoardRemaining(UsageProviderIds.Antigravity),
+            ExternalProviderTokenLedger.GrokProviderId => UsageBoardRemaining(UsageProviderIds.Grok),
+            ExternalProviderTokenLedger.ClaudeProviderId => ClaudeRemainingPercent(),
+            _ => null,
+        };
+        return remaining == turn.InstanceRemainingPercent ? turn : turn with { InstanceRemainingPercent = remaining };
+    }
+
+    private double? UsageBoardRemaining(string providerId)
+    {
+        var provider = _usageBoard.Providers.FirstOrDefault(item => string.Equals(item.ProviderId, providerId, StringComparison.Ordinal));
+        if (provider is null || provider.Accounts.Count == 0) return null;
+        var account = provider.Accounts.FirstOrDefault(KnownUsageAccount) ?? provider.Accounts[0];
+        var window = UsageFormatting.Primary(account) is { UsedPercent: not null, Unlimited: false } primary
+            ? primary
+            : account.Windows.Where(item => item.UsedPercent is not null && !item.Unlimited)
+                .OrderByDescending(item => item.UsedPercent)
+                .FirstOrDefault();
+        return UsageFormatting.Remaining(window);
+    }
+
+    private double? ClaudeRemainingPercent()
+    {
+        var card = _snapshot.Cards.FirstOrDefault(item => item.Provider == ProviderKind.Claude && !item.IsService);
+        if (card is not null)
+        {
+            var window = card.Windows.Where(item => item.UsedPercent is not null)
+                .OrderByDescending(item => item.UsedPercent)
+                .FirstOrDefault();
+            if (window?.UsedPercent is { } used) return Math.Clamp(100 - used, 0, 100);
+        }
+        return UsageBoardRemaining(UsageProviderIds.Claude);
     }
 
     public void SetSystemUsage(SystemUsageSnapshot snapshot)

@@ -144,6 +144,97 @@ public static partial class UsageAccountDirectory
         }
     }
 
+    public static string? ProbeSqliteEmail(string path, string key)
+    {
+        byte[] bytes;
+        try
+        {
+            if (!File.Exists(path)) return null;
+            var length = new FileInfo(path).Length;
+            if (length <= 0 || length > 33_554_432) return null;
+            bytes = File.ReadAllBytes(path);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+
+        var keyBytes = Encoding.UTF8.GetBytes(key);
+        if (keyBytes.Length == 0 || keyBytes.Length * 2 + 13 >= 128) return null;
+        var keySerial = (byte)(keyBytes.Length * 2 + 13);
+
+        // Pass 1: exact SQLite leaf-table record match (avoids JSON key-list decoys inside state.vscdb).
+        var searchFrom = 0;
+        while (searchFrom <= bytes.Length - keyBytes.Length)
+        {
+            var rel = IndexOf(bytes.AsSpan(searchFrom), keyBytes);
+            if (rel < 0) break;
+            var origin = searchFrom + rel;
+            searchFrom = origin + 1;
+
+            var valueStart = origin + keyBytes.Length;
+            int valueLen = -1;
+            if (origin >= 2 && bytes[origin - 2] == keySerial && bytes[origin - 1] is >= 13 and < 128 && (bytes[origin - 1] & 1) == 1)
+            {
+                valueLen = (bytes[origin - 1] - 13) / 2;
+            }
+            else if (origin >= 3 && bytes[origin - 3] == keySerial && bytes[origin - 2] >= 0x80 && bytes[origin - 1] < 0x80)
+            {
+                var serial = ((bytes[origin - 2] & 0x7F) << 7) | bytes[origin - 1];
+                if (serial >= 13 && (serial & 1) == 1) valueLen = (serial - 13) / 2;
+            }
+
+            if (valueLen is >= 4 and <= 254 && valueStart + valueLen <= bytes.Length)
+            {
+                var candidate = Encoding.UTF8.GetString(bytes, valueStart, valueLen).Trim();
+                if (IsValidEmail(candidate)) return candidate;
+            }
+        }
+
+        // Pass 2: plain-text key/value fallback for synthetic non-SQLite fixtures.
+        searchFrom = 0;
+        while (searchFrom <= bytes.Length - keyBytes.Length)
+        {
+            var rel = IndexOf(bytes.AsSpan(searchFrom), keyBytes);
+            if (rel < 0) break;
+            var origin = searchFrom + rel;
+            searchFrom = origin + 1;
+
+            var pos = origin + keyBytes.Length;
+            if (pos >= bytes.Length || bytes[pos] is not ((byte)' ' or (byte)'\t' or (byte)':' or (byte)'"')) continue;
+            while (pos < bytes.Length && bytes[pos] is (byte)' ' or (byte)'\t' or (byte)':' or (byte)'"') pos++;
+            var end = pos;
+            while (end < bytes.Length && end - pos < 254 && IsEmailByte(bytes[end])) end++;
+            if (end - pos >= 4)
+            {
+                var candidate = Encoding.ASCII.GetString(bytes, pos, end - pos).Trim();
+                if (IsValidEmail(candidate)) return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    internal static bool IsValidEmail(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        var email = value.Trim();
+        if (email.Length is <= 3 or > 254) return false;
+        if (email.Any(character => char.IsWhiteSpace(character) || char.IsControl(character))) return false;
+        var at = email.IndexOf('@');
+        if (at <= 0 || at >= email.Length - 1) return false;
+        if (email.IndexOf('@', at + 1) >= 0) return false;
+        var domain = email[(at + 1)..];
+        var dot = domain.IndexOf('.');
+        return dot > 0 && dot < domain.Length - 1 && !domain.Contains("..", StringComparison.Ordinal);
+    }
+
+    private static bool IsEmailByte(byte value) =>
+        value is (>= (byte)'A' and <= (byte)'Z')
+            or (>= (byte)'a' and <= (byte)'z')
+            or (>= (byte)'0' and <= (byte)'9')
+            or (byte)'.' or (byte)'_' or (byte)'%' or (byte)'+' or (byte)'-' or (byte)'@';
+
     private static string? ReadTokenFile(string path, params string[] names)
     {
         var document = Read(path);

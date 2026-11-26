@@ -58,7 +58,8 @@ public sealed class ClaudeQuotaService
             return Missing(
                 RateLimitDetail(retryAt, now),
                 ProviderHealthCode.RateLimited,
-                retryAt: retryAt);
+                retryAt: retryAt,
+                email: credential.Email);
         }
         ClearRateLimit();
 
@@ -88,7 +89,8 @@ public sealed class ClaudeQuotaService
                     return Missing(
                         RateLimitDetail(_retryAt.Value, DateTimeOffset.UtcNow),
                         ProviderHealthCode.RateLimited,
-                        retryAt: _retryAt);
+                        retryAt: _retryAt,
+                        email: credential.Email);
                 }
 
                 ClearRateLimit();
@@ -100,11 +102,13 @@ public sealed class ClaudeQuotaService
                             : "Claude OAuth expired. Run Claude Code or enable OAuth auto-refresh.",
                             refreshAllowed
                                 ? ProviderHealthCode.OAuthRefreshFailed
-                                : ProviderHealthCode.OAuthExpired)
+                                : ProviderHealthCode.OAuthExpired,
+                            email: credential.Email)
                         : Missing(
                             $"Claude API returned HTTP {(int)response.StatusCode}.",
                             ProviderHealthCode.HttpError,
-                            (int)response.StatusCode);
+                            (int)response.StatusCode,
+                            email: credential.Email);
                 }
 
                 var json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -129,7 +133,13 @@ public sealed class ClaudeQuotaService
                     credential.Plan,
                     "#d97757",
                     true,
-                    windows) { HasAccountIdentity = true };
+                    windows)
+                {
+                    HasAccountIdentity = true,
+                    AccountHint = string.IsNullOrWhiteSpace(credential.Email)
+                        ? null
+                        : CodexAccountFormatting.MaskEmail(credential.Email),
+                };
                 return new ProviderResult(
                     ProviderKind.Claude,
                     [card],
@@ -142,13 +152,14 @@ public sealed class ClaudeQuotaService
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return Missing("Claude API request timed out.", ProviderHealthCode.Timeout);
+            return Missing("Claude API request timed out.", ProviderHealthCode.Timeout, email: credential.Email);
         }
         catch (Exception exception) when (exception is HttpRequestException or JsonException or IOException)
         {
             return Missing(
                 $"Claude quota unavailable: {exception.Message}",
-                ProviderHealthCode.Unavailable);
+                ProviderHealthCode.Unavailable,
+                email: credential.Email);
         }
     }
 
@@ -166,11 +177,11 @@ public sealed class ClaudeQuotaService
 
     private static ClaudeCredential? ReadCredential()
     {
-        var configDirectory = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
-        if (string.IsNullOrWhiteSpace(configDirectory))
-        {
-            configDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude");
-        }
+        var configuredDir = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
+        var allowUserProfileFallback = string.IsNullOrWhiteSpace(configuredDir);
+        var configDirectory = allowUserProfileFallback
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude")
+            : configuredDir!;
 
         var path = Path.Combine(configDirectory, ".credentials.json");
         try
@@ -193,9 +204,54 @@ public sealed class ClaudeQuotaService
                 accessToken,
                 oauth.Value.StringProperty("refreshToken"),
                 PlanLabel(tier, subscription),
-                expiresAt);
+                expiresAt,
+                ReadAccountEmail(configDirectory, allowUserProfileFallback, oauth));
         }
         catch
+        {
+            return null;
+        }
+    }
+
+    internal static string? ReadAccountEmail(
+        string configDirectory,
+        bool allowUserProfileFallback,
+        JsonElement? oauth = null)
+    {
+        if (oauth is { } node && UsageAccountDirectory.IsValidEmail(node.StringProperty("email")))
+        {
+            return node.StringProperty("email")!.Trim();
+        }
+
+        var candidates = allowUserProfileFallback
+            ? new[]
+            {
+                Path.Combine(configDirectory, ".claude.json"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude.json"),
+            }.Distinct(StringComparer.OrdinalIgnoreCase)
+            : [Path.Combine(configDirectory, ".claude.json")];
+
+        foreach (var candidate in candidates)
+        {
+            var email = ReadClaudeJsonEmail(candidate);
+            if (email is not null) return email;
+        }
+
+        return null;
+    }
+
+    private static string? ReadClaudeJsonEmail(string path)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            if (!info.Exists || info.Length is <= 0 or > 2 * 1024 * 1024) return null;
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var document = JsonDocument.Parse(stream);
+            var email = document.RootElement.ObjectProperty("oauthAccount")?.StringProperty("emailAddress");
+            return UsageAccountDirectory.IsValidEmail(email) ? email!.Trim() : null;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
         {
             return null;
         }
@@ -266,8 +322,11 @@ public sealed class ClaudeQuotaService
         string detail,
         ProviderHealthCode code,
         int? httpStatus = null,
-        DateTimeOffset? retryAt = null)
+        DateTimeOffset? retryAt = null,
+        string? email = null)
     {
+        var hasIdentity = code is not (ProviderHealthCode.MissingCredentials
+            or ProviderHealthCode.OAuthExpired or ProviderHealthCode.OAuthRefreshFailed);
         var card = new QuotaCard(
             "claude.account",
             ProviderKind.Claude,
@@ -280,8 +339,10 @@ public sealed class ClaudeQuotaService
                 new QuotaWindow("1w", null, null, TimeSpan.FromDays(7)),
             ])
         {
-            HasAccountIdentity = code is not (ProviderHealthCode.MissingCredentials
-                or ProviderHealthCode.OAuthExpired or ProviderHealthCode.OAuthRefreshFailed),
+            HasAccountIdentity = hasIdentity,
+            AccountHint = hasIdentity && !string.IsNullOrWhiteSpace(email)
+                ? CodexAccountFormatting.MaskEmail(email)
+                : null,
         };
         return new ProviderResult(
             ProviderKind.Claude,
@@ -338,5 +399,6 @@ public sealed class ClaudeQuotaService
         string AccessToken,
         string? RefreshToken,
         string? Plan,
-        DateTimeOffset? ExpiresAt);
+        DateTimeOffset? ExpiresAt,
+        string? Email = null);
 }

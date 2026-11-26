@@ -259,6 +259,71 @@ public static class UsageProviderFixtureTests
             Check(token is not null && token.StartsWith("eyJ", StringComparison.Ordinal), "cursor session is read from the local database");
             Check(UsageAccountDirectory.JwtSubject(token!) == "user_123", "cursor user id comes from the token subject");
 
+            // Cursor SQLite cachedEmail probe: decoy JSON metadata must be skipped; exact SQLite record length wins.
+            var email1 = "cursor.dev@example.com";
+            var cursorAppData = Path.Combine(root, "AppData");
+            var cursorStorage = Path.Combine(cursorAppData, "Cursor", "User", "globalStorage");
+            Directory.CreateDirectory(cursorStorage);
+            var cursorDbPath = Path.Combine(cursorStorage, "state.vscdb");
+            var decoy = Encoding.UTF8.GetBytes("""{"cursorAuth/cachedEmail":1,"cursorAuth/cachedSignUpType":1}""");
+            var emailBytes = Encoding.UTF8.GetBytes(email1);
+            var keyBytes = Encoding.UTF8.GetBytes("cursorAuth/cachedEmail");
+            var tokenBytes = Encoding.UTF8.GetBytes(" cursorAuth/accessToken eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1c2VyXzEyMyJ9.sig ");
+            var record1 = new List<byte>();
+            record1.AddRange(decoy);
+            record1.AddRange(tokenBytes);
+            record1.Add(3);
+            record1.Add((byte)(keyBytes.Length * 2 + 13));
+            record1.Add((byte)(emailBytes.Length * 2 + 13));
+            record1.AddRange(keyBytes);
+            record1.AddRange(emailBytes);
+            record1.AddRange("trailingGarbageShouldBeIgnored"u8.ToArray());
+            File.WriteAllBytes(cursorDbPath, [.. record1]);
+            Check(UsageAccountDirectory.ProbeSqliteEmail(cursorDbPath, "cursorAuth/cachedEmail") == email1,
+                "cursor sqlite email probe skips JSON decoy and reads exact SQLite 1-byte varint length");
+
+            var longEmail = new string('a', 52) + "@example.com"; // 64 bytes -> serial 141 (>= 128, 2-byte SQLite varint)
+            var longEmailBytes = Encoding.UTF8.GetBytes(longEmail);
+            var serial2 = longEmailBytes.Length * 2 + 13;
+            var record2 = new List<byte>();
+            record2.AddRange(decoy);
+            record2.Add(4);
+            record2.Add((byte)(keyBytes.Length * 2 + 13));
+            record2.Add((byte)(0x80 | (serial2 >> 7)));
+            record2.Add((byte)(serial2 & 0x7F));
+            record2.AddRange(keyBytes);
+            record2.AddRange(longEmailBytes);
+            record2.AddRange("tail"u8.ToArray());
+            var db2 = Path.Combine(root, "state2.vscdb");
+            File.WriteAllBytes(db2, [.. record2]);
+            Check(UsageAccountDirectory.ProbeSqliteEmail(db2, "cursorAuth/cachedEmail") == longEmail,
+                "cursor sqlite email probe handles 2-byte varint lengths");
+
+            var cursorCreds = UsageAccountDirectory.Discover(
+                ProviderCatalog.Find(UsageProviderIds.Cursor)!,
+                new UsagePaths(root, cursorAppData, root),
+                new MapUsageEnvironment(new Dictionary<string, string>()),
+                false);
+            Check(cursorCreds.Count == 1 && cursorCreds[0].AccountId == "user_123" && cursorCreds[0].Label == email1,
+                "cursor credential keeps AccountId while attaching cached email as Label");
+
+            // Claude ReadAccountEmail: oauth.email wins, else .claude.json oauthAccount.emailAddress, respecting isolation.
+            var claudeDir = Path.Combine(root, ".claude-isolated");
+            Directory.CreateDirectory(claudeDir);
+            File.WriteAllText(Path.Combine(claudeDir, ".claude.json"),
+                """{"oauthAccount":{"emailAddress":"claude.user@example.com"}}""");
+            Check(ClaudeQuotaService.ReadAccountEmail(claudeDir, allowUserProfileFallback: false) == "claude.user@example.com",
+                "claude reads oauthAccount.emailAddress from config directory .claude.json");
+            using (var doc = System.Text.Json.JsonDocument.Parse("""{"email":"direct.oauth@example.com"}"""))
+            {
+                Check(ClaudeQuotaService.ReadAccountEmail(claudeDir, allowUserProfileFallback: false, doc.RootElement) == "direct.oauth@example.com",
+                    "claude prefers claudeAiOauth.email when present");
+            }
+            var emptyClaudeDir = Path.Combine(root, ".claude-empty");
+            Directory.CreateDirectory(emptyClaudeDir);
+            Check(ClaudeQuotaService.ReadAccountEmail(emptyClaudeDir, allowUserProfileFallback: false) is null,
+                "claude isolated mode does not leak host user profile .claude.json");
+
             File.WriteAllText(Path.Combine(root, "hosts.yml"), "github.com:\n  oauth_token: gho_example\n  user: octocat\n");
             var github = UsageAccountDirectory.ReadGitHubToken(Path.Combine(root, "hosts.yml"));
             Check(github?.Label == "octocat" && github.Secret == "gho_example", "copilot reads the GitHub CLI token");

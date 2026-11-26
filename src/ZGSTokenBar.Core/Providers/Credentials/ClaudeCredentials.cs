@@ -12,7 +12,11 @@ public static partial class UsageAccountDirectory
         var root = Path.Combine(paths.Home, ".claude");
         var accounts = new List<UsageCredential>();
         var primary = Path.Combine(root, ".credentials.json");
-        if (!skipPrimary && ReadClaude(primary, "claude-primary") is { } main) accounts.Add(main);
+        var primaryEmail = skipPrimary
+            ? null
+            : ClaudeQuotaService.ReadAccountEmail(root, allowUserProfileFallback: false)
+                ?? ClaudeQuotaService.ReadAccountEmail(paths.Home, allowUserProfileFallback: false);
+        if (!skipPrimary && ReadClaude(primary, "claude-primary", primaryEmail) is { } main) accounts.Add(main);
         var extra = Path.Combine(root, "accounts");
         if (!Directory.Exists(extra)) return accounts;
         foreach (var file in Directory.EnumerateFiles(extra, "*.json").Take(UsageAccounts.MaximumAccounts))
@@ -23,7 +27,7 @@ public static partial class UsageAccountDirectory
         return accounts;
     }
 
-    private static UsageCredential? ReadClaude(string path, string fallbackId)
+    private static UsageCredential? ReadClaude(string path, string fallbackId, string? fallbackEmail = null)
     {
         var document = Read(path);
         if (document is null) return null;
@@ -34,7 +38,8 @@ public static partial class UsageAccountDirectory
                 : (JsonElement?)null;
             var token = oauth is { } node ? StringOf(node, "accessToken", "access_token") : null;
             if (token is null) return null;
-            var email = oauth is { } value ? StringOf(value, "email") : null;
+            var rawEmail = oauth is { } value ? StringOf(value, "email") : null;
+            var email = IsValidEmail(rawEmail) ? rawEmail!.Trim() : fallbackEmail;
             return new UsageCredential(email ?? fallbackId, email ?? fallbackId, "claude-oauth", token);
         }
     }

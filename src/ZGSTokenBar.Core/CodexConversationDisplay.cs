@@ -164,11 +164,39 @@ public static class CodexConversationDisplay
             .ThenByDescending(turn => turn.ObservedAt)
             .ToArray();
         var selected = new List<CodexConversationTurn>(Math.Min(maximumRows, Math.Max(ranked.Length, 1)));
+        var externalReps = new List<CodexConversationTurn>();
+        var seenExternalProviders = new HashSet<string>(StringComparer.Ordinal);
+        var hasCodex = false;
+        foreach (var turn in ranked)
+        {
+            if (turn.ProviderId is { Length: > 0 } providerId
+                && !string.Equals(providerId, ExternalProviderTokenLedger.CodexProviderId, StringComparison.Ordinal))
+            {
+                if (seenExternalProviders.Add(providerId)) externalReps.Add(turn);
+            }
+            else
+            {
+                hasCodex = true;
+            }
+        }
+
+        var reservedExternal = Math.Min(externalReps.Count, Math.Max(0, maximumRows - (hasCodex ? 1 : 0)));
+        var codexCap = Math.Max(0, maximumRows - reservedExternal);
         var seenInstances = new HashSet<int>();
         foreach (var turn in ranked)
         {
+            if (selected.Count >= codexCap) break;
+            if (turn.ProviderId is { Length: > 0 } providerId
+                && !string.Equals(providerId, ExternalProviderTokenLedger.CodexProviderId, StringComparison.Ordinal))
+            {
+                continue;
+            }
             if (turn.InstanceNumber > 0 && seenInstances.Add(turn.InstanceNumber)) selected.Add(turn);
-            if (selected.Count == maximumRows) break;
+        }
+
+        for (var i = 0; i < reservedExternal && selected.Count < maximumRows; i++)
+        {
+            selected.Add(externalReps[i]);
         }
 
         if (selected.Count < maximumRows)

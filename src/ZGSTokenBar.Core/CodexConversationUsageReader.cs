@@ -28,6 +28,8 @@ public sealed record CodexConversationTurn(
     public int InstanceAccountNumber { get; init; }
     [JsonIgnore]
     public double? InstanceRemainingPercent { get; init; }
+    [JsonIgnore]
+    public string? ProviderId { get; init; }
     public string? ServiceTier { get; init; }
     public string? ResponseModels { get; init; }
     public string? RoutedFromModel { get; init; }
