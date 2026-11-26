@@ -62,6 +62,49 @@ internal static class LiveMetricTests
             "Expired feeds are unavailable.");
         Check(tracker.Observe(Feed([]), at).Total is null, "No readable session is unavailable, not a measured zero.");
         Check(tracker.Observe(Feed([], [active with { Phase = "idle" }]), at).Total == 0, "An observed idle session has zero current output.");
+
+        // Combined multi-provider feed aggregation and provider breakdown math.
+        var codexFeed = new CodexLiveRateFeed(
+            at.AddSeconds(-2),
+            [new CodexResponseSample("codex-s1", "gpt-5.5", at.AddSeconds(-6), at.AddSeconds(-2), 200)],
+            [new CodexLiveSession("codex-s1", "gpt-5.5", "generating", at.AddSeconds(-2), at.AddSeconds(-2))],
+            0);
+        var extFeed = new CodexLiveRateFeed(
+            at.AddSeconds(-1),
+            [
+                new CodexResponseSample("ext-agy", "gemini-4-neon-xhigh", at.AddSeconds(-11), at.AddSeconds(-1), 300)
+                {
+                    ProviderId = ExternalProviderTokenLedger.AntigravityProviderId,
+                    TurnId = "turn-1",
+                },
+                new CodexResponseSample("ext-grok", "grok-4.7", at.AddSeconds(-6), at.AddSeconds(-1), 100)
+                {
+                    ProviderId = ExternalProviderTokenLedger.GrokProviderId,
+                    TurnId = "turn-2",
+                },
+            ],
+            [
+                new CodexLiveSession("ext-agy", "gemini-4-neon-xhigh", "tools", null, at.AddSeconds(-1))
+                {
+                    ProviderId = ExternalProviderTokenLedger.AntigravityProviderId,
+                    TurnId = "turn-1",
+                },
+            ],
+            0);
+        var combinedFeed = ObservedOutputRate.CombineFeeds(codexFeed, extFeed, at);
+        var combinedObserved = tracker.Observe(combinedFeed, at);
+        Check(combinedObserved.RecordedTotal is { } combinedTot && Math.Abs(combinedTot - 100.0) < 0.01
+            && combinedObserved.Generating == 1 && combinedObserved.Tools == 1
+            && combinedObserved.ProviderRates.Count == 3
+            && combinedObserved.ProviderRates[0].ProviderId == ExternalProviderTokenLedger.CodexProviderId
+            && Math.Abs(combinedObserved.ProviderRates[0].SharePercent - 50.0) < 0.01
+            && combinedObserved.ProviderRates[1].ProviderId == ExternalProviderTokenLedger.AntigravityProviderId
+            && Math.Abs(combinedObserved.ProviderRates[1].SharePercent - 30.0) < 0.01
+            && combinedObserved.ProviderRates[2].ProviderId == ExternalProviderTokenLedger.GrokProviderId
+            && Math.Abs(combinedObserved.ProviderRates[2].SharePercent - 20.0) < 0.01
+            && Math.Abs(combinedObserved.ProviderRates.Sum(p => p.SharePercent) - 100.0) < 0.05,
+            "CombineFeeds merges Codex + external feeds into one RecordedTotal with exact ProviderRates breakdown.");
+
         ReaderIntervals(at);
         AllRunningConversations(at);
         SharedConversationRates(at);
@@ -198,10 +241,35 @@ internal static class LiveMetricTests
                 new(ExternalProviderTokenLedger.ClaudeProviderId, "Claude", 50_000_000, 0.006),
             ],
         });
-        var breakdownContent = rateContent with { ProviderBreakdown = breakdown };
+        // Rate-breakdown bar in top headline card + hover tooltip without breaking height/heatmap tests.
+        var rateAt = DateTimeOffset.UtcNow;
+        var multiRateSnapshot = snapshot with
+        {
+            ObservedOutputTokensPerSecond = 100.0,
+            OutputRateCapturedAt = rateAt,
+            LiveRate = new LiveOutputRate(rateAt, 112.0, 100.0, 12.0, 2, 1, 4, 0)
+            {
+                RecordedAt = rateAt,
+                ProviderRates =
+                [
+                    new(ExternalProviderTokenLedger.CodexProviderId, "Codex", 50.0, 12.0, 50.0),
+                    new(ExternalProviderTokenLedger.AntigravityProviderId, "AGY", 30.0, 0, 30.0),
+                    new(ExternalProviderTokenLedger.GrokProviderId, "Grok", 20.0, 0, 20.0),
+                ],
+            },
+        };
+        var breakdownContent = rateContent with { Snapshot = multiRateSnapshot, ProviderBreakdown = breakdown };
         using (var _ = popover.RenderForTest(breakdownContent, text, QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), 96)) { }
         Check(popover.CurrentLogicalBodyHeight <= 540,
             "Rates panel with multi-provider breakdown still fits inside the single unscrolled page budget.");
+        var rateBar = popover.RateBreakdownBarBoundsForAcceptance;
+        Check(rateBar.Width > 0, "Top speed card exposes non-empty rate breakdown bar bounds.");
+        popover.UpdateHoverAtLogicalPoint(new System.Drawing.PointF(rateBar.X + 10f, rateBar.Y + rateBar.Height / 2f));
+        Check(popover.HoverRateBreakdownLabelForAcceptance is { Length: > 0 } rateTip
+            && rateTip.Contains("Codex", StringComparison.Ordinal)
+            && rateTip.Contains("tok/s", StringComparison.Ordinal),
+            "Hovering the top rate breakdown bar reports provider share and tok/s.");
+        popover.UpdateHoverAtLogicalPoint(null);
         Check(popover.SelectedBreakdownPeriodForAcceptance == TokenBreakdownPeriod.Week,
             "Multi-provider breakdown defaults to Week.");
 

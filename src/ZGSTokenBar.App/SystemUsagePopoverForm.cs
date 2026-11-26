@@ -77,6 +77,11 @@ internal sealed class SystemUsagePopoverForm : Form
     private string? _hoverBreakdownLabel;
     private RectangleF _hoverBreakdownTargetBounds;
     private Color _hoverBreakdownAccent = RecordedAccent;
+    private RectangleF _rateBarBounds;
+    private readonly List<(RectangleF Bounds, string Label, Color Accent)> _rateBreakdownHitTargets = [];
+    private string? _hoverRateBreakdownLabel;
+    private RectangleF _hoverRateBreakdownTargetBounds;
+    private Color _hoverRateBreakdownAccent = RecordedAccent;
     private const int MaximumSessionRows = 10;
     private const int SessionRowHeight = 34;
     private const int SessionHeaderHeight = 30;
@@ -194,6 +199,16 @@ internal sealed class SystemUsagePopoverForm : Form
             _breakdownHitTargets.Clear();
             _hoverBreakdownLabel = null;
             _hoverBreakdownTargetBounds = RectangleF.Empty;
+            _rateBarBounds = RectangleF.Empty;
+            _rateBreakdownHitTargets.Clear();
+            _hoverRateBreakdownLabel = null;
+            _hoverRateBreakdownTargetBounds = RectangleF.Empty;
+        }
+        else if (snapshot.CurrentOutputRate is not > 0 || snapshot.CurrentLiveRate?.ProviderRates is not { Count: > 0 })
+        {
+            _rateBreakdownHitTargets.Clear();
+            _hoverRateBreakdownLabel = null;
+            _hoverRateBreakdownTargetBounds = RectangleF.Empty;
         }
         _logicalBodyWidth = content.LiveRates ? LiveRateBodyWidth : LogicalBodyWidth;
         _logicalBodyHeight = content.LiveRates
@@ -201,6 +216,7 @@ internal sealed class SystemUsagePopoverForm : Form
             : Math.Clamp(282 + Math.Max(0, _processes.Length - 1) * 18, 282, LogicalBodyHeight);
         _capturedAt = _text.SystemUsageCapturedAt(snapshot.CapturedAt);
         if (_breakdownBarBounds.Width > 0) RebuildBreakdownHitTargets();
+        if (content.LiveRates && _rateBarBounds.Width > 0) RebuildRateBreakdownBarHitTargets();
         Invalidate();
     }
 
@@ -222,6 +238,10 @@ internal sealed class SystemUsagePopoverForm : Form
     internal RectangleF BreakdownPeriodBoundsForAcceptance => _breakdownPeriodBounds;
 
     internal string? HoverBreakdownLabelForAcceptance => _hoverBreakdownLabel;
+
+    internal RectangleF RateBreakdownBarBoundsForAcceptance => _rateBarBounds;
+
+    internal string? HoverRateBreakdownLabelForAcceptance => _hoverRateBreakdownLabel;
 
     private const int TokenSectionHeight = 168;
     private const int BreakdownSectionHeight = 72;
@@ -418,6 +438,9 @@ internal sealed class SystemUsagePopoverForm : Form
         string? nextBreakdownLabel = null;
         var nextBreakdownBounds = RectangleF.Empty;
         var nextBreakdownAccent = RecordedAccent;
+        string? nextRateBreakdownLabel = null;
+        var nextRateBreakdownBounds = RectangleF.Empty;
+        var nextRateBreakdownAccent = RecordedAccent;
         if (_content?.LiveRates == true && logicalPoint is { } point)
         {
             if (_content.Activity is { } activity)
@@ -442,18 +465,36 @@ internal sealed class SystemUsagePopoverForm : Form
                     break;
                 }
             }
+
+            if (nextLabel is null && nextBreakdownLabel is null)
+            {
+                foreach (var target in _rateBreakdownHitTargets)
+                {
+                    if (!target.Bounds.Contains(point)) continue;
+                    nextRateBreakdownLabel = target.Label;
+                    nextRateBreakdownBounds = target.Bounds;
+                    nextRateBreakdownAccent = target.Accent;
+                    break;
+                }
+            }
         }
         if (!string.Equals(_hoverHeatmapLabel, nextLabel, StringComparison.Ordinal)
             || _hoverHeatmapTargetBounds != nextBounds
             || !string.Equals(_hoverBreakdownLabel, nextBreakdownLabel, StringComparison.Ordinal)
             || _hoverBreakdownTargetBounds != nextBreakdownBounds
-            || _hoverBreakdownAccent != nextBreakdownAccent)
+            || _hoverBreakdownAccent != nextBreakdownAccent
+            || !string.Equals(_hoverRateBreakdownLabel, nextRateBreakdownLabel, StringComparison.Ordinal)
+            || _hoverRateBreakdownTargetBounds != nextRateBreakdownBounds
+            || _hoverRateBreakdownAccent != nextRateBreakdownAccent)
         {
             _hoverHeatmapLabel = nextLabel;
             _hoverHeatmapTargetBounds = nextBounds;
             _hoverBreakdownLabel = nextBreakdownLabel;
             _hoverBreakdownTargetBounds = nextBreakdownBounds;
             _hoverBreakdownAccent = nextBreakdownAccent;
+            _hoverRateBreakdownLabel = nextRateBreakdownLabel;
+            _hoverRateBreakdownTargetBounds = nextRateBreakdownBounds;
+            _hoverRateBreakdownAccent = nextRateBreakdownAccent;
             Invalidate();
         }
     }
@@ -578,15 +619,16 @@ internal sealed class SystemUsagePopoverForm : Form
         }
 
         Panel(38, 112);
-        TextAt(_metrics[0].Label, _metricLabelFont, muted, 24, 49, 136, 13);
-        TextAt(zh ? "近1分钟 · 最近响应" : "Latest · 1 min", _subtitleFont, muted, 176, 49, 100, 13, StringAlignment.Far);
-        TextAt(_metrics[0].Value, _liveValueFont, primary, 24, 67, 252, 29);
-        var rail = At(24, 105, 252, 3);
-        using var railBrush = new SolidBrush(UiPalette.Slate500.WithAlpha(48));
-        graphics.FillRoundedRectangle(railBrush, rail, 1.5f);
-        TextAt(_metrics[1].Label, _subtitleFont, muted, 24, 115, 118, 12);
+        TextAt(_metrics[0].Label, _metricLabelFont, muted, 24, 46, 136, 13);
+        TextAt(zh ? "近1分钟 · 最近响应" : "Latest · 1 min", _subtitleFont, muted, 176, 46, 100, 13, StringAlignment.Far);
+        TextAt(_metrics[0].Value, _liveValueFont, primary, 24, 58, 252, 27);
+        _rateBarBounds = At(24, 90, 252, 5);
+        using (var railBrush = new SolidBrush(UiPalette.Slate500.WithAlpha(48)))
+            graphics.FillRoundedRectangle(railBrush, _rateBarBounds, 2.5f);
+        DrawRateBreakdown(graphics, body, snapshot, primary);
+        TextAt(_metrics[1].Label, _subtitleFont, muted, 24, 117, 118, 12);
         TextAt(zh ? "生成中估算" : "In-flight estimate",
-            _subtitleFont, muted, 158, 115, 118, 12);
+            _subtitleFont, muted, 158, 117, 118, 12);
         TextAt(_metrics[1].Value, _metricValueFont, live is null ? muted : recorded, 24, 131, 118, 14);
         TextAt(_metrics[2].Value, _metricValueFont, live is null ? muted : estimated, 158, 131, 118, 14);
 
@@ -751,8 +793,164 @@ internal sealed class SystemUsagePopoverForm : Form
             DrawSessions(graphics, new RectangleF(body.X + rightX, body.Y + sessionTop, rightWidth, sessionHeight), primary, muted);
         }
 
+        if (hoverTip is null && _hoverRateBreakdownLabel is { Length: > 0 } && _hoverRateBreakdownTargetBounds.Width > 0)
+        {
+            hoverTip = _hoverRateBreakdownLabel;
+            hoverTarget = _hoverRateBreakdownTargetBounds;
+            hoverAccent = _hoverRateBreakdownAccent;
+        }
         if (hoverTip is { Length: > 0 } && hoverTarget.Width > 0)
             DrawHeatmapHoverOverlay(graphics, body, hoverTip, hoverTarget, hoverAccent);
+    }
+
+    private void DrawRateBreakdown(
+        Graphics graphics,
+        RectangleF body,
+        SystemUsageSnapshot snapshot,
+        Brush primary)
+    {
+        _rateBreakdownHitTargets.Clear();
+        var live = snapshot.CurrentLiveRate;
+        if (snapshot.CurrentOutputRate is not > 0 || live?.ProviderRates is not { Count: > 0 } shares)
+            return;
+
+        var segments = LayoutRateBreakdownBar(_rateBarBounds, shares);
+        var state = graphics.Save();
+        var smoothing = graphics.SmoothingMode;
+        graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using (var clipPath = RoundedRectangle(_rateBarBounds, 2.5f))
+            graphics.SetClip(clipPath);
+        foreach (var (share, rect) in segments)
+        {
+            using var segBrush = new SolidBrush(ProviderAccent(share.ProviderId));
+            graphics.FillRectangle(segBrush, rect);
+        }
+        graphics.SmoothingMode = smoothing;
+        graphics.Restore(state);
+
+        RebuildRateBreakdownBarHitTargets(segments, shares.Count);
+
+        var x = body.X + 24f;
+        var y = body.Y + 98f;
+        var maxX = body.X + 276f;
+        var displayed = Math.Min(4, shares.Count);
+        for (var i = 0; i < displayed; i++)
+        {
+            var share = shares[i];
+            var rateValue = FormatCompactRate(share.Measured);
+            var text = shares.Count == 1
+                ? $"{share.DisplayName} {rateValue} tok/s"
+                : $"{share.DisplayName} {rateValue}";
+            var textWidth = (float)Math.Ceiling(graphics.MeasureString(text, _subtitleFont).Width) + 1f;
+            var dotWidth = 4.5f;
+            var dotGap = 1.5f;
+            var itemWidth = dotWidth + dotGap + textWidth;
+            if (x + itemWidth > maxX && i > 0) break;
+
+            var accent = ProviderAccent(share.ProviderId);
+            var itemSmoothing = graphics.SmoothingMode;
+            graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using (var dotBrush = new SolidBrush(accent))
+                graphics.FillEllipse(dotBrush, x, y + 4f, dotWidth, dotWidth);
+            graphics.SmoothingMode = itemSmoothing;
+
+            var availableTextWidth = Math.Max(1f, Math.Min(textWidth, maxX - (x + dotWidth + dotGap)));
+            DrawString(graphics, text, _subtitleFont, primary,
+                new RectangleF(x + dotWidth + dotGap, y, availableTextWidth, 13f), StringAlignment.Near);
+            _rateBreakdownHitTargets.Add((
+                new RectangleF(x, y, dotWidth + dotGap + availableTextWidth, 13f),
+                FormatRateBreakdownTooltip(share, shares.Count),
+                accent));
+
+            x += itemWidth + 3f;
+        }
+    }
+
+    private void RebuildRateBreakdownBarHitTargets()
+    {
+        _rateBreakdownHitTargets.Clear();
+        var snapshot = _content?.Snapshot;
+        var shares = snapshot?.CurrentLiveRate?.ProviderRates;
+        if (snapshot?.CurrentOutputRate is not > 0 || shares is not { Count: > 0 } || _rateBarBounds.Width <= 0)
+            return;
+        var segments = LayoutRateBreakdownBar(_rateBarBounds, shares);
+        RebuildRateBreakdownBarHitTargets(segments, shares.Count);
+    }
+
+    private void RebuildRateBreakdownBarHitTargets(
+        IReadOnlyList<(ProviderOutputRateShare Share, RectangleF Rect)> segments,
+        int providerCount)
+    {
+        foreach (var (share, rect) in segments)
+        {
+            var hitRect = new RectangleF(rect.X, rect.Y - 3f, rect.Width, rect.Height + 6f);
+            _rateBreakdownHitTargets.Add((hitRect, FormatRateBreakdownTooltip(share, providerCount), ProviderAccent(share.ProviderId)));
+        }
+    }
+
+    private static string FormatRateBreakdownTooltip(ProviderOutputRateShare share, int providerCount) =>
+        $"{share.DisplayName} · {FormatSharePercent(share.SharePercent, providerCount)} · {share.Measured.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)} tok/s";
+
+    private static string FormatCompactRate(double rate) =>
+        rate >= 100
+            ? rate.ToString("0", System.Globalization.CultureInfo.InvariantCulture)
+            : rate.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+
+    internal static IReadOnlyList<(ProviderOutputRateShare Share, RectangleF Rect)> LayoutRateBreakdownBar(
+        RectangleF barBounds,
+        IReadOnlyList<ProviderOutputRateShare> shares)
+    {
+        var count = Math.Min(4, shares.Count);
+        if (count == 0 || barBounds.Width <= 0 || barBounds.Height <= 0) return [];
+
+        double total = 0;
+        for (var i = 0; i < count; i++)
+            total += Math.Max(0d, shares[i].Measured);
+        if (total <= 0) return [];
+
+        var gap = count > 1 ? 1.5f : 0f;
+        var usable = Math.Max(1f, barBounds.Width - (count - 1) * gap);
+        var minWidth = count > 1 ? Math.Min(5f, usable / count) : usable;
+
+        var widths = new float[count];
+        var deficit = 0f;
+        var spareCapacity = 0f;
+        for (var i = 0; i < count; i++)
+        {
+            var raw = (float)(usable * (Math.Max(0d, shares[i].Measured) / total));
+            if (raw < minWidth)
+            {
+                deficit += minWidth - raw;
+                widths[i] = minWidth;
+            }
+            else
+            {
+                spareCapacity += raw - minWidth;
+                widths[i] = raw;
+            }
+        }
+
+        if (deficit > 0 && spareCapacity > 0)
+        {
+            for (var i = 0; i < count; i++)
+            {
+                if (widths[i] <= minWidth) continue;
+                var spare = widths[i] - minWidth;
+                widths[i] -= deficit * (spare / spareCapacity);
+            }
+        }
+
+        var result = new (ProviderOutputRateShare, RectangleF)[count];
+        var x = barBounds.X;
+        for (var i = 0; i < count; i++)
+        {
+            var width = i == count - 1
+                ? Math.Max(1f, barBounds.Right - x)
+                : Math.Max(1f, widths[i]);
+            result[i] = (shares[i], new RectangleF(x, barBounds.Y, width, barBounds.Height));
+            x += width + gap;
+        }
+        return result;
     }
 
     private void DrawProviderBreakdown(Graphics graphics, ProviderTokenBreakdown breakdown, Brush primary, Brush muted)
@@ -932,7 +1130,7 @@ internal sealed class SystemUsagePopoverForm : Form
         var x = Math.Clamp(centerX - width / 2f, minX, Math.Max(minX, maxX));
 
         const float gap = 5f;
-        var placeAbove = target.Y - height - gap >= body.Y + 206f;
+        var placeAbove = target.Y >= body.Y + 206f && target.Y - height - gap >= body.Y + 206f;
         var y = placeAbove ? target.Y - height - gap : target.Bottom + gap;
         var pill = new RectangleF(x, y, width, height);
 

@@ -4,6 +4,11 @@ using System.Text.Json;
 
 namespace ZGSTokenBar.Core;
 
+public sealed record ExternalConversationSnapshot(
+    DateTimeOffset CapturedAt,
+    IReadOnlyList<CodexConversationTurn> Turns,
+    CodexLiveRateFeed? LiveRateFeed);
+
 /// <summary>
 /// Bounded, in-memory-only, stat-cached reader of recent and active conversations for non-Codex tools
 /// (Antigravity, Grok CLI, and Claude Code). Never touches <c>codex-token-usage-index.json</c> or writes
@@ -12,12 +17,17 @@ namespace ZGSTokenBar.Core;
 public sealed class ExternalConversationTracker
 {
     private const int MaxCandidatesPerProvider = 16;
+    private const int MaxSamplesPerSession = 8;
     private const int TailReadBytes = 256 * 1024;
     private const int HeadReadBytes = 16 * 1024;
     private const long MaxMetadataFileBytes = 2 * 1024 * 1024;
     private const int StreamBufferBytes = 64 * 1024;
     private static readonly TimeSpan HardMaxAge = TimeSpan.FromDays(30);
     private static readonly TimeSpan RunningTimeout = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan MinResponseDuration = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan MaxResponseDuration = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan SampleRetention = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan ClockSkewAllowance = TimeSpan.FromSeconds(5);
 
     private readonly UsagePaths _paths;
     private readonly IUsageEnvironment _environment;
@@ -35,17 +45,22 @@ public sealed class ExternalConversationTracker
         _environment = environment;
     }
 
-    public IReadOnlyList<CodexConversationTurn> Refresh(DateTimeOffset now, CancellationToken cancellationToken = default)
+    public IReadOnlyList<CodexConversationTurn> Refresh(DateTimeOffset now, CancellationToken cancellationToken = default) =>
+        RefreshSnapshot(now, cancellationToken).Turns;
+
+    public ExternalConversationSnapshot RefreshSnapshot(DateTimeOffset now, CancellationToken cancellationToken = default)
     {
         lock (_sync)
         {
             var hardCutoffUtc = now.UtcDateTime - HardMaxAge;
             var activeKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var results = new List<CodexConversationTurn>();
+            var responses = new List<CodexResponseSample>();
+            var sessions = new List<CodexLiveSession>();
 
-            CollectAgy(now, hardCutoffUtc, activeKeys, results, cancellationToken);
-            CollectGrok(now, hardCutoffUtc, activeKeys, results, cancellationToken);
-            CollectClaude(now, hardCutoffUtc, activeKeys, results, cancellationToken);
+            CollectAgy(now, hardCutoffUtc, activeKeys, results, responses, sessions, cancellationToken);
+            CollectGrok(now, hardCutoffUtc, activeKeys, results, responses, sessions, cancellationToken);
+            CollectClaude(now, hardCutoffUtc, activeKeys, results, responses, sessions, cancellationToken);
 
             if (_cache.Count > activeKeys.Count)
             {
@@ -53,7 +68,10 @@ public sealed class ExternalConversationTracker
                     _cache.Remove(staleKey);
             }
 
-            return results;
+            var feed = responses.Count > 0 || sessions.Count > 0
+                ? new CodexLiveRateFeed(now, responses, sessions, 0)
+                : null;
+            return new ExternalConversationSnapshot(now, results, feed);
         }
     }
 
@@ -62,6 +80,8 @@ public sealed class ExternalConversationTracker
         DateTime hardCutoffUtc,
         HashSet<string> activeKeys,
         List<CodexConversationTurn> results,
+        List<CodexResponseSample> responses,
+        List<CodexLiveSession> sessions,
         CancellationToken cancellationToken)
     {
         var agyRoot = NonEmpty(_environment.Get("ANTIGRAVITY_DATA_DIR"))
@@ -107,18 +127,27 @@ public sealed class ExternalConversationTracker
             var stamp = new FileStamp(candidate.Info.Length, candidate.Info.LastWriteTimeUtc.Ticks);
             if (_cache.TryGetValue(cacheKey, out var cached) && cached.PrimaryStamp == stamp)
             {
-                if (cached.Turn is { } data && BuildTurn(data, now) is { } projected)
-                    results.Add(projected);
+                EmitCached(cached, now, results, responses, sessions);
                 continue;
             }
 
-            var cachedTitle = cached is not null && candidate.Info.Length >= cached.PrimaryStamp.Length
-                ? cached.CachedTitle
-                : null;
-            var parsed = ParseAgySession(candidate.ConvId, candidate.Path, candidate.Info, cachedTitle, now, out var nextTitle);
-            _cache[cacheKey] = new CachedEntry(stamp, default, default, nextTitle, null, parsed);
-            if (parsed is not null && BuildTurn(parsed, now) is { } turn)
-                results.Add(turn);
+            var keepHead = cached is not null && candidate.Info.Length >= cached.PrimaryStamp.Length;
+            var cachedTitle = keepHead ? cached!.CachedTitle : null;
+            var cachedModel = keepHead ? cached!.CachedModel : null;
+            var cachedSamples = keepHead ? cached!.CachedSamples : [];
+            var parsed = ParseAgySession(
+                candidate.ConvId,
+                candidate.Path,
+                candidate.Info,
+                cachedTitle,
+                cachedModel,
+                cachedSamples,
+                now,
+                out var nextTitle,
+                out var nextModel,
+                out var nextSamples);
+            _cache[cacheKey] = new CachedEntry(stamp, default, default, nextTitle, null, nextModel, nextSamples, parsed);
+            EmitParsed(parsed, nextSamples, now, results, responses, sessions);
         }
     }
 
@@ -127,6 +156,8 @@ public sealed class ExternalConversationTracker
         DateTime hardCutoffUtc,
         HashSet<string> activeKeys,
         List<CodexConversationTurn> results,
+        List<CodexResponseSample> responses,
+        List<CodexLiveSession> sessions,
         CancellationToken cancellationToken)
     {
         var grokRoot = NonEmpty(_environment.Get("GROK_HOME"))
@@ -164,8 +195,7 @@ public sealed class ExternalConversationTracker
                 && cached.SecondaryStamp == usgStamp
                 && cached.TertiaryStamp == updStamp)
             {
-                if (cached.Turn is { } data && BuildTurn(data, now) is { } projected)
-                    results.Add(projected);
+                EmitCached(cached, now, results, responses, sessions);
                 continue;
             }
 
@@ -175,10 +205,11 @@ public sealed class ExternalConversationTracker
                 candidate.Usage,
                 candidate.Updates,
                 candidate.LatestUtc,
-                now);
-            _cache[cacheKey] = new CachedEntry(sumStamp, usgStamp, updStamp, parsed?.Title, parsed?.ProjectName, parsed);
-            if (parsed is not null && BuildTurn(parsed, now) is { } turn)
-                results.Add(turn);
+                cached?.CachedModel,
+                now,
+                out var nextSamples);
+            _cache[cacheKey] = new CachedEntry(sumStamp, usgStamp, updStamp, parsed?.Title, parsed?.ProjectName, parsed?.Model, nextSamples, parsed);
+            EmitParsed(parsed, nextSamples, now, results, responses, sessions);
         }
     }
 
@@ -187,6 +218,8 @@ public sealed class ExternalConversationTracker
         DateTime hardCutoffUtc,
         HashSet<string> activeKeys,
         List<CodexConversationTurn> results,
+        List<CodexResponseSample> responses,
+        List<CodexLiveSession> sessions,
         CancellationToken cancellationToken)
     {
         var claudeRoot = NonEmpty(_environment.Get("CLAUDE_CONFIG_DIR"))
@@ -224,26 +257,61 @@ public sealed class ExternalConversationTracker
             var stamp = new FileStamp(candidate.Info.Length, candidate.Info.LastWriteTimeUtc.Ticks);
             if (_cache.TryGetValue(cacheKey, out var cached) && cached.PrimaryStamp == stamp)
             {
-                if (cached.Turn is { } data && BuildTurn(data, now) is { } projected)
-                    results.Add(projected);
+                EmitCached(cached, now, results, responses, sessions);
                 continue;
             }
 
             var keepHead = cached is not null && candidate.Info.Length >= cached.PrimaryStamp.Length;
             var cachedTitle = keepHead ? cached!.CachedTitle : null;
             var cachedProject = keepHead ? cached!.CachedProject : null;
+            var cachedModel = keepHead ? cached!.CachedModel : null;
             var parsed = ParseClaudeSession(
                 candidate.SessionId,
                 candidate.Path,
                 candidate.Info,
                 cachedTitle,
                 cachedProject,
+                cachedModel,
                 now,
                 out var nextTitle,
-                out var nextProject);
-            _cache[cacheKey] = new CachedEntry(stamp, default, default, nextTitle, nextProject, parsed);
-            if (parsed is not null && BuildTurn(parsed, now) is { } turn)
+                out var nextProject,
+                out var nextModel,
+                out var nextSamples);
+            _cache[cacheKey] = new CachedEntry(stamp, default, default, nextTitle, nextProject, nextModel, nextSamples, parsed);
+            EmitParsed(parsed, nextSamples, now, results, responses, sessions);
+        }
+    }
+
+    private static void EmitCached(
+        CachedEntry cached,
+        DateTimeOffset now,
+        List<CodexConversationTurn> results,
+        List<CodexResponseSample> responses,
+        List<CodexLiveSession> sessions) =>
+        EmitParsed(cached.Turn, cached.CachedSamples, now, results, responses, sessions);
+
+    private static void EmitParsed(
+        CachedTurnData? data,
+        IReadOnlyList<CodexResponseSample> samples,
+        DateTimeOffset now,
+        List<CodexConversationTurn> results,
+        List<CodexResponseSample> responses,
+        List<CodexLiveSession> sessions)
+    {
+        if (data is not null)
+        {
+            if (BuildTurn(data, now) is { } turn)
                 results.Add(turn);
+            if (BuildLiveSession(data, now) is { } session)
+                sessions.Add(session);
+        }
+
+        if (samples.Count == 0) return;
+        var sampleCutoff = now - SampleRetention;
+        foreach (var sample in samples)
+        {
+            if (sample.End <= now && sample.End >= sampleCutoff)
+                responses.Add(sample);
         }
     }
 
@@ -252,10 +320,16 @@ public sealed class ExternalConversationTracker
         string path,
         FileInfo info,
         string? cachedTitle,
+        string? cachedModel,
+        IReadOnlyList<CodexResponseSample> cachedSamples,
         DateTimeOffset now,
-        out string? titleOut)
+        out string? titleOut,
+        out string? modelOut,
+        out IReadOnlyList<CodexResponseSample> samplesOut)
     {
         titleOut = cachedTitle;
+        modelOut = cachedModel;
+        samplesOut = [];
         try
         {
             if (titleOut is null)
@@ -282,36 +356,11 @@ public sealed class ExternalConversationTracker
             var tailLines = ReadTailLines(path, TailReadBytes);
             if (tailLines.Count == 0) return null;
 
+            var events = new List<AgyParsedEvent>(tailLines.Count);
             var lastUserIndex = -1;
-            for (var i = tailLines.Count - 1; i >= 0; i--)
+            string? lastKnownModel = null;
+            foreach (var line in tailLines)
             {
-                if (!tailLines[i].Contains("\"USER_INPUT\"", StringComparison.Ordinal)) continue;
-                try
-                {
-                    using var doc = JsonDocument.Parse(tailLines[i]);
-                    if (doc.RootElement.ValueKind == JsonValueKind.Object
-                        && string.Equals(doc.RootElement.StringProperty("type"), "USER_INPUT", StringComparison.Ordinal))
-                    {
-                        lastUserIndex = i;
-                        break;
-                    }
-                }
-                catch (JsonException) { }
-            }
-
-            var startIndex = lastUserIndex >= 0 ? lastUserIndex : 0;
-            long rawInput = 0, cacheRead = 0, cacheCreate = 0, output = 0;
-            string? model = null;
-            string? lastStatus = null;
-            string? lastEventType = null;
-            var lastHasToolCalls = false;
-            DateTimeOffset? turnStart = null;
-            DateTimeOffset? lastEventAt = null;
-            long? lastStep = null;
-
-            for (var i = startIndex; i < tailLines.Count; i++)
-            {
-                var line = tailLines[i];
                 if (string.IsNullOrWhiteSpace(line)) continue;
                 try
                 {
@@ -321,57 +370,175 @@ public sealed class ExternalConversationTracker
                     var type = root.StringProperty("type");
                     if (string.IsNullOrWhiteSpace(type)) continue;
 
-                    lastEventType = type;
+                    long? stepIndex = null;
                     if (root.TryGetProperty("step_index", out var stepEl) && stepEl.ValueKind == JsonValueKind.Number && stepEl.TryGetInt64(out var stepVal))
-                        lastStep = stepVal;
-
-                    lastStatus = root.StringProperty("status");
-
+                        stepIndex = stepVal;
+                    var status = root.StringProperty("status");
                     var createdAt = ParseTimestamp(root, "created_at");
-                    if (createdAt is { } ts)
-                    {
-                        turnStart ??= ts;
-                        if (lastEventAt is null || ts > lastEventAt) lastEventAt = ts;
-                    }
 
-                    if (type == "USER_INPUT" && titleOut is null)
+                    long rawIn = 0, stepCacheRead = 0, stepCacheCreate = 0, stepOut = 0;
+                    string? evModel = null;
+                    var hasToolCalls = false;
+                    if (type == "USER_INPUT")
                     {
-                        titleOut = SanitizeTitle(root.StringProperty("content"));
+                        lastUserIndex = events.Count;
+                        if (titleOut is null)
+                            titleOut = SanitizeTitle(root.StringProperty("content"));
                     }
                     else if (type == "PLANNER_RESPONSE")
                     {
-                        TryReadNonNegativeInt64(root, "input_tokens", out var stepIn);
-                        TryReadNonNegativeInt64(root, "cache_read_tokens", out var stepCacheRead);
-                        TryReadNonNegativeInt64(root, "cache_creation_tokens", out var stepCacheCreate);
-                        TryReadNonNegativeInt64(root, "output_tokens", out var stepOut);
-                        rawInput = TokenActivityView.SaturatingAdd(rawInput, stepIn);
-                        cacheRead = TokenActivityView.SaturatingAdd(cacheRead, stepCacheRead);
-                        cacheCreate = TokenActivityView.SaturatingAdd(cacheCreate, stepCacheCreate);
-                        output = TokenActivityView.SaturatingAdd(output, stepOut);
-                        model = NonEmpty(root.StringProperty("model")) ?? model;
-                        lastHasToolCalls = HasNonEmptyToolCalls(root);
+                        TryReadNonNegativeInt64(root, "input_tokens", out rawIn);
+                        TryReadNonNegativeInt64(root, "cache_read_tokens", out stepCacheRead);
+                        TryReadNonNegativeInt64(root, "cache_creation_tokens", out stepCacheCreate);
+                        TryReadNonNegativeInt64(root, "output_tokens", out stepOut);
+                        evModel = NonEmpty(root.StringProperty("model"));
+                        if (evModel is not null) lastKnownModel = evModel;
+                        hasToolCalls = HasNonEmptyToolCalls(root);
                     }
+
+                    events.Add(new AgyParsedEvent(stepIndex, type, status, createdAt, evModel, rawIn, stepCacheRead, stepCacheCreate, stepOut, hasToolCalls));
                 }
                 catch (JsonException) { }
             }
 
+            if (events.Count == 0) return null;
+
+            var startIndex = lastUserIndex >= 0 ? lastUserIndex : 0;
+            long rawInput = 0, cacheRead = 0, cacheCreate = 0, output = 0;
+            string? turnModel = null;
+            string? lastStatus = null;
+            string? lastEventType = null;
+            var lastHasToolCalls = false;
+            DateTimeOffset? turnStart = null;
+            DateTimeOffset? lastEventAt = null;
+            long? lastStep = null;
+
+            for (var i = startIndex; i < events.Count; i++)
+            {
+                var ev = events[i];
+                lastEventType = ev.Type;
+                if (ev.StepIndex is { } s) lastStep = s;
+                lastStatus = ev.Status;
+
+                if (ev.CreatedAt is { } ts)
+                {
+                    turnStart ??= ts;
+                    if (lastEventAt is null || ts > lastEventAt) lastEventAt = ts;
+                }
+
+                if (ev.Type == "PLANNER_RESPONSE")
+                {
+                    rawInput = TokenActivityView.SaturatingAdd(rawInput, ev.RawIn);
+                    cacheRead = TokenActivityView.SaturatingAdd(cacheRead, ev.CacheRead);
+                    cacheCreate = TokenActivityView.SaturatingAdd(cacheCreate, ev.CacheCreate);
+                    output = TokenActivityView.SaturatingAdd(output, ev.Output);
+                    if (ev.Model is not null) turnModel = ev.Model;
+                    lastHasToolCalls = ev.HasToolCalls;
+                }
+            }
+
             if (lastEventType is null) return null;
+            var effectiveModel = turnModel ?? lastKnownModel ?? cachedModel;
+            modelOut = effectiveModel;
+            var turnId = $"turn-{lastStep ?? 0}";
+            var fileMtime = new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero);
+
+            var rawSamples = new List<CodexResponseSample>();
+            var runningModel = cachedModel;
+            for (var i = 0; i < events.Count; i++)
+            {
+                var ev = events[i];
+                if (ev.Model is not null) runningModel = ev.Model;
+                if (ev.Type != "PLANNER_RESPONSE" || ev.Output <= 0 || ev.CreatedAt is not { } start)
+                    continue;
+
+                var sampleModel = ev.Model ?? runningModel ?? effectiveModel;
+                DateTimeOffset? end = null;
+                if (ev.HasToolCalls)
+                {
+                    for (var j = i + 1; j < events.Count; j++)
+                    {
+                        if (events[j].Type == "USER_INPUT") break;
+                        if (events[j].CreatedAt is { } nextTs && nextTs >= start)
+                        {
+                            end = nextTs;
+                            break;
+                        }
+                    }
+
+                    if (end is null
+                        && i == events.Count - 1
+                        && IsAgyDoneOrEmpty(ev.Status)
+                        && IsValidMtimeEnd(fileMtime, start, now))
+                    {
+                        end = ClampObserved(fileMtime, now);
+                    }
+                }
+                else
+                {
+                    if (i == events.Count - 1
+                        && IsAgyDoneOrEmpty(ev.Status)
+                        && IsValidMtimeEnd(fileMtime, start, now))
+                    {
+                        end = ClampObserved(fileMtime, now);
+                    }
+                    else if (i < events.Count - 1)
+                    {
+                        var reused = cachedSamples.LastOrDefault(s => s.Start == start && s.Output == ev.Output);
+                        if (reused is not null && reused.End <= now && reused.End >= now - SampleRetention)
+                        {
+                            rawSamples.Add(reused with { TurnId = turnId, Model = sampleModel ?? reused.Model });
+                        }
+                        continue;
+                    }
+                }
+
+                if (end is { } resolvedEnd
+                    && resolvedEnd <= now
+                    && resolvedEnd - start >= MinResponseDuration
+                    && resolvedEnd - start <= MaxResponseDuration)
+                {
+                    rawSamples.Add(new CodexResponseSample(convId, sampleModel, start, resolvedEnd, ev.Output)
+                    {
+                        TurnId = turnId,
+                        ProviderId = ExternalProviderTokenLedger.AntigravityProviderId,
+                    });
+                }
+            }
+
+            samplesOut = RetainRecentSamples(rawSamples, now);
+
             var totalInput = TokenActivityView.SaturatingAdd(rawInput, TokenActivityView.SaturatingAdd(cacheRead, cacheCreate));
-            var observedAt = ClampObserved(lastEventAt ?? new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero), now);
-            var startedAt = turnStart is { } st && st <= observedAt ? st : observedAt;
             var completed = string.Equals(lastEventType, "PLANNER_RESPONSE", StringComparison.Ordinal)
                 && !lastHasToolCalls
-                && (string.IsNullOrWhiteSpace(lastStatus) || string.Equals(lastStatus, "DONE", StringComparison.OrdinalIgnoreCase));
+                && IsAgyDoneOrEmpty(lastStatus);
             var elapsedSeconds = lastEventAt is { } endAt && turnStart is { } beginAt && (endAt - beginAt).TotalSeconds >= 1.0
                 ? (endAt - beginAt).TotalSeconds
                 : 0d;
+
+            var observedAt = ClampObserved(lastEventAt ?? fileMtime, now);
+            if (!completed
+                && lastEventAt is { } evAt
+                && fileMtime > evAt
+                && fileMtime <= now + ClockSkewAllowance
+                && fileMtime - evAt <= MaxResponseDuration)
+            {
+                observedAt = ClampObserved(fileMtime, now);
+            }
+            var startedAt = turnStart is { } st && st <= observedAt ? st : observedAt;
+            var activePhase = completed
+                ? null
+                : ((string.Equals(lastEventType, "PLANNER_RESPONSE", StringComparison.Ordinal) && lastHasToolCalls)
+                    || (string.Equals(lastEventType, "GENERIC", StringComparison.Ordinal) && string.Equals(lastStatus, "RUNNING", StringComparison.OrdinalIgnoreCase))
+                        ? "tools"
+                        : "generating");
 
             return new CachedTurnData(
                 ExternalProviderTokenLedger.AntigravityProviderId,
                 "AGY",
                 convId,
-                $"turn-{lastStep ?? 0}",
-                model,
+                turnId,
+                effectiveModel,
                 null,
                 titleOut,
                 null,
@@ -383,7 +550,8 @@ public sealed class ExternalConversationTracker
                 output,
                 elapsedSeconds,
                 completed,
-                completed && elapsedSeconds >= 1.0 && output > 0);
+                completed && elapsedSeconds >= 1.0 && output > 0,
+                activePhase);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
@@ -397,8 +565,11 @@ public sealed class ExternalConversationTracker
         FileInfo? usageInfo,
         FileInfo? updatesInfo,
         DateTime latestFileUtc,
-        DateTimeOffset now)
+        string? cachedModel,
+        DateTimeOffset now,
+        out IReadOnlyList<CodexResponseSample> samplesOut)
     {
+        samplesOut = [];
         string? title = null;
         string? projectName = null;
         string? model = null;
@@ -474,12 +645,14 @@ public sealed class ExternalConversationTracker
             catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException) { }
         }
 
+        var effectiveModel = model ?? cachedModel;
         string? lastSessionUpdate = null;
         DateTimeOffset? lastUpdateAt = null;
         var updatesHasLines = false;
         long updInput = 0, updCacheRead = 0, updCacheWrite = 0, updOutput = 0;
         var hasUpdateUsage = false;
         double? updateElapsedMs = null;
+        var rawSamples = new List<CodexResponseSample>();
         if (updatesInfo is { Exists: true, Length: > 0 })
         {
             try
@@ -505,8 +678,10 @@ public sealed class ExternalConversationTracker
 
                         if (su == "turn_completed")
                         {
+                            double? turnElapsedMs = null;
                             if (update.NumberProperty("elapsed_ms") is { } ems && double.IsFinite(ems) && ems >= 0)
-                                updateElapsedMs = ems;
+                                turnElapsedMs = ems;
+                            long lineOut = 0;
                             if (update.ObjectProperty("usage") is { } u)
                             {
                                 hasUpdateUsage = true;
@@ -514,8 +689,26 @@ public sealed class ExternalConversationTracker
                                 TryReadNonNegativeInt64(u, "cachedReadTokens", out updCacheRead);
                                 TryReadNonNegativeInt64(u, "cacheCreationTokens", out updCacheWrite);
                                 TryReadNonNegativeInt64(u, "outputTokens", out updOutput);
+                                lineOut = updOutput;
                                 if (updInput == 0 && TryReadNonNegativeInt64(u, "totalTokens", out var updTotal) && updTotal > updOutput)
                                     updInput = updTotal - updOutput;
+                                if (turnElapsedMs is null && u.NumberProperty("apiDurationMs") is { } adm && double.IsFinite(adm) && adm >= 0)
+                                    turnElapsedMs = adm;
+                            }
+                            if (turnElapsedMs is not null) updateElapsedMs = turnElapsedMs;
+
+                            if (lineOut > 0 && ts is { } lineEnd && turnElapsedMs is { } msVal)
+                            {
+                                var dur = TimeSpan.FromMilliseconds(msVal);
+                                if (dur >= MinResponseDuration && dur <= MaxResponseDuration && lineEnd <= now + ClockSkewAllowance)
+                                {
+                                    var resolvedEnd = ClampObserved(lineEnd, now);
+                                    rawSamples.Add(new CodexResponseSample(sessionId, effectiveModel, resolvedEnd - dur, resolvedEnd, lineOut)
+                                    {
+                                        TurnId = turnId,
+                                        ProviderId = ExternalProviderTokenLedger.GrokProviderId,
+                                    });
+                                }
                             }
                         }
                     }
@@ -552,6 +745,34 @@ public sealed class ExternalConversationTracker
             return null;
         }
 
+        if (rawSamples.Count == 0 && completed && output > 0 && startedAt is { } sb && endedAt is { } se)
+        {
+            var dur = se - sb;
+            if (dur >= MinResponseDuration && dur <= MaxResponseDuration && se <= now + ClockSkewAllowance)
+            {
+                var resolvedEnd = ClampObserved(se, now);
+                rawSamples.Add(new CodexResponseSample(sessionId, effectiveModel, sb, resolvedEnd, output)
+                {
+                    TurnId = turnId,
+                    ProviderId = ExternalProviderTokenLedger.GrokProviderId,
+                });
+            }
+        }
+        else if (rawSamples.Count == 0 && completed && output > 0 && endedAt is { } seOnly && updateElapsedMs is { } ums)
+        {
+            var dur = TimeSpan.FromMilliseconds(ums);
+            if (dur >= MinResponseDuration && dur <= MaxResponseDuration && seOnly <= now + ClockSkewAllowance)
+            {
+                var resolvedEnd = ClampObserved(seOnly, now);
+                rawSamples.Add(new CodexResponseSample(sessionId, effectiveModel, resolvedEnd - dur, resolvedEnd, output)
+                {
+                    TurnId = turnId,
+                    ProviderId = ExternalProviderTokenLedger.GrokProviderId,
+                });
+            }
+        }
+        samplesOut = RetainRecentSamples(rawSamples, now);
+
         var latestTimestamp = MaxTimestamp(lastUpdateAt, endedAt, usageUpdatedAt, summaryAt);
         var observedAt = ClampObserved(latestTimestamp ?? new DateTimeOffset(latestFileUtc, TimeSpan.Zero), now);
         var effectiveStart = startedAt is { } st && st <= observedAt ? st : observedAt;
@@ -560,13 +781,16 @@ public sealed class ExternalConversationTracker
             : updateElapsedMs is >= 1000
                 ? updateElapsedMs.Value / 1000.0
                 : 0d;
+        var activePhase = completed
+            ? null
+            : (lastSessionUpdate is "tool_call" or "tool_call_update" ? "tools" : "generating");
 
         return new CachedTurnData(
             ExternalProviderTokenLedger.GrokProviderId,
             "Grok",
             sessionId,
             turnId,
-            model,
+            effectiveModel,
             effort,
             title,
             projectName,
@@ -578,7 +802,8 @@ public sealed class ExternalConversationTracker
             output,
             elapsedSeconds,
             completed,
-            completed && elapsedSeconds >= 1.0 && output > 0);
+            completed && elapsedSeconds >= 1.0 && output > 0,
+            activePhase);
     }
 
     private static CachedTurnData? ParseClaudeSession(
@@ -587,12 +812,17 @@ public sealed class ExternalConversationTracker
         FileInfo info,
         string? cachedTitle,
         string? cachedProject,
+        string? cachedModel,
         DateTimeOffset now,
         out string? titleOut,
-        out string? projectOut)
+        out string? projectOut,
+        out string? modelOut,
+        out IReadOnlyList<CodexResponseSample> samplesOut)
     {
         titleOut = cachedTitle;
         projectOut = cachedProject;
+        modelOut = cachedModel;
+        samplesOut = [];
         try
         {
             if (titleOut is null || projectOut is null)
@@ -623,6 +853,7 @@ public sealed class ExternalConversationTracker
 
             string? lastPromptTitle = null;
             string? effort = null;
+            string? lastKnownModel = null;
             var lastHumanUserIndex = -1;
             var parsedEvents = new List<(string? Type, string? Cwd, string? Effort, string? LastPrompt, DateTimeOffset? Timestamp, bool IsMeta, bool IsToolResultUser, string? Model, string? StopReason, string? MsgKey, long RawIn, long CacheCreate, long CacheRead, long Output, double? DurationMs)>(tailLines.Count);
 
@@ -654,6 +885,7 @@ public sealed class ExternalConversationTracker
                     if (type == "assistant" && root.ObjectProperty("message") is { } msg)
                     {
                         model = NonEmpty(msg.StringProperty("model"));
+                        if (model is not null) lastKnownModel = model;
                         stopReason = NonEmpty(msg.StringProperty("stop_reason"));
                         msgKey = NonEmpty(msg.StringProperty("id")) ?? NonEmpty(root.StringProperty("requestId"));
                         if (msg.ObjectProperty("usage") is { } usage)
@@ -739,6 +971,99 @@ public sealed class ExternalConversationTracker
             if (lastTurnEntryType is null && lastEventAt is null && keyedUsage.Count == 0 && unkeyedUsage.Count == 0)
                 return null;
 
+            var effectiveModel = lastModel ?? lastKnownModel ?? cachedModel;
+            modelOut = effectiveModel;
+            var turnId = $"turn-{startIndex}";
+
+            // Extract completed assistant response samples across parsed tail turns.
+            var rawSamples = new List<CodexResponseSample>();
+            var groupedMessages = new List<ClaudeGroupedMessage>();
+            var keyedIndex = new Dictionary<string, int>(StringComparer.Ordinal);
+            DateTimeOffset? prevBoundaryTs = null;
+            double? currentTurnDurMs = null;
+            var currentTurnMsgIndices = new List<int>();
+            for (var i = 0; i < parsedEvents.Count; i++)
+            {
+                var ev = parsedEvents[i];
+                if (ev.Type == "user" && !ev.IsMeta && !ev.IsToolResultUser)
+                {
+                    AssignSingleTurnDuration(groupedMessages, currentTurnMsgIndices, currentTurnDurMs);
+                    currentTurnMsgIndices.Clear();
+                    currentTurnDurMs = null;
+                    if (ev.Timestamp is { } uts) prevBoundaryTs = uts;
+                    continue;
+                }
+
+                if (ev.DurationMs is { } dms)
+                {
+                    currentTurnDurMs = dms;
+                    if (ev.Timestamp is { } dts) prevBoundaryTs = dts;
+                    continue;
+                }
+
+                if (ev.Type == "assistant")
+                {
+                    if (ev.MsgKey is { } key && keyedIndex.TryGetValue(key, out var idx))
+                    {
+                        var cur = groupedMessages[idx];
+                        groupedMessages[idx] = cur with
+                        {
+                            Model = ev.Model ?? cur.Model,
+                            StopReason = ev.StopReason ?? cur.StopReason,
+                            LastTs = ev.Timestamp ?? cur.LastTs,
+                            FirstTs = cur.FirstTs ?? ev.Timestamp,
+                            Output = Math.Max(cur.Output, ev.Output),
+                        };
+                        if (ev.Timestamp is { } ats) prevBoundaryTs = ats;
+                    }
+                    else
+                    {
+                        var entry = new ClaudeGroupedMessage(
+                            ev.Model,
+                            ev.StopReason,
+                            prevBoundaryTs,
+                            ev.Timestamp,
+                            ev.Timestamp,
+                            ev.Output,
+                            null);
+                        var newIdx = groupedMessages.Count;
+                        groupedMessages.Add(entry);
+                        currentTurnMsgIndices.Add(newIdx);
+                        if (ev.MsgKey is { } keyNew) keyedIndex[keyNew] = newIdx;
+                        if (ev.Timestamp is { } ats) prevBoundaryTs = ats;
+                    }
+                }
+                else if (ev.Timestamp is { } ots)
+                {
+                    prevBoundaryTs = ots;
+                }
+            }
+            AssignSingleTurnDuration(groupedMessages, currentTurnMsgIndices, currentTurnDurMs);
+
+            foreach (var gm in groupedMessages)
+            {
+                if (gm.StopReason is null || gm.Output <= 0 || gm.LastTs is not { } end || end > now + ClockSkewAllowance)
+                    continue;
+                var resolvedEnd = ClampObserved(end, now);
+                DateTimeOffset? start = null;
+                if (gm.PrevEventTs is { } pts && resolvedEnd >= pts)
+                    start = pts;
+                else if (gm.TurnDurationMs is >= 500)
+                    start = resolvedEnd.AddMilliseconds(-gm.TurnDurationMs.Value);
+                else if (gm.FirstTs is { } fts && resolvedEnd - fts >= MinResponseDuration)
+                    start = fts;
+
+                if (start is { } s && resolvedEnd - s >= MinResponseDuration && resolvedEnd - s <= MaxResponseDuration)
+                {
+                    rawSamples.Add(new CodexResponseSample(sessionId, gm.Model ?? effectiveModel, s, resolvedEnd, gm.Output)
+                    {
+                        TurnId = turnId,
+                        ProviderId = ExternalProviderTokenLedger.ClaudeProviderId,
+                    });
+                }
+            }
+            samplesOut = RetainRecentSamples(rawSamples, now);
+
             long rawInput = 0, cacheCreate = 0, cacheRead = 0, output = 0;
             foreach (var entry in keyedUsage.Values)
             {
@@ -765,13 +1090,19 @@ public sealed class ExternalConversationTracker
                 : lastAssistantAt is { } endAt && turnStart is { } beginAt && (endAt - beginAt).TotalSeconds >= 1.0
                     ? (endAt - beginAt).TotalSeconds
                     : 0d;
+            var activePhase = completed
+                ? null
+                : (string.Equals(lastTurnEntryType, "assistant", StringComparison.Ordinal)
+                    && string.Equals(lastStopReason, "tool_use", StringComparison.Ordinal)
+                        ? "tools"
+                        : "generating");
 
             return new CachedTurnData(
                 ExternalProviderTokenLedger.ClaudeProviderId,
                 "Claude",
                 sessionId,
-                $"turn-{startIndex}",
-                lastModel,
+                turnId,
+                effectiveModel,
                 effort,
                 titleOut,
                 projectOut,
@@ -783,12 +1114,63 @@ public sealed class ExternalConversationTracker
                 output,
                 elapsedSeconds,
                 completed,
-                completed && elapsedSeconds >= 1.0 && output > 0);
+                completed && elapsedSeconds >= 1.0 && output > 0,
+                activePhase);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             return null;
         }
+    }
+
+    private static bool IsAgyDoneOrEmpty(string? status) =>
+        string.IsNullOrWhiteSpace(status) || string.Equals(status, "DONE", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsValidMtimeEnd(DateTimeOffset fileMtime, DateTimeOffset start, DateTimeOffset now) =>
+        fileMtime >= start + MinResponseDuration
+        && fileMtime <= start + MaxResponseDuration
+        && fileMtime <= now + ClockSkewAllowance;
+
+    private static IReadOnlyList<CodexResponseSample> RetainRecentSamples(
+        List<CodexResponseSample> samples,
+        DateTimeOffset now)
+    {
+        if (samples.Count == 0) return [];
+        var cutoff = now - SampleRetention;
+        var filtered = samples
+            .Where(s => s.End <= now && s.End >= cutoff && s.End - s.Start >= MinResponseDuration && s.End - s.Start <= MaxResponseDuration)
+            .OrderByDescending(s => s.End)
+            .Take(MaxSamplesPerSession)
+            .ToArray();
+        Array.Reverse(filtered);
+        return filtered;
+    }
+
+    private static void AssignSingleTurnDuration(
+        List<ClaudeGroupedMessage> grouped,
+        List<int> indices,
+        double? durationMs)
+    {
+        if (durationMs is not { } ms || indices.Count != 1) return;
+        var idx = indices[0];
+        grouped[idx] = grouped[idx] with { TurnDurationMs = ms };
+    }
+
+    private static CodexLiveSession? BuildLiveSession(CachedTurnData data, DateTimeOffset now)
+    {
+        if (data.Completed || data.ActivePhase is null || now - data.ObservedAt > RunningTimeout)
+            return null;
+        var phase = data.ActivePhase;
+        return new CodexLiveSession(
+            data.SessionId,
+            data.Model,
+            phase,
+            string.Equals(phase, "generating", StringComparison.Ordinal) ? data.ObservedAt : null,
+            data.ObservedAt)
+        {
+            TurnId = data.TurnId,
+            ProviderId = data.ProviderId,
+        };
     }
 
     private static CodexConversationTurn? BuildTurn(CachedTurnData data, DateTimeOffset now)
@@ -1081,12 +1463,35 @@ public sealed class ExternalConversationTracker
 
     private readonly record struct FileStamp(long Length, long LastWriteUtcTicks);
 
+    private readonly record struct AgyParsedEvent(
+        long? StepIndex,
+        string Type,
+        string? Status,
+        DateTimeOffset? CreatedAt,
+        string? Model,
+        long RawIn,
+        long CacheRead,
+        long CacheCreate,
+        long Output,
+        bool HasToolCalls);
+
+    private sealed record ClaudeGroupedMessage(
+        string? Model,
+        string? StopReason,
+        DateTimeOffset? PrevEventTs,
+        DateTimeOffset? FirstTs,
+        DateTimeOffset? LastTs,
+        long Output,
+        double? TurnDurationMs);
+
     private sealed record CachedEntry(
         FileStamp PrimaryStamp,
         FileStamp SecondaryStamp,
         FileStamp TertiaryStamp,
         string? CachedTitle,
         string? CachedProject,
+        string? CachedModel,
+        IReadOnlyList<CodexResponseSample> CachedSamples,
         CachedTurnData? Turn);
 
     private sealed record CachedTurnData(
@@ -1106,5 +1511,6 @@ public sealed class ExternalConversationTracker
         long OutputTokens,
         double ElapsedSeconds,
         bool Completed,
-        bool UsageComplete);
+        bool UsageComplete,
+        string? ActivePhase);
 }

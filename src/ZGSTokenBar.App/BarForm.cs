@@ -498,6 +498,15 @@ internal sealed partial class BarForm : Form
         var first = _systemUsage.OutputRateCapturedAt is null;
         _systemUsage = _systemUsage with { ObservedOutputTokensPerSecond = rate.RecordedTotal, OutputRateCapturedAt = rate.CapturedAt, LiveRate = rate };
         if (first) ApplySnapshotLayout();
+        if (_systemUsagePopover?.Visible == true && _systemAnchorIsLive)
+        {
+            var previousHeight = _systemUsagePopover.CurrentLogicalBodyHeight;
+            _systemUsagePopover.UpdateContent(SystemPopoverContent(_systemUsage, _popoverPinned), _text);
+            if (previousHeight != _systemUsagePopover.CurrentLogicalBodyHeight)
+            {
+                RepositionPopovers();
+            }
+        }
         Invalidate();
     }
 
@@ -588,13 +597,36 @@ internal sealed partial class BarForm : Form
             : [];
 
         if (_externalConversations.Count == 0) return codexRows;
+        var liveRates = snapshot.CurrentLiveRate?.Conversations;
         var combined = new List<CodexConversationTurn>(codexRows.Count + _externalConversations.Count);
         combined.AddRange(codexRows);
         foreach (var turn in _externalConversations)
         {
-            combined.Add(AttachExternalProviderQuota(turn));
+            var matchedRate = MatchExternalRate(liveRates, turn);
+            var withQuota = AttachExternalProviderQuota(turn);
+            combined.Add(ReferenceEquals(withQuota.LiveRate, matchedRate) ? withQuota : withQuota with { LiveRate = matchedRate });
         }
         return combined;
+    }
+
+    private static ConversationOutputRate? MatchExternalRate(
+        IReadOnlyList<ConversationOutputRate>? rates,
+        CodexConversationTurn turn)
+    {
+        if (rates is null || rates.Count == 0) return null;
+        var provider = ObservedOutputRate.NormalizeProviderId(turn.ProviderId);
+        ConversationOutputRate? bySession = null;
+        foreach (var rate in rates)
+        {
+            if (!string.Equals(ObservedOutputRate.NormalizeProviderId(rate.ProviderId), provider, StringComparison.Ordinal))
+                continue;
+            if (!string.Equals(rate.SessionId, turn.SessionId, StringComparison.Ordinal))
+                continue;
+            if (string.Equals(rate.TurnId, turn.TurnId, StringComparison.Ordinal))
+                return rate;
+            bySession ??= rate;
+        }
+        return bySession;
     }
 
     private CodexConversationTurn AttachExternalProviderQuota(CodexConversationTurn turn)

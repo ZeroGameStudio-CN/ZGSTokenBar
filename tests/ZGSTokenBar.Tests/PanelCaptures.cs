@@ -38,6 +38,11 @@ internal static class PanelCaptures
                 InputTokens = 28_000,
                 CachedInputTokens = 24_500,
                 InstanceRemainingPercent = 80,
+                LiveRate = new ConversationOutputRate("agy-conv-0001", "turn-agy-1", 24.5, 0)
+                {
+                    RecordedAt = at,
+                    ProviderId = ExternalProviderTokenLedger.AntigravityProviderId,
+                },
             },
             new CodexConversationTurn("grok-conv-0002", "turn-grok-1", "grok-4.7", "high", at.AddSeconds(-30), at, 960, 30, false, false)
             {
@@ -47,6 +52,11 @@ internal static class PanelCaptures
                 InputTokens = 14_000,
                 CachedInputTokens = 10_200,
                 InstanceRemainingPercent = 19,
+                LiveRate = new ConversationOutputRate("grok-conv-0002", "turn-grok-1", 12.8, 0)
+                {
+                    RecordedAt = at,
+                    ProviderId = ExternalProviderTokenLedger.GrokProviderId,
+                },
             },
             new CodexConversationTurn("claude-conv-0003", "turn-claude-1", "claude-opus-5-5", "high", at.AddSeconds(-65), at, 1_150, 65, false, false)
             {
@@ -56,6 +66,11 @@ internal static class PanelCaptures
                 InputTokens = 18_000,
                 CachedInputTokens = 14_400,
                 InstanceRemainingPercent = 68,
+                LiveRate = new ConversationOutputRate("claude-conv-0003", "turn-claude-1", 8.4, 0)
+                {
+                    RecordedAt = at,
+                    ProviderId = ExternalProviderTokenLedger.ClaudeProviderId,
+                },
             },
             Turn(2, "Fix provider refresh cadence", "gpt-5.5", "medium", 7_210, 95, 0, 38.2, null, 21_000, 4_200, instance: 1, remaining: 19),
             Turn(3, "ZOS-1088 进入戰鬥後無法看到白色提示", "gpt-5.5", "high", 12_400, 180, 0, 37.4, 0.8, 44_000, 39_600, instance: 2, remaining: 54),
@@ -224,7 +239,19 @@ internal static class PanelCaptures
         {
             NetworkReceiveBytesPerSecond = 12.5 * 1024 * 1024, NetworkSendBytesPerSecond = 128 * 1024, NetworkInterfaces = 1,
             NetworkHistory = new(at.AddDays(-13).AddHours(-1), 1_352_400_000_000, 1_539_300_000_000, at, false),
-            LiveRate = new LiveOutputRate(at, 53.2, 33.2, 20, 2, 1, 4, 0) { RecordedAt = at }, ObservedOutputTokensPerSecond = 33.2, OutputRateCapturedAt = at,
+            LiveRate = new LiveOutputRate(at, 198.2, 178.2, 20, 2, 1, 7, 0)
+            {
+                RecordedAt = at,
+                ProviderRates =
+                [
+                    new(ExternalProviderTokenLedger.CodexProviderId, "Codex", 132.5, 20, 74.35),
+                    new(ExternalProviderTokenLedger.AntigravityProviderId, "AGY", 24.5, 0, 13.75),
+                    new(ExternalProviderTokenLedger.GrokProviderId, "Grok", 12.8, 0, 7.18),
+                    new(ExternalProviderTokenLedger.ClaudeProviderId, "Claude", 8.4, 0, 4.71),
+                ],
+            },
+            ObservedOutputTokensPerSecond = 178.2,
+            OutputRateCapturedAt = at,
             CumulativeTokens = 735_400_000_000,
             TopProcesses =
             [
