@@ -179,7 +179,7 @@ internal sealed class SystemUsagePopoverForm : Form
         _sessionsVisible = content.LiveRates && content.Conversations is not null;
         var conversations = content.Conversations ?? [];
         var rows = CodexConversationDisplay.ActivityRows(conversations, MaximumSessionRows);
-        var activeCount = rows.Count(turn => turn.LiveRate is { Total: > 0 } || turn.State == "running");
+        var activeCount = conversations.Count(turn => turn.LiveRate is { Total: > 0 } || turn.State == "running");
         _activeSessionCount = activeCount;
         _sessionsRecent = activeCount == 0;
         _sessions = _sessionsVisible ? rows.ToArray() : [];
@@ -207,6 +207,8 @@ internal sealed class SystemUsagePopoverForm : Form
     internal bool LiveRatesContentForAcceptance => _content?.LiveRates == true;
 
     internal int SessionRowCountForAcceptance => _sessions.Length;
+
+    internal int ActiveSessionCountForAcceptance => _activeSessionCount;
 
     internal TokenActivityGrain EffectiveActivityGrain =>
         _grainOverride ?? _content?.Activity?.Grain ?? TokenActivityGrain.Daily;
@@ -1045,7 +1047,7 @@ internal sealed class SystemUsagePopoverForm : Form
             new RectangleF(panel.X + pad, panel.Y + 9, panel.Width - pad * 2, 13), StringAlignment.Near);
         if (_sessions.Length == 0)
         {
-            DrawString(graphics, zh ? "暂无 Codex 会话读数" : "No Codex chat data yet", _detailFont, muted,
+            DrawString(graphics, zh ? "暂无会话读数" : "No chat data yet", _detailFont, muted,
                 new RectangleF(panel.X + pad, panel.Y + SessionHeaderHeight + 6, panel.Width - 24, 15), StringAlignment.Near);
             return;
         }
@@ -1075,11 +1077,13 @@ internal sealed class SystemUsagePopoverForm : Form
             var accent = live is null ? (turn.State == "running" ? recorded : idle)
                 : live.Estimated > 0 ? estimated : recorded;
 
-            // Line 1: taskbar-ring-linked Codex instance chip · full-width title.
+            // Line 1: taskbar-ring-linked provider/instance chip · full-width title.
             var instanceLabel = string.IsNullOrWhiteSpace(turn.InstanceLabel)
                 ? (turn.InstanceNumber > 0 ? $"Codex · {turn.InstanceNumber}" : "Codex")
                 : turn.InstanceLabel;
-            var ringColor = InstanceRingColor(turn.InstanceRemainingPercent);
+            var ringColor = turn.InstanceRemainingPercent is not null
+                ? InstanceRingColor(turn.InstanceRemainingPercent)
+                : ProviderSessionAccent(turn.ProviderId);
             var chip = new RectangleF(chipLeft, top + 2, chipWidth, 15);
             using (var path = RoundedRectangle(chip, 7.5f))
             using (var chipFill = new SolidBrush(Color.FromArgb(36, ringColor)))
@@ -1088,7 +1092,7 @@ internal sealed class SystemUsagePopoverForm : Form
                 graphics.FillPath(chipFill, path);
                 graphics.DrawPath(chipBorder, path);
             }
-            DrawInstanceRing(graphics, new RectangleF(chip.X + 2.5f, chip.Y + 1.5f, 12f, 12f), turn.InstanceRemainingPercent, ringColor);
+            DrawInstanceRing(graphics, new RectangleF(chip.X + 2.5f, chip.Y + 1.5f, 12f, 12f), turn.InstanceRemainingPercent, ringColor, turn.ProviderId);
             using (var chipText = new SolidBrush(ringColor))
             {
                 graphics.DrawString(instanceLabel, _subtitleFont, chipText,
@@ -1135,8 +1139,16 @@ internal sealed class SystemUsagePopoverForm : Form
             }
             else if (live is not null || turn.State == "running")
             {
-                speed = zh ? "待记录" : "No sample";
-                speedBrush = muted;
+                if (IsExternalProvider(turn.ProviderId) && turn.State == "running")
+                {
+                    speed = zh ? "运行中" : "Running";
+                    speedBrush = recorded;
+                }
+                else
+                {
+                    speed = zh ? "待记录" : "No sample";
+                    speedBrush = muted;
+                }
                 speedFont = _subtitleFont;
             }
             else if (turn.OutputTokensPerSecond is { } avg && double.IsFinite(avg) && avg > 0)
@@ -1155,6 +1167,21 @@ internal sealed class SystemUsagePopoverForm : Form
         }
     }
 
+    private static bool IsExternalProvider(string? providerId) =>
+        providerId is { Length: > 0 }
+        && !string.Equals(providerId, ExternalProviderTokenLedger.CodexProviderId, StringComparison.Ordinal);
+
+    private static Color ProviderSessionAccent(string? providerId) =>
+        IsExternalProvider(providerId) ? ProviderAccent(providerId!) : RecordedAccent;
+
+    private static Image SessionLogo(string? providerId) => providerId switch
+    {
+        ExternalProviderTokenLedger.AntigravityProviderId => ProviderIcons.For(UsageProviderIds.Antigravity) ?? OpenAiLogo,
+        ExternalProviderTokenLedger.GrokProviderId => ProviderIcons.For(UsageProviderIds.Grok) ?? OpenAiLogo,
+        ExternalProviderTokenLedger.ClaudeProviderId => ProviderIcons.For(UsageProviderIds.Claude) ?? OpenAiLogo,
+        _ => OpenAiLogo,
+    };
+
     private static Color InstanceRingColor(double? remaining) => GlassDockLayout.Band(remaining) switch
     {
         "red" => Color.FromArgb(255, 99, 99),
@@ -1163,12 +1190,12 @@ internal sealed class SystemUsagePopoverForm : Form
         _ => RecordedAccent,
     };
 
-    private void DrawInstanceRing(Graphics graphics, RectangleF bounds, double? remaining, Color ringColor)
+    private void DrawInstanceRing(Graphics graphics, RectangleF bounds, double? remaining, Color ringColor, string? providerId)
     {
         const float stroke = 1.4f;
         var core = RectangleF.Inflate(bounds, -stroke - .2f, -stroke - .2f);
         var pixels = Math.Max(8, (int)MathF.Round(core.Width * _scale));
-        var baked = GlassDockPainter.BakedIcon(OpenAiLogo, pixels, .3f * _scale, .92f);
+        var baked = GlassDockPainter.BakedIcon(SessionLogo(providerId), pixels, .3f * _scale, .92f);
         var interpolation = graphics.InterpolationMode;
         graphics.InterpolationMode = InterpolationMode.HighQualityBilinear;
         graphics.DrawImage(baked, core);

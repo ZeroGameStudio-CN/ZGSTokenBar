@@ -47,25 +47,33 @@ internal static class AntigravityLocalQuotaTests
             version = "1.5.3";
             File.WriteAllText(exe, "updated fixture for a qualified executable");
             var current = await source.ReadAsync(paths, now, default);
-            Check(current is { Freshness: UsageFreshness.Current, SourceKind: "agy-cli" }
+            Check(current is { Freshness: UsageFreshness.Current, SourceKind: "agy-cli", AccountId: "antigravity", Label: "Antigravity" }
                 && current.Windows.Single().UsedPercent is { } used && Math.Abs(used - 63.6) < .0001,
                 "The native route reads quota without any legacy credential file and retains exact fractions.");
+
+            File.WriteAllText(appStorage, """{"agy.onboarding.lastLoginUsername":"second@example.test"}""");
+            var withAccount = await source.ReadAsync(paths, now.AddMinutes(1), default);
+            Check(withAccount is { Freshness: UsageFreshness.Current, AccountId: "antigravity", Label: "second@example.test" },
+                "Stable signed-in account labels the AGY snapshot while keeping AccountId fixed.");
+
             foreach (var failure in new[] { null, Quota.Replace("\"num_turns\":0", "\"num_turns\":1"),
                          Quota.Replace("\"usage\"", "\"other\""), Quota.Replace("\"SUCCESS\"", "\"ERROR\"") })
             {
                 reply = failure;
                 var unavailable = await source.ReadAsync(paths, now.AddMinutes(2), default);
-                Check(unavailable is { Freshness: UsageFreshness.Unavailable, SampledAt: null, Windows.Count: 0 },
-                    "A transport failure or nonquota result cannot become a current percentage or re-enable the legacy account.");
+                Check(unavailable is { Freshness: UsageFreshness.Unavailable, SampledAt: null, Windows.Count: 0, Label: "Antigravity" },
+                    "A transport failure or nonquota result cannot become a current percentage, re-enable the legacy account, or keep stale labels.");
             }
             reply = Quota;
             switchProfile = true;
-            Check(await source.ReadAsync(paths, now, default) is { Freshness: UsageFreshness.Unavailable },
+            File.WriteAllText(appStorage, """{"agy.onboarding.lastLoginUsername":"first@example.test"}""");
+            Check(await source.ReadAsync(paths, now, default) is { Freshness: UsageFreshness.Unavailable, Label: "Antigravity" },
                 "A login change during the read discards the result.");
             switchProfile = false;
-            Check(await source.ReadAsync(paths, now.AddMinutes(2), default) is { Freshness: UsageFreshness.Current }
+            Check(await source.ReadAsync(paths, now.AddMinutes(2), default) is { Freshness: UsageFreshness.Current, Label: "second@example.test" }
                 && calls.Count(call => call == "--version") == 2,
                 "The next refresh recovers on the current account, reusing only the executable qualification.");
+            await VerifyTokenJwtAndFreshestIdentityAsync(root.FullName, now, exe, appStorage, source);
             await VerifyDetachedChildAsync(root.FullName);
             Check(UsageCliFallback.DefaultProcessTimeout == TimeSpan.FromSeconds(25)
                 && AntigravityLocalQuota.ProcessTimeout == TimeSpan.FromSeconds(35),
@@ -77,12 +85,54 @@ internal static class AntigravityLocalQuotaTests
         {
             File.Delete(exe);
             File.Delete(appStorage);
+            var tokenDir = Path.Combine(root.FullName, ".gemini", "antigravity-cli");
+            if (Directory.Exists(tokenDir)) Directory.Delete(tokenDir, true);
+            var geminiDir = Path.Combine(root.FullName, ".gemini");
+            if (Directory.Exists(geminiDir)) Directory.Delete(geminiDir, true);
             File.Delete(Path.Combine(root.FullName, "pipe-started"));
             profile.Delete();
             bin.Delete();
             Directory.Delete(Path.Combine(root.FullName, "agy"));
             root.Delete();
         }
+    }
+
+    private static async Task VerifyTokenJwtAndFreshestIdentityAsync(
+        string root,
+        DateTimeOffset now,
+        string exe,
+        string appStorage,
+        AntigravityLocalQuota source)
+    {
+        var paths = new UsagePaths(root, root, root);
+        var cliDir = Directory.CreateDirectory(Path.Combine(root, ".gemini", "antigravity-cli"));
+        var tokenFile = Path.Combine(cliDir.FullName, "antigravity-oauth-token");
+        static string Jwt(string email)
+        {
+            static string B64(string json) => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(json))
+                .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+            return $"{B64("{\"alg\":\"none\"}")}.{B64($"{{\"email\":\"{email}\"}}")}.sig";
+        }
+
+        if (File.Exists(appStorage)) File.Delete(appStorage);
+        File.WriteAllText(tokenFile, $$$"""{"token":{"access_token":"ya29.test"},"id_token":"{{{Jwt("jwt@example.com")}}}"}""");
+        Check(UsageAccountDirectory.AntigravitySignedInAccount(paths) == "jwt@example.com",
+            "AGY extracts email from the CLI OAuth id_token claim when app_storage.json is absent.");
+        var fromJwt = await source.ReadAsync(paths, now.AddMinutes(3), default);
+        Check(fromJwt is { Freshness: UsageFreshness.Current, Label: "jwt@example.com" },
+            "AGY snapshot labels the JWT-derived account.");
+
+        File.WriteAllText(appStorage, """{"agy.onboarding.lastLoginUsername":"older-app@example.com"}""");
+        File.SetLastWriteTimeUtc(appStorage, DateTime.UtcNow.AddMinutes(-10));
+        File.SetLastWriteTimeUtc(tokenFile, DateTime.UtcNow);
+        Check(UsageAccountDirectory.AntigravitySignedInAccount(paths) == "jwt@example.com",
+            "When both files exist, the fresher CLI token file wins.");
+
+        File.WriteAllText(appStorage, """{"agy.onboarding.lastLoginUsername":"newer-app@example.com"}""");
+        File.SetLastWriteTimeUtc(appStorage, DateTime.UtcNow.AddMinutes(1));
+        Check(UsageAccountDirectory.AntigravitySignedInAccount(paths) == "newer-app@example.com",
+            "When app_storage.json is newer than the token file, app_storage.json wins.");
+        _ = exe;
     }
 
     private static async Task VerifyDetachedChildAsync(string root)

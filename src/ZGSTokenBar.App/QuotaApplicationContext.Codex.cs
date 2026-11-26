@@ -202,6 +202,31 @@ internal sealed partial class QuotaApplicationContext
         }
     }
 
+    private async Task RefreshExternalConversationsAsync()
+    {
+        if (!await _externalConversationsGate.WaitAsync(0)) return;
+        try
+        {
+            var turns = await Task.Run(
+                () => BackgroundWork.BelowNormal(() => _externalConversationTracker.Refresh(DateTimeOffset.UtcNow, _shutdown.Token)),
+                _shutdown.Token);
+            Volatile.Write(ref _lastExternalConversationsTick, Environment.TickCount64);
+            if (!_shutdown.IsCancellationRequested && !_bar.IsDisposed)
+                _bar.SetExternalConversations(turns);
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+        {
+        }
+        catch (Exception error)
+        {
+            AppDiagnostics.Record("external-conversations", error);
+        }
+        finally
+        {
+            _externalConversationsGate.Release();
+        }
+    }
+
     private static string? FreshCodexCardSignature(
         QuotaSnapshot snapshot,
         DateTimeOffset observedAt)

@@ -16,6 +16,8 @@ internal static class MultiProviderTokenLedgerTests
             TestParsersIncrementalCacheAndDeduplication(tempRoot);
             TestAggregatorBreakdownAndFormatting();
             TestBarFormCombinedTotal();
+            TestExternalConversationTracker(tempRoot);
+            TestMultiProviderActiveSessionsUi();
             Check(ReferenceEquals(syncContext, SynchronizationContext.Current),
                 "Multi-provider token tests cannot leak a UI synchronization context.");
         }
@@ -258,6 +260,306 @@ internal static class MultiProviderTokenLedgerTests
             form.SetExternalProviderTokens(external);
             Check(form.DisplayedTokenTotal == 750_000, "BarForm DisplayedTokenTotal combines Codex + external tokens.");
             Check(form.LiveMetrics.CumulativeTokens == 750_000, "SystemUsageSnapshot CumulativeTokens mirrors combined total.");
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(context);
+        }
+    }
+
+    private static void TestExternalConversationTracker(string tempRoot)
+    {
+        var now = new DateTimeOffset(2026, 11, 26, 15, 30, 0, TimeSpan.FromHours(8));
+        var homeDir = Path.Combine(tempRoot, "conv-home");
+        var agyRoot = Path.Combine(homeDir, ".gemini", "antigravity");
+        var grokRoot = Path.Combine(homeDir, ".grok");
+        var claudeRoot = Path.Combine(homeDir, ".claude");
+
+        // 1. AGY: active session (with tool_calls & USER_INPUT tail), completed session, stale session, plus ignored transcript_full.jsonl.
+        var agyActiveLogs = Path.Combine(agyRoot, "brain", "agy-active", ".system_generated", "logs");
+        var agyDoneLogs = Path.Combine(agyRoot, "brain", "agy-done", ".system_generated", "logs");
+        var agyStaleLogs = Path.Combine(agyRoot, "brain", "agy-stale", ".system_generated", "logs");
+        var agyHistoryNonDoneLogs = Path.Combine(agyRoot, "brain", "agy-history-non-done", ".system_generated", "logs");
+        Directory.CreateDirectory(agyActiveLogs);
+        Directory.CreateDirectory(agyDoneLogs);
+        Directory.CreateDirectory(agyStaleLogs);
+        Directory.CreateDirectory(agyHistoryNonDoneLogs);
+
+        var tActive = now.AddSeconds(-20).ToUniversalTime().ToString("O");
+        var tActiveStart = now.AddSeconds(-35).ToUniversalTime().ToString("O");
+        File.WriteAllLines(Path.Combine(agyActiveLogs, "transcript.jsonl"),
+        [
+            $"{{\"type\":\"USER_INPUT\",\"created_at\":\"{tActiveStart}\",\"status\":\"DONE\",\"content\":\"<USER_REQUEST>\\nBuild multi-provider active sessions\\n</USER_REQUEST>\"}}",
+            $"{{\"type\":\"PLANNER_RESPONSE\",\"created_at\":\"{tActive}\",\"status\":\"DONE\",\"model\":\"gemini-4-neon-xhigh\",\"input_tokens\":2000,\"cache_read_tokens\":8000,\"output_tokens\":400,\"tool_calls\":[{{\"name\":\"run_command\"}}]}}",
+        ]);
+        File.WriteAllText(Path.Combine(agyActiveLogs, "transcript_full.jsonl"),
+            $"{{\"type\":\"PLANNER_RESPONSE\",\"created_at\":\"{tActive}\",\"input_tokens\":999999,\"output_tokens\":999999}}\n");
+
+        var tDoneSame = now.AddMinutes(-1).ToUniversalTime().ToString("O");
+        File.WriteAllLines(Path.Combine(agyDoneLogs, "transcript.jsonl"),
+        [
+            $"{{\"type\":\"USER_INPUT\",\"created_at\":\"{tDoneSame}\",\"status\":\"DONE\",\"content\":\"Check account email\"}}",
+            $"{{\"type\":\"PLANNER_RESPONSE\",\"created_at\":\"{tDoneSame}\",\"status\":\"DONE\",\"model\":\"gemini-4-neon-xhigh\",\"input_tokens\":500,\"cache_read_tokens\":1500,\"output_tokens\":200}}",
+        ]);
+
+        var tStale = now.AddMinutes(-5).ToUniversalTime().ToString("O");
+        File.WriteAllLines(Path.Combine(agyStaleLogs, "transcript.jsonl"),
+        [
+            $"{{\"type\":\"USER_INPUT\",\"created_at\":\"{tStale}\",\"status\":\"DONE\",\"content\":\"Abandoned tool step\"}}",
+            $"{{\"type\":\"PLANNER_RESPONSE\",\"created_at\":\"{tStale}\",\"status\":\"DONE\",\"model\":\"gemini-4-neon-xhigh\",\"input_tokens\":100,\"cache_read_tokens\":0,\"output_tokens\":50,\"tool_calls\":[{{\"name\":\"wait\"}}]}}",
+        ]);
+
+        var tHistStart = now.AddSeconds(-50).ToUniversalTime().ToString("O");
+        var tHistMid = now.AddSeconds(-45).ToUniversalTime().ToString("O");
+        var tHistEnd = now.AddSeconds(-40).ToUniversalTime().ToString("O");
+        File.WriteAllLines(Path.Combine(agyHistoryNonDoneLogs, "transcript.jsonl"),
+        [
+            $"{{\"type\":\"USER_INPUT\",\"created_at\":\"{tHistStart}\",\"status\":\"DONE\",\"content\":\"Recover after tool error\"}}",
+            $"{{\"type\":\"GENERIC\",\"created_at\":\"{tHistMid}\",\"status\":\"RUNNING\"}}",
+            $"{{\"type\":\"GENERIC\",\"created_at\":\"{tHistMid}\",\"status\":\"ERROR\"}}",
+            $"{{\"type\":\"PLANNER_RESPONSE\",\"created_at\":\"{tHistEnd}\",\"status\":\"DONE\",\"model\":\"gemini-4-neon-xhigh\",\"input_tokens\":400,\"cache_read_tokens\":1200,\"output_tokens\":250,\"tool_calls\":[]}}",
+        ]);
+
+        // 2. Grok: active (updates.jsonl without turn_completed) and completed (usage.json + summary.json + elapsed_ms fallback).
+        var grokActiveDir = Path.Combine(grokRoot, "sessions", "proj-a", "grok-active");
+        var grokDoneDir = Path.Combine(grokRoot, "sessions", "proj-b", "grok-done");
+        var grokElapsedDir = Path.Combine(grokRoot, "sessions", "proj-c", "grok-elapsed-ms");
+        Directory.CreateDirectory(grokActiveDir);
+        Directory.CreateDirectory(grokDoneDir);
+        Directory.CreateDirectory(grokElapsedDir);
+
+        File.WriteAllText(Path.Combine(grokActiveDir, "summary.json"),
+            $$$"""
+            {"generated_title":"Investigate Grok active stream","current_model_id":"grok-4.7","reasoning_effort":"high","last_active_at":"{{{now.AddSeconds(-15).ToUniversalTime():O}}}","info":{"cwd":"D:\\projects\\ZGSTokenBar"}}
+            """);
+        File.WriteAllLines(Path.Combine(grokActiveDir, "updates.jsonl"),
+        [
+            $"{{\"timestamp\":{now.AddSeconds(-15).ToUnixTimeSeconds()},\"params\":{{\"update\":{{\"sessionUpdate\":\"agent_message_chunk\",\"text\":\"working\"}}}}}}",
+        ]);
+
+        File.WriteAllText(Path.Combine(grokDoneDir, "summary.json"),
+            """
+            {"generated_title":"Grok finished task","current_model_id":"grok-4.7-build","reasoning_effort":"medium","info":{"cwd":"D:\\projects\\Other"}}
+            """);
+        File.WriteAllText(Path.Combine(grokDoneDir, "usage.json"),
+            $$"""
+            {
+              "updatedAt": "{{now.AddMinutes(-1).ToUniversalTime():O}}",
+              "turns": [
+                {
+                  "turnNumber": 2,
+                  "startedAt": "{{now.AddMinutes(-2).ToUniversalTime():O}}",
+                  "endedAt": "{{now.AddMinutes(-1).ToUniversalTime():O}}",
+                  "inputTokens": 4500,
+                  "cachedReadTokens": 3600,
+                  "outputTokens": 600,
+                  "primaryModelId": "grok-4.7-build"
+                }
+              ]
+            }
+            """);
+
+        File.WriteAllText(Path.Combine(grokElapsedDir, "summary.json"),
+            """
+            {"generated_title":"Grok elapsed_ms turn","current_model_id":"grok-4.7","reasoning_effort":"high","info":{"cwd":"D:\\projects\\ZGSTokenBar"}}
+            """);
+        File.WriteAllText(Path.Combine(grokElapsedDir, "usage.json"),
+            $$"""
+            {
+              "updatedAt": "{{now.AddSeconds(-30).ToUniversalTime():O}}",
+              "turns": [
+                {
+                  "turnNumber": 1,
+                  "endedAt": "{{now.AddSeconds(-30).ToUniversalTime():O}}",
+                  "inputTokens": 2000,
+                  "cachedReadTokens": 1000,
+                  "outputTokens": 500,
+                  "primaryModelId": "grok-4.7"
+                }
+              ]
+            }
+            """);
+        File.WriteAllLines(Path.Combine(grokElapsedDir, "updates.jsonl"),
+        [
+            $"{{\"timestamp\":{now.AddSeconds(-30).ToUnixTimeSeconds()},\"params\":{{\"update\":{{\"sessionUpdate\":\"turn_completed\",\"elapsed_ms\":5000,\"usage\":{{\"inputTokens\":2000,\"cachedReadTokens\":1000,\"outputTokens\":500}}}}}}}}",
+        ]);
+
+        // 3. Claude Code: active (tool_use tail) and completed (end_turn + lastPrompt + message.id dedup).
+        var claudeProjDir = Path.Combine(claudeRoot, "projects", "work");
+        Directory.CreateDirectory(claudeProjDir);
+        File.WriteAllLines(Path.Combine(claudeProjDir, "claude-active.jsonl"),
+        [
+            $"{{\"type\":\"user\",\"timestamp\":\"{now.AddSeconds(-25).ToUniversalTime():O}\",\"cwd\":\"D:\\\\projects\\\\ZGSTokenBar\",\"message\":{{\"role\":\"user\",\"content\":\"Audit provider auth\"}}}}",
+            $"{{\"type\":\"assistant\",\"timestamp\":\"{now.AddSeconds(-10).ToUniversalTime():O}\",\"effort\":\"high\",\"requestId\":\"req-a\",\"message\":{{\"id\":\"msg-a\",\"model\":\"claude-opus-5-5\",\"stop_reason\":\"tool_use\",\"usage\":{{\"input_tokens\":300,\"cache_creation_input_tokens\":200,\"cache_read_input_tokens\":1500,\"output_tokens\":120}}}}}}",
+        ]);
+        File.WriteAllLines(Path.Combine(claudeProjDir, "claude-done.jsonl"),
+        [
+            $"{{\"type\":\"user\",\"timestamp\":\"{now.AddMinutes(-3).ToUniversalTime():O}\",\"cwd\":\"D:\\\\projects\\\\ZGSTokenBar\",\"message\":{{\"role\":\"user\",\"content\":\"Initial prompt\"}}}}",
+            $"{{\"type\":\"assistant\",\"timestamp\":\"{now.AddMinutes(-2).ToUniversalTime():O}\",\"message\":{{\"id\":\"msg-d\",\"model\":\"claude-opus-5-5\",\"stop_reason\":null,\"usage\":{{\"input_tokens\":100,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":900,\"output_tokens\":20}}}}}}",
+            $"{{\"type\":\"assistant\",\"timestamp\":\"{now.AddMinutes(-2).ToUniversalTime():O}\",\"message\":{{\"id\":\"msg-d\",\"model\":\"claude-opus-5-5\",\"stop_reason\":\"end_turn\",\"usage\":{{\"input_tokens\":100,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":900,\"output_tokens\":300}}}}}}",
+            "{\"type\":\"last-prompt\",\"lastPrompt\":\"Refined Claude title\"}",
+        ]);
+
+        var paths = new UsagePaths(homeDir, Path.Combine(tempRoot, "roaming"), Path.Combine(tempRoot, "local"));
+        var env = new MapUsageEnvironment(new Dictionary<string, string>(StringComparer.Ordinal));
+        var tracker = new ExternalConversationTracker(paths, env);
+        var turns = tracker.Refresh(now);
+
+        var agyActive = turns.Single(t => t.SessionId == "agy-active");
+        Check(agyActive.ProviderId == ExternalProviderTokenLedger.AntigravityProviderId
+            && agyActive.InstanceLabel == "AGY"
+            && agyActive.State == "running"
+            && agyActive.Title == "Build multi-provider active sessions"
+            && agyActive.InputTokens == 10_000
+            && agyActive.CachedInputTokens == 8_000
+            && agyActive.OutputTokens == 400,
+            "AGY active session detects running tool_calls, strips <USER_REQUEST>, excludes transcript_full, and sums tokens.");
+
+        var agyDone = turns.Single(t => t.SessionId == "agy-done");
+        Check(agyDone.State == "completed" && agyDone.OutputTokensPerSecond is null,
+            "AGY completed turn with zero-second created_at delta guards against bogus high tok/s.");
+
+        var agyStale = turns.Single(t => t.SessionId == "agy-stale");
+        Check(agyStale.State == "stale",
+            "AGY unfinished session older than 2 minutes becomes stale instead of active.");
+
+        var agyHistoryNonDone = turns.Single(t => t.SessionId == "agy-history-non-done");
+        Check(agyHistoryNonDone.State == "completed",
+            "AGY turn ending with PLANNER_RESPONSE DONE and empty tool_calls is completed despite earlier RUNNING/ERROR steps.");
+
+        var grokActive = turns.Single(t => t.SessionId == "grok-active");
+        Check(grokActive.ProviderId == ExternalProviderTokenLedger.GrokProviderId
+            && grokActive.InstanceLabel == "Grok"
+            && grokActive.State == "running"
+            && grokActive.Title == "Investigate Grok active stream"
+            && grokActive.ProjectName == "ZGSTokenBar"
+            && grokActive.Model == "grok-4.7"
+            && grokActive.Effort == "high",
+            "Grok active session extracts summary metadata and detects non-completed updates.jsonl.");
+
+        var grokDone = turns.Single(t => t.SessionId == "grok-done");
+        Check(grokDone.State == "completed" && grokDone.InputTokens == 4500 && grokDone.CachedInputTokens == 3600
+            && grokDone.OutputTokens == 600 && grokDone.OutputTokensPerSecond is { } grokSpeed && Math.Abs(grokSpeed - 10.0) < 0.01,
+            "Grok completed turn parses usage.json tokens, cache hit, and duration.");
+
+        var grokElapsed = turns.Single(t => t.SessionId == "grok-elapsed-ms");
+        Check(grokElapsed.State == "completed"
+            && grokElapsed.OutputTokensPerSecond is { } grokElapsedSpeed
+            && grokElapsedSpeed > 0
+            && Math.Abs(grokElapsedSpeed - 100.0) < 0.01,
+            "Grok completed turn falls back to updates.jsonl turn_completed elapsed_ms when usage.json omits startedAt.");
+
+        var claudeActive = turns.Single(t => t.SessionId == "claude-active");
+        Check(claudeActive.ProviderId == ExternalProviderTokenLedger.ClaudeProviderId
+            && claudeActive.InstanceLabel == "Claude"
+            && claudeActive.State == "running"
+            && claudeActive.Title == "Audit provider auth"
+            && claudeActive.InputTokens == 2000 && claudeActive.CachedInputTokens == 1500 && claudeActive.OutputTokens == 120,
+            "Claude active session detects tool_use stop_reason and aggregates input + cache.");
+
+        var claudeDone = turns.Single(t => t.SessionId == "claude-done");
+        Check(claudeDone.State == "completed" && claudeDone.Title == "Refined Claude title" && claudeDone.OutputTokens == 300,
+            "Claude completed turn deduplicates streaming message.id and prefers lastPrompt title.");
+
+        // Unchanged stat cache reuses parsed turn and transitions active -> stale as clock advances.
+        var aged = tracker.Refresh(now.AddMinutes(3));
+        Check(aged.Single(t => t.SessionId == "agy-active").State == "stale"
+            && aged.Single(t => t.SessionId == "claude-active").State == "stale"
+            && !aged.Any(t => t.SessionId == "grok-active"),
+            "Stat-cached active external sessions become stale (or drop if tokenless) when clock advances past running timeout.");
+    }
+
+    private static void TestMultiProviderActiveSessionsUi()
+    {
+        var at = DateTimeOffset.UtcNow;
+        var codexTurns = Enumerable.Range(1, 10)
+            .Select(i => new CodexConversationTurn($"codex-{i}", $"t-{i}", "gpt-5.5", "high", at.AddSeconds(-20), at, 500, 10, false, true)
+            {
+                InstanceLabel = $"Codex · {i}",
+                InstanceNumber = i,
+                LiveRate = new ConversationOutputRate($"codex-{i}", $"t-{i}", 50 - i, 0) { RecordedAt = at },
+                Title = $"Codex task {i}",
+            });
+        var agyTurn = new CodexConversationTurn("agy-1", "t-agy", "gemini-4-neon-xhigh", null, at.AddSeconds(-5), at, 420, 0, false, false)
+        {
+            ProviderId = ExternalProviderTokenLedger.AntigravityProviderId,
+            InstanceLabel = "AGY",
+            Title = "AGY live conversation",
+            InputTokens = 10_000,
+            CachedInputTokens = 8_000,
+        };
+        var grokTurn = new CodexConversationTurn("grok-1", "t-grok", "grok-4.7", "high", at.AddSeconds(-8), at, 200, 0, false, false)
+        {
+            ProviderId = ExternalProviderTokenLedger.GrokProviderId,
+            InstanceLabel = "Grok",
+            Title = "Grok live conversation",
+            InputTokens = 5_000,
+            CachedInputTokens = 4_000,
+        };
+        var claudeTurn = new CodexConversationTurn("claude-1", "t-claude", "claude-opus-5-5", "high", at.AddSeconds(-12), at, 150, 0, false, false)
+        {
+            ProviderId = ExternalProviderTokenLedger.ClaudeProviderId,
+            InstanceLabel = "Claude",
+            Title = "Claude live conversation",
+            InputTokens = 3_000,
+            CachedInputTokens = 2_000,
+        };
+
+        var allTurns = codexTurns.Concat([agyTurn, grokTurn, claudeTurn]).ToArray();
+        var selected = CodexConversationDisplay.ActivityRows(allTurns, 10);
+        Check(selected.Count == 10
+            && selected.Any(t => t.ProviderId == ExternalProviderTokenLedger.AntigravityProviderId)
+            && selected.Any(t => t.ProviderId == ExternalProviderTokenLedger.GrokProviderId)
+            && selected.Any(t => t.ProviderId == ExternalProviderTokenLedger.ClaudeProviderId),
+            "ActivityRows preserves representative seats for active AGY, Grok, and Claude alongside 10 Codex sessions.");
+
+        var context = SynchronizationContext.Current;
+        try
+        {
+            var agyDef = UsageProviderRegistry.Find(UsageProviderIds.Antigravity)!.Definition;
+            var grokDef = UsageProviderRegistry.Find(UsageProviderIds.Grok)!.Definition;
+            var claudeCard = new QuotaCard("claude.account", ProviderKind.Claude, "Claude", "Max", "#d97757", true,
+                [new QuotaWindow("5h", 35, at.AddHours(3), TimeSpan.FromHours(5))]) { HasAccountIdentity = true };
+            using var form = new BarForm(
+                new AppSettings { Locale = "zh-CN", EnableAnimations = false },
+                new QuotaSnapshot([claudeCard], [], at),
+                activeProviders: new HashSet<ProviderKind> { ProviderKind.Claude }, // Codex explicitly inactive!
+                renderOnly: true,
+                renderDpi: 96);
+            form.SetUsageBoard(new UsageBoard(
+            [
+                new UsageProviderSnapshot(agyDef.Id, agyDef.DisplayName, agyDef.Accent, agyDef.Order,
+                [
+                    new UsageAccountSnapshot("antigravity", "user@example.com", null, "agy-cli",
+                        [new UsageWindow("argon-7d", "Argon · 7d", 25, at.AddDays(4), TimeSpan.FromDays(7))],
+                        null, null, [], UsageFreshness.Current, at, null),
+                ]),
+                new UsageProviderSnapshot(grokDef.Id, grokDef.DisplayName, grokDef.Accent, grokDef.Order,
+                [
+                    new UsageAccountSnapshot("grok", "grok@example.com", "SuperGrok", "grok-auth",
+                        [new UsageWindow("weekly", "Weekly", 60, at.AddDays(2), TimeSpan.FromDays(7))],
+                        null, null, [], UsageFreshness.Current, at, null),
+                ]),
+            ]));
+            form.SetExternalConversations([agyTurn, grokTurn, claudeTurn]);
+            var liveRows = form.LiveConversationsForAcceptance();
+            Check(liveRows.Count == 3
+                && Math.Abs(liveRows.Single(t => t.SessionId == "agy-1").InstanceRemainingPercent!.Value - 75) < 0.01
+                && Math.Abs(liveRows.Single(t => t.SessionId == "grok-1").InstanceRemainingPercent!.Value - 40) < 0.01
+                && Math.Abs(liveRows.Single(t => t.SessionId == "claude-1").InstanceRemainingPercent!.Value - 65) < 0.01,
+                "BarForm surfaces external active sessions even when Codex is inactive and attaches each provider's remaining quota.");
+
+            using var popover = new SystemUsagePopoverForm();
+            var content = new SystemUsagePopoverContent(form.LiveMetrics, false, true) { Conversations = allTurns };
+            foreach (var dpi in new[] { 96, 144 })
+            {
+                using var bitmap = popover.RenderForTest(content, NativeText.For("zh-CN"),
+                    QuotaBackgroundPalette.Resolve(AppSettings.DefaultBackgroundPalette), dpi);
+                Check(bitmap.Width > 0 && bitmap.Height > 0
+                    && popover.SessionRowCountForAcceptance == 10
+                    && popover.ActiveSessionCountForAcceptance == 13,
+                    "Mixed-provider popover renders cleanly and reports true total active count beyond 10.");
+            }
         }
         finally
         {
