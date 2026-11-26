@@ -1209,12 +1209,10 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
         if (RouterJson.Number(group, "occupiedSecondsMean") is not { } occMean)
             return $"{category} {p95}";
         var edMean = RouterJson.Number(group, "editorActiveSecondsMean") is { } ed ? RouterTaskPresentation.FormatDuration(ed) : "—";
-        var ovMean = RouterJson.Number(group, "routerOverheadSecondsMean") is { } ov ? RouterTaskPresentation.FormatDuration(ov) : "—";
-        var ovDetail = RouterJson.Number(group, "cleanupSecondsMean") is { } cl && cl > 0.05
-            ? $"{ovMean}·清理 {RouterTaskPresentation.FormatDuration(cl)}"
-            : ovMean;
+        var (cleanup, other) = RouterTaskPresentation.SplitOverhead(
+            RouterJson.Number(group, "routerOverheadSecondsMean") ?? 0d, RouterJson.Number(group, "cleanupSecondsMean") ?? 0d);
         var neMean = RouterJson.Number(group, "nonEditorScriptSecondsMean") is { } ne ? RouterTaskPresentation.FormatDuration(ne) : "—";
-        return $"{category} 均占 {RouterTaskPresentation.FormatDuration(occMean)}（Editor {edMean} / 开销 {ovDetail} / 非Editor {neMean}） · {p95}";
+        return $"{category} 均占 {RouterTaskPresentation.FormatDuration(occMean)}（Editor {edMean} / 清理 {RouterTaskPresentation.FormatDuration(cleanup)} / 准备与等待 {RouterTaskPresentation.FormatDuration(other)} / 脚本其他 {neMean}） · {p95}";
     }
 
     private static string TimingDetails(JsonElement row, bool includeSectionHeaders = false)
@@ -1228,6 +1226,10 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
                      ("nativeTestSeconds", "原生测试"), ("recoverySeconds", "恢复执行"), ("recoveryWaitSeconds", "恢复等待") })
             if (RouterJson.Number(row, field) is not null) lines.Add(label + " " + Seconds(row, field));
         lines.Add("清理 " + Seconds(row, "cleanupSeconds"));
+        var admission = RouterJson.Field(row, "admissionDiagnostics");
+        if (RouterJson.Text(admission, "lastReadbackState") == "ready"
+            && RouterJson.Number(admission, "readyToDispatchSeconds") is double delay && delay >= 0)
+            lines.Add("就绪到派发 " + RouterTaskPresentation.DispatchLatency(delay));
         if (RouterJson.Number(row, "occupiedSeconds") is { } occ)
         {
             if (includeSectionHeaders)
@@ -1238,12 +1240,13 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
             lines.Add("槽位总占用 " + RouterTaskPresentation.FormatDuration(occ));
             var edVal = RouterJson.Number(row, "editorActiveSeconds");
             var edText = edVal is { } ed ? RouterTaskPresentation.FormatDuration(ed) : "未观测";
-            var ovText = RouterJson.Number(row, "routerOverheadSeconds") is { } ov ? RouterTaskPresentation.FormatDuration(ov) : "—";
+            var (cleanup, other) = RouterTaskPresentation.SplitOverhead(
+                RouterJson.Number(row, "routerOverheadSeconds") ?? 0d, RouterJson.Number(row, "cleanupSeconds") ?? 0d);
             var neText = RouterJson.Number(row, "nonEditorScriptSeconds") is { } ne ? RouterTaskPresentation.FormatDuration(ne) : "—";
             var unSuffix = RouterJson.Number(row, "unmeasuredSeconds") is { } un && un > 0.05
                 ? $" · 未拆分 {RouterTaskPresentation.FormatDuration(un)}"
                 : "";
-            lines.Add($"时间拆分：真实 Editor {edText} · Router 开销 {ovText} · 非 Editor {neText}{unSuffix}");
+            lines.Add($"时间拆分  Editor 计时 {edText} · 清理确认 {RouterTaskPresentation.FormatDuration(cleanup)} · 准备与等待 {RouterTaskPresentation.FormatDuration(other)} · 脚本其他耗时 {neText}{unSuffix}");
             var cliCount = row.ValueKind == JsonValueKind.Object && row.TryGetProperty("editorCliCallCount", out var cliEl) && cliEl.ValueKind == JsonValueKind.Number
                 ? cliEl.GetInt32()
                 : (int?)null;
@@ -1253,7 +1256,7 @@ internal sealed class RouterMonitorForm : MonitorPanelForm
                 lines.Add(string.Create(CultureInfo.InvariantCulture, $"Unity CLI 调用 {count:N0} 次（{cliSec}）"));
             }
             if (RouterJson.Text(row, "kind") == "script" && cliCount == 0 && edVal is 0)
-                lines.Add("提示：未调用 Unity CLI，可评估移出 Editor 队列");
+                lines.Add("本次未观测到 Unity CLI 进程");
         }
         return string.Join(Environment.NewLine, lines);
     }

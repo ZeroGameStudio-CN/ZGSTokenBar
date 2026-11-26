@@ -287,7 +287,7 @@ internal sealed class RouterHistoryMetricsStrip : Control
 
         // Row 1: Scoped KPIs + right badge
         var badgeText = _data.ZeroEditorScriptCount > 0
-            ? string.Create(CultureInfo.InvariantCulture, $"无 Editor 脚本 {_data.ZeroEditorScriptCount:N0} 条")
+            ? string.Create(CultureInfo.InvariantCulture, $"未见 CLI {_data.ZeroEditorScriptCount:N0} 条")
             : _data.TotalUnmeasuredSeconds > 0.05 && _data.DispatchedCount > 0
                 ? string.Create(CultureInfo.InvariantCulture, $"已拆解 {_data.MeasuredCount:N0}/{_data.DispatchedCount:N0}")
                 : _data.DispatchedCount > 0
@@ -349,14 +349,16 @@ internal sealed class RouterHistoryMetricsStrip : Control
             UiPaint.FillRounded(g, trackBrush, barRect, barRect.Height / 2f);
 
         var occupied = _data.TotalOccupiedSeconds;
+        var (cleanup, other) = RouterTaskPresentation.SplitOverhead(_data.TotalRouterOverheadSeconds, _data.TotalCleanupSeconds);
+        var segments = new List<(double Seconds, Color Color, string Label)>(5);
+        if (_data.TotalEditorActiveSeconds > 0.001) segments.Add((_data.TotalEditorActiveSeconds, UiTokens.Positive, "Editor 计时"));
+        if (cleanup > 0.001) segments.Add((cleanup, UiTokens.Warning, "清理确认"));
+        if (other > 0.001) segments.Add((other, UiPalette.Indigo300, "准备与等待"));
+        if (_data.TotalNonEditorScriptSeconds > 0.001) segments.Add((_data.TotalNonEditorScriptSeconds, UiPalette.Violet400, "脚本其他耗时"));
+        if (_data.TotalUnmeasuredSeconds > 0.05) segments.Add((_data.TotalUnmeasuredSeconds, UiPalette.Slate500, "旧未拆分"));
+
         if (occupied > 0.001)
         {
-            var segments = new List<(double Seconds, Color Color)>(4);
-            if (_data.TotalEditorActiveSeconds > 0.001) segments.Add((_data.TotalEditorActiveSeconds, UiTokens.Positive));
-            if (_data.TotalRouterOverheadSeconds > 0.001) segments.Add((_data.TotalRouterOverheadSeconds, UiTokens.Warning));
-            if (_data.TotalNonEditorScriptSeconds > 0.001) segments.Add((_data.TotalNonEditorScriptSeconds, UiPalette.Violet400));
-            if (_data.TotalUnmeasuredSeconds > 0.05) segments.Add((_data.TotalUnmeasuredSeconds, UiPalette.Slate500));
-
             if (segments.Count > 0)
             {
                 var gap = 1.5f * s;
@@ -382,40 +384,23 @@ internal sealed class RouterHistoryMetricsStrip : Control
 
         // Row 3: Legend
         var dotSize = 5.5f * s;
-        var baseOverhead = $"Router 开销 {RouterTaskPresentation.FormatShare(_data.TotalRouterOverheadSeconds, occupied)} ({RouterTaskPresentation.FormatDuration(_data.TotalRouterOverheadSeconds)})";
-        var legend = new List<(Color Color, string Text)>(4)
-        {
-            (UiTokens.Positive, $"真实 Editor {RouterTaskPresentation.FormatShare(_data.TotalEditorActiveSeconds, occupied)} ({RouterTaskPresentation.FormatDuration(_data.TotalEditorActiveSeconds)})"),
-            (UiTokens.Warning, baseOverhead),
-            (UiPalette.Violet400, $"非 Editor {RouterTaskPresentation.FormatShare(_data.TotalNonEditorScriptSeconds, occupied)} ({RouterTaskPresentation.FormatDuration(_data.TotalNonEditorScriptSeconds)})"),
-        };
-        if (_data.TotalUnmeasuredSeconds > 0.05)
-        {
-            legend.Add((UiPalette.Slate500, $"旧未拆分 {RouterTaskPresentation.FormatShare(_data.TotalUnmeasuredSeconds, occupied)} ({RouterTaskPresentation.FormatDuration(_data.TotalUnmeasuredSeconds)})"));
-        }
-        if (_data.TotalCleanupSeconds > 0.05 && _data.TotalRouterOverheadSeconds > 0.05)
-        {
-            var expandedOverhead = $"Router 开销 {RouterTaskPresentation.FormatShare(_data.TotalRouterOverheadSeconds, occupied)} ({RouterTaskPresentation.FormatDuration(_data.TotalRouterOverheadSeconds)}，清理 {RouterTaskPresentation.FormatDuration(_data.TotalCleanupSeconds)})";
-            var expandedWidth = dotSize + 4.5f * s + MonitorStripPaint.MeasureWidth(g, expandedOverhead, captionFont);
-            for (var i = 0; i < legend.Count; i++)
-            {
-                if (i == 1) continue;
-                expandedWidth += dotSize + 4.5f * s + MonitorStripPaint.MeasureWidth(g, legend[i].Text, captionFont);
-            }
-            if (expandedWidth + 6f * s * Math.Max(0, legend.Count - 1) <= right - left)
-                legend[1] = (UiTokens.Warning, expandedOverhead);
-        }
+        var legend = segments.Select(segment => (segment.Color,
+            Text: $"{segment.Label} {RouterTaskPresentation.FormatShare(segment.Seconds, occupied)} ({RouterTaskPresentation.FormatDuration(segment.Seconds)})")).ToArray();
 
         var legendY = 33f * s;
         var legendH = Math.Max(12f * s, Height - legendY - 2f * s);
         var legendGap = 12f * s;
         var lx = left;
         var itemWidths = legend.Select(item => dotSize + 4.5f * s + MonitorStripPaint.MeasureWidth(g, item.Text, captionFont)).ToArray();
-        var neededLegend = itemWidths.Sum() + legendGap * Math.Max(0, legend.Count - 1);
-        if (legend.Count > 1 && neededLegend > right - left)
-            legendGap = Math.Max(5f * s, ((right - left) - itemWidths.Sum()) / (legend.Count - 1));
+        var neededLegend = itemWidths.Sum() + legendGap * Math.Max(0, legend.Length - 1);
+        if (legend.Length > 1 && neededLegend > right - left)
+        {
+            legendGap = 6f * s;
+            legend = segments.Select(segment => (segment.Color,
+                Text: $"{segment.Label} {RouterTaskPresentation.FormatShare(segment.Seconds, occupied)}")).ToArray();
+        }
 
-        for (var i = 0; i < legend.Count; i++)
+        for (var i = 0; i < legend.Length; i++)
         {
             if (lx + dotSize + 10f * s >= right) break;
             using var dotBrush = new SolidBrush(legend[i].Color);
