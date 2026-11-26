@@ -280,45 +280,63 @@ internal static class MultiProviderTokenLedgerTests
         var agyDoneLogs = Path.Combine(agyRoot, "brain", "agy-done", ".system_generated", "logs");
         var agyStaleLogs = Path.Combine(agyRoot, "brain", "agy-stale", ".system_generated", "logs");
         var agyHistoryNonDoneLogs = Path.Combine(agyRoot, "brain", "agy-history-non-done", ".system_generated", "logs");
+        var agyFollowupLogs = Path.Combine(agyRoot, "brain", "agy-followup", ".system_generated", "logs");
         Directory.CreateDirectory(agyActiveLogs);
         Directory.CreateDirectory(agyDoneLogs);
         Directory.CreateDirectory(agyStaleLogs);
         Directory.CreateDirectory(agyHistoryNonDoneLogs);
+        Directory.CreateDirectory(agyFollowupLogs);
 
+        var tActiveNext = now.AddSeconds(-10).ToUniversalTime().ToString("O");
         var tActive = now.AddSeconds(-20).ToUniversalTime().ToString("O");
         var tActiveStart = now.AddSeconds(-35).ToUniversalTime().ToString("O");
         File.WriteAllLines(Path.Combine(agyActiveLogs, "transcript.jsonl"),
         [
             $"{{\"type\":\"USER_INPUT\",\"created_at\":\"{tActiveStart}\",\"status\":\"DONE\",\"content\":\"<USER_REQUEST>\\nBuild multi-provider active sessions\\n</USER_REQUEST>\"}}",
             $"{{\"type\":\"PLANNER_RESPONSE\",\"created_at\":\"{tActive}\",\"status\":\"DONE\",\"model\":\"gemini-4-neon-xhigh\",\"input_tokens\":2000,\"cache_read_tokens\":8000,\"output_tokens\":400,\"tool_calls\":[{{\"name\":\"run_command\"}}]}}",
+            $"{{\"type\":\"GENERIC\",\"created_at\":\"{tActiveNext}\",\"status\":\"RUNNING\"}}",
         ]);
         File.WriteAllText(Path.Combine(agyActiveLogs, "transcript_full.jsonl"),
             $"{{\"type\":\"PLANNER_RESPONSE\",\"created_at\":\"{tActive}\",\"input_tokens\":999999,\"output_tokens\":999999}}\n");
 
         var tDoneSame = now.AddMinutes(-1).ToUniversalTime().ToString("O");
-        File.WriteAllLines(Path.Combine(agyDoneLogs, "transcript.jsonl"),
+        var agyDonePath = Path.Combine(agyDoneLogs, "transcript.jsonl");
+        File.WriteAllLines(agyDonePath,
         [
             $"{{\"type\":\"USER_INPUT\",\"created_at\":\"{tDoneSame}\",\"status\":\"DONE\",\"content\":\"Check account email\"}}",
             $"{{\"type\":\"PLANNER_RESPONSE\",\"created_at\":\"{tDoneSame}\",\"status\":\"DONE\",\"model\":\"gemini-4-neon-xhigh\",\"input_tokens\":500,\"cache_read_tokens\":1500,\"output_tokens\":200}}",
         ]);
+        File.SetLastWriteTimeUtc(agyDonePath, now.AddMinutes(-1).UtcDateTime);
 
         var tStale = now.AddMinutes(-5).ToUniversalTime().ToString("O");
-        File.WriteAllLines(Path.Combine(agyStaleLogs, "transcript.jsonl"),
+        var agyStalePath = Path.Combine(agyStaleLogs, "transcript.jsonl");
+        File.WriteAllLines(agyStalePath,
         [
             $"{{\"type\":\"USER_INPUT\",\"created_at\":\"{tStale}\",\"status\":\"DONE\",\"content\":\"Abandoned tool step\"}}",
             $"{{\"type\":\"PLANNER_RESPONSE\",\"created_at\":\"{tStale}\",\"status\":\"DONE\",\"model\":\"gemini-4-neon-xhigh\",\"input_tokens\":100,\"cache_read_tokens\":0,\"output_tokens\":50,\"tool_calls\":[{{\"name\":\"wait\"}}]}}",
         ]);
+        File.SetLastWriteTimeUtc(agyStalePath, now.AddMinutes(-5).UtcDateTime);
 
         var tHistStart = now.AddSeconds(-50).ToUniversalTime().ToString("O");
         var tHistMid = now.AddSeconds(-45).ToUniversalTime().ToString("O");
         var tHistEnd = now.AddSeconds(-40).ToUniversalTime().ToString("O");
-        File.WriteAllLines(Path.Combine(agyHistoryNonDoneLogs, "transcript.jsonl"),
+        var agyHistPath = Path.Combine(agyHistoryNonDoneLogs, "transcript.jsonl");
+        File.WriteAllLines(agyHistPath,
         [
             $"{{\"type\":\"USER_INPUT\",\"created_at\":\"{tHistStart}\",\"status\":\"DONE\",\"content\":\"Recover after tool error\"}}",
             $"{{\"type\":\"GENERIC\",\"created_at\":\"{tHistMid}\",\"status\":\"RUNNING\"}}",
             $"{{\"type\":\"GENERIC\",\"created_at\":\"{tHistMid}\",\"status\":\"ERROR\"}}",
             $"{{\"type\":\"PLANNER_RESPONSE\",\"created_at\":\"{tHistEnd}\",\"status\":\"DONE\",\"model\":\"gemini-4-neon-xhigh\",\"input_tokens\":400,\"cache_read_tokens\":1200,\"output_tokens\":250,\"tool_calls\":[]}}",
         ]);
+        File.SetLastWriteTimeUtc(agyHistPath, now.AddSeconds(-40).UtcDateTime);
+
+        var agyFollowupPath = Path.Combine(agyFollowupLogs, "transcript.jsonl");
+        File.WriteAllLines(agyFollowupPath,
+        [
+            $"{{\"type\":\"USER_INPUT\",\"created_at\":\"{now.AddSeconds(-40).ToUniversalTime():O}\",\"status\":\"DONE\",\"content\":\"Explain rate pipeline\"}}",
+            $"{{\"type\":\"PLANNER_RESPONSE\",\"created_at\":\"{now.AddSeconds(-20).ToUniversalTime():O}\",\"status\":\"DONE\",\"model\":\"gemini-4-neon-xhigh\",\"input_tokens\":600,\"cache_read_tokens\":1400,\"output_tokens\":600,\"tool_calls\":[]}}",
+        ]);
+        File.SetLastWriteTimeUtc(agyFollowupPath, now.AddSeconds(-5).UtcDateTime);
 
         // 2. Grok: active (updates.jsonl without turn_completed) and completed (usage.json + summary.json + elapsed_ms fallback).
         var grokActiveDir = Path.Combine(grokRoot, "sessions", "proj-a", "grok-active");
@@ -399,11 +417,20 @@ internal static class MultiProviderTokenLedgerTests
             $"{{\"type\":\"assistant\",\"timestamp\":\"{now.AddMinutes(-2).ToUniversalTime():O}\",\"message\":{{\"id\":\"msg-d\",\"model\":\"claude-opus-5-5\",\"stop_reason\":\"end_turn\",\"usage\":{{\"input_tokens\":100,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":900,\"output_tokens\":300}}}}}}",
             "{\"type\":\"last-prompt\",\"lastPrompt\":\"Refined Claude title\"}",
         ]);
+        File.WriteAllLines(Path.Combine(claudeProjDir, "claude-followup.jsonl"),
+        [
+            $"{{\"type\":\"user\",\"timestamp\":\"{now.AddSeconds(-30).ToUniversalTime():O}\",\"cwd\":\"D:\\\\projects\\\\ZGSTokenBar\",\"message\":{{\"role\":\"user\",\"content\":\"First turn\"}}}}",
+            $"{{\"type\":\"assistant\",\"timestamp\":\"{now.AddSeconds(-20).ToUniversalTime():O}\",\"message\":{{\"id\":\"msg-cf\",\"model\":\"claude-opus-5-5\",\"stop_reason\":\"end_turn\",\"usage\":{{\"input_tokens\":200,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":800,\"output_tokens\":200}}}}}}",
+            $"{{\"type\":\"user\",\"timestamp\":\"{now.AddSeconds(-5).ToUniversalTime():O}\",\"cwd\":\"D:\\\\projects\\\\ZGSTokenBar\",\"message\":{{\"role\":\"user\",\"content\":\"Follow-up pending\"}}}}",
+        ]);
 
         var paths = new UsagePaths(homeDir, Path.Combine(tempRoot, "roaming"), Path.Combine(tempRoot, "local"));
         var env = new MapUsageEnvironment(new Dictionary<string, string>(StringComparer.Ordinal));
         var tracker = new ExternalConversationTracker(paths, env);
-        var turns = tracker.Refresh(now);
+        var snapshot = tracker.RefreshSnapshot(now);
+        var turns = snapshot.Turns;
+        var feed = snapshot.LiveRateFeed!;
+        var rate = new ObservedOutputRate().Observe(feed, now);
 
         var agyActive = turns.Single(t => t.SessionId == "agy-active");
         Check(agyActive.ProviderId == ExternalProviderTokenLedger.AntigravityProviderId
@@ -414,6 +441,16 @@ internal static class MultiProviderTokenLedgerTests
             && agyActive.CachedInputTokens == 8_000
             && agyActive.OutputTokens == 400,
             "AGY active session detects running tool_calls, strips <USER_REQUEST>, excludes transcript_full, and sums tokens.");
+        var agyActiveRate = rate.Conversations.Single(c => c.SessionId == "agy-active" && c.ProviderId == ExternalProviderTokenLedger.AntigravityProviderId);
+        Check(Math.Abs(agyActiveRate.Measured - 40.0) < 0.01
+            && feed.Sessions.Single(s => s.SessionId == "agy-active").Phase == "tools",
+            "AGY tool-calling PLANNER_RESPONSE followed by GENERIC RUNNING yields exact tok/s sample and tools phase.");
+
+        var agyFollowup1 = turns.Single(t => t.SessionId == "agy-followup");
+        var agyFollowupSample1 = feed.Responses.Single(r => r.SessionId == "agy-followup");
+        Check(agyFollowup1.Model == "gemini-4-neon-xhigh"
+            && Math.Abs(agyFollowupSample1.Output / (agyFollowupSample1.End - agyFollowupSample1.Start).TotalSeconds - 40.0) < 0.01,
+            "AGY final PLANNER_RESPONSE uses file mtime as response end.");
 
         var agyDone = turns.Single(t => t.SessionId == "agy-done");
         Check(agyDone.State == "completed" && agyDone.OutputTokensPerSecond is null,
@@ -448,6 +485,9 @@ internal static class MultiProviderTokenLedgerTests
             && grokElapsedSpeed > 0
             && Math.Abs(grokElapsedSpeed - 100.0) < 0.01,
             "Grok completed turn falls back to updates.jsonl turn_completed elapsed_ms when usage.json omits startedAt.");
+        var grokRate = rate.Conversations.Single(c => c.SessionId == "grok-elapsed-ms" && c.ProviderId == ExternalProviderTokenLedger.GrokProviderId);
+        Check(Math.Abs(grokRate.Measured - 100.0) < 0.01,
+            "Grok turn_completed emits live response sample for ObservedOutputRate.");
 
         var claudeActive = turns.Single(t => t.SessionId == "claude-active");
         Check(claudeActive.ProviderId == ExternalProviderTokenLedger.ClaudeProviderId
@@ -456,10 +496,38 @@ internal static class MultiProviderTokenLedgerTests
             && claudeActive.Title == "Audit provider auth"
             && claudeActive.InputTokens == 2000 && claudeActive.CachedInputTokens == 1500 && claudeActive.OutputTokens == 120,
             "Claude active session detects tool_use stop_reason and aggregates input + cache.");
+        var claudeActiveRate = rate.Conversations.Single(c => c.SessionId == "claude-active" && c.ProviderId == ExternalProviderTokenLedger.ClaudeProviderId);
+        Check(Math.Abs(claudeActiveRate.Measured - 8.0) < 0.01
+            && feed.Sessions.Single(s => s.SessionId == "claude-active").Phase == "tools",
+            "Claude active tool_use emits response sample and tools phase.");
 
         var claudeDone = turns.Single(t => t.SessionId == "claude-done");
         Check(claudeDone.State == "completed" && claudeDone.Title == "Refined Claude title" && claudeDone.OutputTokens == 300,
             "Claude completed turn deduplicates streaming message.id and prefers lastPrompt title.");
+
+        var claudeFollowup = turns.Single(t => t.SessionId == "claude-followup");
+        var claudeFollowupRate = rate.Conversations.Single(c => c.SessionId == "claude-followup" && c.ProviderId == ExternalProviderTokenLedger.ClaudeProviderId);
+        Check(claudeFollowup.State == "running"
+            && claudeFollowup.Model == "claude-opus-5-5"
+            && Math.Abs(claudeFollowupRate.Measured - 20.0) < 0.01,
+            "Claude follow-up user turn preserves session model and retains recent response rate.");
+
+        // Follow-up USER_INPUT on agy-followup must preserve model and retain cached response End timestamp.
+        var tFollowupStart = now.AddSeconds(8);
+        File.AppendAllText(agyFollowupPath,
+            $"{{\"type\":\"USER_INPUT\",\"created_at\":\"{tFollowupStart.ToUniversalTime():O}\",\"status\":\"DONE\",\"content\":\"Second prompt\"}}\n");
+        File.SetLastWriteTimeUtc(agyFollowupPath, tFollowupStart.UtcDateTime);
+        var poll2At = now.AddSeconds(10);
+        var snapshot2 = tracker.RefreshSnapshot(poll2At);
+        var agyFollowup2 = snapshot2.Turns.Single(t => t.SessionId == "agy-followup");
+        var agyFollowupSample2 = snapshot2.LiveRateFeed!.Responses.Single(r => r.SessionId == "agy-followup");
+        var rate2 = new ObservedOutputRate().Observe(snapshot2.LiveRateFeed, poll2At);
+        Check(agyFollowup2.Model == "gemini-4-neon-xhigh"
+            && agyFollowup2.State == "running"
+            && agyFollowupSample2.End == agyFollowupSample1.End
+            && Math.Abs(rate2.Conversations.Single(c => c.SessionId == "agy-followup").Measured - 40.0) < 0.01
+            && snapshot2.LiveRateFeed.Sessions.Single(s => s.SessionId == "agy-followup").Phase == "generating",
+            "AGY follow-up USER_INPUT preserves last known model, retains prior response End without corruption, and reports generating phase.");
 
         // Unchanged stat cache reuses parsed turn and transitions active -> stale as clock advances.
         var aged = tracker.Refresh(now.AddMinutes(3));

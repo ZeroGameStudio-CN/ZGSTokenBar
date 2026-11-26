@@ -37,6 +37,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
     private readonly CodexTokenUsageLedger _codexTokenUsageLedger;
     private readonly ExternalProviderTokenLedger _externalProviderTokenLedger;
     private readonly ExternalConversationTracker _externalConversationTracker = new();
+    private CodexLiveRateFeed? _cachedExternalRateFeed;
     private long _lastExternalConversationsTick;
     private readonly SystemUsageSampler _systemUsageSampler = new();
     private readonly NetworkTrafficLedger _networkTraffic;
@@ -276,7 +277,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
                 {
                     if (_activeProviders.Contains(ProviderKind.Codex))
                         _ = RefreshCodexConversationsAsync();
-                    var externalThresholdMs = _bar.HasOpenHoverOrPopover ? 2_000L : 10_000L;
+                    var externalThresholdMs = _bar.HasOpenHoverOrPopover ? 2_000L : 5_000L;
                     if (Environment.TickCount64 - Volatile.Read(ref _lastExternalConversationsTick) >= externalThresholdMs)
                         _ = RefreshExternalConversationsAsync();
                 }

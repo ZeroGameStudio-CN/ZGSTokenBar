@@ -318,8 +318,8 @@ internal sealed partial class QuotaApplicationContext
                 ConversationCheckpointFailures = _cachedCodexTokenUsage?.ConversationCheckpointFailures ?? 0,
                 LatestTurnOutputTokensPerSecond = _cachedCodexTokenUsage?.RecentTurns.FirstOrDefault()?.OutputTokensPerSecond,
                 ConversationLiveRateTotal = _bar.LiveMetrics.CurrentOutputRate is null ? null
-                    : CodexConversationDisplay.Select(_cachedCodexTokenUsage).Sum(turn => turn.LiveRate?.Measured ?? 0),
-                ConversationLiveRateCount = CodexConversationDisplay.Select(_cachedCodexTokenUsage).Count(turn => turn.LiveRate is { HasRecordedResponse: true }),
+                    : _bar.LiveConversationsForAcceptance().Sum(turn => turn.LiveRate?.Measured ?? 0),
+                ConversationLiveRateCount = _bar.LiveConversationsForAcceptance().Count(turn => turn.LiveRate is { HasRecordedResponse: true }),
                 ObservedCodexInstanceNumbers = CodexConversationDisplay.Select(_cachedCodexTokenUsage?.RecentTurns ?? [],
                     _bar.LiveMetrics.LiveRate, DateTimeOffset.UtcNow, _snapshot).Select(turn => turn.InstanceNumber)
                     .Where(number => number > 0).Distinct().Order().ToArray(),

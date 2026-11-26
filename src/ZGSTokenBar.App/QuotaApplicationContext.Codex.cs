@@ -130,8 +130,8 @@ internal sealed partial class QuotaApplicationContext
                     var rate = _observedOutput.Observe(summary.LiveRateFeed, DateTimeOffset.UtcNow);
                     summary = summary with { LiveOutputRate = rate };
                     _cachedCodexTokenUsage = summary;
-                    _bar.SetLiveOutputRate(rate);
                 }
+                PublishCombinedLiveOutputRate(DateTimeOffset.UtcNow);
                 _bar.SetCodexTokenUsage(summary);
                 _pluginHost.Publish(CorePluginProjection.CodexUsage(
                     "zgstokenbar.usage.codex-local",
@@ -164,13 +164,14 @@ internal sealed partial class QuotaApplicationContext
                 _shutdown.Token);
             if (_shutdown.IsCancellationRequested || _bar.IsDisposed || summary is null
                 || !_activeProviders.Contains(ProviderKind.Codex)) return;
-            var rate = _observedOutput.Observe(summary.LiveRateFeed, DateTimeOffset.UtcNow);
+            var now = DateTimeOffset.UtcNow;
+            var rate = _observedOutput.Observe(summary.LiveRateFeed, now);
             summary = summary with { LiveOutputRate = rate };
             _cachedCodexTokenUsage = summary;
-            _bar.SetLiveOutputRate(rate);
+            PublishCombinedLiveOutputRate(now);
             _bar.SetCodexTokenUsage(summary);
             _pluginHost.Publish(CorePluginProjection.CodexUsage(
-                "zgstokenbar.usage.codex-local", summary, DateTimeOffset.UtcNow));
+                "zgstokenbar.usage.codex-local", summary, now));
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
@@ -207,12 +208,16 @@ internal sealed partial class QuotaApplicationContext
         if (!await _externalConversationsGate.WaitAsync(0)) return;
         try
         {
-            var turns = await Task.Run(
-                () => BackgroundWork.BelowNormal(() => _externalConversationTracker.Refresh(DateTimeOffset.UtcNow, _shutdown.Token)),
+            var snapshot = await Task.Run(
+                () => BackgroundWork.BelowNormal(() => _externalConversationTracker.RefreshSnapshot(DateTimeOffset.UtcNow, _shutdown.Token)),
                 _shutdown.Token);
             Volatile.Write(ref _lastExternalConversationsTick, Environment.TickCount64);
             if (!_shutdown.IsCancellationRequested && !_bar.IsDisposed)
-                _bar.SetExternalConversations(turns);
+            {
+                _cachedExternalRateFeed = snapshot.LiveRateFeed;
+                _bar.SetExternalConversations(snapshot.Turns);
+                PublishCombinedLiveOutputRate(DateTimeOffset.UtcNow);
+            }
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
         {
@@ -225,6 +230,15 @@ internal sealed partial class QuotaApplicationContext
         {
             _externalConversationsGate.Release();
         }
+    }
+
+    private void PublishCombinedLiveOutputRate(DateTimeOffset now)
+    {
+        var codexFeed = _activeProviders.Contains(ProviderKind.Codex)
+            ? _cachedCodexTokenUsage?.LiveRateFeed
+            : null;
+        var combinedFeed = ObservedOutputRate.CombineFeeds(codexFeed, _cachedExternalRateFeed, now);
+        _bar.SetLiveOutputRate(_observedOutput.Observe(combinedFeed, now));
     }
 
     private static string? FreshCodexCardSignature(
