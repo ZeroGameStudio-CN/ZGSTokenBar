@@ -17,6 +17,7 @@ internal static class MultiProviderTokenLedgerTests
             TestAggregatorBreakdownAndFormatting();
             TestBarFormCombinedTotal();
             TestExternalConversationTracker(tempRoot);
+            TestClaudeOpenLogRefresh(tempRoot);
             TestMultiProviderActiveSessionsUi();
             Check(ReferenceEquals(syncContext, SynchronizationContext.Current),
                 "Multi-provider token tests cannot leak a UI synchronization context.");
@@ -535,6 +536,84 @@ internal static class MultiProviderTokenLedgerTests
             && aged.Single(t => t.SessionId == "claude-active").State == "stale"
             && !aged.Any(t => t.SessionId == "grok-active"),
             "Stat-cached active external sessions become stale (or drop if tokenless) when clock advances past running timeout.");
+    }
+
+    private static void TestClaudeOpenLogRefresh(string tempRoot)
+    {
+        var home = Path.Combine(tempRoot, "claude-open-home");
+        var project = Path.Combine(home, ".claude", "projects", "work");
+        Directory.CreateDirectory(project);
+        var now = DateTimeOffset.UtcNow;
+        var activePath = Path.Combine(project, "active.jsonl");
+        var resumedPath = Path.Combine(project, "resumed.jsonl");
+        File.WriteAllLines(activePath, [UserLine(now.AddSeconds(-8)), AssistantLine(now.AddSeconds(-4), 40)]);
+        File.SetLastWriteTimeUtc(activePath, now.AddMinutes(-1).UtcDateTime);
+        File.WriteAllLines(resumedPath, [UserLine(now.AddDays(-35)), AssistantLine(now.AddDays(-35), 20)]);
+        File.SetLastWriteTimeUtc(resumedPath, now.AddDays(-35).UtcDateTime);
+        for (var i = 0; i < 16; i++)
+        {
+            var path = Path.Combine(project, $"recent-{i}.jsonl");
+            File.WriteAllLines(path, [UserLine(now.AddMinutes(-3)), AssistantLine(now.AddMinutes(-2), 30)]);
+            File.SetLastWriteTimeUtc(path, now.AddMinutes(-2).UtcDateTime);
+        }
+
+        var tracker = new ExternalConversationTracker(new UsagePaths(home, home, home),
+            new MapUsageEnvironment(new Dictionary<string, string>()));
+        var initial = tracker.RefreshSnapshot(now).Turns;
+        Check(initial.Single(t => t.SessionId == "active").OutputTokens == 40
+            && initial.All(t => t.SessionId != "resumed"), "The newest Claude logs fill the shortlist before an old session resumes.");
+        for (var i = 0; i < 16; i++)
+            File.SetLastWriteTimeUtc(Path.Combine(project, $"recent-{i}.jsonl"), now.AddSeconds(-30).UtcDateTime);
+
+        const FileShare share = FileShare.ReadWrite | FileShare.Delete;
+        using var active = new FileStream(activePath, FileMode.Append, FileAccess.Write, share);
+        using var resumed = new FileStream(resumedPath, FileMode.Append, FileAccess.Write, share);
+        var next = AssistantLine(now.AddSeconds(1), 125);
+        Append(active, next[..20]);
+        Check(tracker.RefreshSnapshot(now.AddSeconds(1)).Turns.Single(t => t.SessionId == "active").OutputTokens == 40,
+            "A tracked Claude log stays ranked ahead of newer directory entries while its writer appends an incomplete line.");
+        Append(active, next[20..] + "\n");
+        Check(tracker.RefreshSnapshot(now.AddSeconds(2)).Turns.Single(t => t.SessionId == "active").OutputTokens == 125,
+            "Completing a line in a still-open Claude log refreshes the tracked session on the next poll.");
+
+        Append(resumed, UserLine(now.AddSeconds(3)) + "\n" + AssistantLine(now.AddSeconds(4), 60) + "\n");
+        var first = tracker.RefreshSnapshot(now.AddSeconds(4)).Turns;
+        var second = tracker.RefreshSnapshot(now.AddSeconds(5)).Turns;
+        Check((first.Any(t => t.SessionId == "resumed" && t.OutputTokens == 60)
+            || second.Any(t => t.SessionId == "resumed" && t.OutputTokens == 60))
+            && second.Count <= 16,
+            "An old Claude log writing again can join the bounded shortlist within two polls while its writer is open.");
+
+        Append(resumed, AssistantLine(now.AddSeconds(6), 210) + "\n");
+        Check(tracker.RefreshSnapshot(now.AddSeconds(6)).Turns.Single(t => t.SessionId == "resumed").OutputTokens == 210,
+            "Subsequent writes to the resumed log refresh on the next poll even if its directory entry still looks old.");
+
+        static string UserLine(DateTimeOffset at) => System.Text.Json.JsonSerializer.Serialize(new
+        {
+            type = "user",
+            timestamp = at,
+            cwd = @"D:\fixture",
+            message = new { role = "user", content = "Fixture prompt" }
+        });
+
+        static string AssistantLine(DateTimeOffset at, int output) => System.Text.Json.JsonSerializer.Serialize(new
+        {
+            type = "assistant",
+            timestamp = at,
+            message = new
+            {
+                id = "fixture-reply",
+                model = "claude-opus-5-5",
+                stop_reason = "end_turn",
+                usage = new { input_tokens = 10, output_tokens = output }
+            }
+        });
+
+        static void Append(FileStream stream, string text)
+        {
+            stream.Write(System.Text.Encoding.UTF8.GetBytes(text));
+            stream.Flush();
+        }
     }
 
     private static void TestMultiProviderActiveSessionsUi()

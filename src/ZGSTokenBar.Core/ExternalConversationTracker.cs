@@ -33,6 +33,8 @@ public sealed class ExternalConversationTracker
     private readonly IUsageEnvironment _environment;
     private readonly object _sync = new();
     private readonly Dictionary<string, CachedEntry> _cache = new(StringComparer.OrdinalIgnoreCase);
+    private string? _claudeProjectsDirectory;
+    private int _claudeMetadataPartition;
 
     public ExternalConversationTracker()
         : this(UsagePaths.Current(), ProcessUsageEnvironment.Instance)
@@ -226,20 +228,43 @@ public sealed class ExternalConversationTracker
             ?? (string.IsNullOrWhiteSpace(_paths.Home) ? null : Path.Combine(_paths.Home, ".claude"));
         if (string.IsNullOrWhiteSpace(claudeRoot)) return;
 
-        var projectsDir = Path.Combine(claudeRoot, "projects");
-        var candidates = new List<(string SessionId, string Path, FileInfo Info)>();
+        const string cachePrefix = "claude:";
+        var projectsDir = Path.GetFullPath(Path.Combine(claudeRoot, "projects"));
+        if (!Directory.Exists(projectsDir))
+        {
+            _claudeProjectsDirectory = null;
+            return;
+        }
+
+        var firstScan = !string.Equals(_claudeProjectsDirectory, projectsDir, StringComparison.OrdinalIgnoreCase);
+        _claudeProjectsDirectory = projectsDir;
+        _claudeMetadataPartition ^= 1;
+        var trackedFiles = _cache.Keys
+            .Where(key => key.StartsWith(cachePrefix, StringComparison.Ordinal))
+            .Select(key => key[cachePrefix.Length..])
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var candidates = new List<(string Path, long WriteTicks)>();
         foreach (var dir in EnumerateDirectoriesSafe(projectsDir, cancellationToken))
         {
             try
             {
-                foreach (var file in Directory.EnumerateFiles(dir, "*.jsonl"))
+                foreach (var file in new DirectoryInfo(dir).EnumerateFiles("*.jsonl"))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var info = SafeFileInfo(file);
-                    if (info is null || info.Length <= 0 || info.LastWriteTimeUtc < hardCutoffUtc) continue;
-                    var sessionId = Path.GetFileNameWithoutExtension(file);
-                    if (string.IsNullOrWhiteSpace(sessionId)) continue;
-                    candidates.Add((sessionId, Path.GetFullPath(file), info));
+                    if (Path.GetFileNameWithoutExtension(file.Name.AsSpan()).Trim().IsEmpty) continue;
+
+                    var path = file.FullName;
+                    // Windows directory entries can lag a writer. Refresh tracked files every poll
+                    // and alternate the other paths so older sessions can reenter within two polls.
+                    if (firstScan || trackedFiles.Contains(path) || file.Length == 0
+                        || (StringComparer.OrdinalIgnoreCase.GetHashCode(path) & 1) == _claudeMetadataPartition)
+                    {
+                        file.Refresh();
+                    }
+
+                    var writeTicks = file.LastWriteTimeUtc.Ticks;
+                    if (file.Exists && file.Length > 0 && writeTicks >= hardCutoffUtc.Ticks)
+                        candidates.Add((path, writeTicks));
                 }
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
@@ -247,38 +272,44 @@ public sealed class ExternalConversationTracker
             }
         }
 
-        foreach (var candidate in candidates
-                     .OrderByDescending(c => c.Info.LastWriteTimeUtc)
-                     .Take(MaxCandidatesPerProvider))
+        foreach (var candidate in candidates.OrderByDescending(c => c.WriteTicks).Take(MaxCandidatesPerProvider))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var cacheKey = "claude:" + candidate.Path;
-            activeKeys.Add(cacheKey);
-            var stamp = new FileStamp(candidate.Info.Length, candidate.Info.LastWriteTimeUtc.Ticks);
-            if (_cache.TryGetValue(cacheKey, out var cached) && cached.PrimaryStamp == stamp)
+            try
             {
-                EmitCached(cached, now, results, responses, sessions);
-                continue;
-            }
+                using var stream = OpenReadShared(candidate.Path);
+                var writeUtc = File.GetLastWriteTimeUtc(stream.SafeFileHandle);
+                var stamp = new FileStamp(stream.Length, writeUtc.Ticks);
+                if (stamp.Length <= 0 || writeUtc < hardCutoffUtc) continue;
 
-            var keepHead = cached is not null && candidate.Info.Length >= cached.PrimaryStamp.Length;
-            var cachedTitle = keepHead ? cached!.CachedTitle : null;
-            var cachedProject = keepHead ? cached!.CachedProject : null;
-            var cachedModel = keepHead ? cached!.CachedModel : null;
-            var parsed = ParseClaudeSession(
-                candidate.SessionId,
-                candidate.Path,
-                candidate.Info,
-                cachedTitle,
-                cachedProject,
-                cachedModel,
-                now,
-                out var nextTitle,
-                out var nextProject,
-                out var nextModel,
-                out var nextSamples);
-            _cache[cacheKey] = new CachedEntry(stamp, default, default, nextTitle, nextProject, nextModel, nextSamples, parsed);
-            EmitParsed(parsed, nextSamples, now, results, responses, sessions);
+                var cacheKey = cachePrefix + candidate.Path;
+                activeKeys.Add(cacheKey);
+                if (_cache.TryGetValue(cacheKey, out var cached) && cached.PrimaryStamp == stamp)
+                {
+                    EmitCached(cached, now, results, responses, sessions);
+                    continue;
+                }
+
+                var keepHead = cached is not null && stamp.Length >= cached.PrimaryStamp.Length;
+                var parsed = ParseClaudeSession(
+                    Path.GetFileNameWithoutExtension(candidate.Path),
+                    stream,
+                    stamp.Length,
+                    writeUtc,
+                    keepHead ? cached!.CachedTitle : null,
+                    keepHead ? cached!.CachedProject : null,
+                    keepHead ? cached!.CachedModel : null,
+                    now,
+                    out var nextTitle,
+                    out var nextProject,
+                    out var nextModel,
+                    out var nextSamples);
+                _cache[cacheKey] = new CachedEntry(stamp, default, default, nextTitle, nextProject, nextModel, nextSamples, parsed);
+                EmitParsed(parsed, nextSamples, now, results, responses, sessions);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+            }
         }
     }
 
@@ -808,8 +839,9 @@ public sealed class ExternalConversationTracker
 
     private static CachedTurnData? ParseClaudeSession(
         string sessionId,
-        string path,
-        FileInfo info,
+        FileStream stream,
+        long length,
+        DateTime writeUtc,
         string? cachedTitle,
         string? cachedProject,
         string? cachedModel,
@@ -827,7 +859,7 @@ public sealed class ExternalConversationTracker
         {
             if (titleOut is null || projectOut is null)
             {
-                foreach (var headLine in ReadHeadLines(path, HeadReadBytes))
+                foreach (var headLine in ReadHeadLines(stream, length, HeadReadBytes))
                 {
                     if (string.IsNullOrWhiteSpace(headLine)) continue;
                     try
@@ -848,7 +880,7 @@ public sealed class ExternalConversationTracker
                 }
             }
 
-            var tailLines = ReadTailLines(path, TailReadBytes);
+            var tailLines = ReadTailLines(stream, length, TailReadBytes);
             if (tailLines.Count == 0) return null;
 
             string? lastPromptTitle = null;
@@ -1081,7 +1113,7 @@ public sealed class ExternalConversationTracker
             }
 
             var totalInput = TokenActivityView.SaturatingAdd(rawInput, TokenActivityView.SaturatingAdd(cacheCreate, cacheRead));
-            var observedAt = ClampObserved(lastEventAt ?? new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero), now);
+            var observedAt = ClampObserved(lastEventAt ?? new DateTimeOffset(writeUtc, TimeSpan.Zero), now);
             var startedAt = turnStart is { } st && st <= observedAt ? st : observedAt;
             var completed = string.Equals(lastTurnEntryType, "assistant", StringComparison.Ordinal)
                 && lastStopReason is "end_turn" or "stop_sequence" or "max_tokens";
@@ -1251,7 +1283,11 @@ public sealed class ExternalConversationTracker
     private static IReadOnlyList<string> ReadHeadLines(string path, int maxBytes)
     {
         using var stream = OpenReadShared(path);
-        var length = stream.Length;
+        return ReadHeadLines(stream, stream.Length, maxBytes);
+    }
+
+    private static IReadOnlyList<string> ReadHeadLines(FileStream stream, long length, int maxBytes)
+    {
         if (length <= 0) return [];
         var count = (int)Math.Min(length, maxBytes);
         var buffer = new byte[count];
@@ -1271,10 +1307,14 @@ public sealed class ExternalConversationTracker
     private static IReadOnlyList<string> ReadTailLines(string path, int maxBytes)
     {
         using var stream = OpenReadShared(path);
-        var length = stream.Length;
+        return ReadTailLines(stream, stream.Length, maxBytes);
+    }
+
+    private static IReadOnlyList<string> ReadTailLines(FileStream stream, long length, int maxBytes)
+    {
         if (length <= 0) return [];
         var offset = Math.Max(0L, length - maxBytes);
-        if (offset > 0) stream.Seek(offset, SeekOrigin.Begin);
+        stream.Position = offset;
         var count = (int)(length - offset);
         var buffer = new byte[count];
         var read = ReadFully(stream, buffer, count);
