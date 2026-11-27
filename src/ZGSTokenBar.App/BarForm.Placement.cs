@@ -114,13 +114,34 @@ internal sealed partial class BarForm
             var wasInRow = wasEmbedded || _taskbarRowOverlayFor != 0;
             var remote = _embedRequested && RemoteSession();
             if (remote && wasEmbedded) DetachFromTaskbar("remote-session");
-            var wasCrowded = TaskbarEmbedStatus is "embedded:crowded" or "overlay:crowded";
+            var previousRowKey = _taskbarRowKey;
+            var rowKey = (track.TaskbarWindow, track.TaskbarBounds, track.TrayBounds);
+            if (_taskbarResizeDeferred && previousRowKey == rowKey && HasConfirmedTaskbarRowLayout)
+            {
+                ApplySnapshotLayout(updatePlacement: false);
+                placementSize = Size;
+            }
+            var alreadyEmbedded = !remote && HasNativeTaskbarParent(track.TaskbarWindow);
             TryAdaptTaskbarWidthForRow(track, ref placementSize);
             var rowCandidate = TryGetSafeRowLocation(track, placementSize, anchor, oldBounds, remote, out var location, out var reason);
+            if (rowCandidate && _taskbarRowStability.AwaitingLayout)
+            {
+                rowCandidate = false;
+                reason = "layout-unavailable";
+            }
+            // Keep the currently visible seat during a failed read of the same Shell row.
+            if (reason == "layout-unavailable" && previousRowKey == rowKey && _taskbarRowKey == rowKey
+                && Visible && !_taskbarFullscreenSuspended && TaskbarEmbedding.IsVisible(Handle)
+                && oldBounds.Size == placementSize && track.TaskbarBounds.Contains(oldBounds)
+                && !track.TrayBounds.IntersectsWith(oldBounds)
+                && (alreadyEmbedded || _taskbarRowOverlayFor == track.TaskbarWindow && _reservedTaskbarRowProbe(track)))
+            {
+                return;
+            }
             var rowOverlay = rowCandidate && remote;
             if (rowCandidate && !remote)
             {
-                if (!HasNativeTaskbarParent(track.TaskbarWindow))
+                if (!alreadyEmbedded)
                     using (PerfTrace.Measure("placement.embed")) EnsureTaskbarEmbedding(track);
                 if (!EmbeddedInTaskbar)
                 {
@@ -132,8 +153,7 @@ internal sealed partial class BarForm
                 }
             }
             var crowdedInRow = false;
-            if (_embedRequested && !rowCandidate
-                && (reason == "no-clear-space" || wasCrowded && wasInRow && reason == "layout-unavailable")
+            if (_embedRequested && !rowCandidate && reason == "no-clear-space"
                 && track.Primary && track.Horizontal && !track.TrayBounds.IsEmpty
                 && track.ScreenBounds.Contains(track.TaskbarBounds))
             {
@@ -167,8 +187,11 @@ internal sealed partial class BarForm
             {
                 if (EmbeddedInTaskbar) DetachFromTaskbar(reason);
                 if (_embedRequested && !string.IsNullOrEmpty(reason)) TaskbarEmbedStatus = "fallback:" + reason;
-                if (TryAdaptTaskbarRingCap(null))
+                if (TryAdaptTaskbarRingCap(null)) placementSize = Size;
+                if (_taskbarResizeDeferred)
                 {
+                    _taskbarRowOverlayFor = 0;
+                    ApplySnapshotLayout(updatePlacement: false);
                     placementSize = Size;
                 }
             }
@@ -187,8 +210,14 @@ internal sealed partial class BarForm
                 return;
             }
 
-            if (WindowState != FormWindowState.Normal) WindowState = FormWindowState.Normal;
+            var restoreWindow = WindowState != FormWindowState.Normal;
+            if (restoreWindow) WindowState = FormWindowState.Normal;
             var wasVisible = Visible;
+            var sameNativeSeat = rowCandidate && alreadyEmbedded && !restoreWindow && wasVisible
+                && TaskbarEmbedStatus == "embedded" && oldBounds == new Rectangle(location, placementSize)
+                && TaskbarEmbedding.IsVisible(Handle) && TaskbarEmbedding.IsTopSibling(Handle);
+            if (sameNativeSeat) return;
+
             using (PerfTrace.Measure("placement.show-at"))
             {
                 if (!TaskbarPlacement.ShowAt(Handle, location, placementSize))

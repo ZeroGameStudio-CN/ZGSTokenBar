@@ -48,15 +48,51 @@ internal static class TaskbarFullscreenTests
         Set("_taskbarRowProbePending", true); Set("_taskbarRowProbeAfter", long.MaxValue); Set("_taskbarRowPollAfter", long.MaxValue);
         var fullscreen = false;
         Set("_fullscreenWindowProbe", (Func<string?, bool>)(_ => fullscreen));
-        // Ordinary background layout reads can also be temporarily unavailable without
-        // requesting a desktop overlay. Retain the child and restore from new evidence.
-        Set("_taskbarRowSample", ((Rectangle[]?)null, Environment.TickCount64));
-        Place();
-        Check(!bar.Visible && bar.EmbeddedInTaskbar && TaskbarEmbedding.ParentOf(bar.Handle) == parent.Handle,
-            $"An ordinary transient layout recheck never shows an adjacent floating bar: visible={bar.Visible}, embedded={bar.EmbeddedInTaskbar}, parent={TaskbarEmbedding.ParentOf(bar.Handle)}, expected={parent.Handle}, status={bar.TaskbarEmbedStatus}, detach={bar.TaskbarLastDetachReason}, detail={bar.TaskbarLastDetachDetail}");
         Set("_taskbarRowSample", (new Rectangle[] { apps, tray }, Environment.TickCount64));
         Place();
-        Check(bar.Visible && bar.TaskbarEmbedStatus == "embedded", "A fresh layout restores the same in-row child.");
+        var verifiedSeat = bar.ScreenBounds;
+        var handle = bar.Handle;
+        var failureTime = Environment.TickCount64;
+        foreach (var sample in new (Rectangle[]? Occupied, long ReadAt)[]
+        {
+            ([apps, tray], failureTime - 10_000),
+            (null, failureTime),
+            (null, failureTime - 4_000),
+        })
+        {
+            Set("_taskbarRowSample", sample);
+            Place();
+            Check(bar.Visible && TaskbarEmbedding.IsVisible(handle) && bar.Handle == handle
+                && bar.NativeTaskbarParentVerified && bar.ScreenBounds == verifiedSeat,
+                "Stale and repeated unavailable reads keep the same native child visible at its confirmed bounds.");
+        }
+
+        var rowStability = (TaskbarRowStability)typeof(BarForm).GetField("_taskbarRowStability", Instance)!.GetValue(bar)!;
+        rowStability.OnLayoutChanged(failureTime - 750);
+        Set("_taskbarRowSample", (new Rectangle[] { apps, tray }, failureTime - 700));
+        Place();
+        Check(bar.Visible && bar.ScreenBounds == verifiedSeat,
+            "A pending layout revision holds the seat beyond the old refresh grace.");
+        rowStability.ConfirmLayout(rowStability.LayoutRevision);
+
+        var obstruction = new Rectangle(verifiedSeat.Left, row.Top, verifiedSeat.Width + 8 * scale, row.Height);
+        Set("_taskbarRowSample", (new Rectangle[] { obstruction, apps, tray }, Environment.TickCount64));
+        Place();
+        Check(bar.Visible && bar.Handle == handle && bar.TaskbarEmbedStatus == "embedded"
+            && !bar.ScreenBounds.IntersectsWith(obstruction),
+            "A new confirmed obstruction moves the same bar into a clear part of the row.");
+        using (var sibling = new Form { ShowInTaskbar = false, Opacity = 0 })
+        {
+            sibling.Show();
+            Check(TaskbarEmbedding.Attach(sibling.Handle, parent.Handle, out _) is not null
+                && TaskbarPlacement.ShowAt(sibling.Handle, anchor, bar.Size)
+                && !TaskbarEmbedding.IsTopSibling(bar.Handle),
+                "Another child can cover even a clear, unchanged seat.");
+            var currentSeat = bar.ScreenBounds;
+            Place();
+            Check(bar.ScreenBounds == currentSeat && TaskbarEmbedding.IsTopSibling(bar.Handle),
+                "Placing an unchanged seat still restores the bar's child z-order when needed.");
+        }
         for (var cycle = 0; cycle < 4; cycle++)
         {
             fullscreen = true; Place();
@@ -107,8 +143,11 @@ internal static class TaskbarFullscreenTests
             && bar.ScreenBounds.Size == bar.Size && row.Contains(bar.ScreenBounds),
             "A reserved and verified row keeps the full-size top-level bar in place after attachment is refused.");
         var overlayBounds = bar.ScreenBounds;
+        Set("_taskbarRowSample", ((Rectangle[]?)null, Environment.TickCount64));
         Place();
-        Check(bar.Visible && bar.ScreenBounds == overlayBounds, "A refresh retains the safe top-level seat.");
+        Check(bar.Visible && TaskbarEmbedding.IsVisible(bar.Handle) && bar.ScreenBounds == overlayBounds
+            && bar.TaskbarEmbedStatus == "overlay:embed-unavailable",
+            "An unavailable layout keeps a visible top-level bar in its reserved, unchanged row.");
         fullscreen = true; Place();
         Check(!bar.Visible, "The verified top-level overlay also yields to fullscreen.");
         fullscreen = false; Place();

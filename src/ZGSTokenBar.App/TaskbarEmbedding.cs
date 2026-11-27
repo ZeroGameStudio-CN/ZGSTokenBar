@@ -25,6 +25,7 @@ internal static class TaskbarEmbedding
     private const uint SwpNoActivate = 0x0010;
     private const uint SwpFrameChanged = 0x0020;
     private const uint GaParent = 1;
+    private const uint GwHwndPrev = 3;
     private static readonly nint Top = 0;
 
     /// <summary>Primary taskbar window, or 0.</summary>
@@ -47,6 +48,8 @@ internal static class TaskbarEmbedding
     internal static bool IsAlive(nint window) => window != 0 && IsWindow(window);
 
     internal static bool IsVisible(nint window) => window != 0 && IsWindowVisible(window);
+
+    internal static bool IsTopSibling(nint window) => GetWindow(window, GwHwndPrev) == 0;
 
     internal static uint WindowThread(nint window, out uint processId) => GetWindowThreadProcessId(window, out processId);
     internal static int DpiOf(nint window) => window == 0 ? 0 : (int)GetDpiForWindow(window);
@@ -233,6 +236,9 @@ internal static class TaskbarEmbedding
 
     [DllImport("user32.dll")]
     private static extern nint GetAncestor(nint window, uint flags);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetWindow(nint window, uint command);
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     private static extern nint GetWindowLongPtr(nint window, int index);

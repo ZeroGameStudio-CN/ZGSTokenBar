@@ -46,6 +46,12 @@ internal sealed partial class BarForm
 
     internal bool NativeTaskbarParentVerified => HasNativeTaskbarParent(_embedParent);
 
+    internal bool EmbeddedPlacementHasWatchdog => _embedWatchdog.Enabled && EmbeddedInTaskbar;
+
+    private bool HasConfirmedTaskbarRowLayout => !_taskbarRowStability.AwaitingLayout
+        && _taskbarRowSample.Occupied is not null
+        && Environment.TickCount64 - _taskbarRowSample.ReadAt < LayoutMaximumAgeMs;
+
     internal bool? ObserveDockHealth()
     {
         if (!_taskbarDocked || !_embedRequested || _hiddenToTray || _taskbarDragging) return null;
@@ -167,8 +173,7 @@ internal sealed partial class BarForm
             return true;
         }
 
-        // A recent unconfirmed read may only retain the same clear seat, never move or attach.
-        // Missing or stale evidence still uses the full-size overlay.
+        // A new location requires a current, confirmed reading of the row.
         if (awaitingLayout || occupied is null)
         {
             if (occupied is null) _taskbarRowStability.ResetReturn();
@@ -199,9 +204,7 @@ internal sealed partial class BarForm
             return;
         }
         var key = (track.TaskbarWindow, track.TaskbarBounds, track.TrayBounds);
-        if (_taskbarRowKey != key || _taskbarRowStability.AwaitingLayout) return;
-        var observed = _taskbarRowSample;
-        if (observed.Occupied is not { } occupied || Environment.TickCount64 - observed.ReadAt >= LayoutMaximumAgeMs)
+        if (_taskbarRowKey != key || !HasConfirmedTaskbarRowLayout || _taskbarRowSample.Occupied is not { } occupied)
             return;
 
         var maxPhysicalGap = TaskbarPlacement.LargestGapWidth(track, occupied, extraClearance: 0);
@@ -236,8 +239,7 @@ internal sealed partial class BarForm
                 var now = Environment.TickCount64;
                 if (now - startedAt >= LayoutMaximumAgeMs) occupied = null;
                 var confirmed = _taskbarRowStability.ConfirmLayout(revision);
-                // A newer notice does not make a real clear-space measurement useless. Keep it
-                // for the short existing-seat lease; AwaitingLayout still blocks moves/attachment.
+                // A read superseded by another notice can still let an in-row drag retain its current seat.
                 if (confirmed || _taskbarRowStability.AwaitingLayout && occupied is not null)
                     _taskbarRowSample = (occupied, startedAt);
                 if (confirmed)

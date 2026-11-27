@@ -272,7 +272,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
             {
                 if (_bar.WantsSystemUsageDetails) _ = RefreshSystemUsageDetailsAsync();
                 else _ = RefreshSystemUsageOverviewAsync();
-                _bar.SyncTaskbarPlacement();
+                if (!_bar.EmbeddedPlacementHasWatchdog) _bar.SyncTaskbarPlacement();
                 if (_settings.IsPluginEnabled("zgstokenbar.metrics.system", true))
                 {
                     if (_activeProviders.Contains(ProviderKind.Codex))

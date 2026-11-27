@@ -127,9 +127,12 @@ internal static class TaskbarFreshSeatTests
             { Location = new(-29000, -30000), Opacity = 0 };
         bar.Show();
         Application.DoEvents();
-        bar.SetPluginMiniCards([
+        PluginMiniCardView[] monitorCards =
+        [
             new(RouterPlugin.Id, "Router", RouterModuleTests.Card("idle"), new Dictionary<string, string>()),
-            new(IntakeObserverPlugin.Id, "自动分拣", IntakeObserverPlugin.Launcher, new Dictionary<string, string>())]);
+            new(IntakeObserverPlugin.Id, "自动分拣", IntakeObserverPlugin.Launcher, new Dictionary<string, string>()),
+        ];
+        bar.SetPluginMiniCards(monitorCards);
         Check(TaskbarEmbedding.TryGetScreenBounds(parent.Handle, out var row), "Crowded fixture has real row geometry.");
         var tray = new Rectangle(row.Right - 220, row.Top, 220, row.Height);
         var screen = new Rectangle(row.Left, row.Bottom - 1080, row.Width, 1080);
@@ -154,6 +157,20 @@ internal static class TaskbarFreshSeatTests
         Check(bar.Visible && bar.EmbeddedInTaskbar && bar.TaskbarEmbedStatus == "embedded"
             && bar.Width == 241 && !bar.TaskbarUltraCompact,
             "Open row embeds at full ring width.");
+
+        bar.SetPluginMiniCards([]);
+        Place();
+        var smallerSeat = bar.ScreenBounds;
+        Check(smallerSeat.Width < 241, "Removing monitors creates a smaller confirmed bar.");
+        Set("_taskbarRowSample", ((Rectangle[]?)null, Environment.TickCount64));
+        bar.SetPluginMiniCards(monitorCards);
+        Place();
+        Check(bar.Visible && bar.NativeTaskbarParentVerified && bar.ScreenBounds == smallerSeat,
+            "A content-driven expansion waits at the displayed size while the layout is unavailable.");
+        Set("_taskbarRowSample", (new Rectangle[] { new(row.Left, row.Top, 500, row.Height), tray }, Environment.TickCount64));
+        Place();
+        Check(bar.Visible && bar.NativeTaskbarParentVerified && bar.Width == 241,
+            "The deferred expansion fits into the next confirmed layout.");
 
         // Crowded taskbar: leave zero clear gap anywhere in the row.
         Set("_taskbarRowSample", (new Rectangle[] { new(row.Left, row.Top, tray.Left - row.Left, row.Height), tray }, Environment.TickCount64));
