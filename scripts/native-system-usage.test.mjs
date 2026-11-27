@@ -57,8 +57,9 @@ test('system usage follows the existing delayed hover and temporary pin lifecycl
 test('process-heavy details are sampled only for hover or pin and rendered as a compact Top 5 table', () => {
   assert.match(bar, /WantsSystemUsageDetails/);
   assert.match(bar, /SystemUsageDetailsRequested/);
-  assert.match(application, /_bar\.WantsSystemUsageDetails\) _ = RefreshSystemUsageDetailsAsync\(\)/);
-  assert.match(application, /SystemUsageSampling\.TrySampleAsync\([\s\S]*?includeProcesses: true/);
+  assert.match(application, /RefreshSystemUsageAsync\(_bar\.WantsSystemUsageDetails\)/);
+  assert.match(application, /SystemUsageDetailsRequested \+=[\s\S]*?RefreshSystemUsageAsync\(includeProcesses: true\)/);
+  assert.match(application, /includeProcesses && !_bar\.WantsSystemUsageDetails/);
   assert.match(sampling, /Task\.Run\(/);
   assert.match(sampling, /gate\.WaitAsync\(0, cancellationToken\)/);
   assert.match(sampler, /Sample\(bool includeProcesses = false\)/);
@@ -76,7 +77,7 @@ test('process-heavy details are sampled only for hover or pin and rendered as a 
 });
 
 test('system usage refreshes once per Mini clock tick and degrades unavailable metrics to dashes', () => {
-  assert.match(application, /if \(_bar\.IsTaskbarMode\)[\s\S]*?RefreshSystemUsageOverviewAsync\(\)/);
+  assert.match(application, /if \(_bar\.IsTaskbarMode\)[\s\S]*?RefreshSystemUsageAsync\(_bar\.WantsSystemUsageDetails\)/);
   assert.doesNotMatch(application, /_bar\.SetSystemUsage\(_systemUsageSampler\.Sample\(\)\)/);
   assert.match(application, /_clockTimer\.Interval = ClockIntervalMs\(_bar\.IsTaskbarMode, _bar\.HasOpenHoverOrPopover\)/);
   assert.match(application, /!taskbarMode \? 30_000 : hoverOpen \? 1_000 : 2_000/);

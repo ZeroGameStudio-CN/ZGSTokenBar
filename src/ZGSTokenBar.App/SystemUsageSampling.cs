@@ -1,22 +1,22 @@
-using ZGSTokenBar.Core;
-
 namespace ZGSTokenBar.App;
 
 internal static class SystemUsageSampling
 {
-    public static async Task<SystemUsageSnapshot?> TrySampleAsync(
+    public static async Task TrySampleAsync(
         SemaphoreSlim gate,
         Func<bool, SystemUsageSnapshot> sample,
+        Action<SystemUsageSnapshot> publish,
         bool includeProcesses,
         CancellationToken cancellationToken)
     {
-        if (!await gate.WaitAsync(0, cancellationToken).ConfigureAwait(false)) return null;
+        if (!await gate.WaitAsync(0, cancellationToken)) return;
         try
         {
-            return await Task.Run(
-                    () => sample(includeProcesses),
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var snapshot = await Task.Run(() => sample(includeProcesses), cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // Keep the gate until the caller's UI context has applied this sample.
+            publish(snapshot);
         }
         finally
         {
