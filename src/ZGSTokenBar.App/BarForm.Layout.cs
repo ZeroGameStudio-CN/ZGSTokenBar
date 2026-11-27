@@ -181,6 +181,8 @@ internal sealed partial class BarForm
             ApplyDockedTarget(track, Size, track.Constrain(anchor), preserveAdjacentPosition: false);
     }
 
+    private bool _taskbarResizeDeferred;
+
     private void ApplySnapshotLayout(bool updatePlacement = true)
     {
         _scale = Math.Max(1, EffectiveDpi() / 96f);
@@ -202,8 +204,15 @@ internal sealed partial class BarForm
         var miniLogicalWidth = GlassCanvasLogicalWidth(CurrentGlassPlan().Width);
         var previousClientSize = ClientSize;
         var newSize = new Size(Scale(miniLogicalWidth), Scale(TaskbarMiniLayoutMath.Height));
-        if ((EmbeddedInTaskbar || _taskbarRowOverlayFor != 0)
-            && (newSize.Width > previousClientSize.Width || newSize.Height > previousClientSize.Height))
+        var inTaskbarRow = EmbeddedInTaskbar || _taskbarRowOverlayFor != 0;
+        if (_embedRequested && _taskbarDocked && !_placingTaskbar && !_taskbarDragging
+            && inTaskbarRow && Visible && newSize != previousClientSize && !HasConfirmedTaskbarRowLayout)
+        {
+            _taskbarResizeDeferred = true;
+            return;
+        }
+        _taskbarResizeDeferred = false;
+        if (inTaskbarRow && (newSize.Width > previousClientSize.Width || newSize.Height > previousClientSize.Height))
         {
             // The old seat does not justify an in-row expansion during a layout recheck.
             if (_taskbarRowOverlayFor != 0) _taskbarRowOverlayFor = 0;

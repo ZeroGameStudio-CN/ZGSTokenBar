@@ -369,10 +369,11 @@ changes on the same window, without changing Windows settings.
 executable checks full-width fit and fallback, detach coordinates, stale-parent
 recovery, drag z-order and same-resolution session reconnects. Experimental
 embedding reads the primary taskbar's button bounds on a background worker.
-A missing or crowded layout uses an adjacent overlay (`fallback:layout-unavailable`
-or `fallback:no-clear-space`) without shrinking the bar. A verified position stays
-put while it fits. When returning from beside the taskbar, the same gap must
-be verified again after two seconds (`fallback:waiting-for-space` while waiting).
+A visible bar stays at its existing bounds while a layout read for the same row
+is unavailable. A fresh confirmed layout allows resizing and repositioning. A
+newly entering or already hidden bar waits for a verified fit. When returning
+from beside the taskbar, the same gap must be verified again after two seconds
+(`hidden:waiting-for-space` while waiting).
 On Remote Desktop, the same verified gap uses a top-level window
 (`overlay:remote-session`, `embeddedInTaskbar: false`). If Windows rejects native
 attachment, a verified gap in a reserved row uses the same top-level placement
