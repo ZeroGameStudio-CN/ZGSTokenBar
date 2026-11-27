@@ -12214,59 +12214,62 @@ static void TestSystemUsageBackgroundSerialization()
     using var release = new ManualResetEventSlim();
     var callerThread = Environment.CurrentManagedThreadId;
     var sampleThread = callerThread;
-    var active = 0;
-    var maximumActive = 0;
+    var sampleCount = 0;
+    var publishCount = 0;
     var includeProcessesObserved = false;
+    var snapshot = new SystemUsageSnapshot(
+        72, null, null, null, null, null, 0, 1, DateTimeOffset.Parse("2026-08-23T08:00:00Z"));
     SystemUsageSnapshot Sample(bool includeProcesses)
     {
         sampleThread = Environment.CurrentManagedThreadId;
         includeProcessesObserved = includeProcesses;
-        var current = Interlocked.Increment(ref active);
-        maximumActive = Math.Max(maximumActive, current);
-        if (current == 1)
-        {
-            entered.Set();
-            release.Wait(TimeSpan.FromSeconds(5));
-        }
-        Interlocked.Decrement(ref active);
-        return new(
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            0,
-            1,
-            DateTimeOffset.Parse("2026-08-23T08:00:00Z"));
+        Interlocked.Increment(ref sampleCount);
+        entered.Set();
+        release.Wait(TimeSpan.FromSeconds(5));
+        return snapshot;
     }
 
-    var first = SystemUsageSampling.TrySampleAsync(
-        gate,
-        Sample,
-        includeProcesses: true,
-        CancellationToken.None);
-    Equal(true, entered.Wait(TimeSpan.FromSeconds(5)), "background system sampling starts");
+    void Publish(SystemUsageSnapshot actual)
+    {
+        Equal(0, gate.CurrentCount, "the sampling slot stays occupied until publication");
+        Equal(snapshot, actual, "publication receives the completed background sample");
+        Interlocked.Increment(ref publishCount);
+    }
+
+    var context = SynchronizationContext.Current;
+    Task first;
     try
     {
-        var overlapping = SystemUsageSampling.TrySampleAsync(
-                gate,
-                Sample,
-                includeProcesses: false,
-                CancellationToken.None)
-            .GetAwaiter()
-            .GetResult();
-        Equal<SystemUsageSnapshot?>(null, overlapping, "an overlapping system sample is skipped");
+        SynchronizationContext.SetSynchronizationContext(null);
+        first = SystemUsageSampling.TrySampleAsync(gate, Sample, Publish, includeProcesses: true, CancellationToken.None);
+    }
+    finally
+    {
+        SynchronizationContext.SetSynchronizationContext(context);
+    }
+
+    try
+    {
+        Equal(true, entered.Wait(TimeSpan.FromSeconds(5)), "background system sampling starts");
+        for (var tick = 0; tick < 3; tick++)
+        {
+            SystemUsageSampling.TrySampleAsync(gate, Sample, Publish, includeProcesses: false, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+        }
+        Equal(0, publishCount, "skipped ticks do not publish while the active sample is pending");
     }
     finally
     {
         release.Set();
     }
 
-    Equal(true, first.GetAwaiter().GetResult() is not null, "background system sample returns its snapshot");
+    first.GetAwaiter().GetResult();
+    Equal(1, sampleCount, "overview and detail sampling share one serialization gate");
+    Equal(1, publishCount, "a slow accepted sample is published despite overlapping refresh ticks");
+    Equal(1, gate.CurrentCount, "publication releases the sampling slot");
     Equal(false, callerThread == sampleThread, "system sampling does not execute on the caller UI thread");
     Equal(true, includeProcessesObserved, "detail sampling intent reaches the sampler");
-    Equal(1, maximumActive, "overview and detail sampling share one serialization gate");
 }
 
 static void TestSystemUsagePopoverPresentation()

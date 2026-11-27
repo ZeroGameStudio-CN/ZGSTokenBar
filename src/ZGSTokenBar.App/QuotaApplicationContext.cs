@@ -91,7 +91,6 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
     private long _uiRevision;
     private int _genericCardsUpdateQueued;
     private bool _pluginRuntimeDisposed;
-    private long _systemUsageGeneration;
     private readonly object _stateSaveSync = new();
     private Task _stateSaveTail = Task.CompletedTask;
     private long _planHistorySavedAt;
@@ -161,7 +160,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         _bar.SystemUsageDetailsRequested += (_, _) =>
         {
             ApplyClockInterval();
-            _ = RefreshSystemUsageDetailsAsync();
+            _ = RefreshSystemUsageAsync(includeProcesses: true);
             _ = RefreshExternalConversationsAsync();
         };
         _bar.GlassExpandedChanged += (_, expanded) => SaveGlassExpanded(expanded);
@@ -270,8 +269,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
         {
             if (_bar.IsTaskbarMode)
             {
-                if (_bar.WantsSystemUsageDetails) _ = RefreshSystemUsageDetailsAsync();
-                else _ = RefreshSystemUsageOverviewAsync();
+                _ = RefreshSystemUsageAsync(_bar.WantsSystemUsageDetails);
                 if (!_bar.EmbeddedPlacementHasWatchdog) _bar.SyncTaskbarPlacement();
                 if (_settings.IsPluginEnabled("zgstokenbar.metrics.system", true))
                 {
@@ -361,7 +359,7 @@ internal sealed partial class QuotaApplicationContext : ApplicationContext, IDes
             Timeout.Infinite,
             false);
 
-        _bar.BeginInvoke(() => _ = RefreshSystemUsageOverviewAsync());
+        _bar.BeginInvoke(() => _ = RefreshSystemUsageAsync(includeProcesses: false));
         _bar.BeginInvoke(() => _ = RefreshAsync());
         _bar.BeginInvoke(() => _ = RefreshExternalProviderTokensAsync());
         _bar.BeginInvoke(() => _ = RefreshExternalConversationsAsync());

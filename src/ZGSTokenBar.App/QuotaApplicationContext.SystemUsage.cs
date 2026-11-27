@@ -21,54 +21,30 @@ internal sealed partial class QuotaApplicationContext
         return snapshot with { NetworkHistory = totals, NetworkHistorySaveFailed = _networkTraffic.SaveFailed };
     }
 
-    private async Task RefreshSystemUsageOverviewAsync()
-    {
-        if (_quitting
-            || !_bar.IsTaskbarMode
-            || !_settings.IsPluginEnabled("zgstokenbar.metrics.system", true)) return;
-        var generation = Interlocked.Increment(ref _systemUsageGeneration);
-        try
-        {
-            var snapshot = await SystemUsageSampling.TrySampleAsync(
-                _systemUsageGate,
-                includeProcesses => SampleSystemUsage(includeProcesses),
-                includeProcesses: false,
-                _shutdown.Token);
-            if (snapshot is not null
-                && generation == Volatile.Read(ref _systemUsageGeneration)
-                && !_quitting
-                && !_bar.IsDisposed)
-            {
-                _bar.SetSystemUsage(snapshot);
-            }
-        }
-        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
-        {
-        }
-    }
-
-    private async Task RefreshSystemUsageDetailsAsync()
+    private async Task RefreshSystemUsageAsync(bool includeProcesses)
     {
         if (_quitting
             || !_bar.IsTaskbarMode
             || !_settings.IsPluginEnabled("zgstokenbar.metrics.system", true)
-            || !_bar.WantsSystemUsageDetails) return;
-        var generation = Interlocked.Increment(ref _systemUsageGeneration);
+            || includeProcesses && !_bar.WantsSystemUsageDetails) return;
         try
         {
-            var snapshot = await SystemUsageSampling.TrySampleAsync(
+            await SystemUsageSampling.TrySampleAsync(
                 _systemUsageGate,
-                includeProcesses => SampleSystemUsage(includeProcesses),
-                includeProcesses: true,
+                SampleSystemUsage,
+                snapshot =>
+                {
+                    if (!_quitting
+                        && !_bar.IsDisposed
+                        && _bar.IsTaskbarMode
+                        && _settings.IsPluginEnabled("zgstokenbar.metrics.system", true)
+                        && (!includeProcesses || _bar.WantsSystemUsageDetails))
+                    {
+                        _bar.SetSystemUsage(snapshot);
+                    }
+                },
+                includeProcesses,
                 _shutdown.Token);
-            if (snapshot is not null
-                && generation == Volatile.Read(ref _systemUsageGeneration)
-                && !_quitting
-                && !_bar.IsDisposed
-                && _bar.WantsSystemUsageDetails)
-            {
-                _bar.SetSystemUsage(snapshot);
-            }
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
         {
